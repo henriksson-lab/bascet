@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-seq_io = "0.3.2"
+bio = "2.0.3"
+rand = "0.8.5"
+rayon = "1.10.0"

@@ -1,4 +1,3 @@
-mod header;
-mod simulate;
+mod reads;
 
-pub use simulate::reads as reads;
+pub use reads::ReadsSimulator as ReadsSimulator;

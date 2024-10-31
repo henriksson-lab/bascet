@@ -1,12 +1,12 @@
-use KMER_Select::simulate;
 use std::path::Path;
-use seq_io::fasta::{Reader, Record};
+use KMER_Select::simulate::ReadsSimulator;
 
 fn main() {
-    let path = Path::new("data/all.fa");
-    let mut reader = Reader::from_path(path).unwrap();
-
+    let in_path = Path::new("data/all.fa");
     let out_path = Path::new("simulated/reads.fasta");
-    // reads = simulate::reads(&reader, out_path);
-    println!("mean sequence length of {} records: {:.1} bp", n, sum as f32 / n as f32);
+    let sim = ReadsSimulator {
+        p_read_open: 0.025,
+        read_length: 150,
+    };
+    let _ = sim.simulate_with(in_path, out_path);
 }
