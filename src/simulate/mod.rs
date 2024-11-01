@@ -1,3 +1,3 @@
 mod reads;
 
-pub use reads::ReadsSimulator as ReadsSimulator;
+pub use reads::ReadsSimulator;
