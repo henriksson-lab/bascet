@@ -1,10 +1,10 @@
 use bio::io::fasta;
-use rand::distributions::{Distribution, Uniform};
-use rayon::prelude::*;
+use rand::{distributions::{Distribution, Uniform}, SeedableRng};
 use std::path::Path;
 
 pub struct ReadsSimulator {
     pub p_read_open: f32,
+    pub p_read_coverage_change: f32,
     pub read_length: u32,
 }
 
@@ -23,12 +23,19 @@ impl ReadsSimulator {
                 continue;
             }
 
-            let range = Uniform::new(0.0, 1.0);
-            let read_indices: Vec<(u32, u32)> = (0..=(n - 150))
-                .into_par_iter()
+            let read_open_range = Uniform::new(0.0, 1.0);
+            let read_change_coverage_range = Uniform::new(0.0, 1.0);
+            let read_coverage_range = Uniform::new(0.0, 2.0);
+            let mut read_coverage_factor = 1.0;
+
+            let mut rng = rand::rngs::StdRng::from_entropy();
+            let read_indices: Vec<(u32, u32)> = (0..=(n - self.read_length))
+                .into_iter()
                 .map(|i| {
-                    let mut rng = rand::thread_rng();
-                    if range.sample(&mut rng) <= self.p_read_open {
+                    if read_change_coverage_range.sample(&mut rng) <= self.p_read_coverage_change {
+                        read_coverage_factor = read_coverage_range.sample(&mut rng);
+                    }
+                    if read_open_range.sample(&mut rng) <= self.p_read_open * read_coverage_factor {
                         Some((i, i + self.read_length))
                     } else {
                         None
