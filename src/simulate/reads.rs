@@ -20,42 +20,36 @@ impl ReadsSimulator {
         let mut writer = fasta::Writer::new(writer_handle);
 
         let mut rng = SmallRng::from_entropy();
-
         for record_opt in reader.records() {
             let record = record_opt.unwrap();
-            let n = record.seq().len() as u32;
 
-            if n < 150 {
+            let n = record.seq().len() as u32;
+            if n < self.read_length {
                 continue;
             }
 
-            let read_open_range = Uniform::new(0.0, 1.0);
-            let read_change_coverage_range = Uniform::new(0.0, 1.0);
-            let read_coverage_range = Uniform::new(0.0, 2.0);
-            let mut read_coverage_factor = read_coverage_range.sample(&mut rng);
+            let read_open_range             = Uniform::new(0.0, 1.0);
+            let read_change_coverage_range  = Uniform::new(0.0, 1.0);
+            let read_coverage_range         = Uniform::new(0.0, 2.0);
 
-            let read_indices: Vec<(u32, u32)> = (0..=(n - self.read_length))
+            let mut read_coverage_factor = read_coverage_range.sample(&mut rng);
+            (0..(n - self.read_length))
                 .into_iter()
-                .filter_map(|i| {
-                    if read_change_coverage_range.sample(&mut rng) <= self.p_read_coverage_change {
+                .for_each(|i| {
+                    let c_read_change_coverage = read_change_coverage_range.sample(&mut rng);
+                    if  c_read_change_coverage <= self.p_read_coverage_change {
                         read_coverage_factor = read_coverage_range.sample(&mut rng);
                     }
-                    if read_open_range.sample(&mut rng) <= self.p_read_open * read_coverage_factor {
-                        Some((i, i + self.read_length))
-                    } else {
-                        None
+
+                    let c_read_open_range = read_open_range.sample(&mut rng);
+                    if  c_read_open_range <= self.p_read_open * read_coverage_factor {
+                        let (s, e) = (i, i + self.read_length);
+                        let read_slice = &record.seq()[s as usize..e as usize];
+                        let read_id = format!("{}::{}..{}", record.id(), s, e);
+
+                        writer.write(&read_id, record.desc(), read_slice).expect("File is unable to be opened or written to.");
                     }
-                })
-                .collect();
-
-            for &(s, e) in &read_indices {
-                let read_slice = &record.seq()[s as usize..e as usize];
-                let new_id = format!("{}::{}..{}", record.id(), s, e);
-
-                let _ = writer.write(&new_id, None, read_slice);
-                // with description, skipping for now as it makes parsing a little harder in R
-                // let _ = writer.write(&new_id, record.desc(), read_slice);
-            }
+                });
         }
         let _ = writer.flush();
     }
