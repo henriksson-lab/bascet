@@ -1,1 +1,1 @@
-![Build status](https://github.com/JulianDicken/KMER-Select/blob/main/.github/workflows/rust.yml/badge.svg?branch=feature-1)
+[![Rust](https://github.com/JulianDicken/KMER-Select/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/JulianDicken/KMER-Select/actions/workflows/rust.yml)
