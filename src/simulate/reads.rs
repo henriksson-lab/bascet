@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use bio::io::fasta;
-use rand::{distributions::Uniform, prelude::Distribution, rngs::StdRng, SeedableRng};
+use rand::{distributions::Uniform, prelude::Distribution, rngs::SmallRng, SeedableRng};
 
 pub struct ReadsSimulator {
     pub p_read_open: f32,
@@ -19,6 +19,8 @@ impl ReadsSimulator {
         let writer_handle = std::io::BufWriter::new(writer_file);
         let mut writer = fasta::Writer::new(writer_handle);
 
+        let mut rng = SmallRng::from_entropy();
+
         for record_opt in reader.records() {
             let record = record_opt.unwrap();
             let n = record.seq().len() as u32;
@@ -27,7 +29,6 @@ impl ReadsSimulator {
                 continue;
             }
 
-            let mut rng = StdRng::from_entropy();
             let read_open_range = Uniform::new(0.0, 1.0);
             let read_change_coverage_range = Uniform::new(0.0, 1.0);
             let read_coverage_range = Uniform::new(0.0, 2.0);
