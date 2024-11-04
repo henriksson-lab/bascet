@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use bio::io::fasta;
+use bio::io::{fasta, fastq};
 use rand::{distributions::Uniform, prelude::Distribution, rngs::SmallRng, SeedableRng};
 
 pub struct ReadsSimulator {
@@ -11,13 +11,15 @@ pub struct ReadsSimulator {
 
 impl ReadsSimulator {
     pub fn simulate_with(&self, in_path: &Path, out_path: &Path) {
+        let phred33_quality_annotation: Vec<u8> = vec![33 + 56; self.read_length as usize];
+
         let reader = fasta::Reader::from_file(in_path)
             .expect("File does not exist or is unable to be opened.");
 
         let writer_file =
             std::fs::File::create(out_path).expect("File is unable to be opened and written to.");
         let writer_handle = std::io::BufWriter::new(writer_file);
-        let mut writer = fasta::Writer::new(writer_handle);
+        let mut writer = fastq::Writer::new(writer_handle);
 
         let mut rng = SmallRng::from_entropy();
         for record_opt in reader.records() {
@@ -46,7 +48,7 @@ impl ReadsSimulator {
                     let read_id = format!("{}::{}..{}", record.id(), s, e);
 
                     writer
-                        .write(&read_id, record.desc(), read_slice)
+                        .write(&read_id, record.desc(), read_slice, &phred33_quality_annotation)
                         .expect("File is unable to be opened or written to.");
                 }
             });

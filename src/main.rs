@@ -3,7 +3,7 @@ use KMER_Select::simulate::ReadsSimulator;
 
 fn main() {
     let in_path = Path::new("data/all.fa");
-    let out_path = Path::new("simulated/reads_variable_fidelity.fasta");
+    let out_path = Path::new("simulated/reads_variable_fidelity.fastq");
     let sim = ReadsSimulator {
         p_read_open: 0.015,
         p_read_coverage_change: 0.0001,
@@ -11,7 +11,7 @@ fn main() {
     };
     let _ = sim.simulate_with(in_path, out_path);
 
-    let out_path = Path::new("simulated/reads_low_fidelity.fasta");
+    let out_path = Path::new("simulated/reads_low_fidelity.fastq");
     let sim = ReadsSimulator {
         p_read_open: 0.00075,
         p_read_coverage_change: 0.0004,
@@ -19,7 +19,7 @@ fn main() {
     };
     let _ = sim.simulate_with(in_path, out_path);
 
-    let out_path = Path::new("simulated/reads_high_fidelity.fasta");
+    let out_path = Path::new("simulated/reads_high_fidelity.fastq");
     let sim = ReadsSimulator {
         p_read_open: 0.03,
         p_read_coverage_change: 0.0002,
