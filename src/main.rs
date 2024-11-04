@@ -1,29 +1,18 @@
 use std::path::Path;
-use KMER_Select::simulate::ReadsSimulator;
+use std::process::Command;
+use KMER_Select::simulate;
 
 fn main() {
-    let in_path = Path::new("data/all.fa");
-    let out_path = Path::new("simulated/reads_variable_fidelity.fastq");
-    let sim = ReadsSimulator {
-        p_read_open: 0.015,
-        p_read_coverage_change: 0.0001,
-        read_length: 150,
-    };
-    let _ = sim.simulate_with(in_path, out_path);
+    let path_in = Path::new("data/all.fa");
+    let path_out = Path::new("simulated/reads_variable_fidelity.fastq");
+    let sim = simulate::Reads::<150>::new(path_in, 0.001, 0.0001);
+    let _ = sim.simulate(path_out);
 
-    let out_path = Path::new("simulated/reads_low_fidelity.fastq");
-    let sim = ReadsSimulator {
-        p_read_open: 0.00075,
-        p_read_coverage_change: 0.0004,
-        read_length: 150,
-    };
-    let _ = sim.simulate_with(in_path, out_path);
+    let path_out = Path::new("simulated/reads_low_fidelity.fastq");
+    let sim = simulate::Reads::<150>::new(path_in, 0.0001, 0.00001);
+    let _ = sim.simulate(path_out);
 
-    let out_path = Path::new("simulated/reads_high_fidelity.fastq");
-    let sim = ReadsSimulator {
-        p_read_open: 0.03,
-        p_read_coverage_change: 0.0002,
-        read_length: 150,
-    };
-    let _ = sim.simulate_with(in_path, out_path);
+    let path_out = Path::new("simulated/reads_high_fidelity.fastq");
+    let sim = simulate::Reads::<150>::new(path_in, 0.01, 0.001);
+    let _ = sim.simulate(path_out);
 }
