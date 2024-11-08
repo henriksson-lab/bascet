@@ -9,10 +9,10 @@ fn main() {
     let path_in = Path::new("data/all.fa");
     let dir_out = Path::new("simulated/reads_variable_fidelity");
     let file_out = dir_out.with_extension("fastq");
-    let sim = simulate::Reads::<150>::new(path_in, 0.001, 0.0001);
-    let _ = sim.simulate(&file_out);
+    let sim = simulate::Reads::<150>::new(path_in, 0.0005, 0.0004);
+    let _ = sim.simulate(100, &file_out);
 
-    let path_refs = Path::new("data/reference");
+    let refs_in = Path::new("data/reference");
     let ref_bufreader: BufReader<File> = match path_in.try_exists() {
         Ok(true) => BufReader::new(File::open(path_in).unwrap()),
         Ok(false) => panic!("File {path_in:?} does not exist and cannot be read."),
@@ -24,7 +24,7 @@ fn main() {
         let record = record_opt.unwrap();
         let record_name = record.id().replace(".", "_");
 
-        let ref_file = File::create(path_refs.join(&record_name).with_extension("fastq")).unwrap();
+        let ref_file = File::create(refs_in.join(&record_name).with_extension("fastq")).unwrap();
         let ref_bufwriter: BufWriter<File> =  BufWriter::new(ref_file);
         let mut ref_bufwriter = fastq::Writer::new(ref_bufwriter);
         let _ = ref_bufwriter
@@ -36,7 +36,7 @@ fn main() {
             );
     }
     let mut queries = vec![];
-    for entry in path_refs.read_dir().expect("read_dir call failed") {
+    for entry in refs_in.read_dir().expect("read_dir call failed") {
         if let Ok(entry) = entry {
             if entry.file_name() == "all.fa" {
                 continue;
@@ -89,7 +89,7 @@ fn main() {
                 eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
             }
     }
-    // let _ = pairwise_file_bufwriter.flush();
+    let _ = pairwise_file_bufwriter.flush();
 
     // let path_out = Path::new("simulated/reads_low_fidelity.fastq");
     // let sim = simulate::Reads::<150>::new(path_in, 0.0001, 0.00001);

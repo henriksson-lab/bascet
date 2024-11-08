@@ -1,5 +1,5 @@
 use bio::io::{fasta, fastq};
-use rand::{distributions::Uniform, prelude::Distribution, rngs::SmallRng, SeedableRng};
+use rand::{distributions::{self, Uniform}, prelude::Distribution, rngs::SmallRng, SeedableRng};
 use std::{
     fs::{self, File},
     io::{BufReader, BufWriter},
@@ -16,6 +16,7 @@ pub struct Reads<const N: usize> {
 impl<const N: usize> Reads<N> {
     //NOTE: I read that 40 is the default being assigned to NT reads by some aligners, so i am using 40
     const PHRED33_QUALITY_ANNOTATION: [u8; N] = [33 + 40; N];
+    const READERR: f32 = 0.01;
 
     pub fn new(path_in: &Path, p_read_open: f32, p_read_coverage_change: f32) -> Self {
         let in_bufreader: BufReader<File> = match path_in.try_exists() {
@@ -43,7 +44,7 @@ impl<const N: usize> Reads<N> {
         };
     }
 
-    pub fn simulate(self, path_out: &Path) {
+    pub fn simulate(self, samples: i32, path_out: &Path) {
         let in_bufreader = fasta::Reader::new(self.in_bufreader.get_ref());
 
         let path_out_dir = path_out.parent().expect(&format!(
@@ -73,57 +74,59 @@ impl<const N: usize> Reads<N> {
             if n < N {
                 continue;
             }
-            let record_name = record.id().replace(".", "_");
-            
-            // io is always fun :))))))))
-            let record_writer_path_out =
-                record_writer_dir.join(&record_name).with_extension("fastq");
-            let record_writer_file = File::create(&record_writer_path_out).expect(&format!(
-                "Unable to write to file: {record_writer_path_out:?}."
-            ));
-            let record_bufwriter_handle = BufWriter::new(record_writer_file);
-            let mut record_writer_fastq = fastq::Writer::new(record_bufwriter_handle);
+            for i in 1..=samples {
+                let record_name = format!("{}::{i}", record.id().replace(".", "_"));
+                
+                // io is always fun :))))))))
+                let record_writer_path_out =
+                    record_writer_dir.join(&record_name).with_extension("fastq");
+                let record_writer_file = File::create(&record_writer_path_out).expect(&format!(
+                    "Unable to write to file: {record_writer_path_out:?}."
+                ));
+                let record_bufwriter_handle = BufWriter::new(record_writer_file);
+                let mut record_writer_fastq = fastq::Writer::new(record_bufwriter_handle);
+                
+                let mut read_coverage_factor = read_coverage_range.sample(&mut rng);
+                (0..(n - N)).into_iter().for_each(|i| {
+                    let c_read_change_coverage = read_change_coverage_range.sample(&mut rng);
+                    if c_read_change_coverage <= self.p_read_coverage_change {
+                        read_coverage_factor = read_coverage_range.sample(&mut rng);
+                    }
 
-            let mut read_coverage_factor = read_coverage_range.sample(&mut rng);
-            (0..(n - N)).into_iter().for_each(|i| {
-                let c_read_change_coverage = read_change_coverage_range.sample(&mut rng);
-                if c_read_change_coverage <= self.p_read_coverage_change {
-                    read_coverage_factor = read_coverage_range.sample(&mut rng);
-                }
+                    let c_read_open_range = read_open_range.sample(&mut rng);
+                    if c_read_open_range <= self.p_read_open * read_coverage_factor {
+                        let (s, e) = (i, i + N);
+                        let read_slice = &record.seq()[s as usize..e as usize];
+                        let read_id = format!("{}::{}..{}", &record_name, s, e);
 
-                let c_read_open_range = read_open_range.sample(&mut rng);
-                if c_read_open_range <= self.p_read_open * read_coverage_factor {
-                    let (s, e) = (i, i + N);
-                    let read_slice = &record.seq()[s as usize..e as usize];
-                    let read_id = format!("{}::{}..{}", &record_name, s, e);
+                        record_writer_fastq
+                            .write(
+                                &read_id,
+                                record.desc(),
+                                &read_slice,
+                                &Self::PHRED33_QUALITY_ANNOTATION,
+                            )
+                            .expect(&format!(
+                                "File at path {record_writer_path_out:?} is unable to be opened or written to."
+                            ));
+                        
+                        concat_writer_fastq
+                            .write(
+                                &read_id,
+                                record.desc(),
+                                &read_slice,
+                                &Self::PHRED33_QUALITY_ANNOTATION,
+                            )
+                            .expect(&format!(
+                                "File at path {path_out:?} is unable to be opened or written to."
+                            ));
+                    }
+                });
 
-                    record_writer_fastq
-                        .write(
-                            &read_id,
-                            record.desc(),
-                            &read_slice,
-                            &Self::PHRED33_QUALITY_ANNOTATION,
-                        )
-                        .expect(&format!(
-                            "File at path {record_writer_path_out:?} is unable to be opened or written to."
-                        ));
-                    
-                    concat_writer_fastq
-                        .write(
-                            &read_id,
-                            record.desc(),
-                            &read_slice,
-                            &Self::PHRED33_QUALITY_ANNOTATION,
-                        )
-                        .expect(&format!(
-                            "File at path {path_out:?} is unable to be opened or written to."
-                        ));
-                }
-            });
-
-            record_writer_fastq.flush().expect(&format!(
-                "File at path {path_out:?} is unable to be opened or written to."
-            ));
+                record_writer_fastq.flush().expect(&format!(
+                    "File at path {path_out:?} is unable to be opened or written to."
+                ));
+            }
         }
         concat_writer_fastq.flush().expect(&format!(
             "File at path {path_out:?} is unable to be opened or written to."
