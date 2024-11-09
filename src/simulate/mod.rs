@@ -1,3 +1,3 @@
-mod reads;
+mod iss;
 
-pub use reads::Reads;
+pub use iss::ISS;
