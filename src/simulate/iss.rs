@@ -101,7 +101,7 @@ impl ISS {
                     .args([Self::ISS_ARG_GENOME, path_temp_ref_file.to_str().unwrap()])
                     .args([Self::ISS_ARG_MODEL, ISSModel::NovaSeq.to_str()])
                     .args([Self::ISS_ARG_PATH_OUT, path_sample_out.to_str().unwrap()])
-                    .args([Self::ISS_ARG_CPUS, "12"])
+                    .args([Self::ISS_ARG_CPUS, "16"])
                     .args([Self::ISS_ARG_N_READS, &n_reads.to_string()])
                     .output()
                     .expect("Failed to execute iss command");

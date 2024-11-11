@@ -21,6 +21,12 @@ fn main() {
     path_out = Path::new("simulated/1K");
     ISS::simulate(&path_ref, &path_out, 10, 1000);
 
+    path_out = Path::new("simulated/100");
+    ISS::simulate(&path_ref, &path_out, 10, 100);
+
+    path_out = Path::new("simulated/10");
+    ISS::simulate(&path_ref, &path_out, 10, 10);
+
     // let ref_reader = fasta::Reader::new(ref_bufreader);
     // for record_opt in ref_reader.records() {
     //     let record = record_opt.unwrap();
