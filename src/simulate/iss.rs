@@ -1,4 +1,9 @@
-use std::{fs::{self, File}, io::{BufReader, BufWriter}, path::Path, process::Command};
+use std::{
+    fs::{self, File},
+    io::{BufReader, BufWriter},
+    path::Path,
+    process::Command,
+};
 
 use bio::io::fasta::{Reader, Writer};
 use linya::{Bar, Progress};
@@ -43,8 +48,9 @@ impl ISS {
     const ISS_ARG_MODEL: &'static str = "--model";
     const ISS_ARG_PATH_OUT: &'static str = "--output";
     const ISS_ARG_CPUS: &'static str = "--cpus";
+    const ISS_ARG_N_READS: &'static str = "--n_reads";
 
-    pub fn simulate<P: AsRef<Path>>(path_ref: &P, path_out: &P, n_samples: i32) {
+    pub fn simulate<P: AsRef<Path>>(path_ref: P, path_out: P, n_samples: i32, n_reads: i32) {
         let path_ref = path_ref.as_ref();
         let path_out = path_out.as_ref();
 
@@ -78,20 +84,25 @@ impl ISS {
                 .flush()
                 .expect("Could not write to temp file");
 
-            let bar: Bar = progress.bar(n_samples as usize, format!("Simulating {} reads for {}", n_samples, record.id()));
+            let bar = progress.bar(
+                n_samples as usize,
+                format!("Simulating {} reads for {}", n_samples, record.id()),
+            );
             progress.set_and_draw(&bar, 0);
 
             for n in 1..=n_samples {
-                let path_sample_out = path_out.join(format!("{}-{}", &record.id(), n)).join("Reads");
+                let path_sample_out = path_out
+                    .join(format!("{}-{}", &record.id(), n))
+                    .join("Reads");
                 let _ = fs::create_dir_all(&path_sample_out.parent().unwrap());
-                
+
                 let iss_out = Command::new(Self::ISS_CMD)
                     .arg(Self::ISS_GEN)
                     .args([Self::ISS_ARG_GENOME, path_temp_ref_file.to_str().unwrap()])
                     .args([Self::ISS_ARG_MODEL, ISSModel::NovaSeq.to_str()])
                     .args([Self::ISS_ARG_PATH_OUT, path_sample_out.to_str().unwrap()])
                     .args([Self::ISS_ARG_CPUS, "12"])
-                    .args(["--n_reads", "100K"])
+                    .args([Self::ISS_ARG_N_READS, &n_reads.to_string()])
                     .output()
                     .expect("Failed to execute iss command");
 

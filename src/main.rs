@@ -7,16 +7,19 @@ use KMER_Select::simulate::{self, ISS};
 
 fn main() {
     let path_ref = Path::new("data/all.fa");
-    let path_out = Path::new("simulated");
-    
-    ISS::simulate(&path_ref, &path_out, 10);    
+    let mut path_out: &Path;
 
-    // let refs_in = Path::new("data/reference");
-    // let ref_bufreader: BufReader<File> = match path_ref.try_exists() {
-    //     Ok(true) => BufReader::new(File::open(path_ref).unwrap()),
-    //     Ok(false) => panic!("File {path_ref:?} does not exist and cannot be read."),
-    //     Err(_) => panic!("File {path_ref:?} cannot be read. It may exist."),
-    // };
+    path_out = Path::new("simulated/1M");
+    ISS::simulate(&path_ref, &path_out, 10, 1000000);
+
+    path_out = Path::new("simulated/100K");
+    ISS::simulate(&path_ref, &path_out, 10, 100000);
+
+    path_out = Path::new("simulated/10K");
+    ISS::simulate(&path_ref, &path_out, 10, 10000);
+
+    path_out = Path::new("simulated/1K");
+    ISS::simulate(&path_ref, &path_out, 10, 1000);
 
     // let ref_reader = fasta::Reader::new(ref_bufreader);
     // for record_opt in ref_reader.records() {
