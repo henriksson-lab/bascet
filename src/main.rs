@@ -9,23 +9,17 @@ fn main() {
     let path_ref = Path::new("data/all.fa");
     let mut path_out: &Path;
 
-    path_out = Path::new("simulated/1M");
-    ISS::simulate(&path_ref, &path_out, 10, 1000000);
+    // path_out = Path::new("simulated/1M");
+    // ISS::simulate(&path_ref, &path_out, 10, 1000000);
 
-    path_out = Path::new("simulated/100K");
-    ISS::simulate(&path_ref, &path_out, 10, 100000);
+    // path_out = Path::new("simulated/100K");
+    // ISS::simulate(&path_ref, &path_out, 10, 100000);
 
-    path_out = Path::new("simulated/10K");
-    ISS::simulate(&path_ref, &path_out, 10, 10000);
+    // path_out = Path::new("simulated/10K");
+    // ISS::simulate(&path_ref, &path_out, 10, 10000);
 
-    path_out = Path::new("simulated/1K");
-    ISS::simulate(&path_ref, &path_out, 10, 1000);
-
-    path_out = Path::new("simulated/100");
-    ISS::simulate(&path_ref, &path_out, 10, 100);
-
-    path_out = Path::new("simulated/10");
-    ISS::simulate(&path_ref, &path_out, 10, 10);
+    // path_out = Path::new("simulated/1K");
+    // ISS::simulate(&path_ref, &path_out, 10, 1000);
 
     // let ref_reader = fasta::Reader::new(ref_bufreader);
     // for record_opt in ref_reader.records() {
