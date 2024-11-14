@@ -2,80 +2,35 @@ use bio::io::{fasta, fastq};
 use bio::stats::combinatorics::combinations;
 use itertools::Itertools;
 use linya::Progress;
-use std::cmp::max;
+use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::ffi::OsStr;
 use std::fs::{self, File, FileType, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{exit, Command};
 use walkdir::{DirEntry, WalkDir};
-use KMER_Select::simulate::{self, ISS};
+use KMER_Select::kmer::{self, Codec, EncodedKMER};
+use KMER_Select::simulate::ISS;
+use KMER_Select::utils;
 
-fn is_fastq(entry: &DirEntry) -> bool {
-    if let Some(ext) = entry.path().extension() {
-        return ext == "fastq";
-    }
-    return false;
-}
-const COUNT_SHIFT: i32 = 95;
-const KMER_SHIFT: i32 = 33;
-const KMER_BITS: i32 = COUNT_SHIFT - KMER_SHIFT;
-const COUNT_BITS: i32 = 32;
-
-fn extract_count(key: i128) -> u32 {
-    let positive_key = -key;
-    ((positive_key >> COUNT_SHIFT) & 0xFFFFFFFF) as u32
-}
-
-fn extract_kmer(key: i128) -> u64 {
-    let positive_key = -key;
-    ((positive_key >> KMER_SHIFT) & ((1i128 << 62) - 1)) as u64
-}
-
-
-fn debug_key(key: i128) {
-    let unsigned_key = key as u128;
-    println!("Original:     {:0128b}", key);
-    println!("After shift:  {:064b}", unsigned_key >> KMER_SHIFT);
-    println!("Final kmer:   {:064b}", extract_kmer(key));
-    println!("Final count:  {:032b}", extract_count(key));
-}
 fn main() {
+    const KMER_SIZE: usize = 31;
+    const KMC_KMER_SIZE_ARG: &str = concat!("-ks", stringify!(KMER_SIZE));
+    const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
+
     let path_ref = Path::new("data/all.fa");
     let path_out: &Path;
 
     path_out = Path::new("simulated/1K");
     // ISS::simulate(&path_ref, &path_out, 10, 1000);
-
-    let concat_path = path_out.join("1K").with_extension("fastq");
-    let mut concat_file = File::create(&concat_path).unwrap();
-
-    let walker = WalkDir::new(path_out).into_iter();
-    let mut cats: Vec<String> = Vec::new();
-    for entry in walker {
-        if let Ok(entry) = entry {
-            if is_fastq(&entry) {
-                cats.push(String::from(entry.path().to_str().unwrap()));
-            }
-        }
-    }
-    for cat_file in &cats {
-        let cat_out = Command::new("cat")
-            .arg(cat_file)
-            .output()
-            .expect("Failed to execute cat");
-
-        concat_file
-            .write_all(&cat_out.stdout)
-            .expect("Failed to write to output file");
-    }
+    let path_concatenated = ISS::collect_dir(&path_out).unwrap();
 
     let kmc_path = &path_out.join("1K");
     let _ = Command::new("kmc")
         .arg("-cs4294967295")
-        .arg("-k31")
-        .arg(&concat_path)
+        .arg(KMC_KMER_SIZE_ARG)
+        .arg(&path_concatenated)
         .arg(&kmc_path)
         .arg("data/temp")
         .output()
@@ -99,38 +54,50 @@ fn main() {
         .arg(&kmc_path_dump)
         .output()
         .expect("Failed to execute kmc command");
+
     println!("Processing dump file");
+
     let ref_file = File::open(kmc_path_dump).unwrap();
     let reader = BufReader::new(ref_file);
 
-    let n_smallest = 2000;
-    let mut min_heap: BinaryHeap<i128> = BinaryHeap::new();
+    let n_smallest = 500;
+    let n_largest = 500;
+    let mut min_heap: BinaryHeap<Reverse<u128>> = BinaryHeap::with_capacity(n_smallest + 1);
+    let mut max_heap: BinaryHeap<u128> = BinaryHeap::with_capacity(n_largest + 1);
 
-    for line in reader.lines().flatten() {
-        let str: Vec<&str> = line.split_ascii_whitespace().collect();
-        let kmer: u64 = str[0].trim().chars().fold(0, |acc, e| {
-            (acc << 2)
-                + match e {
-                    'A' => 0,
-                    'T' => 1,
-                    'G' => 2,
-                    'C' => 3,
-                    _ => panic!("Unknown nucleotide"),
-                }
-        });
-        let count: u32 = str[1].trim().parse().expect("Failed to parse count");
-        let key = -(((count as i128) << 95) | ((kmer as i128) << 33));
-        // println!("{count} => {}", extract_count(key));
-        min_heap.push(key);
+    for line in reader.lines() {
+        let line = line.unwrap();
+        let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
+
+        let (str_kmer, str_count) = match (iter.next(), iter.next()) {
+            (Some(kmer), Some(count)) => (kmer, count),
+            (_, _) => panic!("Line must have at least two elements"),
+        };
+        let count = str_count.parse::<u32>().unwrap();
+        let encoded = unsafe { CODEC.encode(str_kmer, count).into_bits() };
+
+        min_heap.push(Reverse(encoded));
+        max_heap.push(encoded);
+
         if min_heap.len() > n_smallest {
             min_heap.pop();
         }
+        if max_heap.len() > n_largest {
+            max_heap.pop();
+        }
     }
-    // Only keep the (2*k) kmer representation :)
-    let ref_features: Vec<u64> = min_heap
-        .into_iter()
-        .map(|k| extract_kmer(k))
-        .collect();
+    // Only keep the (2*k) kmer representations, counts are irrellevant here
+    let mut ref_features: Vec<u128> = Vec::with_capacity(n_smallest + n_largest);
+    ref_features.extend(
+        min_heap
+            .into_iter()
+            .map(|rc| EncodedKMER::from_bits(rc.0).kmer()),
+    );
+    ref_features.extend(
+        max_heap
+            .into_iter()
+            .map(|c| EncodedKMER::from_bits(c).kmer()),
+    );
 
     let feature_file = File::create(&path_out.join("features").with_extension("csv")).unwrap();
     let mut feature_writer = BufWriter::new(feature_file);
@@ -161,29 +128,8 @@ fn main() {
         let out_path = p.parent().unwrap();
         let cat_path = out_path.join("concat").with_extension("fastq");
         let kmc_path = out_path.join("kmc");
-        let _ = File::create(&cat_path);
 
-        let p_file = File::open(&p).unwrap();
-        let q_file = File::open(&q).unwrap();
-        let mut p_reader = BufReader::new(p_file);
-        let mut q_reader = BufReader::new(q_file);
-
-        let cat_file = File::create(&cat_path).unwrap();
-        let mut cat_writer = BufWriter::new(&cat_file);
-        let p_size = p_reader.get_ref().metadata().unwrap().len();
-        let q_size = q_reader.get_ref().metadata().unwrap().len();
-        let buffer_size = max(p_size, q_size) as usize;
-        let mut buffer = Vec::with_capacity(buffer_size);
-
-        p_reader.read_to_end(&mut buffer).unwrap();
-        cat_writer.write_all(&buffer).unwrap();
-        buffer.clear();
-
-        q_reader.read_to_end(&mut buffer).unwrap();
-        cat_writer.write_all(&buffer).unwrap();
-        buffer.clear();
-
-        let _ = cat_writer.flush();
+        let _ = utils::concat_files_two(&p, &q, &cat_path);
 
         // let _ = Command::new("kmc")
         //     .arg("-cs4294967295")
@@ -216,52 +162,62 @@ fn main() {
         let query_file = File::open(kmc_path_dump).unwrap();
         let query_reader = BufReader::new(query_file);
 
-        let mut min_heap: BinaryHeap<i128> = BinaryHeap::new();
+        let n_smallest = 500;
+        let n_largest = 500;
+        let mut min_heap: BinaryHeap<Reverse<u128>> = BinaryHeap::with_capacity(n_smallest + 1);
+        let mut max_heap: BinaryHeap<u128> = BinaryHeap::with_capacity(n_largest + 1);
 
-        for line in query_reader.lines().flatten() {
-            let str: Vec<&str> = line.split_ascii_whitespace().collect();
-            let kmer: u64 = str[0].trim().chars().fold(0, |acc, e| {
-                (acc << 2)
-                    + match e {
-                        'A' => 0,
-                        'T' => 1,
-                        'G' => 2,
-                        'C' => 3,
-                        _ => panic!("Unknown nucleotide"),
-                    }
-            });
-            let count: u32 = str[1].trim().parse().expect("Failed to parse count");
-            let key =  -(((count as i128) << 95) | ((kmer as i128) << 33));
-            min_heap.push(key);
+        for line in query_reader.lines() {
+            let line = line.unwrap();
+            let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
+
+            let (str_kmer, str_count) = match (iter.next(), iter.next()) {
+                (Some(kmer), Some(count)) => (kmer, count),
+                (_, _) => panic!("Line must have at least two elements"),
+            };
+            let count = str_count.parse::<u32>().unwrap();
+            let encoded = unsafe { CODEC.encode(str_kmer, count).into_bits() };
+
+            min_heap.push(Reverse(encoded));
+            max_heap.push(encoded);
+
             if min_heap.len() > n_smallest {
                 min_heap.pop();
             }
+            if max_heap.len() > n_largest {
+                max_heap.pop();
+            }
         }
-        // When processing query k-mers:
-        let (count_vec, kmer_vec): (Vec<u32>, Vec<u64>) = min_heap
-        .iter()
-            .map(|&key| {
-                let count = extract_count(key);
-                let kmer = extract_kmer(key);
-                // Add debug print
-                // println!("Original: {}, Extracted kmer: {}", key, kmer);
-                (count, kmer as u64)
-            })
-            .unzip();
-        
+        let mut query_features: Vec<EncodedKMER> = Vec::with_capacity(n_smallest + n_largest);
+        query_features.extend(
+            min_heap
+                .into_iter()
+                .map(|rc| EncodedKMER::from_bits(rc.0)),
+        );
+        query_features.extend(
+            max_heap
+                .into_iter()
+                .map(|c| EncodedKMER::from_bits(c)),
+        );
+
         let mut line: Vec<String> = Vec::with_capacity(n_smallest + 1);
         line.push(format!("{}", &cat_path.to_str().unwrap()));
-        for feature in &ref_features {
-            let feature_in_query = kmer_vec.iter().position(|&k| k == *feature);
-            if let Some(index) = feature_in_query {
-                line.push(format!("{}", count_vec[index]));
-                println!("Found match! Ref k-mer: {}, Query count: {}", feature, count_vec[index]);
+
+        for feature in &query_features {
+            let kmer = feature.kmer();
+            let count = feature.count();
+
+            let feature_in_query = ref_features.binary_search(&kmer);
+
+            if let Ok(index) = feature_in_query {
+                line.push(format!("{}", count));
+                println!(
+                    "Found match! Ref k-mer: {}, Query count: {}",
+                    kmer, count
+                );
                 continue;
             }
             line.push(format!("{}", 0));
-            if kmer_vec.len() > 0 {
-                // println!("No match for ref k-mer: {}, First query k-mer: {}", feature, kmer_vec[0]);
-            }
         }
 
         let _ = writeln!(feature_writer, "{}", line.join(","));
