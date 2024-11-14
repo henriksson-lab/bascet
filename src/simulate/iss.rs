@@ -1,12 +1,15 @@
 use std::{
-    fs::{self, File},
+    fs::{self, DirEntry, File},
     io::{BufReader, BufWriter},
-    path::Path,
+    path::{self, Path, PathBuf},
     process::Command,
 };
 
 use bio::io::fasta::{Reader, Writer};
 use linya::{Bar, Progress};
+use walkdir::WalkDir;
+
+use crate::utils;
 
 pub enum ISSModel {
     HiSeq,
@@ -21,7 +24,7 @@ pub enum ISSModel {
 }
 
 impl ISSModel {
-    fn to_str(&self) -> &'static str {
+    fn to_str(&self) -> &str {
         match self {
             ISSModel::HiSeq => "HiSeq",
             ISSModel::MiSeq => "MiSeq",
@@ -38,17 +41,17 @@ impl ISSModel {
 pub struct ISS {}
 
 impl ISS {
-    const EXT_FASTA: &'static str = "fasta";
-    const EXT_FASTQ: &'static str = "fastq";
+    const EXT_FASTA: &str = "fasta";
+    const EXT_FASTQ: &str = "fastq";
 
-    const ISS_TEMPDIR: &'static str = "temp";
-    const ISS_CMD: &'static str = "iss";
-    const ISS_GEN: &'static str = "generate";
-    const ISS_ARG_GENOME: &'static str = "--genome";
-    const ISS_ARG_MODEL: &'static str = "--model";
-    const ISS_ARG_PATH_OUT: &'static str = "--output";
-    const ISS_ARG_CPUS: &'static str = "--cpus";
-    const ISS_ARG_N_READS: &'static str = "--n_reads";
+    const ISS_TEMPDIR:      &str = "temp";
+    const ISS_CMD:          &str = "iss";
+    const ISS_GEN:          &str = "generate";
+    const ISS_ARG_GENOME:   &str = "--genome";
+    const ISS_ARG_MODEL:    &str = "--model";
+    const ISS_ARG_PATH_OUT: &str = "--output";
+    const ISS_ARG_CPUS:     &str = "--cpus";
+    const ISS_ARG_N_READS:  &str = "--n_reads";
 
     pub fn simulate<P: AsRef<Path>>(path_ref: P, path_out: P, n_samples: i32, n_reads: i32) {
         let path_ref = path_ref.as_ref();
@@ -102,7 +105,10 @@ impl ISS {
                     .args([Self::ISS_ARG_GENOME, path_temp_ref_file.to_str().unwrap()])
                     .args([Self::ISS_ARG_MODEL, ISSModel::NovaSeq.to_str()])
                     .args([Self::ISS_ARG_PATH_OUT, path_sample_out.to_str().unwrap()])
-                    .args([Self::ISS_ARG_CPUS, "16"])
+                    .args([
+                        Self::ISS_ARG_CPUS,
+                        &format!("{}", std::thread::available_parallelism().unwrap()),
+                    ])
                     .args([Self::ISS_ARG_N_READS, &n_reads.to_string()])
                     .output()
                     .expect("Failed to execute iss command");
@@ -115,5 +121,27 @@ impl ISS {
                 }
             }
         }
+    }
+
+    pub fn collect_dir<P: AsRef<Path>>(path_dir: &P) -> Result<PathBuf, std::io::Error> {
+        let path_dir = path_dir.as_ref();
+        let concat_file_name = path_dir.file_name().unwrap().to_str().unwrap();
+        let concat_path = path_dir
+            .join(&concat_file_name)
+            .with_extension(Self::EXT_FASTQ);
+
+        let walker = WalkDir::new(&path_dir).into_iter();
+        let mut cats: Vec<PathBuf> = Vec::new();
+        for entry in walker {
+            if let Ok(entry) = entry {
+                if let Some(ext) = entry.path().extension() {
+                    if ext == Self::EXT_FASTQ {
+                        cats.push(entry.path().to_owned());
+                    }
+                }
+            }
+        }
+        utils::concat_files_vec(&cats, &concat_path)?;
+        return Ok(concat_path);
     }
 }
