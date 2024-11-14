@@ -61,6 +61,7 @@ impl ISS {
         };
         let bufreader_ref_file = BufReader::new(handle_ref_file);
         let reader_ref_file = Reader::from_bufread(bufreader_ref_file);
+
         let mut progress = Progress::new();
         for res_record in reader_ref_file.records() {
             let record = res_record.unwrap();
