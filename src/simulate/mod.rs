@@ -1,3 +1,3 @@
-mod reads;
+mod iss;
 
-pub use reads::ReadsSimulator;
+pub use iss::ISS;
