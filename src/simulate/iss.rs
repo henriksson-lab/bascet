@@ -44,14 +44,14 @@ impl ISS {
     const EXT_FASTA: &str = "fasta";
     const EXT_FASTQ: &str = "fastq";
 
-    const ISS_TEMPDIR:      &str = "temp";
-    const ISS_CMD:          &str = "iss";
-    const ISS_GEN:          &str = "generate";
-    const ISS_ARG_GENOME:   &str = "--genome";
-    const ISS_ARG_MODEL:    &str = "--model";
+    const ISS_TEMPDIR: &str = "temp";
+    const ISS_CMD: &str = "iss";
+    const ISS_GEN: &str = "generate";
+    const ISS_ARG_GENOME: &str = "--genome";
+    const ISS_ARG_MODEL: &str = "--model";
     const ISS_ARG_PATH_OUT: &str = "--output";
-    const ISS_ARG_CPUS:     &str = "--cpus";
-    const ISS_ARG_N_READS:  &str = "--n_reads";
+    const ISS_ARG_CPUS: &str = "--cpus";
+    const ISS_ARG_N_READS: &str = "--n_reads";
 
     pub fn simulate<P: AsRef<Path>>(path_ref: P, path_out: P, n_samples: i32, n_reads: i32) {
         let path_ref = path_ref.as_ref();
