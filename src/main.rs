@@ -130,6 +130,11 @@ fn main() {
     let bar = progress.bar(compare.len(), "Building Pairwise Feature Matrix");
     let mut idx = 0;
     progress.set_and_draw(&bar, idx);
+
+    let local_n_smallest = n_smallest * 10;
+    let local_n_largest = n_largest * 10;
+    let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
+    let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
     for pair in compare {
         let p = pair.0;
         let q = pair.1;
@@ -159,13 +164,9 @@ fn main() {
 
         let query_file = File::open(kmc_path_dump).unwrap();
         let query_reader = BufReader::new(query_file);
-
-        let local_n_smallest = n_smallest * 10;
-        let local_n_largest = n_largest * 10;
-        let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
-        let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
-
-
+        
+        min_heap.clear();
+        max_heap.clear();
         for line in query_reader.lines() {
             let line = line.unwrap();
             let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
