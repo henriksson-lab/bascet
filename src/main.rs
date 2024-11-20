@@ -127,6 +127,8 @@ fn main() {
             }
         }
     }
+    let start = std::time::Instant::now();
+
     let mut progress = Progress::new();
     let bar = progress.bar(compare.len(), "Building Pairwise Feature Matrix");
     let mut idx = 0;
@@ -243,23 +245,23 @@ fn main() {
             let kmc_path = out_path.join("kmc");
             let kmc_path_dump = out_path.join("kmc_dump");
 
-            let _ = Command::new("kmc")
-                .arg("-cs4294967295")
-                .arg(kmc_kmer_size_arg)
-                .arg("-ci2")
-                .arg(&in_path)
-                .arg(&kmc_path)
-                .arg("data/temp")
-                .output()
-                .expect("Failed to execute kmc command");
+            // let _ = Command::new("kmc")
+            //     .arg("-cs4294967295")
+            //     .arg(kmc_kmer_size_arg)
+            //     .arg("-ci2")
+            //     .arg(&in_path)
+            //     .arg(&kmc_path)
+            //     .arg("data/temp")
+            //     .output()
+            //     .expect("Failed to execute kmc command");
 
-            let _ = Command::new("kmc_tools")
-                .arg("transform")
-                .arg(&kmc_path)
-                .arg("dump")
-                .arg(&kmc_path_dump)
-                .output()
-                .expect("Failed to execute kmc command");
+            // let _ = Command::new("kmc_tools")
+            //     .arg("transform")
+            //     .arg(&kmc_path)
+            //     .arg("dump")
+            //     .arg(&kmc_path_dump)
+            //     .output()
+            //     .expect("Failed to execute kmc command");
 
             let query_file = File::open(kmc_path_dump).unwrap();
             let query_reader = BufReader::new(query_file);
@@ -314,4 +316,7 @@ fn main() {
             let _ = writeln!(feature_writer, "{}", line.join(","));
         }
     }
+
+    let elapsed = start.elapsed().as_secs_f64();
+    println!("Took {elapsed}s")
 }
