@@ -2,7 +2,6 @@ use bitfield_struct::bitfield;
 use rand::{
     distributions::{Distribution, Uniform},
     rngs::SmallRng,
-    Rng,
 };
 
 const NT_LOOKUP: [u8; 256] = {
@@ -29,7 +28,7 @@ impl<const K: usize> Codec<K> {
         kmer: &str,
         count: u16,
         rng: &mut SmallRng,
-        range: Uniform<u8>,
+        range: Uniform<u16>,
     ) -> EncodedKMER {
         let bytes = kmer.as_bytes();
         let mut encoded: u128 = 0;
@@ -61,11 +60,11 @@ impl<const K: usize> Codec<K> {
 
 #[bitfield(u128)]
 pub struct EncodedKMER {
-    #[bits(104)]
+    #[bits(96)]
     pub kmer: u128,
 
-    #[bits]
-    pub rand: u8,
+    #[bits(16)]
+    pub rand: u16,
 
     #[bits(16)]
     pub count: u16,

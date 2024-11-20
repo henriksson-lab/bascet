@@ -1,4 +1,4 @@
-use std::fs::{File, remove_file};
+use std::fs::{remove_file, File};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 
@@ -6,11 +6,6 @@ pub fn concat_files_two<P>(p_path: &P, q_path: &P, cat_path: &P) -> io::Result<(
 where
     P: AsRef<Path>,
 {
-    // Delete the existing cat file before writing
-    if cat_path.as_ref().exists() {
-        remove_file(cat_path)?;
-    }
-
     let cat_file = File::create(cat_path)?;
     let mut cat_writer = BufWriter::new(cat_file);
 
@@ -24,9 +19,7 @@ where
     let mut q_reader = BufReader::with_capacity(q_size as usize, q_file);
     let _ = io::copy(&mut q_reader, &mut cat_writer)?;
 
-    // Ensure the write is flushed and the file is synced to disk
     cat_writer.flush()?;
-    cat_writer.get_ref().sync_all()?; // Sync the file changes
 
     Ok(())
 }
@@ -50,9 +43,7 @@ where
         let _ = io::copy(&mut reader, &mut cat_writer)?;
     }
 
-    // Ensure the write is flushed and the file is synced to disk
     cat_writer.flush()?;
-    cat_writer.get_ref().sync_all()?; // Sync the file changes
 
     Ok(())
 }

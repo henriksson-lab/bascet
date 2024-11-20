@@ -1,12 +1,12 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
 use bio::io::{fasta, fastq};
-use bio::stats::combinatorics::combinations;
 use itertools::Itertools;
 use linya::Progress;
 use rand::distributions::Uniform;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use KMER_Select::features::{BoundedMinHeap, BoundedMaxHeap};
 use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
@@ -16,7 +16,7 @@ use std::process::{exit, Command};
 use std::u8;
 use walkdir::{DirEntry, WalkDir};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
-use KMER_Select::simulate::ISS;
+use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
 
 fn main() {
@@ -34,10 +34,10 @@ fn main() {
     let kmc_path = &path_out.join("kmc");
     let kmc_path_dump = path_out.join("kmc_dump").with_extension("txt");
 
-    let path_concatenated = ISS::collect_dir(&path_out).unwrap();
+    let path_concatenated = ISSRunner::collect_dir(&path_out).unwrap();
     let kmc = Command::new("kmc")
         .arg("-cs4294967295")
-        .arg("-ci30")
+        .arg("-ci2")
         .arg(kmc_kmer_size_arg)
         .arg(&path_concatenated)
         .arg(&kmc_path)
@@ -59,12 +59,12 @@ fn main() {
     let reader = BufReader::new(ref_file);
 
     let mut rng = SmallRng::from_entropy();
-    let range = Uniform::new_inclusive(u8::MIN, u8::MAX);
+    let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
 
-    let n_smallest = 50000;
-    let n_largest = 0;
-    let mut min_heap: BinaryHeap<Reverse<u128>> = BinaryHeap::with_capacity(n_smallest + 1);
-    let mut max_heap: BinaryHeap<u128> = BinaryHeap::with_capacity(n_largest + 1);
+    let n_smallest = 10000;
+    let n_largest = 1000;
+    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
 
     for line in reader.lines() {
         let line = line.unwrap();
@@ -81,7 +81,7 @@ fn main() {
         if decoded != str_kmer {
             println!("Incorrect encoding for: {str_kmer}, Decoded from encoding: {decoded}");
         }
-        min_heap.push(Reverse(encoded));
+        min_heap.push(encoded);
         max_heap.push(encoded);
     }
     let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
@@ -111,7 +111,6 @@ fn main() {
             .map(|kc| unsafe { CODEC.decode(*kc) })
             .join(",")
     );
-
     let walker = WalkDir::new(path_out).into_iter();
     let mut compare: Vec<(PathBuf, PathBuf)> = Vec::new();
     for entry in walker {
@@ -220,8 +219,8 @@ fn main() {
             let entry_path = entry.path();
             if entry_path.is_dir() || entry_path.extension() != Some("fasta".as_ref()) {
                 continue;
-            }            
-            
+            }
+
             let read_handle = File::open(entry_path).unwrap();
             let write_handle = File::create(entry_path.with_extension("fastq")).unwrap();
             let bufreader = BufReader::new(&read_handle);
@@ -246,7 +245,6 @@ fn main() {
             let _ = Command::new("kmc")
                 .arg("-cs4294967295")
                 .arg(kmc_kmer_size_arg)
-                .arg("-ci2")
                 .arg(&in_path)
                 .arg(&kmc_path)
                 .arg("data/temp")

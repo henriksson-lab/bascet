@@ -38,9 +38,9 @@ impl ISSModel {
         }
     }
 }
-pub struct ISS {}
+pub struct ISSRunner {}
 
-impl ISS {
+impl ISSRunner {
     const EXT_FASTA: &str = "fasta";
     const EXT_FASTQ: &str = "fastq";
 
