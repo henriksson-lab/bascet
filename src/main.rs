@@ -6,7 +6,6 @@ use linya::Progress;
 use rand::distributions::Uniform;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
-use KMER_Select::features::{BoundedMinHeap, BoundedMaxHeap};
 use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
@@ -15,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::u8;
 use walkdir::{DirEntry, WalkDir};
+use KMER_Select::bounded_heap::{prelude::*, BoundedHeap, MaxStrategy, MinStrategy};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
@@ -63,8 +63,8 @@ fn main() {
 
     let n_smallest = 10000;
     let n_largest = 1000;
-    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+    let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(n_largest);
 
     for line in reader.lines() {
         let line = line.unwrap();
@@ -81,10 +81,10 @@ fn main() {
         if decoded != str_kmer {
             println!("Incorrect encoding for: {str_kmer}, Decoded from encoding: {decoded}");
         }
-        min_heap.push(encoded);
-        max_heap.push(encoded);
+        let _ = min_heap.push(encoded);
+        let _ = max_heap.push(encoded);
     }
-    let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
+
     println!("Minheap features: {}", min_heap.len());
     // Only keep the (2*k) kmer representations, counts are irrellevant here
     let mut ref_features: Vec<u128> = Vec::with_capacity(n_smallest + n_largest + 1);
@@ -92,7 +92,7 @@ fn main() {
         min_heap
             .iter()
             .take(n_smallest)
-            .map(|rc| EncodedKMER::from_bits(rc.0).kmer()),
+            .map(|c| EncodedKMER::from_bits(*c).kmer()),
     );
     ref_features.extend(
         max_heap
@@ -162,9 +162,9 @@ fn main() {
 
         let local_n_smallest = n_smallest * 10;
         let local_n_largest = n_largest * 10;
-        let mut min_heap: BinaryHeap<Reverse<u128>> =
-            BinaryHeap::with_capacity(local_n_smallest + 1);
-        let mut max_heap: BinaryHeap<u128> = BinaryHeap::with_capacity(local_n_largest + 1);
+        let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
+        let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
+
 
         for line in query_reader.lines() {
             let line = line.unwrap();
@@ -177,15 +177,15 @@ fn main() {
             let count = str_count.parse::<u16>().unwrap();
             let encoded = unsafe { CODEC.encode(str_kmer, count, &mut rng, range).into_bits() };
 
-            min_heap.push(Reverse(encoded));
-            max_heap.push(encoded);
+            let _ = min_heap.push(encoded);
+            let _ = max_heap.push(encoded);
         }
         // let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
         // println!("{} count {} kmer: {}", test.kmer(), test.count(), unsafe { CODEC.decode(test.into_bits()) });
         let mut query_features: HashMap<u128, u16> =
             HashMap::with_capacity(local_n_smallest + local_n_largest + 1);
-        for rc in min_heap.iter().take(local_n_smallest) {
-            let encoded = EncodedKMER::from_bits(rc.0);
+        for c in min_heap.iter().take(local_n_smallest) {
+            let encoded = EncodedKMER::from_bits(*c);
             query_features.insert(encoded.kmer(), encoded.count());
         }
         for c in max_heap.iter().take(local_n_largest) {
@@ -264,9 +264,8 @@ fn main() {
 
             let local_n_smallest = n_smallest * 10;
             let local_n_largest = n_largest * 10;
-            let mut min_heap: BinaryHeap<Reverse<u128>> =
-                BinaryHeap::with_capacity(local_n_smallest + 1);
-            let mut max_heap: BinaryHeap<u128> = BinaryHeap::with_capacity(local_n_largest + 1);
+            let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
+            let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
 
             for line in query_reader.lines() {
                 let line = line.unwrap();
@@ -279,15 +278,15 @@ fn main() {
                 let count = str_count.parse::<u16>().unwrap();
                 let encoded = unsafe { CODEC.encode(str_kmer, count, &mut rng, range).into_bits() };
 
-                min_heap.push(Reverse(encoded));
-                max_heap.push(encoded);
+                let _ = min_heap.push(encoded);
+                let _ = max_heap.push(encoded);
             }
             // let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
             // println!("{} count {} kmer: {}", test.kmer(), test.count(), unsafe { CODEC.decode(test.into_bits()) });
             let mut query_features: HashMap<u128, u16> =
                 HashMap::with_capacity(local_n_smallest + local_n_largest + 1);
-            for rc in min_heap.iter().take(local_n_smallest) {
-                let encoded = EncodedKMER::from_bits(rc.0);
+            for c in min_heap.iter().take(local_n_smallest) {
+                let encoded = EncodedKMER::from_bits(*c);
                 query_features.insert(encoded.kmer(), encoded.count());
             }
             for c in max_heap.iter().take(local_n_largest) {
