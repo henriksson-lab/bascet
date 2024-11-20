@@ -4,16 +4,16 @@ pub trait BoundedHeapBehaviour<T>
 where
     T: Ord,
 {
-    const ORDERING: std::cmp::Ordering; 
+    const ORDERING: std::cmp::Ordering;
 
-    fn push(&mut self, value: T)            -> Result<(), HeapError>;
-    fn peek_last(&self)                     -> Option<&T>;
-    fn push_pop_last(&mut self, value: T)   -> T;
+    fn push(&mut self, value: T) -> Result<(), HeapError>;
+    fn peek_last(&self) -> Option<&T>;
+    fn push_pop_last(&mut self, value: T) -> T;
 }
 
 pub struct BoundedMinHeap<T>
 where
-    T: Ord
+    T: Ord,
 {
     mimxheap: super::min_max_heap::MinMaxHeap<T>,
     capacity: usize,
@@ -21,7 +21,7 @@ where
 
 impl<T> BoundedMinHeap<T>
 where
-    T: Ord
+    T: Ord,
 {
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -92,7 +92,7 @@ where
 }
 impl<T> BoundedHeapBehaviour<T> for BoundedMinHeap<T>
 where
-    T: Ord
+    T: Ord,
 {
     const ORDERING: std::cmp::Ordering = std::cmp::Ordering::Greater;
 
@@ -126,7 +126,7 @@ where
 
 pub struct BoundedMaxHeap<T>
 where
-    T: Ord
+    T: Ord,
 {
     mimxheap: super::min_max_heap::MinMaxHeap<T>,
     capacity: usize,
@@ -134,7 +134,7 @@ where
 
 impl<T> BoundedMaxHeap<T>
 where
-    T: Ord
+    T: Ord,
 {
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -205,7 +205,7 @@ where
 }
 impl<T> BoundedHeapBehaviour<T> for BoundedMaxHeap<T>
 where
-    T: Ord
+    T: Ord,
 {
     const ORDERING: std::cmp::Ordering = std::cmp::Ordering::Less;
 
