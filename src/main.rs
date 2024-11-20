@@ -126,6 +126,7 @@ fn main() {
             }
         }
     }
+    let start = std::time::Instant::now();
     let mut progress = Progress::new();
     let bar = progress.bar(compare.len(), "Building Pairwise Feature Matrix");
     let mut idx = 0;
@@ -311,4 +312,6 @@ fn main() {
             let _ = writeln!(feature_writer, "{}", line.join(","));
         }
     }
+    let single_duration = start.elapsed().as_secs_f64();
+    println!("took {single_duration}");
 }
