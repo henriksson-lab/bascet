@@ -1,6 +1,7 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
 use bio::io::{fasta, fastq};
+use fs2::FileExt;
 use itertools::Itertools;
 use linya::Progress;
 use rand::distributions::Uniform;
@@ -60,39 +61,53 @@ fn main() {
     println!("Processing dump file");
 
     let ref_file = File::open(kmc_path_dump).unwrap();
-    let reader = BufReader::new(ref_file);
+    let _ = ref_file.lock_shared();
 
-    let n_smallest = 50000;
-    let n_largest = 1000;
-    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+    let chunk_size = 4096;
+    let cursor_max = ref_file.metadata().unwrap().len();
+    let mut cursor = 0;
 
-    let total_start = std::time::Instant::now();
-    let mut parse_time = std::time::Duration::ZERO;
-    let mut encode_time = std::time::Duration::ZERO;
-    let mut heap_time = std::time::Duration::ZERO;
+    while cursor < cursor_max {
+        
 
-    for line in reader.lines() {
-        let line = line.unwrap();
-
-        let parse_start = std::time::Instant::now();
-        let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
-        let (str_kmer, str_count) = match (iter.next(), iter.next()) {
-            (Some(kmer), Some(count)) => (kmer, count),
-            (_, _) => panic!("Line must have at least two elements"),
-        };
-        let count = str_count.parse::<u16>().unwrap();
-        parse_time += parse_start.elapsed();
-
-        let encode_start = std::time::Instant::now();
-        let encoded = unsafe { CODEC.encode(str_kmer, count, &mut rng, range).into_bits() };
-        encode_time += encode_start.elapsed();
-
-        let heap_start = std::time::Instant::now();
-        let _ = min_heap.push(encoded);
-        let _ = max_heap.push(encoded);
-        heap_time += heap_start.elapsed();
+        cursor += chunk_size;
     }
+
+    let _ = ref_file.unlock();
+    // let reader = BufReader::new(&ref_file);
+
+    // let n_smallest = 50000;
+    // let n_largest = 1000;
+    // let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
+    // let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+
+    // let total_start = std::time::Instant::now();
+    // let mut parse_time = std::time::Duration::ZERO;
+    // let mut encode_time = std::time::Duration::ZERO;
+    // let mut heap_time = std::time::Duration::ZERO;
+
+    // for line in reader.lines() {
+    //     let line = line.unwrap();
+
+    //     let parse_start = std::time::Instant::now();
+    //     let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
+    //     let (str_kmer, str_count) = match (iter.next(), iter.next()) {
+    //         (Some(kmer), Some(count)) => (kmer, count),
+    //         (_, _) => panic!("Line must have at least two elements"),
+    //     }; 
+    //     let count = str_count.parse::<u16>().unwrap();
+    //     parse_time += parse_start.elapsed();
+
+    //     let encode_start = std::time::Instant::now();
+    //     let encoded = unsafe { CODEC.encode(str_kmer, count, &mut rng, range).into_bits() };
+    //     encode_time += encode_start.elapsed();
+
+    //     let heap_start = std::time::Instant::now();
+    //     let _ = min_heap.push(encoded);
+    //     let _ = max_heap.push(encoded);
+    //     heap_time += heap_start.elapsed();
+    // }
+    // 
 
     let total_time = total_start.elapsed();
     println!("Total time: {:.2}s", total_time.as_secs_f64());
