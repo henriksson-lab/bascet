@@ -6,9 +6,11 @@ use linya::Progress;
 use rand::distributions::Uniform;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rustc_hash::FxHasher;
 use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
+use std::hash::BuildHasherDefault;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
@@ -22,6 +24,8 @@ use KMER_Select::utils;
 fn main() {
     const KMER_SIZE: usize = 31;
     const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
+    let mut rng = SmallRng::from_entropy();
+    let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
 
     let kmc_kmer_size_arg: &str = &format!("-k{}", KMER_SIZE);
     println!("{kmc_kmer_size_arg}");
@@ -58,33 +62,43 @@ fn main() {
     let ref_file = File::open(kmc_path_dump).unwrap();
     let reader = BufReader::new(ref_file);
 
-    let mut rng = SmallRng::from_entropy();
-    let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
-
-    let n_smallest = 10000;
+    let n_smallest = 50000;
     let n_largest = 1000;
-    let mut min_heap: BoundedMinHeap<u128>  = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128>  = BoundedMaxHeap::with_capacity(n_largest);
+    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+
+    let total_start = std::time::Instant::now();
+    let mut parse_time = std::time::Duration::ZERO;
+    let mut encode_time = std::time::Duration::ZERO;
+    let mut heap_time = std::time::Duration::ZERO;
 
     for line in reader.lines() {
         let line = line.unwrap();
-        let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
 
+        let parse_start = std::time::Instant::now();
+        let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
         let (str_kmer, str_count) = match (iter.next(), iter.next()) {
             (Some(kmer), Some(count)) => (kmer, count),
             (_, _) => panic!("Line must have at least two elements"),
         };
         let count = str_count.parse::<u16>().unwrap();
-        let encoded = unsafe { CODEC.encode(str_kmer, count, &mut rng, range).into_bits() };
+        parse_time += parse_start.elapsed();
 
-        let decoded = unsafe { CODEC.decode(encoded) };
-        if decoded != str_kmer {
-            println!("Incorrect encoding for: {str_kmer}, Decoded from encoding: {decoded}");
-        }
+        let encode_start = std::time::Instant::now();
+        let encoded = unsafe { CODEC.encode(str_kmer, count, &mut rng, range).into_bits() };
+        encode_time += encode_start.elapsed();
+
+        let heap_start = std::time::Instant::now();
         let _ = min_heap.push(encoded);
         let _ = max_heap.push(encoded);
+        heap_time += heap_start.elapsed();
     }
 
+    let total_time = total_start.elapsed();
+    println!("Total time: {:.2}s", total_time.as_secs_f64());
+    println!("Parsing: {:.2}s", parse_time.as_secs_f64());
+    println!("Encoding: {:.2}s", encode_time.as_secs_f64());
+    println!("Heap ops: {:.2}s", heap_time.as_secs_f64());
     println!("Minheap features: {}", min_heap.len());
     // Only keep the (2*k) kmer representations, counts are irrellevant here
     let mut ref_features: Vec<u128> = Vec::with_capacity(n_smallest + n_largest + 1);
@@ -134,9 +148,15 @@ fn main() {
 
     let local_n_smallest = n_smallest * 10;
     let local_n_largest = n_largest * 10;
-    let mut min_heap: BoundedMinHeap<u128>  = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128>  = BoundedMaxHeap::with_capacity(n_largest);
-    let mut query_features: HashMap<u128, u16> = HashMap::with_capacity(local_n_smallest + local_n_largest);
+    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+    let mut query_features: HashMap<u128, u16, BuildHasherDefault<FxHasher>> =
+        HashMap::with_capacity_and_hasher(
+            local_n_smallest + local_n_largest,
+            BuildHasherDefault::default(),
+        );
+    let mut hash_took = 0.0;
+    let mut find_took = 0.0;
     for pair in compare {
         let p = pair.0;
         let q = pair.1;
@@ -166,9 +186,10 @@ fn main() {
 
         let query_file = File::open(kmc_path_dump).unwrap();
         let query_reader = BufReader::new(query_file);
-        
+
         min_heap.clear();
         max_heap.clear();
+        let find_start = std::time::Instant::now();
         for line in query_reader.lines() {
             let line = line.unwrap();
             let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
@@ -183,8 +204,10 @@ fn main() {
             let _ = min_heap.push(encoded);
             let _ = max_heap.push(encoded);
         }
+        find_took += find_start.elapsed().as_secs_f64();
         // let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
         // println!("{} count {} kmer: {}", test.kmer(), test.count(), unsafe { CODEC.decode(test.into_bits()) });
+        let hash_start = std::time::Instant::now();
         query_features.clear();
         for c in min_heap.iter() {
             let encoded = EncodedKMER::from_bits(*c);
@@ -194,6 +217,7 @@ fn main() {
             let encoded = EncodedKMER::from_bits(*c);
             query_features.insert(encoded.kmer(), encoded.count());
         }
+        hash_took += hash_start.elapsed().as_secs_f64();
 
         let mut line: Vec<String> = Vec::with_capacity(n_smallest + n_largest + 1);
         line.push(format!("{}", &cat_path.to_str().unwrap()));
@@ -214,12 +238,19 @@ fn main() {
         progress.set_and_draw(&bar, idx);
     }
 
+    println!("Kmer finding took {find_took}s");
+    println!("Hashing took {hash_took}s");
+
     let path_ref = Path::new("data/temp");
     let walker = WalkDir::new(path_ref).into_iter();
 
-    let mut min_heap: BoundedMinHeap<u128>  = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128>  = BoundedMaxHeap::with_capacity(n_largest);
-    let mut query_features: HashMap<u128, u16> = HashMap::with_capacity(local_n_smallest + local_n_largest);
+    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+    let mut query_features: HashMap<u128, u16, BuildHasherDefault<FxHasher>> =
+        HashMap::with_capacity_and_hasher(
+            local_n_smallest + local_n_largest,
+            BuildHasherDefault::default(),
+        );
     for entry in walker {
         if let Ok(entry) = entry {
             let entry_path = entry.path();
@@ -286,6 +317,7 @@ fn main() {
             }
             // let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
             // println!("{} count {} kmer: {}", test.kmer(), test.count(), unsafe { CODEC.decode(test.into_bits()) });
+            query_features.clear();
             for c in min_heap.iter() {
                 let encoded = EncodedKMER::from_bits(*c);
                 query_features.insert(encoded.kmer(), encoded.count());
