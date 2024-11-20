@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::u8;
 use walkdir::{DirEntry, WalkDir};
-use KMER_Select::bounded_heap::{prelude::*, BoundedHeap, MaxStrategy, MinStrategy};
+use KMER_Select::bounded_heap::{prelude::*, BoundedMaxHeap, BoundedMinHeap};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
@@ -63,8 +63,8 @@ fn main() {
 
     let n_smallest = 10000;
     let n_largest = 1000;
-    let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(n_largest);
+    let mut min_heap: BoundedMinHeap<u128>  = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128>  = BoundedMaxHeap::with_capacity(n_largest);
 
     for line in reader.lines() {
         let line = line.unwrap();
@@ -134,8 +134,8 @@ fn main() {
 
     let local_n_smallest = n_smallest * 10;
     let local_n_largest = n_largest * 10;
-    let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
-    let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
+    let mut min_heap: BoundedMinHeap<u128>  = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128>  = BoundedMaxHeap::with_capacity(n_largest);
     let mut query_features: HashMap<u128, u16> = HashMap::with_capacity(local_n_smallest + local_n_largest);
     for pair in compare {
         let p = pair.0;
@@ -217,8 +217,8 @@ fn main() {
     let path_ref = Path::new("data/temp");
     let walker = WalkDir::new(path_ref).into_iter();
 
-    let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
-    let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
+    let mut min_heap: BoundedMinHeap<u128>  = BoundedMinHeap::with_capacity(n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128>  = BoundedMaxHeap::with_capacity(n_largest);
     let mut query_features: HashMap<u128, u16> = HashMap::with_capacity(local_n_smallest + local_n_largest);
     for entry in walker {
         if let Ok(entry) = entry {
