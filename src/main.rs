@@ -136,6 +136,7 @@ fn main() {
     let local_n_largest = n_largest * 10;
     let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
     let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
+    let mut query_features: HashMap<u128, u16> = HashMap::with_capacity(local_n_smallest + local_n_largest);
     for pair in compare {
         let p = pair.0;
         let q = pair.1;
@@ -184,13 +185,12 @@ fn main() {
         }
         // let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
         // println!("{} count {} kmer: {}", test.kmer(), test.count(), unsafe { CODEC.decode(test.into_bits()) });
-        let mut query_features: HashMap<u128, u16> =
-            HashMap::with_capacity(local_n_smallest + local_n_largest + 1);
-        for c in min_heap.iter().take(local_n_smallest) {
+        query_features.clear();
+        for c in min_heap.iter() {
             let encoded = EncodedKMER::from_bits(*c);
             query_features.insert(encoded.kmer(), encoded.count());
         }
-        for c in max_heap.iter().take(local_n_largest) {
+        for c in max_heap.iter() {
             let encoded = EncodedKMER::from_bits(*c);
             query_features.insert(encoded.kmer(), encoded.count());
         }
@@ -216,6 +216,10 @@ fn main() {
 
     let path_ref = Path::new("data/temp");
     let walker = WalkDir::new(path_ref).into_iter();
+
+    let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
+    let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
+    let mut query_features: HashMap<u128, u16> = HashMap::with_capacity(local_n_smallest + local_n_largest);
     for entry in walker {
         if let Ok(entry) = entry {
             let entry_path = entry.path();
@@ -244,31 +248,28 @@ fn main() {
             let kmc_path = out_path.join("kmc");
             let kmc_path_dump = out_path.join("kmc_dump");
 
-            let _ = Command::new("kmc")
-                .arg("-cs4294967295")
-                .arg(kmc_kmer_size_arg)
-                .arg(&in_path)
-                .arg(&kmc_path)
-                .arg("data/temp")
-                .output()
-                .expect("Failed to execute kmc command");
+            // let _ = Command::new("kmc")
+            //     .arg("-cs4294967295")
+            //     .arg(kmc_kmer_size_arg)
+            //     .arg(&in_path)
+            //     .arg(&kmc_path)
+            //     .arg("data/temp")
+            //     .output()
+            //     .expect("Failed to execute kmc command");
 
-            let _ = Command::new("kmc_tools")
-                .arg("transform")
-                .arg(&kmc_path)
-                .arg("dump")
-                .arg(&kmc_path_dump)
-                .output()
-                .expect("Failed to execute kmc command");
+            // let _ = Command::new("kmc_tools")
+            //     .arg("transform")
+            //     .arg(&kmc_path)
+            //     .arg("dump")
+            //     .arg(&kmc_path_dump)
+            //     .output()
+            //     .expect("Failed to execute kmc command");
 
             let query_file = File::open(kmc_path_dump).unwrap();
             let query_reader = BufReader::new(query_file);
 
-            let local_n_smallest = n_smallest * 10;
-            let local_n_largest = n_largest * 10;
-            let mut min_heap: BoundedHeap<u128, MinStrategy>  = BoundedHeap::with_capacity(local_n_smallest);
-            let mut max_heap: BoundedHeap<u128, MaxStrategy>  = BoundedHeap::with_capacity(local_n_largest);
-
+            min_heap.clear();
+            max_heap.clear();
             for line in query_reader.lines() {
                 let line = line.unwrap();
                 let mut iter = line.split_ascii_whitespace().map(|e| e.trim());
@@ -285,13 +286,11 @@ fn main() {
             }
             // let test = EncodedKMER::from_bits(min_heap.peek().unwrap().0.clone());
             // println!("{} count {} kmer: {}", test.kmer(), test.count(), unsafe { CODEC.decode(test.into_bits()) });
-            let mut query_features: HashMap<u128, u16> =
-                HashMap::with_capacity(local_n_smallest + local_n_largest + 1);
-            for c in min_heap.iter().take(local_n_smallest) {
+            for c in min_heap.iter() {
                 let encoded = EncodedKMER::from_bits(*c);
                 query_features.insert(encoded.kmer(), encoded.count());
             }
-            for c in max_heap.iter().take(local_n_largest) {
+            for c in max_heap.iter() {
                 let encoded = EncodedKMER::from_bits(*c);
                 query_features.insert(encoded.kmer(), encoded.count());
             }
