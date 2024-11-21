@@ -230,7 +230,7 @@ fn main() {
             if let Some(count) = feature_in_query {
                 let kmer = unsafe { CODEC.decode(*feature) };
                 line.push(format!("{}", count));
-                // println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
+                println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
                 continue;
             }
             line.push(format!("{}", 0));
@@ -342,7 +342,7 @@ fn main() {
                 if let Some(count) = feature_in_query {
                     let kmer = unsafe { CODEC.decode(*feature) };
                     line.push(format!("{}", count));
-                    // println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
+                    println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
                     continue;
                 }
                 line.push(format!("{}", 0));
