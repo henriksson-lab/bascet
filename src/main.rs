@@ -22,6 +22,7 @@ use KMER_Select::bounded_heap::{prelude::*, BoundedMaxHeap, BoundedMinHeap};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
+use rayon::prelude::*;
 
 fn main() {
     const KMER_SIZE: usize = 31;
@@ -68,28 +69,33 @@ fn main() {
     // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1
     let overlap_window = 11;
 
-    let n_threads: u64 = std::thread::available_parallelism()
+    let n_threads: usize = std::thread::available_parallelism()
         .unwrap_or(std::num::NonZero::new(1).unwrap())
-        .get() as u64;
-    let chunk_size: u64 = 4096;
-    let cursor_max: u64 = ref_file.metadata().unwrap().len();
-    let mut cursor: u64 = 0;
+        .get() as usize;
+    let chunk_size: usize = 4096;
+    let cursor_max: usize = ref_file.metadata().unwrap().len() as usize;
+    let mut cursor: usize = 0;
 
     while cursor < cursor_max {
         let desired_page_size = chunk_size * n_threads;
         let desired_page_size_with_offset = desired_page_size + overlap_window;
         let remaining_file_size = cursor_max - cursor;
-        let read_size = min(desired_page_size_with_offset, remaining_file_size) as usize;
+        let read_size = min(desired_page_size_with_offset, remaining_file_size);
         
         let mmap = unsafe {
             MmapOptions::new()
-                .offset(cursor)
+                .offset(cursor as u64)
                 .len(read_size)
                 .map(&ref_file)
         }
         .unwrap();
 
-        println!("{cursor}");
+        let chunk_size = read_size / n_threads;
+        mmap.par_chunks(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, chunk)| {
+                println!("{chunk:?}")
+            });
 
         cursor += desired_page_size_with_offset;
     }
