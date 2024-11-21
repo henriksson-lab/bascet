@@ -12,6 +12,15 @@ const NT_LOOKUP: [u8; 256] = {
     table[b'C' as usize] = 0b11;
     table
 };
+// TODO: Improve lookup via this scheme
+// const NT_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
+//     let mut table = [0u8; (b'T' - b'A' + 1) as usize];
+//     table[(b'A' - b'A') as usize] = 0b00;
+//     table[(b'T' - b'A') as usize] = 0b01;
+//     table[(b'G' - b'A') as usize] = 0b10;
+//     table[(b'C' - b'A') as usize] = 0b11;
+//     table
+// };
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
 pub struct Codec<const K: usize>;
@@ -27,7 +36,7 @@ impl<const K: usize> Codec<K> {
         &self,
         kmer: &[u8],
         count: u32,
-        rng: &mut SmallRng,
+        rng: &mut impl rand::Rng,
         range: Uniform<u16>,
     ) -> EncodedKMER {
         let mut encoded: u128 = 0;
