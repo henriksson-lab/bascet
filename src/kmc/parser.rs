@@ -161,8 +161,6 @@ impl<const K: usize> Dump<K> {
                     .encode(&chunk[pane_start..kmer_end], count, rng, range)
                     .into_bits()
             };
-            
-            
 
             let _ = min_heap.push(encoded);
             let _ = max_heap.push(encoded);
