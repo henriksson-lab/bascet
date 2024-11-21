@@ -22,7 +22,7 @@ impl<const K: usize> Config<K> {
     pub const OVERLAP_WINDOW_SIZE: usize = K + 1 + 10 + 1;
     pub const CODEC: crate::kmer::Codec<K> = crate::kmer::Codec::new();
     pub const NLO_RESULTS: u64 = 50_000;
-    pub const NHI_RESULTS: u64 = 0;
+    pub const NHI_RESULTS: u64 = 1_000;
 }
 
 // Then your Dump becomes:
@@ -122,50 +122,51 @@ impl<const K: usize> Dump<K> {
     ) {
         let range: Uniform<u16> = Uniform::new_inclusive(u16::MIN, u16::MAX);
         let chunk_length = chunk.len();
-        let n_max_panes = chunk_length / (K + 1 + 1);
+        let n_max_lines = chunk_length / (K + 1 + 1); // minimum line length: KMER + tab + digit
         let mut cursor = 0;
-
-        for _ in 0..n_max_panes {
-            let pane_start = cursor;
-            if pane_start >= chunk_length {
+    
+        for _ in 0..n_max_lines {
+            let line_start = cursor;
+            if line_start >= chunk_length {
                 break;
             }
-
-            let pane_remainder = chunk_length.saturating_sub(pane_start);
-            let min_pane_length = K + 1 + 1;
-            let max_pane_length = min(Config::<K>::OVERLAP_WINDOW_SIZE, chunk_length - pane_start);
-
-            if min_pane_length > pane_remainder || max_pane_length < K {
+    
+            // Minimum line size check
+            if line_start + K + 2 > chunk_length {
                 break;
             }
-
-            let mut pane_length = min_pane_length;
-            for o in min_pane_length..max_pane_length {
-                if chunk[pane_start + o] == b'\n' {
-                    pane_length = o;
+    
+            // Verify tab after KMER
+            if chunk[line_start + K] != b'\t' {
+                break;
+            }
+    
+            // Find end of line (next newline)
+            let count_start = line_start + K + 1;
+            let mut line_length = K + 1 + 1; // minimum length
+            for i in count_start..min(line_start + Config::<K>::OVERLAP_WINDOW_SIZE, chunk_length) {
+                if chunk[i] == b'\n' {
+                    line_length = i - line_start;
                     break;
                 }
             }
-
-            let pane_end = pane_start + pane_length;
-            let kmer_end = pane_start + K;
-            let count_start = kmer_end + 1;
-
+    
+            // Parse count
             let mut count = 0;
-            for d in &chunk[count_start..pane_end] {
+            for d in &chunk[count_start..line_start + line_length] {
                 count = count * 10 + (d - b'0') as u32;
             }
-
+    
             let encoded: u128 = unsafe {
                 Config::<K>::CODEC
-                    .encode(&chunk[pane_start..pane_end], count, rng, range)
+                    .encode(&chunk[line_start..line_start + K], count, rng, range)
                     .into_bits()
             };
-
+    
             let _ = min_heap.push(encoded);
             let _ = max_heap.push(encoded);
-
-            cursor += pane_length + 1;
+    
+            cursor = line_start + line_length + 1;
         }
     }
 }
