@@ -54,11 +54,11 @@ impl<const K: usize> Dump<K> {
         thread_pool: &ThreadPool,
     ) -> Result<Vec<u128>, ()> {
         let (sender, receiver) = channel::bounded(32);
-
+    
         let io_handle = std::thread::spawn(move || {
             let mmap = unsafe { MmapOptions::new().map(&file) }.unwrap();
             let n_chunks = (mmap.len() + Config::<K>::CHUNK_SIZE - 1) / Config::<K>::CHUNK_SIZE;
-
+    
             for chunk_idx in 0..n_chunks {
                 let raw_start = chunk_idx * Config::<K>::CHUNK_SIZE;
                 let raw_end = min(
@@ -66,7 +66,7 @@ impl<const K: usize> Dump<K> {
                     mmap.len(),
                 );
                 let raw_data = &mmap[raw_start..raw_end];
-
+    
                 let mut valid_start = raw_start;
                 for i in 0..min(Config::<K>::OVERLAP_WINDOW_SIZE, raw_data.len()) {
                     if raw_data[i] == b'\n' {
@@ -74,7 +74,7 @@ impl<const K: usize> Dump<K> {
                         break;
                     }
                 }
-
+    
                 let mut valid_end = raw_end;
                 let end_search_start =
                     valid_end - min(Config::<K>::OVERLAP_WINDOW_SIZE, valid_end - raw_start);
@@ -84,26 +84,27 @@ impl<const K: usize> Dump<K> {
                         break;
                     }
                 }
-
+    
                 let valid_chunk = mmap[valid_start..valid_end].to_vec();
                 sender.send(Some(valid_chunk)).unwrap();
             }
             sender.send(None).unwrap();
         });
-
-        worker_states.par_iter().for_each(|state| {
-            let receiver = receiver.clone();
-            while let Ok(Some(chunk)) = receiver.recv() {
-                let rng = unsafe { &mut *state.rng.get() };
-                let min_heap = unsafe { &mut *state.min_heap.get() };
-                let max_heap = unsafe { &mut *state.max_heap.get() };
-                Self::featurise_process_chunk(&chunk, rng, min_heap, max_heap);
-            }
+    
+        thread_pool.install(|| {
+            worker_states.par_iter().for_each(|state| {
+                let receiver = receiver.clone();
+                while let Ok(Some(chunk)) = receiver.recv() {
+                    let rng = unsafe { &mut *state.rng.get() };
+                    let min_heap = unsafe { &mut *state.min_heap.get() };
+                    let max_heap = unsafe { &mut *state.max_heap.get() };
+                    Self::featurise_process_chunk(&chunk, rng, min_heap, max_heap);
+                }
+            });
         });
-
+    
         io_handle.join().unwrap();
-
-        // Collect results from all heaps
+    
         let mut results = Vec::new();
         for state in worker_states {
             let min_heap = unsafe { &*state.min_heap.get() };
@@ -113,7 +114,7 @@ impl<const K: usize> Dump<K> {
         }
         Ok(results)
     }
-
+    
     fn featurise_process_chunk(
         chunk: &[u8],
         rng: &mut impl rand::Rng,
