@@ -1,6 +1,8 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
 use bio::io::{fasta, fastq};
+use core::str;
+use std::ops::Range;
 use fs2::FileExt;
 use itertools::Itertools;
 use linya::Progress;
@@ -10,7 +12,6 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use rayon::{prelude::*, ThreadPoolBuilder};
 use rustc_hash::FxHasher;
-use core::str;
 use std::cmp::{max, min, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
@@ -28,6 +29,7 @@ use KMER_Select::utils;
 
 fn main() {
     const KMER_SIZE: usize = 31;
+    const KMER_COUNT_CHARS: usize = 11;
     const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
     let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
 
@@ -67,12 +69,11 @@ fn main() {
     // lock file write access so that the behaviour of mmep is safe-ish
     let _ = ref_file.lock_shared();
 
-    // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1
-    let overlap_window = 11;
+    // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1 for safety + the KMER_SIZE
+    let overlap_window = KMER_SIZE + KMER_COUNT_CHARS + 1;
 
-    let n_smallest  = 50_000;
-    let n_largest   =  1_000;
-
+    let n_smallest = 50_000;
+    let n_largest = 1_000;
 
     let n_threads: usize = thread::available_parallelism()
         .unwrap_or(NonZero::new(1).unwrap())
@@ -84,7 +85,7 @@ fn main() {
 
     // +1 because the floating point is truncated -> rounded down
     let n_smallest_thread_local = (n_smallest / n_threads) + 1;
-    let n_largest_thread_local  = (n_largest / n_threads) + 1;
+    let n_largest_thread_local = (n_largest / n_threads) + 1;
 
     let mut min_heaps: Vec<BoundedMinHeap<u128>> = (0..n_threads)
         .map(|_| BoundedMinHeap::with_capacity(n_smallest_thread_local))
@@ -92,50 +93,62 @@ fn main() {
     let mut max_heaps: Vec<BoundedMaxHeap<u128>> = (0..n_threads)
         .map(|_| BoundedMaxHeap::with_capacity(n_largest_thread_local))
         .collect();
-    let mut rngs: Vec<SmallRng> = (0..n_threads)
-        .map(|_| SmallRng::from_entropy())
-        .collect();
+    let mut rngs: Vec<SmallRng> = (0..n_threads).map(|_| SmallRng::from_entropy()).collect();
 
     let chunk_size: usize = 4096;
-    let cursor_max: usize = ref_file.metadata().unwrap().len() as usize;
-    let mut cursor: usize = 0;
+    let cursor_max: u64 = ref_file.metadata().unwrap().len();
+    let mut cursor: u64 = 0;
 
     while cursor < cursor_max {
-        let desired_page_size = chunk_size * n_threads;
-        let remaining_file_size = cursor_max - cursor;
-        let overlap_size = if desired_page_size + overlap_window < remaining_file_size {
-            overlap_window
-        } else {
-            0
-        };
-
-        let read_size = min(
-            desired_page_size + overlap_size,
-            remaining_file_size + overlap_size,
-        );
+        let page_size = chunk_size * n_threads;
 
         let mmap = unsafe {
             MmapOptions::new()
-                .offset(cursor as u64)
-                .len(read_size)
+                .offset(cursor)
+                .len(page_size)
                 .map(&ref_file)
-        }
-        .unwrap();
+        }.unwrap();
 
         pool.install(|| {
-            mmap.windows(chunk_size + overlap_window)
-                .step_by(chunk_size)
-                .par_bridge()
-                .for_each(|window| {
-                    let str = str::from_utf8(window).unwrap();
-                    println!("{str}");
-                });
+            (0..n_threads)
+                .into_par_iter()
+                .for_each(|i| {  // i is what we were using to create ranges
+                    let start   = i * chunk_size;
+                    let end     = min(start + chunk_size + overlap_window, mmap.len());
+                  
+                    let window = &mmap[start..end];
+                    let mut window_start: usize = start;
+                    for i in 0..overlap_window {
+                        if window[i] == b'\n' {
+                            window_start = i;
+                            break;
+                        }
+                    }
+                    let window_size_max = end - start;
+                    let mut window_size: usize = window_size_max;
+                    for i in ((window_size_max - overlap_window)..window_size_max).rev() {
+                        if window[i] == b'\n' {
+                            window_size = window_size_max - i;
+                            break;
+                        }
+                    }
+                    let window_end = window_start + window_size;
+
+                    let window_actual = &mmap[window_start..window_end];
+                    let mut window_cursor = 0;
+
+                    println!("{:?}", window_actual);
+            });
         });
 
-        cursor += desired_page_size;
+        cursor += page_size as u64;
     }
 
     let _ = ref_file.unlock();
+
+    // min_heaps[idx].push(encoded);
+    // max_heaps[idx].push(encoded);
+
     // let reader = BufReader::new(&ref_file);
 
     // let n_smallest = 50000;
