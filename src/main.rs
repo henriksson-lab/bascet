@@ -30,6 +30,7 @@ use KMER_Select::utils;
 fn main() {
     const KMER_SIZE: usize = 31;
     const KMER_COUNT_CHARS: usize = 11;
+
     const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
     let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
 
@@ -137,24 +138,35 @@ fn main() {
                 }
 
                 let window_truncated = &mmap[window_truncated_start..window_truncated_end];
-                // include tab character + one digit => largest possible pane amount                         \t[0-9]
-                let n_window_truncated_panes = (window_truncated_end - window_truncated_start) / (KMER_SIZE + 1 + 1);
+                let window_truncated_length = window_truncated_end - window_truncated_start;
+                // include tab character + one digit => largest possible pane amount                         
+                let n_window_truncated_max_panes = window_truncated_length / (KMER_SIZE + 1 + 1);
+                //                                                                     \t[0-9]
                 let mut cursor = 0;
-                for i in 0..n_window_truncated_panes {
-                    if cursor > window_truncated_end { break; }
 
+                // n_window_truncated_max_panes is the upper bound
+                for _ in 0..n_window_truncated_max_panes {
                     let pane_start = cursor;
-                    let mut pane_length: usize = KMER_SIZE + 1;
+                    if pane_start >= window_truncated_length { break; }
 
-                    for o in (KMER_SIZE + 1)..overlap_window {
+                    let pane_remainder = window_truncated_length.saturating_sub(pane_start);
+                    let min_pane_length = KMER_SIZE;
+                    let max_pane_length = min(overlap_window, window_truncated_length - pane_start);
+                    
+                    if min_pane_length >= pane_remainder    { break; }
+                    if max_pane_length <= KMER_SIZE         { break; }
+
+                    let mut pane_length: usize = 1;
+                    for o in min_pane_length..max_pane_length {
                         if window_truncated[pane_start + o] == b'\n' {
                             pane_length = o;
+                            break;
                         }
                     }
 
                     let pane_end = pane_start + pane_length;
 
-                    println!("Pane start: {pane_start}, Pane len: {pane_length}, pane: {:?}", &window_truncated[pane_start..pane_end]);
+
 
                     cursor += pane_length + 1;
                 }
@@ -163,7 +175,7 @@ fn main() {
 
         cursor += page_size as u64;
     }
-
+    
     let _ = ref_file.unlock();
 
     // min_heaps[idx].push(encoded);
