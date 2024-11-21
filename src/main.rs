@@ -1,6 +1,7 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
 use bio::io::{fasta, fastq};
+use KMER_Select::kmc::{self, ThreadState};
 use core::str;
 use fs2::FileExt;
 use itertools::Itertools;
@@ -15,12 +16,12 @@ use rustc_hash::FxHasher;
 use std::cell::{RefCell, UnsafeCell};
 use std::cmp::{max, min, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::env;
 use std::fs::{self, File, FileType, OpenOptions};
 use std::hash::BuildHasherDefault;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::num::NonZero;
 use std::ops::Range;
-use std::os::fd::{self, AsRawFd};
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::sync::{Arc, Mutex};
@@ -31,17 +32,10 @@ use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
 
-struct ThreadState {
-    rng: UnsafeCell<SmallRng>,
-    min_heap: UnsafeCell<BoundedMinHeap<u128>>,
-    max_heap: UnsafeCell<BoundedMaxHeap<u128>>,
-}
-unsafe impl Send for ThreadState {}
-unsafe impl Sync for ThreadState {}
-
 fn main() {
     const KMER_SIZE: usize = 31;
     const KMER_COUNT_CHARS: usize = 11;
+    const THREADS: usize = 12;
 
     const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
     let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
@@ -89,154 +83,34 @@ fn main() {
     let n_smallest = 50_000;
     let n_largest = 1_000;
 
-    let n_threads: usize = thread::available_parallelism()
-        .unwrap_or(NonZero::new(1).unwrap())
-        .get() as usize;
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(n_threads)
+
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(THREADS)
         .build()
         .unwrap();
 
     // +1 because the floating point is truncated -> rounded down
-    let n_smallest_thread_local = (n_smallest / n_threads) + 1;
-    let n_largest_thread_local = (n_largest / n_threads) + 1;
+    let n_smallest_thread_local = (n_smallest / THREADS) + 1;
+    let n_largest_thread_local = (n_largest / THREADS) + 1;
 
-    let thread_states: Vec<ThreadState> = (0..n_threads)
+    let thread_states: Vec<ThreadState> = (0..(THREADS - 1))
         .map(|_| ThreadState {
             rng: UnsafeCell::new(SmallRng::from_entropy()),
             min_heap: UnsafeCell::new(BoundedMinHeap::with_capacity(n_smallest_thread_local)),
             max_heap: UnsafeCell::new(BoundedMaxHeap::with_capacity(n_largest_thread_local)),
-        })
-        .collect();
+        }).collect();
 
-    println!("");
-    println!("");
-    println!("");
-    let total_start = std::time::Instant::now();
-    let mmap = unsafe {
-        MmapOptions::new()
-            .map(&ref_file)
-    }.unwrap();
     
-    let chunk_size: usize = 1_000_000;
-    let cursor_max: u64 = mmap.len() as u64;
-    let n_chunks = (mmap.len() + chunk_size - 1) / chunk_size;  // ceiling division
+    let dump_start = std::time::Instant::now();
     
-    pool.install(|| {
-        (0..n_chunks).into_par_iter().for_each(|chunk_index| {
-            let chunk_start = chunk_index * chunk_size;
-            let window_end = min(chunk_start + chunk_size + overlap_window, mmap.len());
-            let window = &mmap[chunk_start..window_end];
-    
-            let mut window_truncated_start = chunk_start;
-            for i in 0..min(overlap_window, window.len()) {
-                if window[i] == b'\n' {
-                    window_truncated_start = chunk_start + i + 1; // Start after the newline
-                    break;
-                }
-            }
+    let kmc_parser = kmc::Dump::<KMER_SIZE>::new();
+    let ref_features = kmc_parser.featurise(ref_file, &thread_states, &thread_pool).unwrap();
 
-            let mut window_truncated_end = window_end;
-            let window_truncated_end_search_start =
-                window_truncated_end - min(overlap_window, window_truncated_end - chunk_start);
-            for i in (window_truncated_end_search_start..window_truncated_end).rev() {
-                if window[i - chunk_start] == b'\n' {
-                    window_truncated_end = i + 1; // Include the newline
-                    break;
-                }
-            }
+    println!(
+        "Dump file time: {:.2}s",
+        dump_start.elapsed().as_secs_f64()
+    );
 
-            let window_truncated = &mmap[window_truncated_start..window_truncated_end];
-            let window_truncated_length = window_truncated_end - window_truncated_start;
-            let n_window_truncated_max_panes = window_truncated_length / (KMER_SIZE + 1 + 1);
-            let mut window_cursor = 0;
-
-            for _ in 0..n_window_truncated_max_panes {
-                let pane_start = window_cursor;
-                if pane_start >= window_truncated_length {
-                    break;
-                }
-
-                let pane_remainder = window_truncated_length.saturating_sub(pane_start);
-                let min_pane_length = KMER_SIZE + 1 + 1;
-                let max_pane_length = min(overlap_window, window_truncated_length - pane_start);
-
-                if min_pane_length > pane_remainder {
-                    break;
-                }
-                if max_pane_length < KMER_SIZE {
-                    break;
-                }
-
-                let mut pane_length: usize = min_pane_length;
-                for o in min_pane_length..max_pane_length {
-                    if window_truncated[pane_start + o] == b'\n' {
-                        pane_length = o;
-                        break;
-                    }
-                }
-
-                let pane_end = pane_start + pane_length;
-                let kmer_end = pane_start + KMER_SIZE;
-                let count_start = kmer_end + 1;
-
-                // if chunk_start % 1_000_000 == 0 {
-                //     print!(
-                //         "\x1B[7A\x1B[0J\
-                //         File cursor at: {chunk_start}/{cursor_max}={:.2}%\n\
-                //         Pane start at: {pane_start}/{window_truncated_length}\n\
-                //         Raw bytes for count: {:?}\n\
-                //         Pane: {:?}\n\
-                //         KMER: {:?}\n\
-                //         Count: {:?}\n\n",
-                //         (chunk_start as f64 / cursor_max as f64) * 100.0,
-                //         window_truncated[count_start..pane_end].iter().map(|&b| b).collect::<Vec<_>>(),
-                //         String::from_utf8(window_truncated[pane_start..pane_end].to_vec()).unwrap(),
-                //         String::from_utf8(window_truncated[pane_start..kmer_end].to_vec()).unwrap(),
-                //         String::from_utf8(window_truncated[count_start..pane_end].to_vec()).unwrap()
-                //     );
-                // }
-
-                let mut parsed_count = 0;
-                for d in &window_truncated[count_start..pane_end] {
-                    parsed_count = parsed_count * 10 + (d - b'0') as u32;
-                }
-
-                let thread_index = rayon::current_thread_index().unwrap();
-                let state = &thread_states[thread_index];
-                let rng = unsafe { &mut *state.rng.get() };
-                let min_heap = unsafe { &mut *state.min_heap.get() };
-                let max_heap = unsafe { &mut *state.max_heap.get() };
-
-                let encoded: u128 = unsafe {
-                    CODEC.encode(
-                        &window_truncated[pane_start..pane_end],
-                        parsed_count,
-                        rng,
-                        range,
-                    ).into_bits()
-                };
-                let _ = min_heap.push(encoded);
-                let _ = max_heap.push(encoded);
-                window_cursor += pane_length + 1;
-            }
-        });
-    });
-
-    println!("Dump file time: {:.2}s", total_start.elapsed().as_secs_f64());
-    let mut collected_heaps: Vec<u128> = Vec::with_capacity(n_smallest + n_largest + 1);
-    for thread_state in &thread_states {
-        let minheap = unsafe { &*thread_state.min_heap.get() };
-        let maxheap = unsafe { &*thread_state.min_heap.get() };
-        collected_heaps.extend(minheap.iter().copied());
-        collected_heaps.extend(maxheap.iter().copied());
-    }
-
-    for feature in &collected_heaps {
-        println!("{}", unsafe { CODEC.decode(*feature) });
-    }
-
-    let ref_features: Vec<u128> = collected_heaps.iter().map(|c| EncodedKMER::from_bits(*c).kmer() ).collect();
     println!("{}", ref_features.len());
     let feature_file = File::create(&path_out.join("features").with_extension("csv")).unwrap();
     let mut feature_writer = BufWriter::new(feature_file);
@@ -322,7 +196,11 @@ fn main() {
                 (_, _) => panic!("Line must have at least two elements"),
             };
             let count = str_count.parse::<u16>().unwrap();
-            let encoded = unsafe { CODEC.encode_str(str_kmer, count, &mut rng, range).into_bits() };
+            let encoded = unsafe {
+                CODEC
+                    .encode_str(str_kmer, count, &mut rng, range)
+                    .into_bits()
+            };
 
             let _ = min_heap.push(encoded);
             let _ = max_heap.push(encoded);
@@ -433,7 +311,11 @@ fn main() {
                     (_, _) => panic!("Line must have at least two elements"),
                 };
                 let count = str_count.parse::<u16>().unwrap();
-                let encoded = unsafe { CODEC.encode_str(str_kmer, count, &mut rng, range).into_bits() };
+                let encoded = unsafe {
+                    CODEC
+                        .encode_str(str_kmer, count, &mut rng, range)
+                        .into_bits()
+                };
 
                 let _ = min_heap.push(encoded);
                 let _ = max_heap.push(encoded);

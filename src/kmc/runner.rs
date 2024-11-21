@@ -1,3 +1,1 @@
-pub struct Runner<const K: usize> {
-    
-}
+pub struct Runner<const K: usize> {}
