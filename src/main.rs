@@ -4,11 +4,12 @@ use bio::io::{fasta, fastq};
 use fs2::FileExt;
 use itertools::Itertools;
 use linya::Progress;
+use memmap2::MmapOptions;
 use rand::distributions::Uniform;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use rustc_hash::FxHasher;
-use std::cmp::{max, Reverse};
+use std::cmp::{max, min, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
 use std::hash::BuildHasherDefault;
@@ -61,16 +62,36 @@ fn main() {
     println!("Processing dump file");
 
     let ref_file = File::open(kmc_path_dump).unwrap();
+    // lock file write access so that the behaviour of mmep is safe-ish
     let _ = ref_file.lock_shared();
 
-    let chunk_size = 4096;
-    let cursor_max = ref_file.metadata().unwrap().len();
-    let mut cursor = 0;
+    // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1
+    let overlap_window = 11;
+
+    let n_threads: u64 = std::thread::available_parallelism()
+        .unwrap_or(std::num::NonZero::new(1).unwrap())
+        .get() as u64;
+    let chunk_size: u64 = 4096;
+    let cursor_max: u64 = ref_file.metadata().unwrap().len();
+    let mut cursor: u64 = 0;
 
     while cursor < cursor_max {
+        let desired_page_size = chunk_size * n_threads;
+        let desired_page_size_with_offset = desired_page_size + overlap_window;
+        let remaining_file_size = cursor_max - cursor;
+        let read_size = min(desired_page_size_with_offset, remaining_file_size) as usize;
         
+        let mmap = unsafe {
+            MmapOptions::new()
+                .offset(cursor)
+                .len(read_size)
+                .map(&ref_file)
+        }
+        .unwrap();
 
-        cursor += chunk_size;
+        println!("{cursor}");
+
+        cursor += desired_page_size_with_offset;
     }
 
     let _ = ref_file.unlock();
@@ -94,7 +115,7 @@ fn main() {
     //     let (str_kmer, str_count) = match (iter.next(), iter.next()) {
     //         (Some(kmer), Some(count)) => (kmer, count),
     //         (_, _) => panic!("Line must have at least two elements"),
-    //     }; 
+    //     };
     //     let count = str_count.parse::<u16>().unwrap();
     //     parse_time += parse_start.elapsed();
 
@@ -107,7 +128,7 @@ fn main() {
     //     let _ = max_heap.push(encoded);
     //     heap_time += heap_start.elapsed();
     // }
-    // 
+    //
 
     let total_time = total_start.elapsed();
     println!("Total time: {:.2}s", total_time.as_secs_f64());
