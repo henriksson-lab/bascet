@@ -47,7 +47,7 @@ impl<const K: usize> Codec<K> {
 
         return EncodedKMER::new()
             .with_kmer(encoded)
-            .with_count(count)
+            .with_count(count as u16)
             .with_rand(range.sample(rng));
     }
     #[inline(always)]
@@ -67,33 +67,31 @@ impl<const K: usize> Codec<K> {
 
         return EncodedKMER::new()
             .with_kmer(encoded)
-            .with_count(count as u32)
+            .with_count(count)
             .with_rand(range.sample(rng));
     }
     #[inline(always)]
-    pub unsafe fn decode(&self, encoded_kmer: u128) -> String {
+    pub unsafe fn decode(&self, encoded: u128) -> String {
         let mut sequence = Vec::with_capacity(Self::KMER_SIZE);
-        let mut temp = encoded_kmer;
-
+        let mut temp = EncodedKMER::from_bits(encoded).kmer();
         for _ in 0..Self::KMER_SIZE {
             let nuc = (temp & 0b11) as usize;
             sequence.push(NT_REVERSE[nuc]);
             temp >>= 2;
         }
         sequence.reverse();
-
         String::from_utf8_unchecked(sequence)
     }
 }
 
 #[bitfield(u128)]
 pub struct EncodedKMER {
-    #[bits(80)]
+    #[bits(96)]
     pub kmer: u128,
 
     #[bits(16)]
     pub rand: u16,
 
-    #[bits(32)]
-    pub count: u32,
+    #[bits(16)]
+    pub count: u16,
 }

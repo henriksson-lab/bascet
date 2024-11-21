@@ -7,7 +7,7 @@ use crossbeam::channel;
 use memmap2::MmapOptions;
 use rand::{distributions::Uniform, rngs::SmallRng};
 use rayon::{
-    iter::{IntoParallelRefIterator, ParallelIterator},
+    iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     ThreadPool,
 };
 
@@ -90,9 +90,8 @@ impl<const K: usize> Dump<K> {
     
         thread_pool.install(|| {
             worker_states.par_iter().for_each(|state| {
-                let receiver = rx.clone();
-                let mmap = mmap.clone();
-                while let Ok(Some((start, end))) = receiver.recv() {
+                let rx = rx.clone();
+                while let Ok(Some((start, end))) = rx.recv() {
                     let chunk = &mmap[start..end];
                     let rng = unsafe { &mut *state.rng.get() };
                     let min_heap = unsafe { &mut *state.min_heap.get() };
@@ -155,13 +154,22 @@ impl<const K: usize> Dump<K> {
             for d in &chunk[count_start..pane_end] {
                 count = count * 10 + (d - b'0') as u32;
             }
-    
+            
             let encoded: u128 = unsafe {
                 Config::<K>::CODEC
                     .encode(&chunk[pane_start..kmer_end], count, rng, range)
                     .into_bits()
             };
-
+            let decoded_kmer = unsafe { Config::<K>::CODEC.decode(encoded) };
+            let decoded_count = crate::kmer::EncodedKMER::from_bits(encoded).count();
+            let random_bits = crate::kmer::EncodedKMER::from_bits(encoded).rand();
+            let original_kmer = std::str::from_utf8(&chunk[pane_start..kmer_end]).unwrap();
+            if false || decoded_kmer != original_kmer || decoded_count as u32 != count {
+                println!(
+                    "MISMATCH! Original: kmer='{}' count={} | Decoded: kmer='{}' count={}, rand: {}", 
+                    original_kmer, count, decoded_kmer, decoded_count, random_bits
+                );
+            }
             let _ = min_heap.push(encoded);
             let _ = max_heap.push(encoded);
     

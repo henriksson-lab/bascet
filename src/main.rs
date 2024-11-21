@@ -100,7 +100,6 @@ fn main() {
             min_heap: UnsafeCell::new(BoundedMinHeap::with_capacity(n_smallest_thread_local)),
             max_heap: UnsafeCell::new(BoundedMaxHeap::with_capacity(n_largest_thread_local)),
         }).collect();
-
     
     let dump_start = std::time::Instant::now();
     
@@ -230,7 +229,7 @@ fn main() {
             if let Some(count) = feature_in_query {
                 let kmer = unsafe { CODEC.decode(*feature) };
                 line.push(format!("{}", count));
-                println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
+                // println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
                 continue;
             }
             line.push(format!("{}", 0));
@@ -342,7 +341,7 @@ fn main() {
                 if let Some(count) = feature_in_query {
                     let kmer = unsafe { CODEC.decode(*feature) };
                     line.push(format!("{}", count));
-                    println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
+                    // println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
                     continue;
                 }
                 line.push(format!("{}", 0));
