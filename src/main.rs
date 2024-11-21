@@ -36,6 +36,7 @@ fn main() {
     const KMER_SIZE: usize = 31;
     const KMER_COUNT_CHARS: usize = 11;
     const THREADS: usize = 12;
+    const WORKER_THREADS: usize = THREADS - 1;
 
     const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
     let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
@@ -90,10 +91,10 @@ fn main() {
         .unwrap();
 
     // +1 because the floating point is truncated -> rounded down
-    let n_smallest_thread_local = (n_smallest / THREADS) + 1;
-    let n_largest_thread_local = (n_largest / THREADS) + 1;
+    let n_smallest_thread_local = (n_smallest / WORKER_THREADS) + 1;
+    let n_largest_thread_local = (n_largest / WORKER_THREADS) + 1;
 
-    let thread_states: Vec<ThreadState> = (0..(THREADS - 1))
+    let thread_states: Vec<ThreadState> = (0..WORKER_THREADS)
         .map(|_| ThreadState {
             rng: UnsafeCell::new(SmallRng::from_entropy()),
             min_heap: UnsafeCell::new(BoundedMinHeap::with_capacity(n_smallest_thread_local)),

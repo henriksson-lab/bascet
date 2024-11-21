@@ -47,58 +47,57 @@ impl<const K: usize> Dump<K> {
     }
 
     //NOTE: thread_states should implement thread states for n - 1 threads!
-    pub fn featurise(
-        &self,
-        file: File,
-        worker_states: &[ThreadState],
-        thread_pool: &ThreadPool,
-    ) -> Result<Vec<u128>, ()> {
-        let (sender, receiver) = channel::bounded(32);
+    pub fn featurise(&self, file: File, worker_states: &[ThreadState], thread_pool: &ThreadPool) -> Result<Vec<u128>, ()> {
+        let mmap = unsafe { MmapOptions::new().map(&file) }.unwrap();
+        let mmap = std::sync::Arc::new(mmap);
+        let (sender, receiver) = channel::bounded::<Option<(usize, usize)>>(32);
     
-        let io_handle = std::thread::spawn(move || {
-            let mmap = unsafe { MmapOptions::new().map(&file) }.unwrap();
-            let n_chunks = (mmap.len() + Config::<K>::CHUNK_SIZE - 1) / Config::<K>::CHUNK_SIZE;
+        let io_handle = {
+            let mmap = mmap.clone();
+            std::thread::spawn(move || {
+                let n_chunks = (mmap.len() + Config::<K>::CHUNK_SIZE - 1) / Config::<K>::CHUNK_SIZE;
     
-            for chunk_idx in 0..n_chunks {
-                let raw_start = chunk_idx * Config::<K>::CHUNK_SIZE;
-                let raw_end = min(
-                    raw_start + Config::<K>::CHUNK_SIZE + Config::<K>::OVERLAP_WINDOW_SIZE,
-                    mmap.len(),
-                );
-                let raw_data = &mmap[raw_start..raw_end];
-    
-                let mut valid_start = raw_start;
-                for i in 0..min(Config::<K>::OVERLAP_WINDOW_SIZE, raw_data.len()) {
-                    if raw_data[i] == b'\n' {
-                        valid_start = raw_start + i + 1;
-                        break;
+                for chunk_idx in 0..n_chunks {
+                    let raw_start = chunk_idx * Config::<K>::CHUNK_SIZE;
+                    let raw_end = min(
+                        raw_start + Config::<K>::CHUNK_SIZE + Config::<K>::OVERLAP_WINDOW_SIZE,
+                        mmap.len(),
+                    );
+                    
+                    let mut valid_start = raw_start;
+                    for i in 0..min(Config::<K>::OVERLAP_WINDOW_SIZE, raw_end - raw_start) {
+                        if mmap[raw_start + i] == b'\n' {
+                            valid_start = raw_start + i + 1;
+                            break;
+                        }
                     }
-                }
     
-                let mut valid_end = raw_end;
-                let end_search_start =
-                    valid_end - min(Config::<K>::OVERLAP_WINDOW_SIZE, valid_end - raw_start);
-                for i in (end_search_start..valid_end).rev() {
-                    if raw_data[i - raw_start] == b'\n' {
-                        valid_end = i + 1;
-                        break;
+                    let mut valid_end = raw_end;
+                    let end_search_start = 
+                        valid_end - min(Config::<K>::OVERLAP_WINDOW_SIZE, valid_end - raw_start);
+                    for i in (end_search_start..valid_end).rev() {
+                        if mmap[i] == b'\n' {
+                            valid_end = i + 1;
+                            break;
+                        }
                     }
-                }
     
-                let valid_chunk = mmap[valid_start..valid_end].to_vec();
-                sender.send(Some(valid_chunk)).unwrap();
-            }
-            sender.send(None).unwrap();
-        });
+                    sender.send(Some((valid_start, valid_end))).unwrap();
+                }
+                sender.send(None).unwrap();
+            })
+        };
     
         thread_pool.install(|| {
             worker_states.par_iter().for_each(|state| {
                 let receiver = receiver.clone();
-                while let Ok(Some(chunk)) = receiver.recv() {
+                let mmap = mmap.clone();
+                while let Ok(Some((start, end))) = receiver.recv() {
+                    let chunk = &mmap[start..end];
                     let rng = unsafe { &mut *state.rng.get() };
                     let min_heap = unsafe { &mut *state.min_heap.get() };
                     let max_heap = unsafe { &mut *state.max_heap.get() };
-                    Self::featurise_process_chunk(&chunk, rng, min_heap, max_heap);
+                    Self::featurise_process_chunk(chunk, rng, min_heap, max_heap);
                 }
             });
         });
@@ -123,7 +122,7 @@ impl<const K: usize> Dump<K> {
     ) {
         let range: Uniform<u16> = Uniform::new_inclusive(u16::MIN, u16::MAX);
         let chunk_length = chunk.len();
-        let n_max_lines = chunk_length / (K + 1 + 1); // minimum line length: KMER + tab + digit
+        let n_max_lines = chunk_length / (K + 1 + 1); // minimum line length: KMER + tab + single digit
         let mut cursor = 0;
     
         for _ in 0..n_max_lines {
@@ -144,7 +143,7 @@ impl<const K: usize> Dump<K> {
     
             // Find end of line (next newline)
             let count_start = line_start + K + 1;
-            let mut line_length = K + 1 + 1; // minimum length
+            let mut line_length = K + 1 + 1; 
             for i in count_start..min(line_start + Config::<K>::OVERLAP_WINDOW_SIZE, chunk_length) {
                 if chunk[i] == b'\n' {
                     line_length = i - line_start;
