@@ -11,6 +11,7 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use rayon::{prelude::*, ThreadPoolBuilder};
 use rustc_hash::FxHasher;
+use std::cell::RefCell;
 use std::cmp::{max, min, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
@@ -94,7 +95,9 @@ fn main() {
     let mut max_heaps: Vec<BoundedMaxHeap<u128>> = (0..n_threads)
         .map(|_| BoundedMaxHeap::with_capacity(n_largest_thread_local))
         .collect();
-    let mut rngs: Vec<SmallRng> = (0..n_threads).map(|_| SmallRng::from_entropy()).collect();
+    let rngs: Vec<RefCell<SmallRng>> = (0..n_threads)
+        .map(|_| RefCell::new(SmallRng::from_entropy()))
+        .collect();
 
     let chunk_size: usize = 4096;
     let cursor_max: u64 = ref_file.metadata().unwrap().len();
@@ -112,8 +115,8 @@ fn main() {
         .unwrap();
 
         pool.install(|| {
-            (0..n_threads).into_par_iter().for_each(|i| {
-                let window_start = i * chunk_size;
+            (0..n_threads).into_par_iter().for_each(|thread_index| {
+                let window_start = thread_index * chunk_size;
                 let window_end = min(window_start + chunk_size + overlap_window, mmap.len());
 
                 // Get initial window of data, this is not guaranteed to start with a valid line as well as ending with one so it needs to be truncated
@@ -139,7 +142,7 @@ fn main() {
 
                 let window_truncated = &mmap[window_truncated_start..window_truncated_end];
                 let window_truncated_length = window_truncated_end - window_truncated_start;
-                // include tab character + one digit => largest possible pane amount                         
+                // include tab character + one digit => largest possible pane amount
                 let n_window_truncated_max_panes = window_truncated_length / (KMER_SIZE + 1 + 1);
                 //                                                                     \t[0-9]
                 let mut cursor = 0;
@@ -147,14 +150,20 @@ fn main() {
                 // n_window_truncated_max_panes is the upper bound
                 for _ in 0..n_window_truncated_max_panes {
                     let pane_start = cursor;
-                    if pane_start >= window_truncated_length { break; }
+                    if pane_start >= window_truncated_length {
+                        break;
+                    }
 
                     let pane_remainder = window_truncated_length.saturating_sub(pane_start);
                     let min_pane_length = KMER_SIZE;
                     let max_pane_length = min(overlap_window, window_truncated_length - pane_start);
-                    
-                    if min_pane_length >= pane_remainder    { break; }
-                    if max_pane_length <= KMER_SIZE         { break; }
+
+                    if min_pane_length >= pane_remainder {
+                        break;
+                    }
+                    if max_pane_length <= KMER_SIZE {
+                        break;
+                    }
 
                     let mut pane_length: usize = 1;
                     for o in min_pane_length..max_pane_length {
@@ -165,8 +174,23 @@ fn main() {
                     }
 
                     let pane_end = pane_start + pane_length;
+                    let pane_kmer = pane_start..(pane_start + KMER_SIZE);
+                    let pane_count = (pane_start + KMER_SIZE + 1)..pane_end;
 
+                    let parsed_count: u32 = window[pane_count]
+                        .iter()
+                        .fold(0, |a, &d| a * 10 + (d - b'0') as u32);
 
+                    let pane_encoded = unsafe {
+                        CODEC
+                            .encode(
+                                &window[pane_kmer],
+                                parsed_count,
+                                &mut rngs[thread_index],
+                                range,
+                            )
+                            .into_bits()
+                    };
 
                     cursor += pane_length + 1;
                 }
@@ -175,7 +199,7 @@ fn main() {
 
         cursor += page_size as u64;
     }
-    
+
     let _ = ref_file.unlock();
 
     // min_heaps[idx].push(encoded);
