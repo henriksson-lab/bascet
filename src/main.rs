@@ -2,7 +2,6 @@ use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
 use bio::io::{fasta, fastq};
 use core::str;
-use std::ops::Range;
 use fs2::FileExt;
 use itertools::Itertools;
 use linya::Progress;
@@ -18,6 +17,7 @@ use std::fs::{self, File, FileType, OpenOptions};
 use std::hash::BuildHasherDefault;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::num::NonZero;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::{thread, u8};
@@ -107,42 +107,58 @@ fn main() {
                 .offset(cursor)
                 .len(page_size)
                 .map(&ref_file)
-        }.unwrap();
+        }
+        .unwrap();
 
         pool.install(|| {
-            (0..n_threads)
-                .into_par_iter()
-                .for_each(|i| {
-                    let window_start = i * chunk_size;
-                    let window_end = min(window_start + chunk_size + overlap_window, mmap.len());
-                    
-                    // Get initial window of data
-                    let window = &mmap[window_start..window_end];
-                    
-                    let mut window_truncated_start = window_start;
-                    for i in 0..min(overlap_window, window.len()) {
-                        if window[i] == b'\n' {
-                            window_truncated_start = window_start + i + 1; // Start after the newline
-                            break;
+            (0..n_threads).into_par_iter().for_each(|i| {
+                let window_start = i * chunk_size;
+                let window_end = min(window_start + chunk_size + overlap_window, mmap.len());
+
+                // Get initial window of data, this is not guaranteed to start with a valid line as well as ending with one so it needs to be truncated
+                let window = &mmap[window_start..window_end];
+
+                let mut window_truncated_start = window_start;
+                for i in 0..min(overlap_window, window.len()) {
+                    if window[i] == b'\n' {
+                        window_truncated_start = window_start + i + 1; // Start after the newline
+                        break;
+                    }
+                }
+
+                let mut window_truncated_end = window_end;
+                let window_truncated_end_search_start =
+                    window_truncated_end - min(overlap_window, window_truncated_end - window_start);
+                for i in (window_truncated_end_search_start..window_truncated_end).rev() {
+                    if window[i - window_start] == b'\n' {
+                        window_truncated_end = i + 1; // Include the newline
+                        break;
+                    }
+                }
+
+                let window_truncated = &mmap[window_truncated_start..window_truncated_end];
+                // include tab character + one digit => largest possible pane amount                         \t[0-9]
+                let n_window_truncated_panes = (window_truncated_end - window_truncated_start) / (KMER_SIZE + 1 + 1);
+                let mut cursor = 0;
+                for i in 0..n_window_truncated_panes {
+                    if cursor > window_truncated_end { break; }
+
+                    let pane_start = cursor;
+                    let mut pane_length: usize = KMER_SIZE + 1;
+
+                    for o in (KMER_SIZE + 1)..overlap_window {
+                        if window_truncated[pane_start + o] == b'\n' {
+                            pane_length = o;
                         }
                     }
-                    
-                    let mut window_truncated_end = window_end;
-                    let search_start = window_truncated_end - min(overlap_window, window_truncated_end - window_start);
-                    for i in (search_start..window_truncated_end).rev() {
-                        if window[i - window_start] == b'\n' {
-                            window_truncated_end = i + 1; // Include the newline
-                            break;
-                        }
-                    }
-                    
-                    let window_truncated = &mmap[window_truncated_start..window_truncated_end];
-                    
-                    println!("Chunk {}: {} bytes", i, window_truncated.len());
-                    if let Ok(text) = String::from_utf8(window_truncated.to_vec()) {
-                        println!("Content: \n{}", text);
-                    }
-                });
+
+                    let pane_end = pane_start + pane_length;
+
+                    println!("Pane start: {pane_start}, Pane len: {pane_length}, pane: {:?}", &window_truncated[pane_start..pane_end]);
+
+                    cursor += pane_length + 1;
+                }
+            });
         });
 
         cursor += page_size as u64;
