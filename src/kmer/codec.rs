@@ -25,16 +25,15 @@ impl<const K: usize> Codec<K> {
     #[inline(always)]
     pub unsafe fn encode(
         &self,
-        kmer: &str,
-        count: u16,
+        kmer: &[u8],
+        count: u32,
         rng: &mut SmallRng,
         range: Uniform<u16>,
     ) -> EncodedKMER {
-        let bytes = kmer.as_bytes();
         let mut encoded: u128 = 0;
 
         for i in 0..Self::KMER_SIZE as usize {
-            encoded = (encoded << 2) | u128::from(NT_LOOKUP[bytes[i] as usize]);
+            encoded = (encoded << 2) | u128::from(NT_LOOKUP[kmer[i] as usize]);
         }
 
         return EncodedKMER::new()
@@ -60,12 +59,12 @@ impl<const K: usize> Codec<K> {
 
 #[bitfield(u128)]
 pub struct EncodedKMER {
-    #[bits(96)]
+    #[bits(80)]
     pub kmer: u128,
 
     #[bits(16)]
     pub rand: u16,
 
-    #[bits(16)]
-    pub count: u16,
+    #[bits(32)]
+    pub count: u32,
 }
