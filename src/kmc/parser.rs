@@ -22,7 +22,7 @@ impl<const K: usize> Config<K> {
     pub const OVERLAP_WINDOW_SIZE: usize = K + 1 + 10 + 1;
     pub const CODEC: crate::kmer::Codec<K> = crate::kmer::Codec::new();
     pub const NLO_RESULTS: u64 = 50_000;
-    pub const NHI_RESULTS: u64 = 1_000;
+    pub const NHI_RESULTS: u64 = 0;
 }
 
 // Then your Dump becomes:
