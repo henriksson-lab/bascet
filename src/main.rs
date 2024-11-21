@@ -112,33 +112,37 @@ fn main() {
         pool.install(|| {
             (0..n_threads)
                 .into_par_iter()
-                .for_each(|i| {  // i is what we were using to create ranges
-                    let start   = i * chunk_size;
-                    let end     = min(start + chunk_size + overlap_window, mmap.len());
-                  
-                    let window = &mmap[start..end];
-                    let mut window_start: usize = start;
-                    for i in 0..overlap_window {
+                .for_each(|i| {
+                    let window_start = i * chunk_size;
+                    let window_end = min(window_start + chunk_size + overlap_window, mmap.len());
+                    
+                    // Get initial window of data
+                    let window = &mmap[window_start..window_end];
+                    
+                    let mut window_truncated_start = window_start;
+                    for i in 0..min(overlap_window, window.len()) {
                         if window[i] == b'\n' {
-                            window_start = i;
+                            window_truncated_start = window_start + i + 1; // Start after the newline
                             break;
                         }
                     }
-                    let window_size_max = end - start;
-                    let mut window_size: usize = window_size_max;
-                    for i in ((window_size_max - overlap_window)..window_size_max).rev() {
-                        if window[i] == b'\n' {
-                            window_size = window_size_max - i;
+                    
+                    let mut window_truncated_end = window_end;
+                    let search_start = window_truncated_end - min(overlap_window, window_truncated_end - window_start);
+                    for i in (search_start..window_truncated_end).rev() {
+                        if window[i - window_start] == b'\n' {
+                            window_truncated_end = i + 1; // Include the newline
                             break;
                         }
                     }
-                    let window_end = window_start + window_size;
-
-                    let window_actual = &mmap[window_start..window_end];
-                    let mut window_cursor = 0;
-
-                    println!("{:?}", window_actual);
-            });
+                    
+                    let window_truncated = &mmap[window_truncated_start..window_truncated_end];
+                    
+                    println!("Chunk {}: {} bytes", i, window_truncated.len());
+                    if let Ok(text) = String::from_utf8(window_truncated.to_vec()) {
+                        println!("Content: \n{}", text);
+                    }
+                });
         });
 
         cursor += page_size as u64;
