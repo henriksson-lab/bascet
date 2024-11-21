@@ -104,14 +104,15 @@ fn main() {
     let dump_start = std::time::Instant::now();
     
     let kmc_parser = kmc::Dump::<KMER_SIZE>::new();
-    let ref_features = kmc_parser.featurise(ref_file, &thread_states, &thread_pool).unwrap();
-
+    let extracted_features = kmc_parser.featurise(ref_file, &thread_states, &thread_pool).unwrap();
+    let ref_features: Vec<u128> = extracted_features.iter().map(|c| EncodedKMER::from_bits(*c).kmer() ).collect();
     println!(
         "Dump file time: {:.2}s",
         dump_start.elapsed().as_secs_f64()
     );
 
-    println!("{}", ref_features.len());
+    println!("Features found: {}", ref_features.len());
+
     let feature_file = File::create(&path_out.join("features").with_extension("csv")).unwrap();
     let mut feature_writer = BufWriter::new(feature_file);
     let _ = writeln!(
