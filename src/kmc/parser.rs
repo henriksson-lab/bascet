@@ -50,7 +50,7 @@ impl<const K: usize> Dump<K> {
     pub fn featurise(&self, file: File, worker_states: &[ThreadState], thread_pool: &ThreadPool) -> Result<Vec<u128>, ()> {
         let mmap = unsafe { MmapOptions::new().map(&file) }.unwrap();
         let mmap = std::sync::Arc::new(mmap);
-        let (sender, receiver) = channel::bounded::<Option<(usize, usize)>>(32);
+        let (tx, rx) = channel::bounded::<Option<(usize, usize)>>(32);
     
         let io_handle = {
             let mmap = mmap.clone();
@@ -82,15 +82,15 @@ impl<const K: usize> Dump<K> {
                         }
                     }
     
-                    sender.send(Some((valid_start, valid_end))).unwrap();
+                    tx.send(Some((valid_start, valid_end))).unwrap();
                 }
-                sender.send(None).unwrap();
+                tx.send(None).unwrap();
             })
         };
     
         thread_pool.install(|| {
             worker_states.par_iter().for_each(|state| {
-                let receiver = receiver.clone();
+                let receiver = rx.clone();
                 let mmap = mmap.clone();
                 while let Ok(Some((start, end))) = receiver.recv() {
                     let chunk = &mmap[start..end];
