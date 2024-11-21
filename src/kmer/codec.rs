@@ -42,6 +42,26 @@ impl<const K: usize> Codec<K> {
             .with_rand(range.sample(rng));
     }
     #[inline(always)]
+    pub unsafe fn encode_str(
+        &self,
+        kmer: &str,
+        count: u16,
+        rng: &mut SmallRng,
+        range: Uniform<u16>,
+    ) -> EncodedKMER {
+        let mut encoded: u128 = 0;
+        let bytes = kmer.as_bytes();
+
+        for i in 0..Self::KMER_SIZE as usize {
+            encoded = (encoded << 2) | u128::from(NT_LOOKUP[bytes[i] as usize]);
+        }
+
+        return EncodedKMER::new()
+            .with_kmer(encoded)
+            .with_count(count as u32)
+            .with_rand(range.sample(rng));
+    }
+    #[inline(always)]
     pub unsafe fn decode(&self, encoded_kmer: u128) -> String {
         let mut sequence = Vec::with_capacity(Self::KMER_SIZE);
         let mut temp = encoded_kmer;
