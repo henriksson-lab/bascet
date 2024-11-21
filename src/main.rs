@@ -8,26 +8,27 @@ use memmap2::MmapOptions;
 use rand::distributions::Uniform;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rayon::{prelude::*, ThreadPoolBuilder, ThreadLocal};
 use rustc_hash::FxHasher;
+use core::str;
 use std::cmp::{max, min, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs::{self, File, FileType, OpenOptions};
 use std::hash::BuildHasherDefault;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
-use std::u8;
+use std::{thread, u8};
 use walkdir::{DirEntry, WalkDir};
 use KMER_Select::bounded_heap::{prelude::*, BoundedMaxHeap, BoundedMinHeap};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
-use rayon::prelude::*;
 
 fn main() {
     const KMER_SIZE: usize = 31;
     const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
-    let mut rng = SmallRng::from_entropy();
     let range = Uniform::new_inclusive(u16::MIN, u16::MAX);
 
     let kmc_kmer_size_arg: &str = &format!("-k{}", KMER_SIZE);
@@ -69,19 +70,50 @@ fn main() {
     // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1
     let overlap_window = 11;
 
-    let n_threads: usize = std::thread::available_parallelism()
-        .unwrap_or(std::num::NonZero::new(1).unwrap())
+    let n_smallest  = 50_000;
+    let n_largest   =  1_000;
+
+
+    let n_threads: usize = thread::available_parallelism()
+        .unwrap_or(NonZero::new(1).unwrap())
         .get() as usize;
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(n_threads)
+        .build()
+        .unwrap();
+
+    // +1 because the floating point is truncated -> rounded down
+    let n_smallest_thread_local = (n_smallest / n_threads) + 1;
+    let n_largest_thread_local  = (n_largest / n_threads) + 1;
+
+    let mut min_heaps: Vec<BoundedMinHeap<u128>> = (0..n_threads)
+        .map(|_| BoundedMinHeap::with_capacity(n_smallest_thread_local))
+        .collect();
+    let mut max_heaps: Vec<BoundedMaxHeap<u128>> = (0..n_threads)
+        .map(|_| BoundedMaxHeap::with_capacity(n_largest_thread_local))
+        .collect();
+    let mut rngs: Vec<SmallRng> = (0..n_threads)
+        .map(|_| SmallRng::from_entropy())
+        .collect();
+
     let chunk_size: usize = 4096;
     let cursor_max: usize = ref_file.metadata().unwrap().len() as usize;
     let mut cursor: usize = 0;
 
     while cursor < cursor_max {
         let desired_page_size = chunk_size * n_threads;
-        let desired_page_size_with_offset = desired_page_size + overlap_window;
         let remaining_file_size = cursor_max - cursor;
-        let read_size = min(desired_page_size_with_offset, remaining_file_size);
-        
+        let overlap_size = if desired_page_size + overlap_window < remaining_file_size {
+            overlap_window
+        } else {
+            0
+        };
+
+        let read_size = min(
+            desired_page_size + overlap_size,
+            remaining_file_size + overlap_size,
+        );
+
         let mmap = unsafe {
             MmapOptions::new()
                 .offset(cursor as u64)
@@ -90,14 +122,17 @@ fn main() {
         }
         .unwrap();
 
-        let chunk_size = read_size / n_threads;
-        mmap.par_chunks(chunk_size)
-            .enumerate()
-            .for_each(|(chunk_idx, chunk)| {
-                println!("{chunk:?}")
-            });
+        pool.install(|| {
+            mmap.windows(chunk_size + overlap_window)
+                .step_by(chunk_size)
+                .par_bridge()
+                .for_each(|window| {
+                    let str = str::from_utf8(window).unwrap();
+                    println!("{str}");
+                });
+        });
 
-        cursor += desired_page_size_with_offset;
+        cursor += desired_page_size;
     }
 
     let _ = ref_file.unlock();
