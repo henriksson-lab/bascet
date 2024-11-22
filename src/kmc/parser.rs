@@ -52,11 +52,13 @@ impl<const K: usize> Dump<K> {
         let mmap = std::sync::Arc::new(mmap);
         let (tx, rx) = channel::bounded::<Option<(usize, usize)>>(32);
     
+        let total_size = mmap.len();
+        let mut total_processed = 0;
         let io_handle = {
             let mmap = mmap.clone();
             std::thread::spawn(move || {
                 let n_chunks = (mmap.len() + Config::<K>::CHUNK_SIZE - 1) / Config::<K>::CHUNK_SIZE;
-    
+                
                 for chunk_idx in 0..n_chunks {
                     let raw_start = chunk_idx * Config::<K>::CHUNK_SIZE;
                     let raw_end = min(
@@ -65,25 +67,40 @@ impl<const K: usize> Dump<K> {
                     );
                     
                     let mut valid_start = raw_start;
+                    let mut start_found = false;
                     for i in 0..min(Config::<K>::OVERLAP_WINDOW_SIZE, raw_end - raw_start) {
                         if mmap[raw_start + i] == b'\n' {
                             valid_start = raw_start + i + 1;
+                            start_found = true;
                             break;
                         }
                     }
-    
+                    if !start_found {
+                        println!("Warning: No newline found for chunk start at position {}", raw_start);
+                    }
+                    
                     let mut valid_end = raw_end;
                     let end_search_start = 
                         valid_end - min(Config::<K>::OVERLAP_WINDOW_SIZE, valid_end - raw_start);
+                    let mut end_found = false;
                     for i in (end_search_start..valid_end).rev() {
                         if mmap[i] == b'\n' {
                             valid_end = i + 1;
+                            end_found = true;
                             break;
                         }
                     }
-    
+                    if !end_found {
+                        println!("Warning: No newline found for chunk end at position {}", raw_end);
+                    }
+                    
+                    println!("Chunk {}: {} to {} (raw: {} to {})", 
+                            chunk_idx, valid_start, valid_end, raw_start, raw_end);
+                    total_processed += valid_end - valid_start;
+                    
                     tx.send(Some((valid_start, valid_end))).unwrap();
                 }
+                println!("Total bytes processed: {} out of {}", total_processed, total_size);
                 tx.send(None).unwrap();
             })
         };
