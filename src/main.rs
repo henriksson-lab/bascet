@@ -81,17 +81,10 @@ fn main() {
     // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1 for safety + the KMER_SIZE
     let overlap_window = KMER_SIZE + KMER_COUNT_CHARS + 1;
 
-    let n_smallest = 50_000;
-    let n_largest = 1_000;
-
     let thread_pool = ThreadPoolBuilder::new()
         .num_threads(THREADS)
         .build()
         .unwrap();
-
-    // +1 because the floating point is truncated -> rounded down
-    let n_smallest_thread_local = (n_smallest) + 1;
-    let n_largest_thread_local = (n_largest) + 1;
 
     let dump_start = std::time::Instant::now();
     let config = kmc::Config {
@@ -157,15 +150,16 @@ fn main() {
     let mut idx = 0;
     progress.set_and_draw(&bar, idx);
 
-    let local_n_smallest = n_smallest * 10;
-    let local_n_largest = n_largest * 10;
-    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+    let local_n_smallest = (&config).nlo_results * 10;
+    let local_n_largest = (&config).nhi_results * 10;
+    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(local_n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(local_n_largest);
     let mut query_features: HashMap<u128, u16, BuildHasherDefault<FxHasher>> =
         HashMap::with_capacity_and_hasher(
             local_n_smallest + local_n_largest,
             BuildHasherDefault::default(),
         );
+
     let mut hash_took = 0.0;
     let mut find_took = 0.0;
     for pair in compare {
@@ -234,7 +228,7 @@ fn main() {
         }
         hash_took += hash_start.elapsed().as_secs_f64();
 
-        let mut line: Vec<String> = Vec::with_capacity(n_smallest + n_largest + 1);
+        let mut line: Vec<String> = Vec::with_capacity(local_n_smallest + local_n_largest);
         line.push(format!("{}", &cat_path.to_str().unwrap()));
 
         for feature in &ref_features {
@@ -259,8 +253,8 @@ fn main() {
     let path_ref = Path::new("data/temp");
     let walker = WalkDir::new(path_ref).into_iter();
 
-    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(n_smallest);
-    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(n_largest);
+    let mut min_heap: BoundedMinHeap<u128> = BoundedMinHeap::with_capacity(local_n_smallest);
+    let mut max_heap: BoundedMaxHeap<u128> = BoundedMaxHeap::with_capacity(local_n_largest);
     let mut query_features: HashMap<u128, u16, BuildHasherDefault<FxHasher>> =
         HashMap::with_capacity_and_hasher(
             local_n_smallest + local_n_largest,
@@ -346,7 +340,7 @@ fn main() {
                 query_features.insert(encoded.kmer(), encoded.count() as u16);
             }
 
-            let mut line: Vec<String> = Vec::with_capacity(n_smallest + n_largest + 1);
+            let mut line: Vec<String> = Vec::with_capacity(local_n_smallest + local_n_largest + 1);
             line.push(format!("{}", &entry_path.to_str().unwrap()));
 
             for feature in &ref_features {
@@ -354,7 +348,7 @@ fn main() {
                 if let Some(count) = feature_in_query {
                     let kmer = unsafe { CODEC.decode(*feature) };
                     line.push(format!("{}", count));
-                    // println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
+                    println!("Found match! Ref k-mer: {}, Query count: {}", kmer, count);
                     continue;
                 }
                 line.push(format!("{}", 0));

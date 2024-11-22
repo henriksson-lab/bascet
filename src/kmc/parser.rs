@@ -11,24 +11,13 @@ use rayon::{
 use crate::bounded_heap::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap};
 use crate::kmc::ThreadState;
 
+#[derive(Clone, Copy)]
 pub struct Config {
     pub seed: usize,
     pub threads: usize,
     pub chunk_size: usize,
     pub nlo_results: usize,
     pub nhi_results: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            seed: 0,
-            threads: 8,
-            chunk_size: 262144, // 256KiB chunks
-            nlo_results: 50_000,
-            nhi_results: 1_000,
-        }
-    }
 }
 
 pub struct Dump<const K: usize> {
