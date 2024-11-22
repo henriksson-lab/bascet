@@ -1,7 +1,8 @@
 mod parser;
 mod runner;
-mod thread_state;
+mod worker;
 
 pub use parser::Config;
 pub use parser::Dump;
-pub use thread_state::ThreadState;
+pub use worker::ThreadState;
+pub use worker::Worker;

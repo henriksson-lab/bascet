@@ -1,6 +1,15 @@
+use crate::bounded_heap::{BoundedMaxHeap, BoundedMinHeap};
 use std::cell::UnsafeCell;
 
-use crate::bounded_heap::{BoundedMaxHeap, BoundedMinHeap};
+pub struct Worker<R: rand::Rng> {
+    pub state: ThreadState<R>,
+    pub thread_idx: usize,
+}
+impl<R: rand::Rng> Worker<R> {
+    pub fn new(thread_idx: usize, state: ThreadState<R>) -> Self {
+        Self { state, thread_idx }
+    }
+}
 
 pub struct ThreadState<R: rand::Rng> {
     pub rng: std::cell::UnsafeCell<R>,
