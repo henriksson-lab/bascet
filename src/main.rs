@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::{ptr, thread, u8};
 use walkdir::{DirEntry, WalkDir};
 use KMER_Select::bounded_heap::{prelude::*, BoundedMaxHeap, BoundedMinHeap};
-use KMER_Select::kmc::{self, ThreadState};
+use KMER_Select::kmc::{self, Dump, ThreadState};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
@@ -93,18 +93,31 @@ fn main() {
     let n_smallest_thread_local = (n_smallest) + 1;
     let n_largest_thread_local = (n_largest) + 1;
 
-    let thread_states: Vec<ThreadState<rand::rngs::SmallRng>> = (0..WORKER_THREADS)
-        .map(|_| ThreadState::<rand::rngs::SmallRng>::from_entropy(50_000, 1_000, 262_144))
+    let dump_start = std::time::Instant::now();
+    let config = kmc::Config {
+        seed: 0,
+        threads: 12,
+        chunk_size: 524288,
+        nlo_results: 50_000,
+        nhi_results: 2_000,
+    };
+    let thread_states: Vec<ThreadState<SmallRng>> = (0..WORKER_THREADS)
+        .map(|_| {
+            ThreadState::<SmallRng>::from_entropy(
+                config.nlo_results,
+                config.nhi_results,
+                config.chunk_size,
+            )
+        })
         .collect();
 
-    let dump_start = std::time::Instant::now();
-
-    let kmc_parser = kmc::Dump::<KMER_SIZE>::new();
+    let kmc_parser: Dump<31> = Dump::new(config);
     let (min_heap, max_heap) = kmc_parser
         .featurise::<rand::rngs::SmallRng>(ref_file, &thread_states, &thread_pool)
         .unwrap();
 
-    let ref_features: Vec<u128> = min_heap.iter()
+    let ref_features: Vec<u128> = min_heap
+        .iter()
         .chain(max_heap.iter())
         .map(|c| EncodedKMER::from_bits(*c).kmer())
         .collect();
