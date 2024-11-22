@@ -1,5 +1,5 @@
 [![Build](https://github.com/JulianDicken/KMER-Select/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/JulianDicken/KMER-Select/actions/workflows/rust.yml)
-# ROBERD (Rapid Organization of Bacterial Elements for Read-based Typing)
+# ROBERT (Rapid Organization of Bacterial Elements for Read-based Typing)
 
 ROBERT is a command-line tool that reduces bacterial genome sequences into feature vectors based on k-mer frequencies.
 
