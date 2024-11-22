@@ -203,8 +203,8 @@ where
         }
     }
 }
-impl<T> Extend<T> for BoundedMinHeap<T> 
-where 
+impl<T> Extend<T> for BoundedMinHeap<T>
+where
     T: Ord,
 {
     #[inline]
@@ -214,9 +214,6 @@ where
         }
     }
 }
-
-
-
 
 impl<T> BoundedHeap<T> for BoundedMaxHeap<T>
 where
@@ -251,8 +248,8 @@ where
         return Ok(());
     }
 }
-impl<T> Extend<T> for BoundedMaxHeap<T> 
-where 
+impl<T> Extend<T> for BoundedMaxHeap<T>
+where
     T: Ord,
 {
     #[inline]
