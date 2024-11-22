@@ -21,8 +21,8 @@ impl<const K: usize> Config<K> {
     pub const CHUNK_SIZE: usize = 65536;
     pub const OVERLAP_WINDOW_SIZE: usize = K + 1 + 10 + 1;
     pub const CODEC: crate::kmer::Codec<K> = crate::kmer::Codec::new();
-    pub const NLO_RESULTS: u64 = 50_000;
-    pub const NHI_RESULTS: u64 = 1_000;
+    pub const NLO_RESULTS: usize = 50_000;
+    pub const NHI_RESULTS: usize = 1_000;
 }
 
 // Then your Dump becomes:
@@ -78,7 +78,6 @@ impl<const K: usize> Dump<K> {
                     if !start_found {
                         println!("Warning: No newline found for chunk start at position {}", raw_start);
                     }
-                    
                     let mut valid_end = raw_end;
                     let end_search_start = 
                         valid_end - min(Config::<K>::OVERLAP_WINDOW_SIZE, valid_end - raw_start);
@@ -93,14 +92,8 @@ impl<const K: usize> Dump<K> {
                     if !end_found {
                         println!("Warning: No newline found for chunk end at position {}", raw_end);
                     }
-                    
-                    println!("Chunk {}: {} to {} (raw: {} to {})", 
-                            chunk_idx, valid_start, valid_end, raw_start, raw_end);
-                    total_processed += valid_end - valid_start;
-                    
                     tx.send(Some((valid_start, valid_end))).unwrap();
                 }
-                println!("Total bytes processed: {} out of {}", total_processed, total_size);
                 tx.send(None).unwrap();
             })
         };
@@ -120,13 +113,29 @@ impl<const K: usize> Dump<K> {
     
         io_handle.join().unwrap();
     
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(Config::<K>::NLO_RESULTS + Config::<K>::NHI_RESULTS);
+
+        // Create final min and max heaps sized for the total results we want
+        let mut final_min_heap = BoundedMinHeap::with_capacity(Config::<K>::NLO_RESULTS as usize);
+        let mut final_max_heap = BoundedMaxHeap::with_capacity(Config::<K>::NHI_RESULTS as usize);
+        
+        // Merge worker heaps into finals
         for state in worker_states {
             let min_heap = unsafe { &*state.min_heap.get() };
             let max_heap = unsafe { &*state.max_heap.get() };
-            results.extend(min_heap.iter());
-            results.extend(max_heap.iter());
+            
+            // Push all elements from worker heaps to final heaps
+            for val in min_heap.iter() {
+                let _ = final_min_heap.push(*val);
+            }
+            for val in max_heap.iter() {
+                let _ = final_max_heap.push(*val);
+            }
         }
+        
+        // Build final results vector from merged heaps
+        results.extend(final_min_heap.iter());
+        results.extend(final_max_heap.iter());
         Ok(results)
     }
     
@@ -177,16 +186,16 @@ impl<const K: usize> Dump<K> {
                     .encode(&chunk[pane_start..kmer_end], count, rng, range)
                     .into_bits()
             };
-            let decoded_kmer = unsafe { Config::<K>::CODEC.decode(encoded) };
-            let decoded_count = crate::kmer::EncodedKMER::from_bits(encoded).count();
-            let random_bits = crate::kmer::EncodedKMER::from_bits(encoded).rand();
-            let original_kmer = std::str::from_utf8(&chunk[pane_start..kmer_end]).unwrap();
-            if false || decoded_kmer != original_kmer || decoded_count as u32 != count {
-                println!(
-                    "MISMATCH! Original: kmer='{}' count={} | Decoded: kmer='{}' count={}, rand: {}", 
-                    original_kmer, count, decoded_kmer, decoded_count, random_bits
-                );
-            }
+            // let decoded_kmer = unsafe { Config::<K>::CODEC.decode(encoded) };
+            // let decoded_count = crate::kmer::EncodedKMER::from_bits(encoded).count();
+            // let random_bits = crate::kmer::EncodedKMER::from_bits(encoded).rand();
+            // let original_kmer = std::str::from_utf8(&chunk[pane_start..kmer_end]).unwrap();
+            // if false || decoded_kmer != original_kmer || decoded_count as u32 != count {
+            //     println!(
+            //         "MISMATCH! Original: kmer='{}' count={} | Decoded: kmer='{}' count={}, rand: {}", 
+            //         original_kmer, count, decoded_kmer, decoded_count, random_bits
+            //     );
+            // }
             let _ = min_heap.push(encoded);
             let _ = max_heap.push(encoded);
     
