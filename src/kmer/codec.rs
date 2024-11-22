@@ -54,6 +54,7 @@ const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
 //NOTE: all of this can probably make use of SIMD operations but I do not know how that'd work
+#[derive(Clone, Copy)]
 pub struct Codec<const K: usize>;
 impl<const K: usize> Codec<K> {
     const KMER_SIZE: usize = K;
