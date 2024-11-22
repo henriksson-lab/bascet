@@ -1,27 +1,39 @@
-use crossbeam::channel;
+use crossbeam::channel::{self, bounded};
 use memmap2::MmapOptions;
-use rand::distributions::Uniform;
+use rand::{distributions::Uniform, Rng};
 use std::{
     cmp::min,
     fs::File,
     sync::{Arc, LazyLock},
     thread,
 };
+use threadpool::ThreadPool;
 
 use crate::bounded_heap::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap};
 
-use super::worker::Worker;
+use super::ThreadState;
 
 // Global uniform distribution for kmer encoding - thread-safe and initialized on first use
 static RANGE: LazyLock<Uniform<u16>> = LazyLock::new(|| Uniform::from(u16::MIN..=u16::MAX));
 
 #[derive(Clone, Copy)]
 pub struct Config {
-    pub seed: usize,
     pub threads: usize,
+    pub work_threads: usize,
     pub chunk_size: usize,
     pub nlo_results: usize,
     pub nhi_results: usize,
+}
+impl Config {
+    pub fn new(threads: usize, chunk_size: usize, nlo_results: usize, nhi_results: usize) -> Self {
+        Self {
+            threads: threads,
+            work_threads: threads - 1,
+            chunk_size: chunk_size,
+            nlo_results: nlo_results,
+            nhi_results: nhi_results,
+        }
+    }
 }
 
 pub struct Dump<const K: usize> {
@@ -41,77 +53,77 @@ impl<const K: usize> Dump<K> {
     }
 
     // Main feature extraction function that processes file data in parallel
-    pub fn featurise<R: rand::Rng>(
+    pub fn featurise<R>(
         &self,
         file: File,
-        workers: &[Worker<R>],
-    ) -> Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>), ()> {
-        let mmap = unsafe { MmapOptions::new().map(&file) }.unwrap();
-        let mmap = Arc::new(mmap);
-
-        let (tx, rx) = channel::bounded::<Option<(usize, usize)>>(64);
+        thread_pool: &ThreadPool,
+        thread_states: &[Arc<ThreadState<R>>],
+    ) -> Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>), ()>
+    where
+        R: Rng + Send + 'static,
+    {
+        let mmap = Arc::new(unsafe { MmapOptions::new().map(&file) }.unwrap());
+        let (tx, rx) = bounded(64);
         let rx = Arc::new(rx);
+        let pool_size = thread_pool.max_count();
+        assert!(pool_size >= 2);
 
         // Launch I/O thread
-        let n_threads = workers.len();
-        let chunk_size = self.config.chunk_size;
-        let io_handle = {
-            let tx = tx;
+        let io_handle = thread::spawn({
+            let tx = tx.clone();
             let mmap = Arc::clone(&mmap);
-
-            thread::spawn(move || {
+            let chunk_size = self.config.chunk_size;
+            move || {
                 let n_chunks = (mmap.len() + chunk_size - 1) / chunk_size;
-                for chunk_idx in 0..n_chunks {
-                    let raw_start = chunk_idx * chunk_size;
+                for i in 0..n_chunks {
+                    let raw_start = i * chunk_size;
                     let raw_end = min(
                         raw_start + chunk_size + Self::OVERLAP_WINDOW_SIZE,
                         mmap.len(),
                     );
-
                     let valid_start = Self::find_chunk_start(&mmap[raw_start..], raw_start);
                     let valid_end = Self::find_chunk_end(&mmap[..raw_end], raw_end);
-
                     tx.send(Some((valid_start, valid_end))).unwrap();
                 }
-
-                for _ in 0..n_threads {
+                for _ in 0..pool_size {
                     tx.send(None).unwrap();
-                }
-            })
-        };
-
-        workers.iter().for_each(|worker| {
-            let rx = Arc::clone(&rx);
-            let mmap = Arc::clone(&mmap);
-            let codec = self.codec.clone();
-
-            while let Ok(Some((start, end))) = rx.recv() {
-                if (start / chunk_size) % n_threads == worker.thread_idx {
-                    let chunk = &mmap[start..end];
-                    unsafe {
-                        let rng = &mut *worker.state.rng.get();
-                        let min_heap = &mut *worker.state.min_heap.get();
-                        let max_heap = &mut *worker.state.max_heap.get();
-                        let buffer = &mut *worker.state.buffer.get();
-                        buffer.clear();
-                        buffer.extend_from_slice(chunk);
-                        Self::featurise_process_chunk(buffer, rng, min_heap, max_heap, &codec);
-                    }
                 }
             }
         });
+        // Launch worker threads
+        assert!(thread_states.len() >= pool_size);
+
+        for i in 0..pool_size {
+            let rx = Arc::clone(&rx);
+            let mmap = Arc::clone(&mmap);
+            let state = Arc::clone(&thread_states[i]);
+            let codec = self.codec.clone();
+            
+            thread_pool.execute(move || while let Ok(Some((start, end))) = rx.recv() {
+                let chunk = &mmap[start..end];
+                unsafe {
+                    let rng = &mut *state.rng.get();
+                    let min_heap = &mut *state.min_heap.get();
+                    let max_heap = &mut *state.max_heap.get();
+                    let buffer = &mut *state.buffer.get();
+                    buffer.clear();
+                    buffer.extend_from_slice(chunk);
+                    Self::featurise_process_chunk(buffer, rng, min_heap, max_heap, &codec);
+                }
+            });
+        }
 
         io_handle.join().unwrap();
+        thread_pool.join();
 
+        // Merge results
         let mut final_min_heap = BoundedMinHeap::with_capacity(self.config.nlo_results);
         let mut final_max_heap = BoundedMaxHeap::with_capacity(self.config.nhi_results);
 
-        for worker in workers {
+        for state in thread_states.iter() {
             unsafe {
-                let min_heap = &*worker.state.min_heap.get();
-                let max_heap = &*worker.state.max_heap.get();
-                final_min_heap.extend(min_heap.iter().copied());
-                final_max_heap.extend(max_heap.iter().copied());
+                final_min_heap.extend((&*state.min_heap.get()).iter().copied());
+                final_max_heap.extend((&*state.max_heap.get()).iter().copied());
             }
         }
 
