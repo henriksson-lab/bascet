@@ -53,4 +53,17 @@ impl<R: rand::Rng> ThreadState<R> {
             buffer_size,
         )
     }
+
+    pub fn reset(&self) {
+        unsafe {
+            // Clear the min heap
+            (*self.min_heap.get()).clear();
+
+            // Clear the max heap
+            (*self.max_heap.get()).clear();
+
+            // Clear the buffer
+            (*self.buffer.get()).clear();
+        }
+    }
 }
