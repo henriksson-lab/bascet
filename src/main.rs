@@ -345,7 +345,7 @@ fn main() {
 
     let total_time = total_start.elapsed();
     println!("\n✨ Analysis complete!");
-    println!("  → Total processing time: {:.4}s", total_time.as_secs_f64() / 60.0);
+    println!("  → Total processing time: {:.4}s", total_time.as_secs_f64());
     println!("  → Features processed: {}", ref_features.len());
     println!("  → Files analyzed: {}", compare_count + ref_count);
     println!("  → Average time per file: {:.4}s", 
