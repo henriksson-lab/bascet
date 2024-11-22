@@ -78,9 +78,6 @@ fn main() {
     // lock file write access so that the behaviour of mmep is safe-ish
     let _ = ref_file.lock_shared();
 
-    // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1 for safety + the KMER_SIZE
-    let overlap_window = KMER_SIZE + KMER_COUNT_CHARS + 1;
-
     let thread_pool = ThreadPoolBuilder::new()
         .num_threads(THREADS)
         .build()

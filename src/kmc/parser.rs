@@ -1,8 +1,8 @@
-use std::{cell::UnsafeCell, cmp::min, fs::File, marker::PhantomData, sync::Arc};
+use std::{cell::UnsafeCell, cmp::min, fs::File, marker::PhantomData, sync::{Arc, LazyLock}};
 
 use crossbeam::channel;
 use memmap2::MmapOptions;
-use rand::{distributions::Uniform, SeedableRng};
+use rand::{distributions::Uniform};
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
     ThreadPool,
@@ -10,6 +10,10 @@ use rayon::{
 
 use crate::bounded_heap::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap};
 use crate::kmc::ThreadState;
+
+static RANGE: LazyLock<Uniform<u16>> = LazyLock::new(|| {
+    Uniform::from(u16::MIN..=u16::MAX)
+});
 
 #[derive(Clone, Copy)]
 pub struct Config {
@@ -26,6 +30,7 @@ pub struct Dump<const K: usize> {
 }
 
 impl<const K: usize> Dump<K> {
+    // HACK: 4'294'967'295 is the largest kmer counter possible, so its count of digits + 1 to be sure + the KMER_SIZE
     const OVERLAP_WINDOW_SIZE: usize = K + 1 + 10 + 1;
 
     pub fn new(config: Config) -> Self {
@@ -36,12 +41,31 @@ impl<const K: usize> Dump<K> {
     }
 
     #[inline(always)]
-    fn parse_count(bytes: &[u8]) -> u32 {
-        let mut count = 0u32;
-        for &d in bytes {
-            count = count.wrapping_mul(10) + (d - b'0') as u32;
+    fn parse_count_u32(bytes: &[u8]) -> u32 {
+        const LOOKUP: [u32; 100] = {
+            let mut table = [0u32; 100];
+            let mut i = 0;
+            while i < 100 {
+                table[i] = (i / 10 * 10 + i % 10) as u32;
+                i += 1;
+            }
+            table
+        };
+        
+        let mut result = 0u32;
+        let chunks = bytes.chunks_exact(2);
+        let remainder = chunks.remainder();
+        
+        for chunk in chunks {
+            let idx = ((chunk[0] - b'0') * 10 + (chunk[1] - b'0')) as usize;
+            result = result.wrapping_mul(100) + LOOKUP[idx];
         }
-        count
+        
+        if let Some(&d) = remainder.first() {
+            result = result.wrapping_mul(10) + (d - b'0') as u32;
+        }
+        
+        result
     }
 
     pub fn featurise<R: rand::Rng>(
@@ -143,7 +167,6 @@ impl<const K: usize> Dump<K> {
         max_heap: &mut BoundedMaxHeap<u128>,
         codec: &crate::kmer::Codec<K>,
     ) {
-        let range: Uniform<u16> = Uniform::new_inclusive(u16::MIN, u16::MAX);
         let chunk_length = chunk.len();
         let n_max_panes = chunk_length / (K + 2);
         let mut cursor = 0;
@@ -169,11 +192,11 @@ impl<const K: usize> Dump<K> {
             }
 
             let kmer_end = pane_start + K;
-            let count = Self::parse_count(&chunk[kmer_end + 1..pane_start + pane_length]);
+            let count = Self::parse_count_u32(&chunk[kmer_end + 1..pane_start + pane_length]);
 
             let encoded = unsafe {
                 codec
-                    .encode(&chunk[pane_start..kmer_end], count, rng, range)
+                    .encode(&chunk[pane_start..kmer_end], count, rng, *RANGE)
                     .into_bits()
             };
 
