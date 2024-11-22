@@ -93,24 +93,22 @@ fn main() {
     let n_smallest_thread_local = (n_smallest) + 1;
     let n_largest_thread_local = (n_largest) + 1;
 
-    let thread_states: Vec<ThreadState> = (0..WORKER_THREADS)
-        .map(|_| ThreadState {
-            rng: UnsafeCell::new(SmallRng::from_entropy()),
-            min_heap: UnsafeCell::new(BoundedMinHeap::with_capacity(n_smallest_thread_local)),
-            max_heap: UnsafeCell::new(BoundedMaxHeap::with_capacity(n_largest_thread_local)),
-        })
+    let thread_states: Vec<ThreadState<rand::rngs::SmallRng>> = (0..WORKER_THREADS)
+        .map(|_| ThreadState::<rand::rngs::SmallRng>::from_entropy(50_000, 1_000, 262_144))
         .collect();
 
     let dump_start = std::time::Instant::now();
 
     let kmc_parser = kmc::Dump::<KMER_SIZE>::new();
-    let extracted_features = kmc_parser
-        .featurise(ref_file, &thread_states, &thread_pool)
+    let (min_heap, max_heap) = kmc_parser
+        .featurise::<rand::rngs::SmallRng>(ref_file, &thread_states, &thread_pool)
         .unwrap();
-    let ref_features: Vec<u128> = extracted_features
-        .iter()
+
+    let ref_features: Vec<u128> = min_heap.iter()
+        .chain(max_heap.iter())
         .map(|c| EncodedKMER::from_bits(*c).kmer())
         .collect();
+
     println!("Dump file time: {:.8}s", dump_start.elapsed().as_secs_f64());
 
     println!("Features found: {}", ref_features.len());
