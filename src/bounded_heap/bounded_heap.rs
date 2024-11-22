@@ -1,6 +1,6 @@
 pub enum HeapError {}
 
-pub trait BoundedHeapBehaviour<T>
+pub trait BoundedHeap<T>
 where
     T: Ord,
 {
@@ -90,7 +90,7 @@ where
         }
     }
 }
-impl<T> BoundedHeapBehaviour<T> for BoundedMinHeap<T>
+impl<T> BoundedHeap<T> for BoundedMinHeap<T>
 where
     T: Ord,
 {
@@ -203,7 +203,22 @@ where
         }
     }
 }
-impl<T> BoundedHeapBehaviour<T> for BoundedMaxHeap<T>
+impl<T> Extend<T> for BoundedMinHeap<T> 
+where 
+    T: Ord,
+{
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for value in iter {
+            self.push(value);
+        }
+    }
+}
+
+
+
+
+impl<T> BoundedHeap<T> for BoundedMaxHeap<T>
 where
     T: Ord,
 {
@@ -234,5 +249,16 @@ where
 
         self.mimxheap.push(value);
         return Ok(());
+    }
+}
+impl<T> Extend<T> for BoundedMaxHeap<T> 
+where 
+    T: Ord,
+{
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for value in iter {
+            self.push(value);
+        }
     }
 }

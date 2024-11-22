@@ -1,7 +1,7 @@
 use bitfield_struct::bitfield;
 use rand::{
     distributions::{Distribution, Uniform},
-    rngs::SmallRng, Rng,
+    Rng,
 };
 
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
@@ -14,37 +14,42 @@ const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
 };
 
 const fn generate_nt4_value(a: u8, b: u8, c: u8, d: u8) -> u8 {
-    (NT1_LOOKUP[(a - b'A') as usize] << 6) | (NT1_LOOKUP[(b - b'A') as usize] << 4) | (NT1_LOOKUP[(c - b'A') as usize] << 2) | NT1_LOOKUP[(d - b'A') as usize]
+    (NT1_LOOKUP[(a - b'A') as usize] << 6)
+        | (NT1_LOOKUP[(b - b'A') as usize] << 4)
+        | (NT1_LOOKUP[(c - b'A') as usize] << 2)
+        | NT1_LOOKUP[(d - b'A') as usize]
 }
 
 const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
     const DIM: usize = (b'T' - b'A' + 1) as usize;
-    ((a - b'A') as usize) + 
-    ((b - b'A') as usize * DIM) +
-    ((c - b'A') as usize * DIM * DIM) +
-    ((d - b'A') as usize * DIM * DIM * DIM)
+    ((a - b'A') as usize)
+        + ((b - b'A') as usize * DIM)
+        + ((c - b'A') as usize * DIM * DIM)
+        + ((d - b'A') as usize * DIM * DIM * DIM)
 }
 const fn generate_nt4_table() -> [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] {
     const NUCLEOTIDES: [u8; 4] = [b'A', b'T', b'G', b'C'];
     let mut table = [0u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE];
-    
+
     let mut i = 0;
-    while i < 256 {  // 4^4 combinations
+    while i < 256 {
+        // 4^4 combinations
         let n1 = NUCLEOTIDES[(i >> 6) & 0b11];
         let n2 = NUCLEOTIDES[(i >> 4) & 0b11];
         let n3 = NUCLEOTIDES[(i >> 2) & 0b11];
         let n4 = NUCLEOTIDES[i & 0b11];
-        
+
         let idx = calculate_index(n1, n2, n3, n4);
         table[idx] = generate_nt4_value(n1, n2, n3, n4);
-        
+
         i += 1;
     }
     table
 }
 
 const NT4_DIMSIZE: usize = (b'T' - b'A' + 1) as usize;
-const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] = generate_nt4_table();
+const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
+    generate_nt4_table();
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
