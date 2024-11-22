@@ -1,6 +1,7 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
-use core::str;
+use threadpool::ThreadPool;
+use std::sync::Arc;
 use fs2::FileExt;
 use itertools::Itertools;
 use linya::Progress;
@@ -13,13 +14,15 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
-use KMER_Select::kmc::{self, Dump, ThreadState, Worker};
+use KMER_Select::kmc::{self, Dump, ThreadState};
 use KMER_Select::kmer::{Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 
 const KMER_SIZE: usize = 31;
 const THREADS: usize = 12;
 const WORKER_THREADS: usize = THREADS - 1;
+const NLO_RESULTS: usize = 50_000;
+const NHI_RESULTS: usize = 2_000;
 const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
 
 fn process_kmc_file(path_out: &Path) -> (PathBuf, PathBuf) {
@@ -62,13 +65,15 @@ fn create_feature_writer(path_out: &Path, ref_features: &[u128]) -> BufWriter<Fi
     feature_writer
 }
 
+
 fn extract_features(
     file: File,
-    workers: &[Worker<SmallRng>],
+    thread_states: &[Arc<ThreadState<SmallRng>>],
+    thread_pool: &ThreadPool,
     config: &kmc::Config,
 ) -> (Vec<u128>, Vec<u128>) {
     let kmc_parser: Dump<KMER_SIZE> = Dump::new(*config);
-    let (min_heap, max_heap) = kmc_parser.featurise(file, workers).unwrap();
+    let (min_heap, max_heap) = kmc_parser.featurise(file, thread_pool, thread_states).unwrap();
 
     let min_features: Vec<u128> = min_heap
         .iter()
@@ -84,11 +89,12 @@ fn extract_features(
 
 fn process_query(
     query_file: File,
-    query_workers: &[Worker<SmallRng>],
+    thread_states: &[Arc<ThreadState<SmallRng>>],
+    thread_pool: &ThreadPool,
     query_parser: &Dump<KMER_SIZE>,
     query_features: &mut HashMap<u128, u16, BuildHasherDefault<FxHasher>>,
 ) {
-    let (min_heap, max_heap) = query_parser.featurise(query_file, query_workers).unwrap();
+    let (min_heap, max_heap) = query_parser.featurise(query_file, thread_pool, thread_states).unwrap();
 
     for heap_item in min_heap.iter().chain(max_heap.iter()) {
         let encoded = EncodedKMER::from_bits(*heap_item);
@@ -143,35 +149,23 @@ fn main() {
     let ref_file = File::open(kmc_path_dump).unwrap();
     let _lock = ref_file.lock_shared();
 
-    let init_config = kmc::Config {
-        seed: 0,
-        threads: THREADS,
-        chunk_size: CHUNK_SIZE,
-        nlo_results: 50_000,
-        nhi_results: 10_000,
-    };
+    let init_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS, NHI_RESULTS);
+    let thread_pool = ThreadPool::new(WORKER_THREADS);
 
-    // Create persistent workers
-    let workers: Vec<Worker<SmallRng>> = (0..WORKER_THREADS)
-        .map(|thread_idx| {
-            Worker::new(
-                thread_idx,
-                ThreadState::<SmallRng>::from_entropy(
-                    init_config.nlo_results,
-                    init_config.nhi_results,
-                    init_config.chunk_size,
-                ),
-            )
+    // Create persistent thread states
+    let thread_states: Vec<Arc<ThreadState<SmallRng>>> = (0..WORKER_THREADS)
+        .map(|_| {
+            Arc::new(ThreadState::<SmallRng>::from_entropy(
+                init_config.nlo_results,
+                init_config.nhi_results,
+                init_config.chunk_size,
+            ))
         })
         .collect();
 
     let dump_start = std::time::Instant::now();
-    let (min_features, max_features) = extract_features(ref_file, &workers, &init_config);
+    let (min_features, max_features) = extract_features(ref_file, &thread_states, &thread_pool, &init_config);
     let ref_features: Vec<u128> = min_features.into_iter().chain(max_features).collect();
-    // let _ = println!(
-    //     "Query,{}",
-    //     ref_features.iter().map(|c| unsafe { CODEC.decode(*c) } ).join(",")
-    // );
     println!("Dump file time: {:.3}s", dump_start.elapsed().as_secs_f64());
     println!("Features found: {}", ref_features.len());
 
@@ -192,26 +186,16 @@ fn main() {
         })
         .collect();
 
-    let query_config = kmc::Config {
-        seed: 0,
-        threads: WORKER_THREADS,
-        chunk_size: CHUNK_SIZE,
-        nlo_results: init_config.nlo_results * 10,
-        nhi_results: init_config.nhi_results * 10,
-    };
+    let query_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS * 10, NHI_RESULTS * 10);
 
-    // Create new workers with updated config
-    drop(workers);
-    let query_workers: Vec<Worker<SmallRng>> = (0..WORKER_THREADS)
-        .map(|thread_idx| {
-            Worker::new(
-                thread_idx,
-                ThreadState::<SmallRng>::from_entropy(
-                    query_config.nlo_results,
-                    query_config.nhi_results,
-                    query_config.chunk_size,
-                ),
-            )
+    // Create new thread states with updated config
+    let query_states: Vec<Arc<ThreadState<SmallRng>>> = (0..WORKER_THREADS)
+        .map(|_| {
+            Arc::new(ThreadState::<SmallRng>::from_entropy(
+                query_config.nlo_results,
+                query_config.nhi_results,
+                query_config.chunk_size,
+            ))
         })
         .collect();
 
@@ -232,7 +216,7 @@ fn main() {
         let out_path = pair.0.parent().unwrap();
         let kmc_path_dump = out_path.join("kmc_dump").with_extension("txt");
 
-        query_workers.iter().for_each(|worker| worker.state.reset());
+        query_states.iter().for_each(|state| state.reset());
         query_features.clear();
 
         let query_file = File::open(&kmc_path_dump).unwrap();
@@ -240,7 +224,8 @@ fn main() {
 
         process_query(
             query_file,
-            &query_workers,
+            &query_states,
+            &thread_pool,
             &query_parser,
             &mut query_features,
         );
@@ -251,7 +236,7 @@ fn main() {
         progress.set_and_draw(&bar, idx);
     }
 
-    // Process reference files
+    // Process reference files section remains largely the same with updated process_query calls
     let path_ref = Path::new("data/temp");
     let ref_files: Vec<PathBuf> = WalkDir::new(path_ref)
         .into_iter()
@@ -275,7 +260,7 @@ fn main() {
         let out_path = entry_path.parent().unwrap();
         let kmc_path_dump = out_path.join("kmc_dump");
 
-        query_workers.iter().for_each(|worker| worker.state.reset());
+        query_states.iter().for_each(|state| state.reset());
         query_features.clear();
 
         let query_file = File::open(&kmc_path_dump).unwrap();
@@ -283,7 +268,8 @@ fn main() {
 
         process_query(
             query_file,
-            &query_workers,
+            &query_states,
+            &thread_pool,
             &query_parser,
             &mut query_features,
         );
