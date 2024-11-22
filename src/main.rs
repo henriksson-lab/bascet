@@ -1,7 +1,6 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
 use bio::io::{fasta, fastq};
-use KMER_Select::kmc::{self, ThreadState};
 use core::str;
 use fs2::FileExt;
 use itertools::Itertools;
@@ -28,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::{ptr, thread, u8};
 use walkdir::{DirEntry, WalkDir};
 use KMER_Select::bounded_heap::{prelude::*, BoundedMaxHeap, BoundedMinHeap};
+use KMER_Select::kmc::{self, ThreadState};
 use KMER_Select::kmer::{self, Codec, EncodedKMER};
 use KMER_Select::simulate::ISSRunner;
 use KMER_Select::utils;
@@ -84,32 +84,34 @@ fn main() {
     let n_smallest = 50_000;
     let n_largest = 1_000;
 
-
     let thread_pool = ThreadPoolBuilder::new()
         .num_threads(THREADS)
         .build()
         .unwrap();
 
     // +1 because the floating point is truncated -> rounded down
-    let n_smallest_thread_local = (n_smallest / WORKER_THREADS) + 1;
-    let n_largest_thread_local = (n_largest / WORKER_THREADS) + 1;
+    let n_smallest_thread_local = (n_smallest) + 1;
+    let n_largest_thread_local = (n_largest) + 1;
 
     let thread_states: Vec<ThreadState> = (0..WORKER_THREADS)
         .map(|_| ThreadState {
             rng: UnsafeCell::new(SmallRng::from_entropy()),
             min_heap: UnsafeCell::new(BoundedMinHeap::with_capacity(n_smallest_thread_local)),
             max_heap: UnsafeCell::new(BoundedMaxHeap::with_capacity(n_largest_thread_local)),
-        }).collect();
-    
+        })
+        .collect();
+
     let dump_start = std::time::Instant::now();
-    
+
     let kmc_parser = kmc::Dump::<KMER_SIZE>::new();
-    let extracted_features = kmc_parser.featurise(ref_file, &thread_states, &thread_pool).unwrap();
-    let ref_features: Vec<u128> = extracted_features.iter().map(|c| EncodedKMER::from_bits(*c).kmer() ).collect();
-    println!(
-        "Dump file time: {:.2}s",
-        dump_start.elapsed().as_secs_f64()
-    );
+    let extracted_features = kmc_parser
+        .featurise(ref_file, &thread_states, &thread_pool)
+        .unwrap();
+    let ref_features: Vec<u128> = extracted_features
+        .iter()
+        .map(|c| EncodedKMER::from_bits(*c).kmer())
+        .collect();
+    println!("Dump file time: {:.8}s", dump_start.elapsed().as_secs_f64());
 
     println!("Features found: {}", ref_features.len());
 
