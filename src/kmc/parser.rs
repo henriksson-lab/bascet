@@ -103,7 +103,6 @@ impl<const K: usize> Dump<K> {
 
         io_handle.join().unwrap();
 
-        // Merge results same as before...
         let mut final_min_heap = BoundedMinHeap::with_capacity(self.config.nlo_results);
         let mut final_max_heap = BoundedMaxHeap::with_capacity(self.config.nhi_results);
 
