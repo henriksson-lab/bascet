@@ -67,7 +67,7 @@ impl<const K: usize> Dump<K> {
         let rx = Arc::new(rx);
         let pool_size = thread_pool.max_count();
         assert!(pool_size >= 2);
-
+        assert!(pool_size == self.config.work_threads);
         // Launch I/O thread
         let io_handle = thread::spawn({
             let tx = tx.clone();
