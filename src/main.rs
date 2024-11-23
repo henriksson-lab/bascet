@@ -14,10 +14,10 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
-use KMER_Select::kmc::{self, Dump, ThreadState};
-use KMER_Select::kmer::{Codec, EncodedKMER};
-use KMER_Select::simulate::ISSRunner;
 use std::time::Instant;
+use ROBERT::kmc::{self, Dump, ThreadState};
+use ROBERT::kmer::{Codec, EncodedKMER};
+use ROBERT::simulate::ISSRunner;
 
 const KMER_SIZE: usize = 31;
 const THREADS: usize = 12;
@@ -177,7 +177,7 @@ fn convert_fasta_to_fastq(fasta_path: &Path) {
 
 fn main() {
     let total_start = Instant::now();
-    println!("🧬 Starting KMer Analysis");
+    println!("🧬 Starting ROBERT");
     println!("  → Configuration: {} threads, {}bp kmers", THREADS, KMER_SIZE);
     
     const CHUNK_SIZE: usize = 524288;
