@@ -25,6 +25,7 @@ const WORKER_THREADS: usize = THREADS - 1;
 const NLO_RESULTS: usize = 50_000;
 const NHI_RESULTS: usize = 0;
 const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
+const CHUNK_SIZE: usize = 524288;
 
 struct ProcessResult {
     kmc_path: PathBuf,
@@ -179,9 +180,7 @@ fn main() {
     let total_start = Instant::now();
     println!("🧬 Starting ROBERT");
     println!("  → Configuration: {} threads, {}bp kmers", THREADS, KMER_SIZE);
-    
-    const CHUNK_SIZE: usize = 524288;
-    const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
+
     let path_out = Path::new("simulated/1K");
     
     // Step 1: KMC Processing
@@ -215,9 +214,10 @@ fn main() {
     let feature_result = extract_features(ref_file, &thread_states, &thread_pool, &init_config);
     println!("✓ Feature extraction completed in {:.2}s", feature_result.extraction_time);
 
-    let ref_features: Vec<u128> = feature_result.min_features.into_iter()
-        .chain(feature_result.max_features)
-        .collect();
+    let ref_features: Vec<u128> = 
+        feature_result.min_features.into_iter()
+            .chain(feature_result.max_features)
+            .collect();
     println!("  → Total features identified: {}", ref_features.len());
 
     // Step 3: Feature Writer Creation
