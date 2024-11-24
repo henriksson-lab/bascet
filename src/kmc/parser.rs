@@ -67,59 +67,59 @@ impl<const K: usize> Dump<K> {
         let rx = Arc::new(rx);
         let pool_size = thread_pool.max_count();
         assert!(pool_size >= 2);
-        assert!(pool_size == self.config.work_threads);
-        // Launch I/O thread
-        let io_handle = thread::spawn({
-            let tx = tx.clone();
-            let mmap = Arc::clone(&mmap);
-            let chunk_size = self.config.chunk_size;
-            move || {
-                let n_chunks = (mmap.len() + chunk_size - 1) / chunk_size;
-                for i in 0..n_chunks {
-                    let raw_start = i * chunk_size;
-                    let raw_end = min(
-                        raw_start + chunk_size + Self::OVERLAP_WINDOW_SIZE,
-                        mmap.len(),
-                    );
-                    let valid_start = Self::find_chunk_start(&mmap[raw_start..], raw_start);
-                    let valid_end = Self::find_chunk_end(&mmap[..raw_end], raw_end);
-                    tx.send(Some((valid_start, valid_end))).unwrap();
-                }
-                for _ in 0..pool_size {
-                    tx.send(None).unwrap();
-                }
+        assert!(pool_size == self.config.threads);
+
+        // Launch I/O work in thread pool
+        let io_tx = tx.clone();
+        let io_mmap = Arc::clone(&mmap);
+        let chunk_size = self.config.chunk_size;
+
+        thread_pool.execute(move || {
+            let n_chunks = (io_mmap.len() + chunk_size - 1) / chunk_size;
+            for i in 0..n_chunks {
+                let raw_start = i * chunk_size;
+                let raw_end = min(
+                    raw_start + chunk_size + Self::OVERLAP_WINDOW_SIZE,
+                    io_mmap.len(),
+                );
+                let valid_start = Self::find_chunk_start(&io_mmap[raw_start..], raw_start);
+                let valid_end = Self::find_chunk_end(&io_mmap[..raw_end], raw_end);
+                io_tx.send(Some((valid_start, valid_end))).unwrap();
+            }
+            for _ in 0..pool_size {
+                io_tx.send(None).unwrap();
             }
         });
         // Launch worker threads
-        assert!(thread_states.len() >= pool_size);
+        assert!(thread_states.len() == pool_size - 1);
 
-        for i in 0..pool_size {
+        let n_worker_threads = pool_size - 1;
+        for i in 0..n_worker_threads {
             let rx = Arc::clone(&rx);
             let mmap = Arc::clone(&mmap);
             let state = Arc::clone(&thread_states[i]);
             let codec = self.codec.clone();
-            
-            thread_pool.execute(move || while let Ok(Some((start, end))) = rx.recv() {
-                let chunk = &mmap[start..end];
-                unsafe {
-                    let rng = &mut *state.rng.get();
-                    let min_heap = &mut *state.min_heap.get();
-                    let max_heap = &mut *state.max_heap.get();
-                    let buffer = &mut *state.buffer.get();
-                    buffer.clear();
-                    buffer.extend_from_slice(chunk);
-                    Self::featurise_process_chunk(buffer, rng, min_heap, max_heap, &codec);
+
+            thread_pool.execute(move || {
+                while let Ok(Some((start, end))) = rx.recv() {
+                    let chunk = &mmap[start..end];
+                    unsafe {
+                        let rng = &mut *state.rng.get();
+                        let min_heap = &mut *state.min_heap.get();
+                        let max_heap = &mut *state.max_heap.get();
+                        let buffer = &mut *state.buffer.get();
+                        buffer.clear();
+                        buffer.extend_from_slice(chunk);
+                        Self::featurise_process_chunk(buffer, rng, min_heap, max_heap, &codec);
+                    }
                 }
             });
         }
-
-        io_handle.join().unwrap();
         thread_pool.join();
 
         // Merge results
         let mut final_min_heap = BoundedMinHeap::with_capacity(self.config.nlo_results);
         let mut final_max_heap = BoundedMaxHeap::with_capacity(self.config.nhi_results);
-
         for state in thread_states.iter() {
             unsafe {
                 final_min_heap.extend((&*state.min_heap.get()).iter().copied());
@@ -130,7 +130,7 @@ impl<const K: usize> Dump<K> {
         Ok((final_min_heap, final_max_heap))
     }
 
-    // Process a single chunk of data, extracting features from kmers
+    // Process a single chunk of data
     #[inline(always)]
     fn featurise_process_chunk(
         chunk: &[u8],
