@@ -12,10 +12,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::Arc;
 use std::time::Instant;
-use threadpool::ThreadPool;
-use walkdir::WalkDir;
 use threadpool::ThreadPool;
 use walkdir::WalkDir;
 use ROBERT::kmc::{self, Dump, ThreadState};
@@ -116,9 +113,6 @@ fn extract_features(
     let (min_heap, max_heap) = kmc_parser
         .featurise(file, thread_pool, thread_states)
         .unwrap();
-    let (min_heap, max_heap) = kmc_parser
-        .featurise(file, thread_pool, thread_states)
-        .unwrap();
 
     let min_features: Vec<u128> = min_heap
         .iter()
@@ -143,9 +137,6 @@ fn process_query(
     query_parser: &Dump<KMER_SIZE>,
     query_features: &mut HashMap<u128, u16, BuildHasherDefault<FxHasher>>,
 ) {
-    let (min_heap, max_heap) = query_parser
-        .featurise(query_file, thread_pool, thread_states)
-        .unwrap();
     let (min_heap, max_heap) = query_parser
         .featurise(query_file, thread_pool, thread_states)
         .unwrap();
@@ -252,9 +243,6 @@ fn main() {
         feature_result.extraction_time
     );
 
-    let ref_features: Vec<u128> = feature_result
-        .min_features
-        .into_iter()
     let ref_features: Vec<u128> = feature_result
         .min_features
         .into_iter()
