@@ -1,7 +1,5 @@
 use bio::io::fasta::Reader;
 use bio::io::fastq::Writer;
-use threadpool::ThreadPool;
-use std::sync::Arc;
 use fs2::FileExt;
 use itertools::Itertools;
 use linya::Progress;
@@ -13,8 +11,10 @@ use std::hash::BuildHasherDefault;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use walkdir::WalkDir;
+use std::sync::Arc;
 use std::time::Instant;
+use threadpool::ThreadPool;
+use walkdir::WalkDir;
 use ROBERT::kmc::{self, Dump, ThreadState};
 use ROBERT::kmer::{Codec, EncodedKMER};
 use ROBERT::simulate::ISSRunner;
@@ -35,7 +35,7 @@ struct ProcessResult {
 
 fn process_kmc_file(path_out: &Path) -> ProcessResult {
     let start = Instant::now();
-    
+
     let kmc_path = path_out.join("kmc");
     let kmc_path_dump = path_out.join("kmc_dump").with_extension("txt");
     let path_concatenated = ISSRunner::collect_dir(&path_out).unwrap();
@@ -72,7 +72,7 @@ struct FeatureWriterResult {
 
 fn create_feature_writer(path_out: &Path, ref_features: &[u128]) -> FeatureWriterResult {
     let start = Instant::now();
-    
+
     let feature_file = File::create(&path_out.join("features").with_extension("csv")).unwrap();
     let mut feature_writer = BufWriter::new(feature_file);
     let _ = writeln!(
@@ -83,7 +83,7 @@ fn create_feature_writer(path_out: &Path, ref_features: &[u128]) -> FeatureWrite
             .map(|kc| unsafe { CODEC.decode(*kc) })
             .join(",")
     );
-    
+
     FeatureWriterResult {
         writer: feature_writer,
         creation_time: start.elapsed().as_secs_f64(),
@@ -103,9 +103,11 @@ fn extract_features(
     config: &kmc::Config,
 ) -> ExtractFeaturesResult {
     let start = Instant::now();
-    
+
     let kmc_parser: Dump<KMER_SIZE> = Dump::new(*config);
-    let (min_heap, max_heap) = kmc_parser.featurise(file, thread_pool, thread_states).unwrap();
+    let (min_heap, max_heap) = kmc_parser
+        .featurise(file, thread_pool, thread_states)
+        .unwrap();
 
     let min_features: Vec<u128> = min_heap
         .iter()
@@ -130,7 +132,9 @@ fn process_query(
     query_parser: &Dump<KMER_SIZE>,
     query_features: &mut HashMap<u128, u16, BuildHasherDefault<FxHasher>>,
 ) {
-    let (min_heap, max_heap) = query_parser.featurise(query_file, thread_pool, thread_states).unwrap();
+    let (min_heap, max_heap) = query_parser
+        .featurise(query_file, thread_pool, thread_states)
+        .unwrap();
 
     for heap_item in min_heap.iter().chain(max_heap.iter()) {
         let encoded = EncodedKMER::from_bits(*heap_item);
@@ -179,17 +183,23 @@ fn convert_fasta_to_fastq(fasta_path: &Path) {
 fn main() {
     let total_start = Instant::now();
     println!("🧬 Starting ROBERT");
-    println!("  → Configuration: {} threads, {}bp kmers", THREADS, KMER_SIZE);
+    println!(
+        "  → Configuration: {} threads, {}bp kmers",
+        THREADS, KMER_SIZE
+    );
 
     let path_out = Path::new("simulated/1K");
-    
+
     // Step 1: KMC Processing
     println!("\n[1/4] Starting KMC processing...");
     println!("  → Collecting directory contents...");
     println!("  → Running KMC command...");
     println!("  → Processing KMC dump...");
     let kmc_result = process_kmc_file(path_out);
-    println!("✓ KMC processing completed in {:.2}s", kmc_result.processing_time);
+    println!(
+        "✓ KMC processing completed in {:.2}s",
+        kmc_result.processing_time
+    );
 
     // Step 2: Dump File Processing
     println!("\n[2/4] Processing dump file...");
@@ -212,24 +222,31 @@ fn main() {
 
     println!("  → Extracting features using {} threads...", THREADS);
     let feature_result = extract_features(ref_file, &thread_states, &thread_pool, &init_config);
-    println!("✓ Feature extraction completed in {:.2}s", feature_result.extraction_time);
+    println!(
+        "✓ Feature extraction completed in {:.2}s",
+        feature_result.extraction_time
+    );
 
-    let ref_features: Vec<u128> = 
-        feature_result.min_features.into_iter()
-            .chain(feature_result.max_features)
-            .collect();
+    let ref_features: Vec<u128> = feature_result
+        .min_features
+        .into_iter()
+        .chain(feature_result.max_features)
+        .collect();
     println!("  → Total features identified: {}", ref_features.len());
 
     // Step 3: Feature Writer Creation
     println!("\n[3/4] Creating feature output file...");
     let feature_writer_result = create_feature_writer(path_out, &ref_features);
-    println!("✓ Feature file created in {:.2}s", feature_writer_result.creation_time);
+    println!(
+        "✓ Feature file created in {:.2}s",
+        feature_writer_result.creation_time
+    );
     let mut feature_writer = feature_writer_result.writer;
 
     // Step 4: Process Comparison Files
     println!("\n[4/4] Processing comparison files...");
     let compare_start = Instant::now();
-    
+
     let compare: Vec<(PathBuf, PathBuf)> = WalkDir::new(path_out)
         .into_iter()
         .filter_map(|entry| {
@@ -243,7 +260,7 @@ fn main() {
             ))
         })
         .collect();
-    
+
     // Store the count before consuming the vector
     let compare_count = compare.len();
 
@@ -345,9 +362,15 @@ fn main() {
 
     let total_time = total_start.elapsed();
     println!("\n✨ Analysis complete!");
-    println!("  → Total processing time: {:.4}s", total_time.as_secs_f64());
+    println!(
+        "  → Total processing time: {:.4}s",
+        total_time.as_secs_f64()
+    );
     println!("  → Features processed: {}", ref_features.len());
     println!("  → Files analyzed: {}", compare_count + ref_count);
-    println!("  → Average time per file: {:.4}s", 
-        (total_time.as_secs_f64() - compare_start.elapsed().as_secs_f64()) / (compare_count + ref_count) as f64);
+    println!(
+        "  → Average time per file: {:.4}s",
+        (total_time.as_secs_f64() - compare_start.elapsed().as_secs_f64())
+            / (compare_count + ref_count) as f64
+    );
 }
