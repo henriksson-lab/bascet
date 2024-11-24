@@ -12,7 +12,10 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::Arc;
 use std::time::Instant;
+use threadpool::ThreadPool;
+use walkdir::WalkDir;
 use threadpool::ThreadPool;
 use walkdir::WalkDir;
 use ROBERT::kmc::{self, Dump, ThreadState};
@@ -26,6 +29,7 @@ const WORKER_THREADS: usize = THREADS - 1;
 const NLO_RESULTS: usize = 100_000;
 const NHI_RESULTS: usize = 0;
 const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
+const CHUNK_SIZE: usize = 524288;
 
 struct ProcessResult {
     kmc_path: PathBuf,
@@ -35,6 +39,7 @@ struct ProcessResult {
 
 fn process_kmc_file(path_out: &Path) -> ProcessResult {
     let start = Instant::now();
+
 
     let kmc_path = path_out.join("kmc");
     let kmc_path_dump = path_out.join("kmc_dump").with_extension("txt");
@@ -73,6 +78,7 @@ struct FeatureWriterResult {
 fn create_feature_writer(path_out: &Path, ref_features: &[u128]) -> FeatureWriterResult {
     let start = Instant::now();
 
+
     let feature_file = File::create(&path_out.join("features").with_extension("csv")).unwrap();
     let mut feature_writer = BufWriter::new(feature_file);
     let _ = writeln!(
@@ -83,6 +89,7 @@ fn create_feature_writer(path_out: &Path, ref_features: &[u128]) -> FeatureWrite
             .map(|kc| unsafe { CODEC.decode(*kc) })
             .join(",")
     );
+
 
     FeatureWriterResult {
         writer: feature_writer,
@@ -104,7 +111,11 @@ fn extract_features(
 ) -> ExtractFeaturesResult {
     let start = Instant::now();
 
+
     let kmc_parser: Dump<KMER_SIZE> = Dump::new(*config);
+    let (min_heap, max_heap) = kmc_parser
+        .featurise(file, thread_pool, thread_states)
+        .unwrap();
     let (min_heap, max_heap) = kmc_parser
         .featurise(file, thread_pool, thread_states)
         .unwrap();
@@ -132,6 +143,9 @@ fn process_query(
     query_parser: &Dump<KMER_SIZE>,
     query_features: &mut HashMap<u128, u16, BuildHasherDefault<FxHasher>>,
 ) {
+    let (min_heap, max_heap) = query_parser
+        .featurise(query_file, thread_pool, thread_states)
+        .unwrap();
     let (min_heap, max_heap) = query_parser
         .featurise(query_file, thread_pool, thread_states)
         .unwrap();
@@ -203,6 +217,10 @@ fn main() {
         "✓ KMC processing completed in {:.2}s",
         kmc_result.processing_time
     );
+    println!(
+        "✓ KMC processing completed in {:.2}s",
+        kmc_result.processing_time
+    );
 
     // Step 2: Dump File Processing
     println!("\n[2/4] Processing dump file...");
@@ -229,7 +247,14 @@ fn main() {
         "✓ Feature extraction completed in {:.2}s",
         feature_result.extraction_time
     );
+    println!(
+        "✓ Feature extraction completed in {:.2}s",
+        feature_result.extraction_time
+    );
 
+    let ref_features: Vec<u128> = feature_result
+        .min_features
+        .into_iter()
     let ref_features: Vec<u128> = feature_result
         .min_features
         .into_iter()
@@ -244,11 +269,16 @@ fn main() {
         "✓ Feature file created in {:.2}s",
         feature_writer_result.creation_time
     );
+    println!(
+        "✓ Feature file created in {:.2}s",
+        feature_writer_result.creation_time
+    );
     let mut feature_writer = feature_writer_result.writer;
 
     // Step 4: Process Comparison Files
     println!("\n[4/4] Processing comparison files...");
     let compare_start = Instant::now();
+
 
     let compare: Vec<(PathBuf, PathBuf)> = WalkDir::new(path_out)
         .into_iter()
@@ -263,6 +293,7 @@ fn main() {
             ))
         })
         .collect();
+
 
     // Store the count before consuming the vector
     let compare_count = compare.len();
@@ -393,6 +424,10 @@ fn main() {
         "  → Total processing time: {:.4}s",
         total_time.as_secs_f64()
     );
+    println!(
+        "  → Total processing time: {:.4}s",
+        total_time.as_secs_f64()
+    );
     println!("  → Features processed: {}", ref_features.len());
     println!("  → Files analyzed: {}", compare_count);
     println!(
@@ -401,3 +436,4 @@ fn main() {
             / (compare_count) as f64
     );
 }
+
