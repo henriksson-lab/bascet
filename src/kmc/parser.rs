@@ -98,17 +98,19 @@ impl<const K: usize> Dump<K> {
             let mmap = Arc::clone(&mmap);
             let state = Arc::clone(&thread_states[i]);
             let codec = self.codec.clone();
-            
-            thread_pool.execute(move || while let Ok(Some((start, end))) = rx.recv() {
-                let chunk = &mmap[start..end];
-                unsafe {
-                    let rng = &mut *state.rng.get();
-                    let min_heap = &mut *state.min_heap.get();
-                    let max_heap = &mut *state.max_heap.get();
-                    let buffer = &mut *state.buffer.get();
-                    buffer.clear();
-                    buffer.extend_from_slice(chunk);
-                    Self::featurise_process_chunk(buffer, rng, min_heap, max_heap, &codec);
+
+            thread_pool.execute(move || {
+                while let Ok(Some((start, end))) = rx.recv() {
+                    let chunk = &mmap[start..end];
+                    unsafe {
+                        let rng = &mut *state.rng.get();
+                        let min_heap = &mut *state.min_heap.get();
+                        let max_heap = &mut *state.max_heap.get();
+                        let buffer = &mut *state.buffer.get();
+                        buffer.clear();
+                        buffer.extend_from_slice(chunk);
+                        Self::featurise_process_chunk(buffer, rng, min_heap, max_heap, &codec);
+                    }
                 }
             });
         }
