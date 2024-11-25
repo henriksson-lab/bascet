@@ -26,7 +26,8 @@ const WORKER_THREADS: usize = THREADS - 1;
 const NLO_RESULTS: usize = 100_000;
 const NHI_RESULTS: usize = 0;
 const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
-const CHUNK_SIZE: usize = 524288;
+// floor(huge page size / worker threads) - overlap window size => fetches memmap as one huge memmap
+const CHUNK_SIZE: usize = ((2048 * 1024) / WORKER_THREADS) - KMER_SIZE + 1 + 10 + 1;
 
 struct ProcessResult {
     kmc_path: PathBuf,
@@ -192,34 +193,25 @@ fn main() {
         "  → Configuration: {} threads, {}bp kmers",
         THREADS, KMER_SIZE
     );
-
-    const CHUNK_SIZE: usize = 524288;
-    const CODEC: Codec<KMER_SIZE> = Codec::<KMER_SIZE>::new();
     let path_out = Path::new("simulated/10K");
     // let path_in = Path::new("./data/all.fa");
     // let sim = ISSRunner::simulate(path_in, path_out, 256, 10_000);
     // Step 1: KMC Processing
     println!("\n[1/4] Starting KMC processing...");
     println!("  → Collecting directory contents...");
-    println!("  → Running KMC command...");
-    println!("  → Processing KMC dump...");
+    println!("  → Running KMC dump...");
     let kmc_result = process_kmc_file(path_out);
     println!(
         "✓ KMC processing completed in {:.2}s",
         kmc_result.processing_time
     );
-    println!(
-        "✓ KMC processing completed in {:.2}s",
-        kmc_result.processing_time
-    );
-
     // Step 2: Dump File Processing
     println!("\n[2/4] Processing dump file...");
     let ref_file = File::open(&kmc_result.kmc_path_dump).unwrap();
     let _lock = ref_file.lock_shared();
 
     let init_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS, NHI_RESULTS);
-    let thread_pool = ThreadPool::new(WORKER_THREADS);
+    let thread_pool = ThreadPool::new(THREADS);
 
     println!("  → Initializing thread states...");
     let thread_states: Vec<Arc<ThreadState<SmallRng>>> = (0..WORKER_THREADS)
@@ -234,10 +226,6 @@ fn main() {
 
     println!("  → Extracting features using {} threads...", THREADS);
     let feature_result = extract_features(ref_file, &thread_states, &thread_pool, &init_config);
-    println!(
-        "✓ Feature extraction completed in {:.2}s",
-        feature_result.extraction_time
-    );
     println!(
         "✓ Feature extraction completed in {:.2}s",
         feature_result.extraction_time
@@ -257,16 +245,12 @@ fn main() {
         "✓ Feature file created in {:.2}s",
         feature_writer_result.creation_time
     );
-    println!(
-        "✓ Feature file created in {:.2}s",
-        feature_writer_result.creation_time
-    );
+
     let mut feature_writer = feature_writer_result.writer;
 
     // Step 4: Process Comparison Files
     println!("\n[4/4] Processing comparison files...");
     let compare_start = Instant::now();
-
 
     let compare: Vec<(PathBuf, PathBuf)> = WalkDir::new(path_out)
         .into_iter()
