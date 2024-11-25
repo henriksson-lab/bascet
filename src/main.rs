@@ -184,10 +184,9 @@ fn convert_fasta_to_fastq(fasta_path: &Path) {
 }
 
 fn main() {
-    let path = Path::new("data/aligned.sortedbyname.bam");
-    let file = File::open(&path).unwrap();
+    let path = Path::new("./data/aligned.sortedbyname.bam");
     let out = Path::new("aligned.sortedbyname.bam").join("chunks");
-    bam::Reader::create_cell_index(file, &out);
+    bam::Reader::create_cell_index(path, &out);
     // let total_start = Instant::now();
     // println!("🧬 Starting ROBERT");
     // println!(

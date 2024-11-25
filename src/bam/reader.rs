@@ -9,11 +9,11 @@ impl Reader {
         Self {}
     }
 
-    pub fn create_cell_index<P>(file: File, out_path: &P) 
+    pub fn create_cell_index<P>(file: P, out: P) 
     where
         P: AsRef<std::path::Path>
     {
-        let mut bgzf = bgzf::Reader::from_path(out_path).unwrap();
+        let mut bgzf = bgzf::Reader::from_path(file).unwrap();
         let mut buffer = [0u8; 4];
         let mut name_buffer = Vec::new();
 
