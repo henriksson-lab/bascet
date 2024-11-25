@@ -15,11 +15,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use threadpool::ThreadPool;
 use walkdir::WalkDir;
+use ROBERT::bam;
 use ROBERT::kmc::{self, ArcDefaultThreadState, Dump, ThreadState};
 use ROBERT::kmer::{Codec, EncodedKMER};
 use ROBERT::simulate::ISSRunner;
 use ROBERT::utils;
-use ROBERT::bam;
 
 const KMER_SIZE: usize = 31;
 const THREADS: usize = 12;
