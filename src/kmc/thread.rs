@@ -1,5 +1,7 @@
 use crate::bounded_heap::{BoundedMaxHeap, BoundedMinHeap};
-use std::cell::UnsafeCell;
+use std::{cell::UnsafeCell, sync::Arc};
+
+pub type ArcDefaultThreadState = Arc<ThreadState<rand::rngs::SmallRng>>;
 
 pub struct ThreadState<R: rand::Rng> {
     pub rng: std::cell::UnsafeCell<R>,
