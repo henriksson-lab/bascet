@@ -3,9 +3,9 @@ use rust_htslib::bam;
 use rust_htslib::bam::Read;
 use std::collections::HashSet;
 
-pub struct Chunk {
-    start: 
-}
+// pub struct Chunk {
+//     start: 
+// }
 
 pub struct Reader {
 
@@ -32,7 +32,7 @@ impl Reader {
         let mut record = bam::Record::new();
 
         while let Some(Ok(())) = bam.read(&mut record) {
-            println!(record.tid())
+            println!("{}", record.tid())
         }
         Ok(())
     }
