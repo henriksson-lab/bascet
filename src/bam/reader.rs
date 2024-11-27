@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux, Read};
 use std::collections::HashSet;
 
@@ -21,18 +21,18 @@ impl Reader {
         let mut record = rust_htslib::bam::Record::new();
         
         loop {
-            let start = bam.tell();
+            let start = unsafe { htslib::bgzf_tell(bam.inner()) };
             match bam.read(&mut record) {
                 Some(Ok(())) => {
-                    let end = bam.tell();
-                    if let Ok(aux) = record.aux(b"CB") {
+                    let end = unsafe { htslib::bgzf_tell(bam.inner()) };
+                    if let Ok(Some(aux)) = record.aux(b"CB") {
                         if let rust_htslib::bam::record::Aux::String(cb_str) = aux {
                             println!("start: {}, end: {}, CB:Z:{}", start, end, cb_str);
                         }
                     }
                 },
                 None => break,
-                Some(Err(_)) => return anyhow::bail!("Err"),
+                Some(Err(e)) => return Err(e),
             }
         }
        
