@@ -1,6 +1,5 @@
 use anyhow::Result;
-use rust_htslib::bam;
-use rust_htslib::bam::Read;
+use rust_htslib::cram;
 use std::collections::HashSet;
 
 // pub struct Chunk {
@@ -20,20 +19,12 @@ impl Reader {
     where
         P: AsRef<std::path::Path>,
     {
-        let mut bam = bam::Reader::from_path(file)?;
-        // not important right now
-        // let names: Vec<_> = bam
-        //     .header()
-        //     .target_names()
-        //     .iter()
-        //     .map(|n| String::from_utf8_lossy(n).to_string())
-        //     .collect();
-
-        let mut record = bam::Record::new();
-
-        while let Some(Ok(())) = bam.read(&mut record) {
-            println!("{}", String::from_utf8(record.qname().to_vec()).unwrap())
+        let mut cram = cram::Reader::from_path(file)?;
+        let mut record = cram::Record::new();
+        while let Some(Ok(())) = cram.read(&mut record) {
+            println!("{}", record.tid())
         }
+
         Ok(())
     }
 }
