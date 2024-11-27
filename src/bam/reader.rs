@@ -26,7 +26,9 @@ impl Reader {
             if let Ok(aux) = record.aux(b"CB") {
                 if let bam::record::Aux::String(cb_str) = aux {
                     if seen_barcodes.insert(cb_str.to_string()) {
-                        println!("{}", cb_str);
+                      
+                    } else {
+                        println("was not in sequence");
                     }
                 }
             }
