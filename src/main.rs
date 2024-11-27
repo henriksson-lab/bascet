@@ -184,7 +184,7 @@ fn convert_fasta_to_fastq(fasta_path: &Path) {
 }
 
 fn main() {
-    let path = Path::new("./data/aligned.sortedbyname.bam");
+    let path = Path::new("./data/240809_novaseq_wgs1.cram");
     let out = Path::new("aligned.sortedbyname.bam").join("chunks");
     bam::Reader::create_cell_index(path, &out);
     // let total_start = Instant::now();
