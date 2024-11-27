@@ -32,7 +32,7 @@ impl Reader {
         let mut record = bam::Record::new();
 
         while let Some(Ok(())) = bam.read(&mut record) {
-            println!("{}", record.tid())
+            println!("{}", String::from_utf8(record.qname().to_vec()).unwrap())
         }
         Ok(())
     }
