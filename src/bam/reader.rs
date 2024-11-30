@@ -1,14 +1,15 @@
 use anyhow::Result;
-use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux, Read};
+use rust_htslib::{
+    bam::{self, ext::BamRecordExtensions, record::Aux, Read},
+    htslib,
+};
 use std::collections::HashSet;
 
 // pub struct Chunk {
-//     start: 
+//     start:
 // }
 
-pub struct Reader {
-
-}
+pub struct Reader {}
 impl Reader {
     pub fn new() -> Self {
         Self {}
@@ -19,23 +20,15 @@ impl Reader {
     {
         let mut bam = rust_htslib::bam::Reader::from_path(file)?;
         let mut record = rust_htslib::bam::Record::new();
-        
-        loop {
-            let start = unsafe { htslib::bgzf_tell(bam.inner()) };
-            match bam.read(&mut record) {
-                Some(Ok(())) => {
-                    let end = unsafe { htslib::bgzf_tell(bam.inner()) };
-                    if let Ok(Some(aux)) = record.aux(b"CB") {
-                        if let rust_htslib::bam::record::Aux::String(cb_str) = aux {
-                            println!("start: {}, end: {}, CB:Z:{}", start, end, cb_str);
-                        }
-                    }
-                },
-                None => break,
-                Some(Err(e)) => return Err(e),
+
+        while let Some(Ok(_)) = bam.read(&mut record) {
+            if let Ok(aux) = record.aux(b"CB") {
+                if let Aux::String(cb_str) = aux {
+                    println!("{:?}", record.qual());
+                }
             }
         }
-       
+
         Ok(())
     }
 }
