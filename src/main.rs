@@ -67,7 +67,6 @@ fn process_kmc_file(path_out: &Path) -> ProcessResult {
         processing_time: start.elapsed().as_secs_f64(),
     }
 }
-
 struct FeatureWriterResult {
     writer: BufWriter<File>,
     creation_time: f64,
@@ -184,9 +183,12 @@ fn convert_fasta_to_fastq(fasta_path: &Path) {
 }
 
 fn main() {
-    let path = Path::new("./data/240809_novaseq_wgs1.cram");
+    // let path = Path::new("./data/240809_novaseq_wgs1.sorted.cram");
+    let path = Path::new("./data/240701_wgs_atcc1.sorted.cram");
     let out = Path::new("aligned.sortedbyname.bam").join("chunks");
-    bam::Reader::create_cell_index(path, &out);
+
+    let thread_pool = ThreadPool::new(THREADS);
+    let _ = bam::Reader::create_cell_index(path, 6, 6);
     // let total_start = Instant::now();
     // println!("🧬 Starting ROBERT");
     // println!(
