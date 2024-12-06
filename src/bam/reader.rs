@@ -34,7 +34,7 @@ impl Reader {
         P: AsRef<std::path::Path>,
     {
         let read_pool = rust_htslib::tpool::ThreadPool::new(n_read_threads).unwrap();
-        let (tx, rx) = bounded::<CBBatch>(64);
+        let (tx, rx) = bounded::<Option<CBBatch>>(64);
         
         let mut bam = rust_htslib::bam::Reader::from_path(file)?;
         bam.set_thread_pool(&read_pool)?;
@@ -54,7 +54,7 @@ impl Reader {
                                     cb: current_cb.clone(),
                                     sequences: current_sequences,
                                 };
-                                let _ = tx.send(batch);
+                                let _ = tx.send(Some(batch));
                                 current_sequences = Vec::new();
                             }
                             
@@ -67,10 +67,14 @@ impl Reader {
             
             // Send final batch
             if !current_sequences.is_empty() {
-                let _ = tx.send(CBBatch {
+                let _ = tx.send(Some(CBBatch {
                     cb: current_cb,
                     sequences: current_sequences,
-                });
+                }));
+            }
+            // Send None to all worker threads to allow cleanup
+            for _ in 0..n_write_threads {
+                let _ = tx.send(None);
             }
         });
 
@@ -81,7 +85,7 @@ impl Reader {
         let tar_file = File::create(tar_path).expect("Failed to create tar file");
         let builder = Arc::new(Mutex::new(tar::Builder::new(tar_file)));
 
-        while let Ok(batch) = rx.recv() {
+        while let Ok(Some(batch)) = rx.recv() {
             let builder = Arc::clone(&builder);
             write_pool.execute(move || {
                 let cb = String::from_utf8_lossy(&batch.cb);
@@ -106,7 +110,10 @@ impl Reader {
                         let status = Command::new("spades.py")
                             .arg("-s").arg(&reads_path)
                             .arg("--isolate")
+                            .arg("-t").arg("1")
                             .arg("-o").arg(&spades_out_dir)
+                            .stdout(std::process::Stdio::null())  // Redirect stdout to null
+                            .stderr(std::process::Stdio::null())
                             .status()
                             .expect("Failed to execute SPAdes");
                         
@@ -133,13 +140,13 @@ impl Reader {
                 }
             });
         }
+        write_pool.join();
+
         if let Ok(mut builder) = builder.lock() {
             if let Err(e) = builder.finish() {
                 eprintln!("Failed to finish tar file: {}", e);
             }
         }
-
-        write_pool.join();
         Ok(())
     }
 }
