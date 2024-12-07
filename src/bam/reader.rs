@@ -112,8 +112,8 @@ impl Reader {
                             .arg("--isolate")
                             .arg("-t").arg("1")
                             .arg("-o").arg(&spades_out_dir)
-                            .stdout(std::process::Stdio::null())  // Redirect stdout to null
-                            .stderr(std::process::Stdio::null())
+                            // .stdout(std::process::Stdio::null())  // Redirect stdout to null
+                            // .stderr(std::process::Stdio::null())
                             .status()
                             .expect("Failed to execute SPAdes");
                         
