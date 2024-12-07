@@ -184,11 +184,9 @@ fn convert_fasta_to_fastq(fasta_path: &Path) {
 
 fn main() {
     // let path = Path::new("./data/240809_novaseq_wgs1.sorted.cram");
-    let path = Path::new("./data/240701_wgs_atcc1.sorted.cram");
-    let out = Path::new("aligned.sortedbyname.bam").join("chunks");
-
-    let thread_pool = ThreadPool::new(THREADS);
-    let _ = bam::Reader::create_cell_index(path, 6, 6);
+    // let path = Path::new("./data/240701_wgs_atcc1.sorted.cram");
+    let path = Path::new("./data/foo_sorted_10000000.cram");
+    let _ = bam::Reader::create_cell_index(path, 1, 11);
     // let total_start = Instant::now();
     // println!("🧬 Starting ROBERT");
     // println!(
