@@ -141,7 +141,7 @@ impl Reader {
             });
         }
         write_pool.join();
-        //test
+        
         if let Ok(mut builder) = builder.lock() {
             if let Err(e) = builder.finish() {
                 eprintln!("Failed to finish tar file: {}", e);
