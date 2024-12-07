@@ -14,7 +14,6 @@ use crate::bounded_heap::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap};
 use super::ThreadState;
 
 // Global uniform distribution for kmer encoding - thread-safe and initialized on first use
-static RANGE: LazyLock<Uniform<u16>> = LazyLock::new(|| Uniform::from(u16::MIN..=u16::MAX));
 
 #[derive(Clone, Copy)]
 pub struct Config {
