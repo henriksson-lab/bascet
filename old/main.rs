@@ -187,139 +187,183 @@ fn main() {
     // let path = Path::new("./data/240701_wgs_atcc1.sorted.cram");
     let path = Path::new("./data/foo_sorted_10000000.cram");
     let _ = bam::Reader::create_cell_index(path, 1, 11);
-    // let total_start = Instant::now();
-    // println!("🧬 Starting ROBERT");
-    // println!(
-    //     "  → Configuration: {} threads, {}bp kmers",
-    //     THREADS, KMER_SIZE
-    // );
-    // let path_out = Path::new("simulated/10K");
-    // // let path_in = Path::new("./data/all.fa");
-    // // let sim = ISSRunner::simulate(path_in, path_out, 256, 10_000);
-    // // Step 1: KMC Processing
-    // println!("\n[1/4] Starting KMC processing...");
-    // println!("  → Collecting directory contents...");
-    // println!("  → Running KMC dump...");
-    // let kmc_result = process_kmc_file(path_out);
-    // println!(
-    //     "✓ KMC processing completed in {:.2}s",
-    //     kmc_result.processing_time
-    // );
-    // // Step 2: Dump File Processing
-    // println!("\n[2/4] Processing dump file...");
-    // let ref_file = File::open(&kmc_result.kmc_path_dump).unwrap();
-    // let _lock = ref_file.lock_shared();
+    let total_start = Instant::now();
+    println!("🧬 Starting ROBERT");
+    println!(
+        "  → Configuration: {} threads, {}bp kmers",
+        THREADS, KMER_SIZE
+    );
+    let path_out = Path::new("simulated/10K");
+    // let path_in = Path::new("./data/all.fa");
+    // let sim = ISSRunner::simulate(path_in, path_out, 256, 10_000);
+    // Step 1: KMC Processing
+    println!("\n[1/4] Starting KMC processing...");
+    println!("  → Collecting directory contents...");
+    println!("  → Running KMC dump...");
+    let kmc_result = process_kmc_file(path_out);
+    println!(
+        "✓ KMC processing completed in {:.2}s",
+        kmc_result.processing_time
+    );
+    // Step 2: Dump File Processing
+    println!("\n[2/4] Processing dump file...");
+    let ref_file = File::open(&kmc_result.kmc_path_dump).unwrap();
+    let _lock = ref_file.lock_shared();
 
-    // let init_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS, NHI_RESULTS);
-    // let thread_pool = ThreadPool::new(THREADS);
+    let init_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS, NHI_RESULTS);
+    let thread_pool = ThreadPool::new(THREADS);
 
-    // println!("  → Initializing thread states...");
-    // let thread_states: Vec<ArcDefaultThreadState> = (0..WORKER_THREADS)
-    //     .map(|_| {
-    //         Arc::new(ThreadState::<SmallRng>::from_entropy(
-    //             init_config.nlo_results,
-    //             init_config.nhi_results,
-    //             init_config.chunk_size,
-    //         ))
-    //     })
-    //     .collect();
+    println!("  → Initializing thread states...");
+    let thread_states: Vec<ArcDefaultThreadState> = (0..WORKER_THREADS)
+        .map(|_| {
+            Arc::new(ThreadState::<SmallRng>::from_entropy(
+                init_config.nlo_results,
+                init_config.nhi_results,
+                init_config.chunk_size,
+            ))
+        })
+        .collect();
 
-    // println!("  → Extracting features using {} threads...", THREADS);
-    // let feature_result = extract_features(ref_file, &thread_states, &thread_pool, &init_config);
-    // println!(
-    //     "✓ Feature extraction completed in {:.2}s",
-    //     feature_result.extraction_time
-    // );
+    println!("  → Extracting features using {} threads...", THREADS);
+    let feature_result = extract_features(ref_file, &thread_states, &thread_pool, &init_config);
+    println!(
+        "✓ Feature extraction completed in {:.2}s",
+        feature_result.extraction_time
+    );
 
-    // let ref_features: Vec<u128> = feature_result
-    //     .min_features
-    //     .into_iter()
-    //     .chain(feature_result.max_features)
-    //     .collect();
-    // println!("  → Total features identified: {}", ref_features.len());
+    let ref_features: Vec<u128> = feature_result
+        .min_features
+        .into_iter()
+        .chain(feature_result.max_features)
+        .collect();
+    println!("  → Total features identified: {}", ref_features.len());
 
-    // // Step 3: Feature Writer Creation
-    // println!("\n[3/4] Creating feature output file...");
-    // let feature_writer_result = create_feature_writer(path_out, &ref_features);
-    // println!(
-    //     "✓ Feature file created in {:.2}s",
-    //     feature_writer_result.creation_time
-    // );
+    // Step 3: Feature Writer Creation
+    println!("\n[3/4] Creating feature output file...");
+    let feature_writer_result = create_feature_writer(path_out, &ref_features);
+    println!(
+        "✓ Feature file created in {:.2}s",
+        feature_writer_result.creation_time
+    );
 
-    // let mut feature_writer = feature_writer_result.writer;
+    let mut feature_writer = feature_writer_result.writer;
 
-    // // Step 4: Process Comparison Files
-    // println!("\n[4/4] Processing comparison files...");
-    // let compare_start = Instant::now();
+    // Step 4: Process Comparison Files
+    println!("\n[4/4] Processing comparison files...");
+    let compare_start = Instant::now();
 
-    // let compare: Vec<(PathBuf, PathBuf)> = WalkDir::new(path_out)
+    let compare: Vec<(PathBuf, PathBuf)> = WalkDir::new(path_out)
+        .into_iter()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if entry.path() == path_out || !entry.metadata().ok()?.is_dir() {
+                return None;
+            }
+            Some((
+                entry.path().join("Reads_R1").with_extension("fastq"),
+                entry.path().join("Reads_R2").with_extension("fastq"),
+            ))
+        })
+        .collect();
+
+    // Store the count before consuming the vector
+    let compare_count = compare.len();
+
+    let query_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS * 10, NHI_RESULTS * 10);
+    let mut progress = Progress::new();
+    let bar = progress.bar(compare.len(), "Processing comparison files");
+    let mut idx = 0;
+
+    // Create new thread states with updated config
+    let query_states: Vec<ArcDefaultThreadState> = (0..WORKER_THREADS)
+        .map(|_| {
+            Arc::new(ThreadState::<SmallRng>::from_entropy(
+                init_config.nlo_results,
+                init_config.nhi_results,
+                query_config.chunk_size,
+            ))
+        })
+        .collect();
+
+    let mut query_features: HashMap<u128, u16, BuildHasherDefault<FxHasher>> =
+        HashMap::with_capacity_and_hasher(
+            query_config.nlo_results + query_config.nhi_results,
+            BuildHasherDefault::default(),
+        );
+
+    let query_parser = Dump::<KMER_SIZE>::new(query_config);
+
+    for pair in compare {
+        let out_path = pair.0.parent().unwrap();
+        let path_concatenated = out_path.join("concat").with_extension("txt");
+        // utils::concat_files_two(
+        //     &Path::new(&pair.0),
+        //     &Path::new(&pair.1),
+        //     &path_concatenated.as_path(),
+        // ).unwrap();
+        let kmc_path = out_path.join("kmc");
+        let kmc_path_dump = out_path.join("kmc_dump").with_extension("txt");
+        let kmc_kmer_size_arg = format!("-k{}", KMER_SIZE);
+        // let _ = Command::new("kmc")
+        //     .arg("-cs4294967295")
+        //     .arg(&kmc_kmer_size_arg)
+        //     .arg(&path_concatenated)
+        //     .arg(&kmc_path)
+        //     .arg("data/temp")
+        //     .output()
+        //     .expect("Failed to execute kmc command");
+
+        // let _ = Command::new("kmc_tools")
+        //     .arg("transform")
+        //     .arg(&kmc_path)
+        //     .arg("dump")
+        //     .arg(&kmc_path_dump)
+        //     .output()
+        //     .expect("Failed to execute kmc command");
+
+        query_states.iter().for_each(|state| state.reset());
+        query_features.clear();
+
+        let query_file = File::open(&kmc_path_dump).unwrap();
+        let _lock = query_file.lock_shared();
+
+        process_query(
+            query_file,
+            &query_states,
+            &thread_pool,
+            &query_parser,
+            &mut query_features,
+        );
+        write_feature_line(&mut feature_writer, &pair.0, &query_features, &ref_features);
+
+        idx += 1;
+        progress.set_and_draw(&bar, idx);
+    }
+
+    // // Process reference files section
+    // let path_ref = Path::new("data/temp");
+    // let ref_files: Vec<PathBuf> = WalkDir::new(path_ref)
     //     .into_iter()
     //     .filter_map(|entry| {
     //         let entry = entry.ok()?;
-    //         if entry.path() == path_out || !entry.metadata().ok()?.is_dir() {
+    //         let path = entry.path();
+    //         if path.is_dir() || path.extension() != Some("fasta".as_ref()) {
     //             return None;
     //         }
-    //         Some((
-    //             entry.path().join("Reads_R1").with_extension("fastq"),
-    //             entry.path().join("Reads_R2").with_extension("fastq"),
-    //         ))
+    //         Some(path.to_path_buf())
     //     })
     //     .collect();
+    // let ref_count = ref_files.len();
 
-    // // Store the count before consuming the vector
-    // let compare_count = compare.len();
+    // println!("\nProcessing reference files...");
+    // let ref_bar = progress.bar(ref_files.len(), "Processing reference files");
+    // let mut ref_idx = 0;
 
-    // let query_config = kmc::Config::new(THREADS, CHUNK_SIZE, NLO_RESULTS * 10, NHI_RESULTS * 10);
-    // let mut progress = Progress::new();
-    // let bar = progress.bar(compare.len(), "Processing comparison files");
-    // let mut idx = 0;
+    // for entry_path in ref_files {
+    //     convert_fasta_to_fastq(&entry_path);
 
-    // // Create new thread states with updated config
-    // let query_states: Vec<ArcDefaultThreadState> = (0..WORKER_THREADS)
-    //     .map(|_| {
-    //         Arc::new(ThreadState::<SmallRng>::from_entropy(
-    //             init_config.nlo_results,
-    //             init_config.nhi_results,
-    //             query_config.chunk_size,
-    //         ))
-    //     })
-    //     .collect();
-
-    // let mut query_features: HashMap<u128, u16, BuildHasherDefault<FxHasher>> =
-    //     HashMap::with_capacity_and_hasher(
-    //         query_config.nlo_results + query_config.nhi_results,
-    //         BuildHasherDefault::default(),
-    //     );
-
-    // let query_parser = Dump::<KMER_SIZE>::new(query_config);
-
-    // for pair in compare {
-    //     let out_path = pair.0.parent().unwrap();
-    //     let path_concatenated = out_path.join("concat").with_extension("txt");
-    //     // utils::concat_files_two(
-    //     //     &Path::new(&pair.0),
-    //     //     &Path::new(&pair.1),
-    //     //     &path_concatenated.as_path(),
-    //     // ).unwrap();
-    //     let kmc_path = out_path.join("kmc");
-    //     let kmc_path_dump = out_path.join("kmc_dump").with_extension("txt");
-    //     let kmc_kmer_size_arg = format!("-k{}", KMER_SIZE);
-    //     // let _ = Command::new("kmc")
-    //     //     .arg("-cs4294967295")
-    //     //     .arg(&kmc_kmer_size_arg)
-    //     //     .arg(&path_concatenated)
-    //     //     .arg(&kmc_path)
-    //     //     .arg("data/temp")
-    //     //     .output()
-    //     //     .expect("Failed to execute kmc command");
-
-    //     // let _ = Command::new("kmc_tools")
-    //     //     .arg("transform")
-    //     //     .arg(&kmc_path)
-    //     //     .arg("dump")
-    //     //     .arg(&kmc_path_dump)
-    //     //     .output()
-    //     //     .expect("Failed to execute kmc command");
+    //     let out_path = entry_path.parent().unwrap();
+    //     let kmc_path_dump = out_path.join("kmc_dump");
 
     //     query_states.iter().for_each(|state| state.reset());
     //     query_features.clear();
@@ -334,71 +378,27 @@ fn main() {
     //         &query_parser,
     //         &mut query_features,
     //     );
-    //     write_feature_line(&mut feature_writer, &pair.0, &query_features, &ref_features);
+    //     write_feature_line(
+    //         &mut feature_writer,
+    //         &entry_path,
+    //         &query_features,
+    //         &ref_features,
+    //     );
 
-    //     idx += 1;
-    //     progress.set_and_draw(&bar, idx);
+    //     ref_idx += 1;
+    //     progress.set_and_draw(&ref_bar, ref_idx);
     // }
 
-    // // // Process reference files section
-    // // let path_ref = Path::new("data/temp");
-    // // let ref_files: Vec<PathBuf> = WalkDir::new(path_ref)
-    // //     .into_iter()
-    // //     .filter_map(|entry| {
-    // //         let entry = entry.ok()?;
-    // //         let path = entry.path();
-    // //         if path.is_dir() || path.extension() != Some("fasta".as_ref()) {
-    // //             return None;
-    // //         }
-    // //         Some(path.to_path_buf())
-    // //     })
-    // //     .collect();
-    // // let ref_count = ref_files.len();
-
-    // // println!("\nProcessing reference files...");
-    // // let ref_bar = progress.bar(ref_files.len(), "Processing reference files");
-    // // let mut ref_idx = 0;
-
-    // // for entry_path in ref_files {
-    // //     convert_fasta_to_fastq(&entry_path);
-
-    // //     let out_path = entry_path.parent().unwrap();
-    // //     let kmc_path_dump = out_path.join("kmc_dump");
-
-    // //     query_states.iter().for_each(|state| state.reset());
-    // //     query_features.clear();
-
-    // //     let query_file = File::open(&kmc_path_dump).unwrap();
-    // //     let _lock = query_file.lock_shared();
-
-    // //     process_query(
-    // //         query_file,
-    // //         &query_states,
-    // //         &thread_pool,
-    // //         &query_parser,
-    // //         &mut query_features,
-    // //     );
-    // //     write_feature_line(
-    // //         &mut feature_writer,
-    // //         &entry_path,
-    // //         &query_features,
-    // //         &ref_features,
-    // //     );
-
-    // //     ref_idx += 1;
-    // //     progress.set_and_draw(&ref_bar, ref_idx);
-    // // }
-
-    // let total_time = total_start.elapsed();
-    // println!("\n✨ Analysis complete!");
-    // println!(
-    //     "  → Total processing time: {:.4}s",
-    //     total_time.as_secs_f64()
-    // );
-    // println!("  → Features processed: {}", ref_features.len());
-    // println!("  → Files analyzed: {}", compare_count);
-    // println!(
-    //     "  → Average time per file: {:.4}s",
-    //     (total_time.as_secs_f64() - compare_start.elapsed().as_secs_f64()) / (compare_count) as f64
-    // );
+    let total_time = total_start.elapsed();
+    println!("\n✨ Analysis complete!");
+    println!(
+        "  → Total processing time: {:.4}s",
+        total_time.as_secs_f64()
+    );
+    println!("  → Features processed: {}", ref_features.len());
+    println!("  → Files analyzed: {}", compare_count);
+    println!(
+        "  → Average time per file: {:.4}s",
+        (total_time.as_secs_f64() - compare_start.elapsed().as_secs_f64()) / (compare_count) as f64
+    );
 }
