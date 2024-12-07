@@ -19,3 +19,4 @@ Right now the tool works in four main steps:
 - Supports both FASTA and FASTQ inputs
 - Outputs simple CSV format for compatibility
 - Memory-efficient processing using streaming and shared memory
+q
