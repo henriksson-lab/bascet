@@ -1,4 +1,7 @@
-use crate::constants::{HUGE_PAGE_SIZE, OVLP_DIGITS};
+use crate::{
+    constants::{HUGE_PAGE_SIZE, OVLP_DIGITS},
+    utils::KMERCodec,
+};
 use anyhow::Result;
 use clap::Args;
 use clio::{Input, Output};
@@ -10,7 +13,7 @@ use super::{
         MARKERS_DEFAULT_FEATURES_MAX, MARKERS_DEFAULT_FEATURES_MIN, MARKERS_DEFAULT_PATH_IN,
         MARKERS_DEFAULT_PATH_OUT,
     },
-    core::{extract_features, DefaultThreadState, ParamsIO, ParamsRuntime, ParamsThreading},
+    core::{DefaultThreadState, KMCProcessor, ParamsIO, ParamsRuntime, ParamsThreading},
 };
 
 #[derive(Args)]
@@ -42,13 +45,14 @@ pub struct Command {
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
+        // TODO: actually implement the CRAM->BAM/fastq.gz
         self.verify_input_file()?;
         let kmer_size = self.verify_kmer_size()?;
         let (features_nmin, features_nmax) = self.verify_features()?;
         let (threads_io, threads_work) = self.resolve_thread_config()?;
-
+        
         let seed = self.seed.unwrap_or_else(rand::random);
-        let file_in = self.path_in.get_file().unwrap();
+        let file_in = &*self.path_in.get_file().unwrap();
         let lock = file_in.lock_shared();
 
         let thread_pool = threadpool::ThreadPool::new(threads_io + threads_work);
@@ -67,7 +71,7 @@ impl Command {
             })
             .collect();
 
-        let result = extract_features(
+        let processor = KMCProcessor::new(
             ParamsIO {
                 file_in,
                 path_out: &mut self.path_out,
@@ -77,6 +81,7 @@ impl Command {
                 ovlp_size: kmer_size + OVLP_DIGITS,
                 features_nmin: features_nmin,
                 features_nmax: features_nmax,
+                codec: KMERCodec::new(kmer_size),
                 seed: seed,
             },
             ParamsThreading {
@@ -84,13 +89,13 @@ impl Command {
                 threads_work: threads_work,
                 thread_buffer_size: buffer_size,
                 thread_pool: &thread_pool,
-                thread_states: &thread_states
+                thread_states: &thread_states,
             },
         );
-
+        let result = processor.extract();
         drop(lock);
 
-        return result;
+        Ok(())
     }
 
     fn verify_input_file(&mut self) -> Result<()> {
@@ -115,9 +120,9 @@ impl Command {
     }
 
     fn verify_kmer_size(&self) -> Result<usize> {
-        if 0 > self.kmer_size &&  self.kmer_size > 48 {
+        if 0 > self.kmer_size && self.kmer_size > 48 {
             return Ok(self.kmer_size);
-        } 
+        }
 
         anyhow::bail!("Invalid kmer size");
     }
