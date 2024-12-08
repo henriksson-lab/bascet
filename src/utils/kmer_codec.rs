@@ -77,7 +77,7 @@ impl KMERCodec {
         let full_chunks = kmer_size / chunk_size;
         let remainder = kmer_size % chunk_size;
 
-        let mut encoded: u128 = 0;
+        let mut encoded = 0;
         let ptr = bytes.as_ptr();
 
         // Process chunks of 4 nucleotides
@@ -92,30 +92,30 @@ impl KMERCodec {
                         * NT4_DIMSIZE
                         * NT4_DIMSIZE)
             };
-            encoded = (encoded << 8) | u128::from(NT4_LOOKUP[idx]);
+            encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
 
         // Handle remaining nucleotides
         let start = full_chunks * chunk_size;
         for i in 0..remainder {
-            encoded = (encoded << 2) | u128::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
+            encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
         }
 
         EncodedKMER::new()
             .with_kmer(encoded)
-            .with_count(count as u16)
+            .with_count(count)
             .with_noise(NOISE_RANGE.sample(rng))
     }
 
     #[inline(always)]
-    pub unsafe fn encode_str(&self, kmer: &str, count: u16, rng: &mut impl Rng) -> EncodedKMER {
+    pub unsafe fn encode_str(&self, kmer: &str, count: u32, rng: &mut impl Rng) -> EncodedKMER {
         let chunk_size: usize = 4;
         let kmer_size = self.kmer_size as usize;
         let full_chunks = kmer_size / chunk_size;
         let remainder = kmer_size % chunk_size;
 
         let bytes = kmer.as_bytes();
-        let mut encoded: u128 = 0;
+        let mut encoded = 0;
         let ptr = bytes.as_ptr();
 
         // Process chunks of 4 nucleotides
@@ -130,13 +130,13 @@ impl KMERCodec {
                         * NT4_DIMSIZE
                         * NT4_DIMSIZE)
             };
-            encoded = (encoded << 8) | u128::from(NT4_LOOKUP[idx]);
+            encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
 
         // Handle remaining nucleotides
         let start = full_chunks * chunk_size;
         for i in 0..remainder {
-            encoded = (encoded << 2) | u128::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
+            encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
         }
 
         EncodedKMER::new()
@@ -161,12 +161,12 @@ impl KMERCodec {
 
 #[bitfield(u128)]
 pub struct EncodedKMER {
-    #[bits(80)]
-    pub kmer: u128,
+    #[bits(64)]
+    pub kmer: u64,
 
     #[bits(32)]
     pub noise: u32,
 
-    #[bits(16)]
-    pub count: u16,
+    #[bits(32)]
+    pub count: u32,
 }

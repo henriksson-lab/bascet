@@ -1,5 +1,5 @@
 mod bounded_heap;
-mod kmc;
+mod kmc_runner;
 mod kmer_codec;
 
 pub use bounded_heap::BoundedHeap;
