@@ -6,9 +6,9 @@ use crate::utils::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap, KMERCodec};
 use super::params;
 
 pub struct KMCProcessor<'a> {
-    pub params_io: params::IO<'a>,
-    pub params_runtime: params::Runtime,
-    pub params_threading: params::Threading<'a>,
+    pub params_io: Arc<params::IO<'a>>,
+    pub params_runtime: Arc<params::Runtime>,
+    pub params_threading: Arc<params::Threading<'a>>,
 }
 
 #[inline(always)]
@@ -78,7 +78,7 @@ fn featurise_process_chunk(
     rng: &mut impl rand::Rng,
     min_heap: &mut BoundedMinHeap<u128>,
     max_heap: &mut BoundedMaxHeap<u128>,
-    codec: &KMERCodec,
+    codec: KMERCodec,
     kmer_size: usize,
     ovlp_size: usize,
 ) {
@@ -132,49 +132,44 @@ impl<'a> KMCProcessor<'a> {
         params_threading: params::Threading<'a>,
     ) -> Self {
         Self {
-            params_io,
-            params_runtime,
-            params_threading,
+            params_io: Arc::new(params_io),
+            params_runtime: Arc::new(params_runtime),
+            params_threading: Arc::new(params_threading),
         }
     }
 
     pub fn extract(&self) -> anyhow::Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>)> {
         let mmap = Arc::new(unsafe { MmapOptions::new().map(self.params_io.file_in) }.unwrap());
         let (tx, rx) = crossbeam::channel::unbounded();
-        let rx = Arc::new(rx);
+        let (tx, rx) = (Arc::new(tx), Arc::new(rx));
+
+        let io_tx = Arc::clone(&tx);
+        let io_mmap = Arc::clone(&mmap);
+        let io_ovlp_size = self.params_runtime.ovlp_size;
 
         let thread_pool = self.params_threading.thread_pool;
-        let io_tx = tx.clone();
-        let io_mmap = Arc::clone(&mmap);
-        let chunk_size = self.params_threading.thread_buffer_size;
-        let ovlp_size = self.params_runtime.ovlp_size;
-        let threads_work = self.params_threading.threads_work;
+        let io_buffer_size = self.params_threading.thread_buffer_size;
+        let io_threads_work = self.params_threading.threads_work;
 
         thread_pool.execute(move || {
-            let n_chunks = (io_mmap.len() + chunk_size - 1) / chunk_size;
+            let n_chunks = (io_mmap.len() + io_buffer_size - 1) / io_buffer_size;
             for i in 0..n_chunks {
-                let raw_start = i * chunk_size;
-                let raw_end = min(raw_start + chunk_size + ovlp_size, io_mmap.len());
-                let valid_start = find_chunk_start(&io_mmap[raw_start..], raw_start, ovlp_size);
-                let valid_end = find_chunk_end(&io_mmap[..raw_end], raw_end, ovlp_size);
+                let raw_start = i * io_buffer_size;
+                let raw_end = min(raw_start + io_buffer_size + io_ovlp_size, io_mmap.len());
+                let valid_start = find_chunk_start(&io_mmap[raw_start..], raw_start, io_ovlp_size);
+                let valid_end = find_chunk_end(&io_mmap[..raw_end], raw_end, io_ovlp_size);
                 io_tx.send(Some((valid_start, valid_end))).unwrap();
             }
-            for _ in 0..threads_work {
+            for _ in 0..io_threads_work {
                 io_tx.send(None).unwrap();
             }
         });
-
-        let arc_codec = Arc::new(self.params_runtime.codec);
-        let kmer_size = self.params_runtime.kmer_size;
-        let ovlp_size = self.params_runtime.ovlp_size;
 
         for i in 0..self.params_threading.threads_work {
             let rx = Arc::clone(&rx);
             let mmap = Arc::clone(&mmap);
             let state = Arc::clone(&self.params_threading.thread_states[i]);
-            let codec = arc_codec.clone();
-            let kmer_size = kmer_size;
-            let ovlp_size = ovlp_size;
+            let runtime_params = Arc::clone(&self.params_runtime);
 
             thread_pool.execute(move || {
                 while let Ok(Some((start, end))) = rx.recv() {
@@ -187,7 +182,13 @@ impl<'a> KMCProcessor<'a> {
                         buffer.clear();
                         buffer.extend_from_slice(chunk);
                         featurise_process_chunk(
-                            buffer, rng, min_heap, max_heap, &codec, kmer_size, ovlp_size,
+                            buffer,
+                            rng,
+                            min_heap,
+                            max_heap,
+                            runtime_params.codec,
+                            runtime_params.kmer_size,
+                            runtime_params.kmer_size,
                         );
                     }
                 }
@@ -197,6 +198,7 @@ impl<'a> KMCProcessor<'a> {
 
         let mut final_min_heap = BoundedMinHeap::with_capacity(self.params_runtime.features_nmin);
         let mut final_max_heap = BoundedMaxHeap::with_capacity(self.params_runtime.features_nmax);
+
         for state in self.params_threading.thread_states.iter() {
             unsafe {
                 final_min_heap.extend((&*state.min_heap.get()).iter().copied());
