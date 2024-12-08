@@ -1,38 +1,14 @@
-use std::{cmp::min, fs::File, sync::Arc, usize};
-
-use clio::Output;
 use memmap2::MmapOptions;
+use std::{cmp::min, sync::Arc, usize};
 
 use crate::utils::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap, KMERCodec};
 
-use super::threading::DefaultThreadState;
-
-pub struct ParamsIO<'a> {
-    pub file_in: &'a File,
-    pub path_out: &'a mut Output,
-}
-
-pub struct ParamsRuntime {
-    pub kmer_size: usize,
-    pub ovlp_size: usize,
-    pub features_nmin: usize,
-    pub features_nmax: usize,
-    pub codec: KMERCodec,
-    pub seed: u64,
-}
-
-pub struct ParamsThreading<'a> {
-    pub threads_io: usize,
-    pub threads_work: usize,
-    pub thread_buffer_size: usize,
-    pub thread_pool: &'a threadpool::ThreadPool,
-    pub thread_states: &'a Vec<Arc<DefaultThreadState>>,
-}
+use super::params;
 
 pub struct KMCProcessor<'a> {
-    pub params_io: ParamsIO<'a>,
-    pub params_runtime: ParamsRuntime,
-    pub params_threading: ParamsThreading<'a>,
+    pub params_io: params::IO<'a>,
+    pub params_runtime: params::Runtime,
+    pub params_threading: params::Threading<'a>,
 }
 
 #[inline(always)]
@@ -58,12 +34,17 @@ fn find_chunk_end(chunk: &[u8], raw_end: usize, ovlp_size: usize) -> usize {
 
 #[inline(always)]
 unsafe fn parse_count_u32(bytes: &[u8]) -> u32 {
-    // Fast path for single digit (most common case)
+    // Fast path for single digit, most common case
     if bytes.len() == 1 {
         return (bytes[0] - b'0') as u32;
     }
 
-    // Pre-computed lookup table for two-digit numbers
+    // Fast path for two digits, second most common case
+    if bytes.len() == 2 {
+        return ((bytes[0] - b'0') * 10 + (bytes[1] - b'0')) as u32;
+    }
+
+    // LUT for two-digit numbers
     const LOOKUP: [u32; 100] = {
         let mut table = [0u32; 100];
         let mut i = 0;
@@ -74,23 +55,10 @@ unsafe fn parse_count_u32(bytes: &[u8]) -> u32 {
         table
     };
 
-    // Handle first two digits
-    if bytes.len() == 2 {
-        let idx = ((bytes[0] - b'0') * 10 + (bytes[1] - b'0')) as usize;
-        return LOOKUP[idx];
-    }
-
-    // Initialize with first two digits for longer numbers
-    let mut result = {
-        let idx = ((bytes[0] - b'0') * 10 + (bytes[1] - b'0')) as usize;
-        LOOKUP[idx]
-    };
-
-    // Process remaining digits in pairs
-    let remaining = &bytes[2..];
-    let chunks = remaining.chunks_exact(2);
+    let chunks = bytes.chunks_exact(2);
     let remainder = chunks.remainder();
 
+    let mut result = 0u32;
     for chunk in chunks {
         let idx = ((chunk[0] - b'0') * 10 + (chunk[1] - b'0')) as usize;
         result = result.wrapping_mul(100) + LOOKUP[idx];
@@ -101,7 +69,7 @@ unsafe fn parse_count_u32(bytes: &[u8]) -> u32 {
         result = result.wrapping_mul(10) + (d - b'0') as u32;
     }
 
-    return result;
+    result
 }
 
 #[inline(always)]
@@ -159,9 +127,9 @@ fn featurise_process_chunk(
 
 impl<'a> KMCProcessor<'a> {
     pub fn new(
-        params_io: ParamsIO<'a>,
-        params_runtime: ParamsRuntime,
-        params_threading: ParamsThreading<'a>,
+        params_io: params::IO<'a>,
+        params_runtime: params::Runtime,
+        params_threading: params::Threading<'a>,
     ) -> Self {
         Self {
             params_io,
@@ -172,7 +140,7 @@ impl<'a> KMCProcessor<'a> {
 
     pub fn extract(&self) -> anyhow::Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>)> {
         let mmap = Arc::new(unsafe { MmapOptions::new().map(self.params_io.file_in) }.unwrap());
-        let (tx, rx) = crossbeam::channel::bounded(64);
+        let (tx, rx) = crossbeam::channel::unbounded();
         let rx = Arc::new(rx);
 
         let thread_pool = self.params_threading.thread_pool;

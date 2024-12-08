@@ -1,7 +1,7 @@
 pub mod features;
+pub mod prepare;
 pub mod query;
-pub mod split;
 
 pub use features::command::Command as Markers;
-pub use features::command::Command as Query;
-pub use features::command::Command as Split;
+pub use prepare::command::Command as Prepare;
+pub use query::command::Command as Query;

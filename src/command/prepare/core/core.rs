@@ -1,0 +1,149 @@
+use super::constants::CB_MIN_SIZE;
+use super::params;
+use anyhow::Result;
+use rust_htslib::bam::{record::Aux, Read};
+use std::any::Any;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+struct Batch {
+    pub barcode: Arc<Vec<u8>>,
+    pub sequences: Arc<Mutex<Vec<String>>>,
+    pub qualities: Arc<Mutex<Vec<String>>>
+}
+
+impl Batch {
+    fn new() -> Self {
+        return Self {
+            barcode: Arc::new(Vec::with_capacity(CB_MIN_SIZE)),
+            sequences: Arc::new(Mutex::new(Vec::new())),
+            qualities: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+pub struct BAMProcessor<'a> {
+    pub params_io: params::IO<'a>,
+    pub params_runtime: params::Runtime,
+    pub params_threading: params::Threading,
+}
+
+impl<'a> BAMProcessor<'a> {
+    pub fn new(
+        params_io: params::IO<'a>,
+        params_runtime: params::Runtime,
+        params_threading: params::Threading,
+    ) -> Self {
+        Self {
+            params_io,
+            params_runtime,
+            params_threading,
+        }
+    }
+
+    pub fn process_bam(&self) -> Result<()> {
+        let read_pool = rust_htslib::tpool::ThreadPool::new(self.params_threading.threads_read)?;
+        let write_pool = threadpool::ThreadPool::new(self.params_threading.threads_write);
+
+        let (tx, rx) = crossbeam::channel::unbounded::<Option<Batch>>();
+        let (tx, rx) = (Arc::new(tx), Arc::new(tx));
+        
+        let mut bam = rust_htslib::bam::Reader::from_path(self.params_io.file_in)?;
+        bam.set_thread_pool(&read_pool)?;
+
+        let params_runtime = self.params_runtime;
+
+        let mut record = rust_htslib::bam::Record::new();
+        let mut batch = Batch::new();
+        while bam.read(&mut record).is_some() {
+            if let Ok(aux) = record.aux(b"CB") {
+                if let Aux::String(cb) = aux {
+                    if !cb.is_empty() {
+                        let new_barcode = cb.as_bytes();
+                        if batch.barcode.as_slice() == new_barcode {
+                            let (seq, qual) = (record.seq(), record.qual());
+                            let seq_string  = String::from_utf8_lossy(&seq.as_bytes());
+                            let qual_string = String::from_utf8_lossy(qual);
+
+                            batch.sequences.lock().unwrap().push(seq_string.to_string());
+                            batch.qualities.lock().unwrap().push(qual_string.to_string());
+                        } else {
+                            tx.send(Some(batch));
+                            batch = Batch::new();
+                            batch.barcode = Arc::new(Vec::from(new_barcode));
+                        }
+                    }
+                }
+            }
+
+            // Send final batch
+            if let Ok(seq) = batch.sequences.lock() {
+                if !seq.is_empty(){
+                    let _ = tx.send(Some(batch));
+                }
+            }
+
+            for _ in 0..self.params_threading.threads_write {
+                let _ = tx.send(None);
+            }
+        };
+
+        
+        while let Ok(Some(batch)) = rx.recv() {
+            let path_out = self.params_io.path_out.clone();
+            let done_tx = done_tx.clone();
+            let params_runtime = self.params_runtime.clone();
+
+            write_pool.execute(move || {
+                let batch = batch.lock().unwrap();
+                if batch.sequences.len() >= params_runtime.min_reads {
+                    let cell_dir = output_dir.join(&batch.cb_str);
+                    let _ = fs::create_dir_all(&cell_dir);
+                    let reads_path = cell_dir.join("reads.fastq");
+
+                    if let Ok(file) = File::create(&reads_path) {
+                        let mut writer = BufWriter::with_capacity(256 * 1024, file);
+                        for i in 0..batch.sequences.len() {
+                            let _ = writeln!(writer, "@{}::{}", batch.read_names[i], batch.cb_str);
+                            let _ = writeln!(writer, "{}", batch.sequences[i]);
+                            let _ = writeln!(writer, "+");
+                            let _ = writeln!(writer, "{}", batch.qualities[i]);
+                        }
+                        let _ = writer.flush();
+
+                        if params_runtime.run_spades {
+                            let spades_out_dir = cell_dir.join("spades_out");
+                            let _ = fs::create_dir_all(&spades_out_dir);
+
+                            let status = Command::new("spades.py")
+                                .arg("-s")
+                                .arg(&reads_path)
+                                .arg("--isolate")
+                                .arg("-t")
+                                .arg("1")
+                                .arg("-o")
+                                .arg(&spades_out_dir)
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .status()
+                                .expect("Failed to execute SPAdes");
+
+                            if status.success() && params_runtime.cleanup {
+                                let _ = fs::remove_dir_all(&cell_dir);
+                            }
+                        }
+                    }
+                }
+                let _ = done_tx.send(());
+            });
+        }
+
+        drop(done_tx);
+        while let Ok(_) = done_rx.recv() {}
+
+        Ok(())
+    }
+}

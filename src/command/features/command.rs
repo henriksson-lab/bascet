@@ -6,14 +6,14 @@ use anyhow::Result;
 use clap::Args;
 use clio::{Input, Output};
 use fs2::FileExt;
-use std::{fs::File, sync::Arc, thread};
+use std::{sync::Arc, thread};
 
 use super::{
     constants::{
         MARKERS_DEFAULT_FEATURES_MAX, MARKERS_DEFAULT_FEATURES_MIN, MARKERS_DEFAULT_PATH_IN,
         MARKERS_DEFAULT_PATH_OUT,
     },
-    core::{DefaultThreadState, KMCProcessor, ParamsIO, ParamsRuntime, ParamsThreading},
+    core::{core::KMCProcessor, params, threading::DefaultThreadState},
 };
 
 #[derive(Args)]
@@ -50,7 +50,7 @@ impl Command {
         let kmer_size = self.verify_kmer_size()?;
         let (features_nmin, features_nmax) = self.verify_features()?;
         let (threads_io, threads_work) = self.resolve_thread_config()?;
-        
+
         let seed = self.seed.unwrap_or_else(rand::random);
         let file_in = &*self.path_in.get_file().unwrap();
         let lock = file_in.lock_shared();
@@ -72,11 +72,11 @@ impl Command {
             .collect();
 
         let processor = KMCProcessor::new(
-            ParamsIO {
+            params::IO {
                 file_in,
                 path_out: &mut self.path_out,
             },
-            ParamsRuntime {
+            params::Runtime {
                 kmer_size: kmer_size,
                 ovlp_size: kmer_size + OVLP_DIGITS,
                 features_nmin: features_nmin,
@@ -84,7 +84,7 @@ impl Command {
                 codec: KMERCodec::new(kmer_size),
                 seed: seed,
             },
-            ParamsThreading {
+            params::Threading {
                 threads_io: threads_io,
                 threads_work: threads_work,
                 thread_buffer_size: buffer_size,
@@ -120,11 +120,11 @@ impl Command {
     }
 
     fn verify_kmer_size(&self) -> Result<usize> {
-        if 0 > self.kmer_size && self.kmer_size > 48 {
+        if self.kmer_size < 48 {
             return Ok(self.kmer_size);
         }
 
-        anyhow::bail!("Invalid kmer size");
+        anyhow::bail!("Invalid kmer size k:{}", self.kmer_size);
     }
 
     fn resolve_thread_config(&self) -> Result<(usize, usize)> {
