@@ -21,13 +21,13 @@ use std::{
 #[derive(Args)]
 pub struct Command {
     #[arg(short = 'i', value_parser)]
-    path_in: Input,
+    path_in: PathBuf,
 
     #[arg(short = 't', value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
     path_tmp: PathBuf,
 
     #[arg(short = 'o', value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
-    path_out: Output,
+    path_out: PathBuf,
 
     #[arg(value_parser, default_value_t = PREPARE_DEFAULT_MIN_READS_PER_CELL)]
     min_reads_per_cell: usize,
@@ -57,9 +57,9 @@ impl Command {
         );
         let processor = BAMProcessor::new(
             params::IO {
-                path_in: self.path_in.path().to_path_buf(),
+                path_in: self.path_in.clone(),
                 path_tmp: self.path_tmp.clone(),
-                path_out: Arc::new(RwLock::new(self.path_out.clone())),
+                path_out: self.path_out.clone(),
             },
             params::Runtime {
                 assemble: self.assemble,
