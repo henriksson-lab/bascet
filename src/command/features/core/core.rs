@@ -140,30 +140,8 @@ impl<'a> KMCProcessor<'a> {
 
     pub fn extract(&self) -> anyhow::Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>)> {
         let mmap = Arc::new(unsafe { MmapOptions::new().map(self.params_io.file_in) }.unwrap());
-        let (tx, rx) = crossbeam::channel::unbounded();
+        let (tx, rx) = crossbeam::channel::bounded(256);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-
-        let io_tx = Arc::clone(&tx);
-        let io_mmap = Arc::clone(&mmap);
-        let io_ovlp_size = self.params_runtime.ovlp_size;
-
-        let thread_pool = self.params_threading.thread_pool;
-        let io_buffer_size = self.params_threading.thread_buffer_size;
-        let io_threads_work = self.params_threading.threads_work;
-
-        thread_pool.execute(move || {
-            let n_chunks = (io_mmap.len() + io_buffer_size - 1) / io_buffer_size;
-            for i in 0..n_chunks {
-                let raw_start = i * io_buffer_size;
-                let raw_end = min(raw_start + io_buffer_size + io_ovlp_size, io_mmap.len());
-                let valid_start = find_chunk_start(&io_mmap[raw_start..], raw_start, io_ovlp_size);
-                let valid_end = find_chunk_end(&io_mmap[..raw_end], raw_end, io_ovlp_size);
-                io_tx.send(Some((valid_start, valid_end))).unwrap();
-            }
-            for _ in 0..io_threads_work {
-                io_tx.send(None).unwrap();
-            }
-        });
 
         for i in 0..self.params_threading.threads_work {
             let rx = Arc::clone(&rx);
@@ -171,7 +149,7 @@ impl<'a> KMCProcessor<'a> {
             let state = Arc::clone(&self.params_threading.thread_states[i]);
             let runtime_params = Arc::clone(&self.params_runtime);
 
-            thread_pool.execute(move || {
+            self.params_threading.thread_pool.execute(move || {
                 while let Ok(Some((start, end))) = rx.recv() {
                     let chunk = &mmap[start..end];
                     unsafe {
@@ -194,7 +172,28 @@ impl<'a> KMCProcessor<'a> {
                 }
             });
         }
-        thread_pool.join();
+
+        let io_tx = Arc::clone(&tx);
+        let io_mmap = Arc::clone(&mmap);
+        let io_ovlp_size = self.params_runtime.ovlp_size;
+        let io_buffer_size = self.params_threading.thread_buffer_size;
+        let io_threads_work = self.params_threading.threads_work;
+
+        self.params_threading.thread_pool.execute(move || {
+            let n_chunks = (io_mmap.len() + io_buffer_size - 1) / io_buffer_size;
+            for i in 0..n_chunks {
+                let raw_start = i * io_buffer_size;
+                let raw_end = min(raw_start + io_buffer_size + io_ovlp_size, io_mmap.len());
+                let valid_start = find_chunk_start(&io_mmap[raw_start..], raw_start, io_ovlp_size);
+                let valid_end = find_chunk_end(&io_mmap[..raw_end], raw_end, io_ovlp_size);
+                io_tx.send(Some((valid_start, valid_end))).unwrap();
+            }
+            for _ in 0..io_threads_work {
+                io_tx.send(None).unwrap();
+            }
+        });
+
+        self.params_threading.thread_pool.join();
 
         let mut final_min_heap = BoundedMinHeap::with_capacity(self.params_runtime.features_nmin);
         let mut final_max_heap = BoundedMaxHeap::with_capacity(self.params_runtime.features_nmax);

@@ -20,25 +20,18 @@ use super::{
 pub struct Command {
     #[arg(short = 'i', value_parser, default_value = MARKERS_DEFAULT_PATH_IN)]
     pub path_in: Input,
-
     #[arg(short = 'o', value_parser, default_value = MARKERS_DEFAULT_PATH_OUT)]
     pub path_out: Output,
-
     #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
     pub kmer_size: usize,
-
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value = MARKERS_DEFAULT_FEATURES_MIN)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MARKERS_DEFAULT_FEATURES_MIN)]
     pub features_nmin: usize,
-
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value = MARKERS_DEFAULT_FEATURES_MAX)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MARKERS_DEFAULT_FEATURES_MAX)]
     pub features_nmax: usize,
-
     #[arg(long, value_parser = clap::value_parser!(usize))]
     pub threads_io: Option<usize>,
-
     #[arg(long, value_parser = clap::value_parser!(usize))]
     pub threads_work: Option<usize>,
-
     #[arg(long, value_parser = clap::value_parser!(u64))]
     pub seed: Option<u64>,
 }

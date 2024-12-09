@@ -1,4 +1,4 @@
-use super::constants::CB_MIN_SIZE;
+use super::constants::CB_PATTERN;
 use super::params;
 use anyhow::Result;
 use rust_htslib::bam::{record::Aux, Read};
@@ -6,34 +6,34 @@ use std::any::Any;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Clone)]
 struct Batch {
-    pub barcode: Arc<Vec<u8>>,
-    pub sequences: Arc<Mutex<Vec<String>>>,
-    pub qualities: Arc<Mutex<Vec<String>>>,
+    pub barcode: Vec<u8>,
+    pub sequences: Vec<String>,
+    pub qualities: Vec<String>,
 }
 
 impl Batch {
     fn new() -> Self {
         return Self {
-            barcode: Arc::new(Vec::with_capacity(CB_MIN_SIZE)),
-            sequences: Arc::new(Mutex::new(Vec::new())),
-            qualities: Arc::new(Mutex::new(Vec::new())),
+            barcode: Vec::new(),
+            sequences: Vec::new(),
+            qualities: Vec::new(),
         };
     }
 }
 
 pub struct BAMProcessor<'a> {
-    pub params_io: Arc<params::IO<'a>>,
+    pub params_io: Arc<params::IO>,
     pub params_runtime: Arc<params::Runtime>,
     pub params_threading: Arc<params::Threading<'a>>,
 }
 
 impl<'a> BAMProcessor<'a> {
     pub fn new(
-        params_io: params::IO<'a>,
+        params_io: params::IO,
         params_runtime: params::Runtime,
         params_threading: params::Threading<'a>,
     ) -> Self {
@@ -45,110 +45,97 @@ impl<'a> BAMProcessor<'a> {
     }
 
     pub fn process_bam(&self) -> Result<()> {
-        let (tx, rx) = crossbeam::channel::unbounded::<Option<Batch>>();
+        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<RwLock<Batch>>>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
-        let mut bam = rust_htslib::bam::Reader::from_path(self.params_io.path_in)?;
-        bam.set_thread_pool(self.params_threading.thread_pool_read)?;
-
-        let params_runtime = self.params_runtime;
-
-        let mut record = rust_htslib::bam::Record::new();
-        let mut batch = Batch::new();
-        while bam.read(&mut record).is_some() {
-            if let Ok(aux) = record.aux(b"CB") {
-                if let Aux::String(cb) = aux {
-                    if !cb.is_empty() {
-                        let new_barcode = cb.as_bytes();
-                        if batch.barcode.as_slice() == new_barcode {
-                            let (seq, qual) = (record.seq(), record.qual());
-                            let seq_string = String::from_utf8_lossy(&seq.as_bytes());
-                            let qual_string = String::from_utf8_lossy(qual);
-
-                            if let (Ok(sequences), Ok(qualities)) =
-                                (batch.sequences.lock(), batch.qualities.lock())
-                            {
-                                sequences.push(seq_string.to_string());
-                                qualities.push(qual_string.to_string());
-                            }
-                        } else {
-                            tx.send(Some(batch));
-                            batch = Batch::new();
-                            batch.barcode = Arc::new(Vec::from(new_barcode));
-                        }
-                    }
-                }
-            }
-
-            // Send final batch
-            if let Ok(seq) = batch.sequences.lock() {
-                if !seq.is_empty() {
-                    let _ = tx.send(Some(batch));
-                }
-            }
-
-            for _ in 0..self.params_threading.threads_write {
-                let _ = tx.send(None);
-            }
-        }
-
-        for i in 0..self.params_threading.threads_write {
+        for _ in 0..self.params_threading.threads_write {
             let rx = Arc::clone(&rx);
-            let runtime_params = Arc::clone(&self.params_runtime);
+            let params_io = Arc::clone(&self.params_io);
+            let params_runtime = Arc::clone(&self.params_runtime);
+            let params_threading = Arc::clone(&self.params_threading);
 
-            self.params_threading.thread_pool_write.execute(move || {
+            params_threading.thread_pool_write.execute(move || {
                 while let Ok(Some(batch)) = rx.recv() {
-                    if let (Ok(sequences), Ok(qualities)) =
-                        (batch.sequences.lock(), batch.qualities.lock())
-                    {
-                        if sequences.len() < params_runtime.min_reads {
+                    if let Ok(batch) = batch.read() {
+                        if batch.sequences.len() < params_runtime.min_reads {
                             continue;
                         }
-
-                        let cell_dir = output_dir.join(&batch.cb_str);
+                        let barcode = &batch.barcode;
+                        let sequences = &batch.sequences;
+                        let qualities = &batch.qualities;
+                        
+                        let barcode_as_string =
+                        String::from_utf8_lossy(barcode).to_string();
+                        let cell_dir = params_io.path_tmp.join(&barcode_as_string);
                         let _ = fs::create_dir_all(&cell_dir);
-                        let reads_path = cell_dir.join("reads.fastq");
 
-                        if let Ok(file) = File::create(&reads_path) {
-                            let mut writer = BufWriter::with_capacity(256 * 1024, file);
+                        let cell_reads_path = cell_dir.join("reads.fastq");
+                        if let Ok(reads_file) = File::create(&cell_reads_path) {
+                            let mut reads_writer = BufWriter::new(reads_file);
                             for i in 0..batch.sequences.len() {
                                 let _ = writeln!(
-                                    writer,
+                                    reads_writer,
                                     "@{}::{}",
-                                    batch.read_names[i], batch.cb_str
+                                    &barcode_as_string, i
                                 );
-                                let _ = writeln!(writer, "{}", batch.sequences[i]);
-                                let _ = writeln!(writer, "+");
-                                let _ = writeln!(writer, "{}", batch.qualities[i]);
+                                let _ = writeln!(reads_writer, "{}", sequences[i]);
+                                let _ = writeln!(reads_writer, "+");
+                                let _ = writeln!(reads_writer, "{}", qualities[i]);
                             }
-                            let _ = writer.flush();
-
-                            if params_runtime.run_spades {
-                                let spades_out_dir = cell_dir.join("spades_out");
-                                let _ = fs::create_dir_all(&spades_out_dir);
-
-                                let status = Command::new("spades.py")
-                                    .arg("-s") 
-                                    .arg(&reads_path)
-                                    .arg("--isolate")
-                                    .arg("-t")
-                                    .arg("1")
-                                    .arg("-o")
-                                    .arg(&spades_out_dir)
-                                    .stdout(std::process::Stdio::null())
-                                    .stderr(std::process::Stdio::null())
-                                    .status()
-                                    .expect("Failed to execute SPAdes");
-
-                                if status.success() && params_runtime.cleanup {
-                                    let _ = fs::remove_dir_all(&cell_dir);
-                                }
-                            }
+                            let _ = reads_writer.flush();
                         }
                     }
                 }
             });
         }
+
+        // Process BAM file
+        let mut bam = rust_htslib::bam::Reader::from_path(&self.params_io.path_in)?;
+        let _ = bam.set_thread_pool(self.params_threading.thread_pool_read);
+        let mut record = rust_htslib::bam::Record::new();
+        let mut batch = Arc::new(RwLock::new(Batch::new()));
+
+        while bam.read(&mut record).is_some() {
+            if let Ok(aux) = record.aux(b"CB") {
+                if let Aux::String(cb) = aux {
+                    if !cb.is_empty() && CB_PATTERN.is_match(cb) {
+                        let mut keep_batch = true;
+                        if let Ok(old_batch) = batch.read() {
+                            keep_batch = &old_batch.barcode == cb.as_bytes();
+                        }
+                        if !keep_batch {
+                            let _ = tx.send(Some(Arc::clone(&batch)));
+                            batch = Arc::new(RwLock::new(Batch::new()));
+                            batch.write().unwrap().barcode = cb.as_bytes().to_vec();
+                        }
+                        let (seq, qual) = (record.seq(), record.qual());
+                        let seq_string = String::from_utf8(seq.as_bytes())?;
+                        let qual_string = String::from_utf8_lossy(qual);
+
+                        if let Ok(mut batch) = batch.write() {
+                            batch.sequences.push(seq_string.to_string());
+                            batch.qualities.push(qual_string.to_string());  
+                        }
+                    }
+                }
+            }
+        }
+
+        // Send final batch if not empty
+        if let Ok(final_batch) = batch.read() {
+            if !final_batch.sequences.is_empty() {
+                let _ = tx.send(Some(Arc::clone(&batch)));
+            }
+        }
+
+        // Send termination signals
+        for _ in 0..self.params_threading.threads_write {
+            let _ = tx.send(None);
+        }
+
+        // Wait for all writer threads to complete
+        self.params_threading.thread_pool_write.join();
+
         Ok(())
     }
 }
