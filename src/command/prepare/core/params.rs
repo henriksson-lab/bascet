@@ -1,7 +1,7 @@
 pub struct IO {
     pub path_in: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
-    pub path_out: std::sync::Arc<std::sync::RwLock<clio::Output>>,
+    pub path_out: std::path::PathBuf,
 }
 
 pub struct Runtime {
