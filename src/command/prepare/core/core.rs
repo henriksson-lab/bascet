@@ -101,7 +101,8 @@ where
                         }
                         let (seq, qual) = (record.seq(), record.qual());
                         let seq_string = String::from_utf8(seq.as_bytes())?;
-                        let qual_string = String::from_utf8_lossy(qual);
+                        let qual_string =
+                            String::from_utf8(qual.iter().map(|q| q + 33).collect::<Vec<u8>>())?;
 
                         batch
                             .inner
