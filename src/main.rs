@@ -13,17 +13,19 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Prepare(command::Prepare),
+    Index(command::Index),
     Features(command::Markers),
     Query(command::Query),
 }
 
 fn main() -> ExitCode {
-    let mut cli = Cli::parse();
+    let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Prepare(ref mut cmd) => cmd.try_execute(),
-        Commands::Features(ref mut cmd) => cmd.try_execute(),
-        Commands::Query(ref mut cmd) => cmd.try_execute(),
+        Commands::Prepare(mut cmd) => cmd.try_execute(),
+        Commands::Features(mut cmd) => cmd.try_execute(),
+        Commands::Query(mut cmd) => cmd.try_execute(),
+        Commands::Index(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
