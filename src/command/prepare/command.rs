@@ -49,7 +49,7 @@ pub struct Command {
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        // self.verify_input_file()?;
+        self.verify_input_file()?;
 
         let (threads_read, threads_write) = self.resolve_thread_config()?;
 
@@ -99,28 +99,25 @@ impl Command {
             .arg("-i")
             .arg(self.path_out.join("rdb").with_extension("zip"))
             .args(&thread_paths_out)
-            .output() {
-                Ok(_) => { },
-                Err(e) => panic!("Failed to execute zipmerge command: {}", e)
-            };
+            .output()
+        {
+            Ok(_) => {}
+            Err(e) => panic!("Failed to execute zipmerge command: {}", e),
+        };
 
         Ok(())
     }
 
-    // fn verify_input_file(&self) -> Result<()> {
-    //     if self.path_in.is_std() {
-    //         anyhow::bail!("stdin not supported for now");
-    //     }
-
-    //     if self.path_in.get_file()?.metadata()?.len() == 0 {
-    //         anyhow::bail!("Empty input file");
-    //     }
-
-    //     match self.path_in.path().extension().and_then(|ext| ext.to_str()) {
-    //         Some("cram" | "bam") => Ok(()),
-    //         _ => anyhow::bail!("Input file must be a CRAM or BAM file"),
-    //     }
-    // }
+    fn verify_input_file(&self) -> Result<()> {
+        if let Ok(file) = File::open(&self.path_in) {
+            if file.metadata()?.len() == 0 {
+                anyhow::bail!("Empty input file");
+            }
+            Ok(())
+        } else {
+            anyhow::bail!("Input file does not exist");
+        }
+    }
 
     fn resolve_thread_config(&self) -> Result<(u32, usize)> {
         let available_threads = thread::available_parallelism()

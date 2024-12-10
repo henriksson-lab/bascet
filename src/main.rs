@@ -14,7 +14,6 @@ struct Cli {
 enum Commands {
     Prepare(command::Prepare),
     Index(command::Index),
-    Features(command::Markers),
     Query(command::Query),
 }
 
@@ -23,7 +22,6 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Commands::Prepare(mut cmd) => cmd.try_execute(),
-        Commands::Features(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Index(mut cmd) => cmd.try_execute(),
     };
