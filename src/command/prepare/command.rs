@@ -7,12 +7,13 @@ use super::{
         PREPARE_DEFAULT_ASSEMBLE, PREPARE_DEFAULT_CLEANUP, PREPARE_DEFAULT_MIN_READS_PER_CELL,
         PREPARE_DEFAULT_PATH_OUT,
     },
-    core::{core::BAMProcessor, params},
+    core::{core::BAMProcessor, params, threading::DefaultThreadState},
 };
 use anyhow::Result;
 use clap::Args;
 use clio::{Input, Output};
 use std::{
+    fs::File,
     path::PathBuf,
     sync::{Arc, RwLock},
     thread,
@@ -55,6 +56,19 @@ impl Command {
             threadpool::ThreadPool::new(threads_write),
             rust_htslib::tpool::ThreadPool::new(threads_read)?,
         );
+        let thread_states: Vec<Arc<DefaultThreadState>> = (0..threads_write)
+            .map(|index| {
+                Arc::new(DefaultThreadState::new(
+                    File::create(
+                        self.path_out
+                            .join(format!("{}", index))
+                            .with_extension("zip"),
+                    )
+                    .unwrap(),
+                ))
+            })
+            .collect();
+
         let processor = BAMProcessor::new(
             params::IO {
                 path_in: self.path_in.clone(),
@@ -71,6 +85,7 @@ impl Command {
                 threads_read,
                 thread_pool_write: &thread_pool_write,
                 thread_pool_read: &thread_pool_read,
+                thread_states: &thread_states,
             },
         );
         let _ = processor.process_bam();
