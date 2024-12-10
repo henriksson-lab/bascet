@@ -15,6 +15,7 @@ use clio::{Input, Output};
 use std::{
     fs::File,
     path::PathBuf,
+    rc::Rc,
     sync::{Arc, RwLock},
     thread,
 };
@@ -56,16 +57,20 @@ impl Command {
             threadpool::ThreadPool::new(threads_write),
             rust_htslib::tpool::ThreadPool::new(threads_read)?,
         );
-        let thread_states: Vec<Arc<DefaultThreadState>> = (0..threads_write)
+
+        let thread_paths_out: Vec<PathBuf> = (0..threads_write)
             .map(|index| {
-                Arc::new(DefaultThreadState::new(
-                    File::create(
-                        self.path_out
-                            .join(format!("{}", index))
-                            .with_extension("zip"),
-                    )
-                    .unwrap(),
-                ))
+                self.path_out
+                    .join(format!("rdb-{}", index))
+                    .with_extension("zip")
+            })
+            .collect();
+
+        let thread_states: Vec<Arc<DefaultThreadState>> = thread_paths_out
+            .iter()
+            .map(|path| {
+                let file = File::create(path).unwrap();
+                Arc::new(DefaultThreadState::new(file))
             })
             .collect();
 
@@ -89,6 +94,16 @@ impl Command {
             },
         );
         let _ = processor.process_bam();
+
+        let _ = match std::process::Command::new("zipmerge")
+            .arg("-i")
+            .arg(self.path_out.join("rdb").with_extension("zip"))
+            .args(&thread_paths_out)
+            .output() {
+                Ok(_) => { },
+                Err(e) => panic!("Failed to execute zipmerge command: {}", e)
+            };
+
         Ok(())
     }
 
