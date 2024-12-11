@@ -66,7 +66,6 @@ where
                     let barcode_as_string = String::from_utf8_lossy(&batch.barcode).to_string();
                     let fastq_path = format!("{}/reads.fastq", &barcode_as_string);
 
-                    // Create a new file in the zip archive with compression
                     let opts: FileOptions<'_, ()> =
                         FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -74,7 +73,6 @@ where
                         let mut index = 0;
                         while let Some((sequence, quality)) = batch.inner.pop() {
                             index += 1;
-                            // Write directly to the zip writer
                             let _ = writeln!(zip_writer, "@{}::{}", &barcode_as_string, index);
                             let _ = writeln!(zip_writer, "{}", sequence);
                             let _ = writeln!(zip_writer, "+");

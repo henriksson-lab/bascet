@@ -14,39 +14,23 @@ use std::{
 use zip::ZipArchive;
 
 use super::{
-    constants::{
-        OVLP_DIGITS, QUERY_DEFAULT_FEATURES_QUERY_MAX, QUERY_DEFAULT_FEATURES_QUERY_MIN,
-        QUERY_DEFAULT_FEATURES_REF_MAX, QUERY_DEFAULT_FEATURES_REF_MIN, QUERY_DEFAULT_PATH_IN,
-        QUERY_DEFAULT_PATH_OUT,
-    },
+    constants::{COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_TEMP},
     core::{core::KMCProcessor, params, threading::DefaultThreadState},
 };
 
 #[derive(Args)]
 pub struct Command {
-    #[arg(short = 'i', value_parser, default_value = QUERY_DEFAULT_PATH_IN)]
+    #[arg(short = 'i', value_parser, default_value = COUNT_DEFAULT_PATH_IN)]
     pub path_in: Input,
-    #[arg(short = 'j', value_parser, default_value = QUERY_DEFAULT_PATH_IN)]
+    #[arg(short = 'j', value_parser, default_value = COUNT_DEFAULT_PATH_INDEX)]
     pub path_index: Input,
-    #[arg(short = 't', value_parser, default_value = QUERY_DEFAULT_PATH_IN)]
-    pub path_tmp: PathBuf,
-    #[arg(short = 'o', value_parser, default_value = QUERY_DEFAULT_PATH_OUT)]
-    pub path_out: Output,
+    #[arg(short = 't', value_parser, default_value = COUNT_DEFAULT_PATH_TEMP)]
+    pub path_tmp: Output,
     #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
     pub kmer_size: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_REF_MIN)]
-    pub features_ref_nmin: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_REF_MAX)]
-    pub features_ref_nmax: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_QUERY_MIN)]
-    pub features_query_nmin: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_QUERY_MAX)]
-    pub features_query_nmax: usize,
     #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub threads_io: Option<usize>,
+    pub threads: Option<usize>,
     #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub threads_work: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(u64))]
     pub seed: Option<u64>,
 }
 
@@ -55,7 +39,7 @@ impl Command {
         // TODO: actually implement the CRAM->BAM/fastq.gz
         self.verify_input_file()?;
         let kmer_size = self.verify_kmer_size()?;
-        let (query_features_nmin, query_features_nmax, ref_features_nmin, ref_features_nmax) =
+        let (COUNT_features_nmin, COUNT_features_nmax, ref_features_nmin, ref_features_nmax) =
             self.verify_features()?;
         let (threads_io, threads_work) = self.resolve_thread_config()?;
         let seed = self.seed.unwrap_or_else(rand::random);
@@ -69,8 +53,8 @@ impl Command {
                 Arc::new(DefaultThreadState::from_seed(
                     seed,
                     buffer_size,
-                    query_features_nmin,
-                    query_features_nmax,
+                    COUNT_features_nmin,
+                    COUNT_features_nmax,
                 ))
             })
             .collect();
@@ -110,8 +94,8 @@ impl Command {
         let params_runtime = Arc::new(params::Runtime {
             kmer_size: kmer_size,
             ovlp_size: kmer_size + OVLP_DIGITS,
-            features_nmin: query_features_nmin,
-            features_nmax: query_features_nmax,
+            features_nmin: COUNT_features_nmin,
+            features_nmax: COUNT_features_nmax,
             codec: KMERCodec::new(kmer_size),
             seed: seed,
         });
@@ -169,7 +153,7 @@ impl Command {
                 .output()?;
 
             if !kmc_union.status.success() {
-                anyhow::bail!("KMC merge failed: {}", String::from_utf8_lossy(&kmc.stderr));
+                anyhow::bail!("KMC failed: {}", String::from_utf8_lossy(&kmc.stderr));
             }
 
             // let file_dump = File::open(&kmc_path_dump)?;
@@ -203,7 +187,7 @@ impl Command {
         if self.features_ref_nmin == 0 && self.features_ref_nmax == 0 {
             anyhow::bail!("Ref features_nmin and features_nmax cannot be 0");
         }
-        if self.features_query_nmin == 0 && self.features_query_nmax == 0 {
+        if self.features_COUNT_nmin == 0 && self.features_COUNT_nmax == 0 {
             anyhow::bail!("Query features_nmin and features_nmax cannot be 0");
         }
 
