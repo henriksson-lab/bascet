@@ -10,7 +10,7 @@ use std::{
 };
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
-use super::constants::{COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_TEMP};
+use super::constants::{COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_OUT, COUNT_DEFAULT_PATH_TEMP};
 
 #[derive(Args)]
 pub struct Command {
@@ -20,6 +20,8 @@ pub struct Command {
     pub path_index: PathBuf,
     #[arg(short = 't', value_parser, default_value = COUNT_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
+    #[arg(short = 'o', value_parser, default_value = COUNT_DEFAULT_PATH_OUT)]
+    pub path_out: PathBuf,
     #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
     pub kmer_size: usize,
     #[arg(long, value_parser = clap::value_parser!(usize))]
@@ -33,10 +35,12 @@ impl Command {
         self.verify_input_file()?;
         let kmer_size = self.verify_kmer_size()?;
         let threads = self.resolve_thread_config()?;
-
+        
         let file_rdb = File::open(&self.path_in)?;
         let mut handle_rdb = ZipArchive::new(&file_rdb)?;
-        let mut bufwriter_rdb = BufWriter::new(&file_rdb);
+
+        let file_rdb_out = File::create(&self.path_out)?;
+        let mut bufwriter_rdb = BufWriter::new(&file_rdb_out);
         let mut zipwriter_rdb = ZipWriter::new(&mut bufwriter_rdb);
 
         // basically all of this is just to get the progress bar ...
