@@ -98,6 +98,7 @@ impl Command {
                 .arg(&path_dir_barcode_reads)
                 .arg(&kmc_path_db)
                 .arg(&self.path_tmp)
+                .arg("-t").arg(format!("{threads}"))
                 .output()?;
 
             if !kmc.status.success() {
@@ -109,6 +110,7 @@ impl Command {
                 .arg(&kmc_path_db)
                 .arg("dump")
                 .arg(&kmc_path_dump)
+                .arg("-t").arg(format!("{threads}"))
                 .output()?;
 
             if !kmc_dump.status.success() {
@@ -120,6 +122,7 @@ impl Command {
                 .arg(&kmc_path_db)
                 .arg("union")
                 .arg(&path_kmc_union_new)
+                .arg("-t").arg(format!("{threads}"))
                 .output()?;
 
             if !kmc_union.status.success() {
