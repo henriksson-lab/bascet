@@ -15,6 +15,7 @@ enum Commands {
     Prepare(command::Prepare),
     Index(command::Index),
     Query(command::Query),
+    Count(command::Count),
 }
 
 fn main() -> ExitCode {
@@ -24,6 +25,7 @@ fn main() -> ExitCode {
         Commands::Prepare(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Index(mut cmd) => cmd.try_execute(),
+        Commands::Count(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
