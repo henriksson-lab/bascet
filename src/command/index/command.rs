@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::Write;
 use std::{fs::File, io::BufWriter, path::PathBuf};
 
@@ -21,7 +22,8 @@ impl Command {
 
         let zip_file = File::open(&self.path_in)?;
         let mut archive = ZipArchive::new(zip_file)?;
-        
+        fs::create_dir_all(&self.path_out)?;
+
         let reads_index_file = File::create(&self.path_out.join("reads"))?;
         let mut reads_index_writer = BufWriter::new(&reads_index_file);
         let kmc_index_file = File::create(&self.path_out.join("kmc"))?;
