@@ -77,6 +77,7 @@ impl Command {
 
         for line in index_reader.lines() {
             let line = line?;
+            println!("{}", &line);
             let index = line
                 .split(',')
                 .next()
@@ -114,19 +115,18 @@ impl Command {
                 .arg(&kmc_path_db)
                 .arg("dump")
                 .arg(&kmc_path_dump)
-                .arg("-t").arg(format!("{threads}"))
                 .output()?;
 
             if !kmc_dump.status.success() {
                 anyhow::bail!("KMC dump failed: {}", String::from_utf8_lossy(&kmc.stderr));
             }
+
             let kmc_union = std::process::Command::new("kmc_tools")
                 .arg("simple")
                 .arg(&path_kmc_union)
                 .arg(&kmc_path_db)
                 .arg("union")
                 .arg(&path_kmc_union_new)
-                .arg("-t").arg(format!("{threads}"))
                 .output()?;
 
             if !kmc_union.status.success() {
@@ -150,7 +150,7 @@ impl Command {
             );
             let _ = fs::remove_dir_all(&path_dir_barcode);
             progress.inc_and_draw(&bar, 1);
-            // break;
+            break;
         }
         Ok(())
     }
