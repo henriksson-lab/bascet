@@ -21,6 +21,7 @@ impl Command {
 
         let zip_file = File::open(&self.path_in)?;
         let mut archive = ZipArchive::new(zip_file)?;
+        
         let reads_index_file = File::create(&self.path_out.join("reads"))?;
         let mut reads_index_writer = BufWriter::new(&reads_index_file);
         let kmc_index_file = File::create(&self.path_out.join("kmc"))?;
