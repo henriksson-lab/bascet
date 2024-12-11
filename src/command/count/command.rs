@@ -1,31 +1,25 @@
-use crate::{constants::HUGE_PAGE_SIZE, utils::KMERCodec};
 use anyhow::Result;
 use clap::Args;
-use clio::{Input, Output};
-use fs2::FileExt;
 use linya::Progress;
+use rev_buf_reader::RevBufReader;
 use std::{
     fs::{self, File},
-    io::{BufRead, BufReader, Seek, SeekFrom},
+    io::{BufRead, BufReader, BufWriter, Seek, SeekFrom},
     path::PathBuf,
-    sync::Arc,
     thread,
 };
-use zip::ZipArchive;
+use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
-use super::{
-    constants::{COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_TEMP},
-    core::{core::KMCProcessor, params, threading::DefaultThreadState},
-};
+use super::constants::{COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_TEMP};
 
 #[derive(Args)]
 pub struct Command {
     #[arg(short = 'i', value_parser, default_value = COUNT_DEFAULT_PATH_IN)]
-    pub path_in: Input,
+    pub path_in: PathBuf,
     #[arg(short = 'j', value_parser, default_value = COUNT_DEFAULT_PATH_INDEX)]
-    pub path_index: Input,
+    pub path_index: PathBuf,
     #[arg(short = 't', value_parser, default_value = COUNT_DEFAULT_PATH_TEMP)]
-    pub path_tmp: Output,
+    pub path_tmp: PathBuf,
     #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
     pub kmer_size: usize,
     #[arg(long, value_parser = clap::value_parser!(usize))]
@@ -36,105 +30,72 @@ pub struct Command {
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        // TODO: actually implement the CRAM->BAM/fastq.gz
         self.verify_input_file()?;
         let kmer_size = self.verify_kmer_size()?;
-        let (COUNT_features_nmin, COUNT_features_nmax, ref_features_nmin, ref_features_nmax) =
-            self.verify_features()?;
-        let (threads_io, threads_work) = self.resolve_thread_config()?;
-        let seed = self.seed.unwrap_or_else(rand::random);
-        let thread_pool = threadpool::ThreadPool::new(threads_io + threads_work);
-        // HACK: Did not implement a good way to get huge page size.
-        //       buffer_size takes into account the thread count and the overlap window.
-        // NOTE: Maximum amount of characters in counts column, including seperator
-        let buffer_size = (HUGE_PAGE_SIZE / threads_work) - ((kmer_size as usize) + OVLP_DIGITS);
-        let thread_states: Vec<Arc<DefaultThreadState>> = (0..threads_work)
-            .map(|_| {
-                Arc::new(DefaultThreadState::from_seed(
-                    seed,
-                    buffer_size,
-                    COUNT_features_nmin,
-                    COUNT_features_nmax,
-                ))
-            })
-            .collect();
-        let zip_file = File::open(self.path_in.path().to_path_buf())?;
-        let mut archive = ZipArchive::new(zip_file)?;
-        let index_reader = BufReader::new(File::open(self.path_index.path().to_path_buf())?);
+        let threads = self.resolve_thread_config()?;
 
-        let mut index_file = File::open(self.path_index.path().to_path_buf())?;
-        index_file.seek(SeekFrom::End(-128))?; // Seek back just enough for last few lines
-        let reader = BufReader::new(index_file);
-        let lines: Vec<_> = reader.lines().collect();
-        let total = lines[lines.len() - 2]
-            .as_ref()
-            .unwrap()
-            .split(',')
+        let file_rdb = File::open(&self.path_in)?;
+        let mut handle_rdb = ZipArchive::new(&file_rdb)?;
+        let mut bufwriter_rdb = BufWriter::new(&file_rdb);
+        let mut zipwriter_rdb = ZipWriter::new(&mut bufwriter_rdb);
+
+        // basically all of this is just to get the progress bar ...
+        let index_file = File::open(&self.path_index)?;
+        let mut index_reader = BufReader::new(&index_file);
+        let mut index_rev_reader = RevBufReader::new(&mut index_reader);
+        let mut index_last_line = String::new();
+        index_rev_reader.read_line(&mut index_last_line)?;
+        let index_last = index_last_line
+            .split(",")
             .next()
             .unwrap()
             .parse::<usize>()?;
+        index_reader.seek(SeekFrom::Start(0))?;
 
-        // create an empty db to merge with
-        let path_empty = self
-            .path_tmp
-            .join("empty")
-            .join("reads")
-            .with_extension("fastq");
-        let path_empty_kmc = self.path_tmp.join("empty").join("kmc");
-        fs::create_dir_all(&path_empty_kmc)?;
-        let kmc_empty = File::create(&path_empty)?;
-        let kmc = std::process::Command::new("kmc")
-            .arg(format!("-cs{}", u32::MAX - 1))
+        let union_dir = self.path_tmp.join("union");
+        fs::create_dir_all(&union_dir)?;
+
+        // create an empty fastq to create an empty kmc database as a merge target
+        let path_empty_reads = union_dir.join("reads").with_extension("fastq");
+        let _ = File::create(&path_empty_reads);
+        let path_kmc_union = union_dir.join("kmc");
+        let path_kmc_union_new = union_dir.join("kmc_new");
+        let _ = std::process::Command::new("kmc")
+            .arg(format!("-cs{}", u32::MAX))
             .arg(format!("-k{}", &self.kmer_size))
-            .arg(&path_empty)
-            .arg(&path_empty_kmc)
+            .arg(&path_empty_reads)
+            .arg(&path_kmc_union)
             .arg(&self.path_tmp)
             .output()?;
 
-        let params_runtime = Arc::new(params::Runtime {
-            kmer_size: kmer_size,
-            ovlp_size: kmer_size + OVLP_DIGITS,
-            features_nmin: COUNT_features_nmin,
-            features_nmax: COUNT_features_nmax,
-            codec: KMERCodec::new(kmer_size),
-            seed: seed,
-        });
-        let params_threading = Arc::new(params::Threading {
-            threads_io: threads_io,
-            threads_work: threads_work,
-            thread_buffer_size: buffer_size,
-            thread_pool: &thread_pool,
-            thread_states: &thread_states,
-        });
-
         let mut progress = Progress::new();
-        let bar = progress.bar(total, "Extracting files");
+        let bar = progress.bar(index_last, "Counting KMERs");
 
         for line in index_reader.lines() {
             let line = line?;
-            let index: usize = line
+            let index = line
                 .split(',')
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("Error parsing index file"))?
-                .parse()?;
+                .parse::<usize>()?;
 
-            if index == 0 {
-                progress.inc_and_draw(&bar, 1);
-                continue;
-            }
+            let mut file = handle_rdb.by_index(index)?;
+            let file_pathbuf = file.mangled_name();
+            let barcode = file_pathbuf.parent().unwrap();
 
-            let mut file = archive.by_index(index)?;
-            let out_path = self.path_tmp.join(file.name());
-            let dir_path = out_path.parent().unwrap();
-            let _ = fs::create_dir_all(&dir_path);
-            let mut out_file = File::create(&out_path)?;
-            std::io::copy(&mut file, &mut out_file)?;
+            let path_dir_barcode = self.path_tmp.join(&barcode);
+            let _ = fs::create_dir(&path_dir_barcode);
 
-            let kmc_path_db = dir_path.join("kmc");
+            let path_dir_barcode_reads = path_dir_barcode.join("reads.fastq");
+            let mut file_dir_barcode_reads = File::create(&path_dir_barcode_reads)?;
+            std::io::copy(&mut file, &mut file_dir_barcode_reads)?;
+
+            let kmc_path_db = path_dir_barcode.join("kmc");
+            let kmc_path_dump = path_dir_barcode.join("dump.txt");
             let kmc = std::process::Command::new("kmc")
                 .arg(format!("-cs{}", u32::MAX - 1))
-                .arg(format!("-k{}", &self.kmer_size))
-                .arg(&out_path)
+                .arg(format!("-k{}", &kmer_size))
+                .arg(&path_dir_barcode_reads)
                 .arg(&kmc_path_db)
                 .arg(&self.path_tmp)
                 .output()?;
@@ -143,60 +104,60 @@ impl Command {
                 anyhow::bail!("KMC failed: {}", String::from_utf8_lossy(&kmc.stderr));
             }
 
+            let kmc_dump = std::process::Command::new("kmc_tools")
+                .arg("transform")
+                .arg(&kmc_path_db)
+                .arg("dump")
+                .arg(&kmc_path_dump)
+                .output()?;
+
+            if !kmc_dump.status.success() {
+                anyhow::bail!("KMC dump failed: {}", String::from_utf8_lossy(&kmc.stderr));
+            }
             let kmc_union = std::process::Command::new("kmc_tools")
                 .arg("simple")
-                .arg(&path_empty_kmc)
-                .arg(&out_path)
-                .arg(&path_empty_kmc)
+                .arg(&path_kmc_union)
+                .arg(&kmc_path_db)
                 .arg("union")
-                .arg(&self.path_tmp.join("union"))
+                .arg(&path_kmc_union_new)
                 .output()?;
 
             if !kmc_union.status.success() {
-                anyhow::bail!("KMC failed: {}", String::from_utf8_lossy(&kmc.stderr));
+                anyhow::bail!("KMC union failed: {}", String::from_utf8_lossy(&kmc.stderr));
             }
 
-            // let file_dump = File::open(&kmc_path_dump)?;
-            // let lock = file_dump.lock_shared();
-            // let params_io = Arc::new(params::IO {
-            //     file_in: &file_dump,
-            //     path_out: &mut self.path_out,
-            // });
-            // let _ = KMCProcessor::extract(params_io, params_runtime, params_threading);
-            // drop(lock);
-            let _ = fs::remove_dir_all(&dir_path);
+            let opts: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            let mut dump_file = File::open(&kmc_path_dump)?;
+            if let Ok(_) = zipwriter_rdb.start_file_from_path(&kmc_path_dump, opts) {
+                std::io::copy(&mut dump_file, &mut zipwriter_rdb)?;
+            }
+
+            let _ = fs::rename(
+                &path_kmc_union_new.with_extension("kmc_pre"),
+                &path_kmc_union.with_extension("kmc_pre"),
+            );
+            let _ = fs::rename(
+                &path_kmc_union_new.with_extension("kmc_suf"),
+                &path_kmc_union.with_extension("kmc_suf"),
+            );
+            let _ = fs::remove_dir_all(&path_dir_barcode);
             progress.inc_and_draw(&bar, 1);
+            // break;
         }
         Ok(())
     }
 
-    fn verify_input_file(&mut self) -> Result<()> {
-        if self.path_in.is_std() {
-            anyhow::bail!("stdin not supported for now");
+    fn verify_input_file(&mut self) -> anyhow::Result<()> {
+        if let Ok(file) = File::open(&self.path_in) {
+            if file.metadata()?.len() == 0 {
+                anyhow::bail!("Empty input file");
+            }
         }
-        if self.path_in.get_file().unwrap().metadata()?.len() == 0 {
-            anyhow::bail!("Empty input file");
-        }
-        match self.path_in.path().extension().and_then(|ext| ext.to_str()) {
-            Some("zip") => Ok(()),
-            _ => anyhow::bail!("Input file must be a robert database (zip)"),
-        }
-    }
-
-    fn verify_features(&self) -> Result<(usize, usize, usize, usize)> {
-        if self.features_ref_nmin == 0 && self.features_ref_nmax == 0 {
-            anyhow::bail!("Ref features_nmin and features_nmax cannot be 0");
-        }
-        if self.features_COUNT_nmin == 0 && self.features_COUNT_nmax == 0 {
-            anyhow::bail!("Query features_nmin and features_nmax cannot be 0");
-        }
-
-        Ok((
-            self.features_ref_nmin,
-            self.features_ref_nmax,
-            self.features_ref_nmin,
-            self.features_ref_nmax,
-        ))
+        match self.path_in.extension().and_then(|ext| ext.to_str()) {
+            Some("zip") => return Ok(()),
+            _ => anyhow::bail!("Input file must be a zip archive"),
+        };
     }
 
     fn verify_kmer_size(&self) -> Result<usize> {
@@ -207,29 +168,19 @@ impl Command {
         anyhow::bail!("Invalid kmer size k:{}", self.kmer_size);
     }
 
-    fn resolve_thread_config(&self) -> Result<(usize, usize)> {
+    fn resolve_thread_config(&self) -> anyhow::Result<usize> {
         let available_threads = thread::available_parallelism()
             .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
             .get();
 
-        if available_threads < 2 {
-            anyhow::bail!("At least two threads must be available");
+        if let Some(given_threads) = self.threads {
+            if given_threads == 0 {
+                anyhow::bail!("At least one thread required");
+            }
+
+            return Ok(given_threads);
         }
 
-        let (threads_io, threads_work) = match (self.threads_io, self.threads_work) {
-            (Some(i), Some(w)) => (i, w),
-            (Some(i), None) => (i, available_threads.saturating_sub(i).max(1)),
-            (None, Some(w)) => (1, w),
-            (None, None) => (1, available_threads.saturating_sub(1).max(1)),
-        };
-
-        if threads_io == 0 {
-            anyhow::bail!("At least one IO thread required");
-        }
-        if threads_work == 0 {
-            anyhow::bail!("At least one work thread required");
-        }
-
-        Ok((threads_io, threads_work))
+        return Ok(available_threads);
     }
 }
