@@ -7,8 +7,8 @@ where
 
 unsafe impl<W> Send for ThreadState<W> where W: std::io::Seek + std::io::Write {}
 unsafe impl<W> Sync for ThreadState<W> where W: std::io::Seek + std::io::Write {}
-pub type DefaultThreadState = ThreadState<std::fs::File>;
 
+pub type DefaultThreadState = ThreadState<std::fs::File>;
 impl<W> ThreadState<W>
 where
     W: std::io::Seek + std::io::Write,
