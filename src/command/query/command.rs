@@ -169,7 +169,10 @@ impl Command {
                 .output()?;
 
             if !kmc_union.status.success() {
-                anyhow::bail!("KMC merge failed: {}", String::from_utf8_lossy(&kmc.stderr));
+                anyhow::bail!(
+                    "KMC merge failed: {}",
+                    String::from_utf8_lossy(&kmc_union.stderr)
+                );
             }
 
             // let file_dump = File::open(&kmc_path_dump)?;
@@ -182,6 +185,8 @@ impl Command {
             // drop(lock);
             let _ = fs::remove_dir_all(&dir_path);
             progress.inc_and_draw(&bar, 1);
+
+            //TODO//NOTE: REMEMBER TO RESET THREAD STATES!!!
         }
         Ok(())
     }

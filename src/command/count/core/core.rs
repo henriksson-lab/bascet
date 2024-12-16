@@ -1,205 +1,171 @@
-use memmap2::MmapOptions;
-use std::{cmp::min, sync::Arc, usize};
+use std::{fs::{self, File}, io::{BufRead, BufReader, Write}, path::PathBuf, sync::{Arc, RwLock}};
 
-use crate::utils::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap, KMERCodec};
+use rev_buf_reader::RevBufReader;
+use zip::ZipArchive;
 
-use super::params;
+use super::{params, threading::DefaultThreadState};
 
-pub struct KMCProcessor {}
+pub struct RDBCounter {}
 
-#[inline(always)]
-fn find_chunk_start(chunk: &[u8], raw_start: usize, ovlp_size: usize) -> usize {
-    for i in 0..min(ovlp_size, chunk.len()) {
-        if chunk[i] == b'\n' {
-            return raw_start + i + 1;
-        }
-    }
-    raw_start
-}
-
-#[inline(always)]
-fn find_chunk_end(chunk: &[u8], raw_end: usize, ovlp_size: usize) -> usize {
-    let window_size = min(ovlp_size, chunk.len());
-    for i in (chunk.len() - window_size..chunk.len()).rev() {
-        if chunk[i] == b'\n' {
-            return min(i + 1, raw_end);
-        }
-    }
-    raw_end
-}
-
-#[inline(always)]
-unsafe fn parse_count_u32(bytes: &[u8]) -> u32 {
-    // Fast path for single digit, most common case
-    if bytes.len() == 1 {
-        return (bytes[0] - b'0') as u32;
-    }
-
-    // Fast path for two digits, second most common case
-    if bytes.len() == 2 {
-        return ((bytes[0] - b'0') * 10 + (bytes[1] - b'0')) as u32;
-    }
-
-    // LUT for two-digit numbers
-    const LOOKUP: [u32; 100] = {
-        let mut table = [0u32; 100];
-        let mut i = 0;
-        while i < 100 {
-            table[i] = (i / 10 * 10 + i % 10) as u32;
-            i += 1;
-        }
-        table
-    };
-
-    let chunks = bytes.chunks_exact(2);
-    let remainder = chunks.remainder();
-
-    let mut result = 0u32;
-    for chunk in chunks {
-        let idx = ((chunk[0] - b'0') * 10 + (chunk[1] - b'0')) as usize;
-        result = result.wrapping_mul(100) + LOOKUP[idx];
-    }
-
-    // Handle last digit if present
-    if let Some(&d) = remainder.first() {
-        result = result.wrapping_mul(10) + (d - b'0') as u32;
-    }
-
-    result
-}
-
-#[inline(always)]
-fn featurise_process_chunk(
-    chunk: &[u8],
-    rng: &mut impl rand::Rng,
-    min_heap: &mut BoundedMinHeap<u128>,
-    max_heap: &mut BoundedMaxHeap<u128>,
-    codec: KMERCodec,
-    kmer_size: usize,
-    ovlp_size: usize,
-) {
-    let chunk_length = chunk.len();
-    let min_read_size = kmer_size + 2; // K + 2 is minimum size for a kmer + count (\t\d)
-    let n_max_panes = chunk_length / min_read_size;
-    let mut cursor = 0;
-
-    for _ in 0..n_max_panes {
-        if cursor >= chunk_length {
-            break;
-        }
-
-        let pane_start = cursor;
-        let remaining = chunk_length - pane_start;
-
-        if remaining < min_read_size {
-            break;
-        }
-
-        // Find the length of the current pane (up to next newline)
-        let mut pane_length = min_read_size;
-        for i in pane_length..min(ovlp_size, remaining) {
-            if chunk[pane_start + i] == b'\n' {
-                pane_length = i;
-                break;
-            }
-        }
-
-        // Extract and encode kmer with its count
-        let kmer_end = pane_start + kmer_size;
-        let count = unsafe { parse_count_u32(&chunk[kmer_end + 1..pane_start + pane_length]) };
-
-        let encoded = unsafe {
-            // eprintln!(
-            //     "About to encode kmer at offset {}, len={}: {:?}",
-            //     pane_start,
-            //     kmer_size,
-            //     std::str::from_utf8(&chunk[pane_start..kmer_end]).unwrap_or("[invalid utf8]")
-            // );
-
-            codec
-                .encode(&chunk[pane_start..kmer_end], count, rng)
-                .into_bits()
-        };
-
-        let _ = min_heap.push(encoded);
-        let _ = max_heap.push(encoded);
-
-        cursor += pane_length + 1; // +1 for newline
-    }
-}
-
-impl KMCProcessor {
+impl RDBCounter {
     pub fn extract<'a>(
-        params_io: Arc<params::IO<'a>>,
+        params_io: Arc<params::IO>,
         params_runtime: Arc<params::Runtime>,
         params_threading: Arc<params::Threading<'a>>,
-    ) -> anyhow::Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>)> {
-        let mmap = Arc::new(unsafe { MmapOptions::new().map(params_io.file_in) }.unwrap());
-        let (tx, rx) = crossbeam::channel::bounded(256);
+        thread_states: Vec<Arc<DefaultThreadState>>,
+    ) -> anyhow::Result<()> {
+        let (tx, rx) = crossbeam::channel::bounded::<Option<(PathBuf, PathBuf)>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
-        for i in 0..params_threading.threads_work {
+       for state in &thread_states {
+            let union_dir = &state.temp_path;
+            // create an empty fastq to create an empty kmc database as a merge target
+            let path_empty_reads = Arc::new(union_dir.join("reads").with_extension("fastq"));
+            let _ = File::create(&*path_empty_reads);
+            
+            let path_kmc_union = Arc::new(union_dir.join("kmc"));
+            let _ = std::process::Command::new("kmc")
+                .arg(format!("-cs{}", u32::MAX))
+                .arg(format!("-k{}", &params_runtime.kmer_size))
+                .arg(&*path_empty_reads)
+                .arg(&*path_kmc_union)
+                .arg(&params_io.path_tmp)
+                .arg("-t").arg("1")
+                .output()?;
+       }
+
+        for tidx in 0..params_threading.threads_write {
             let rx = Arc::clone(&rx);
-            let mmap = Arc::clone(&mmap);
-            let state = Arc::clone(&params_threading.thread_states[i]);
+            let params_io = Arc::clone(&params_io);
             let params_runtime = Arc::clone(&params_runtime);
+            let params_threading = Arc::clone(&params_threading);
+
+            let thread_state = Arc::clone(&thread_states[tidx]);
+            let mut zip_writer = unsafe { &mut *thread_state.zip_writer.get() };
+            let thread_temp_path = Arc::clone(&thread_state.temp_path);
+            let union_kmc = thread_temp_path.join("kmc");
+            let union_kmc_write = thread_temp_path.join("kmc_write");
 
             params_threading.thread_pool.execute(move || {
-                while let Ok(Some((start, end))) = rx.recv() {
-                    let chunk = &mmap[start..end];
-                    unsafe {
-                        let rng = &mut *state.rng.get();
-                        let min_heap = &mut *state.min_heap.get();
-                        let max_heap = &mut *state.max_heap.get();
-                        let buffer = &mut *state.buffer.get();
-                        buffer.clear();
-                        buffer.extend_from_slice(chunk);
-                        featurise_process_chunk(
-                            buffer,
-                            rng,
-                            min_heap,
-                            max_heap,
-                            params_runtime.codec,
-                            params_runtime.kmer_size,
-                            params_runtime.ovlp_size,
-                        );
+                while let Ok(Some((path_dir, path_temp_reads))) = rx.recv() {
+                    let path_dir = params_io.path_tmp.join(&path_dir);
+                    let path_temp_reads = params_io.path_tmp.join(&path_temp_reads);
+                    let kmc_path_db = path_dir.join("kmc");
+                    let kmc_path_dump = path_dir.join("dump.txt");
+                    println!("Evaluating path {path_dir:?}");
+                    let kmc = std::process::Command::new("kmc")
+                        .arg(format!("-cs{}", u32::MAX - 1))
+                        .arg(format!("-k{}", &params_runtime.kmer_size))
+                        .arg(&path_temp_reads)
+                        .arg(&kmc_path_db)
+                        .arg(&*thread_temp_path)
+                        .output()
+                        .map_err(|e| eprintln!("Failed to execute KMC command: {}", e))
+                        .expect("KMC command failed");
+
+                    if !kmc.status.success() {
+                        eprintln!("KMC command failed with status: {}", kmc.status);
+                        std::io::stderr().write_all(&kmc.stderr).expect("Failed to write to stderr");
                     }
+
+                    let kmc_dump = std::process::Command::new("kmc_tools")
+                        .arg("transform")
+                        .arg(&kmc_path_db)
+                        .arg("dump")
+                        .arg(&kmc_path_dump)
+                        .output()
+                        .map_err(|e| eprintln!("Failed to execute KMC dump command: {}", e))
+                        .expect("KMC dump command failed");
+
+                    if !kmc_dump.status.success() {
+                        eprintln!("KMC dump command failed with status: {}", kmc_dump.status);
+                        std::io::stderr().write_all(&kmc_dump.stderr).expect("Failed to write to stderr");
+                    }
+
+                    let kmc_union = std::process::Command::new("kmc_tools")
+                        .arg("simple")
+                        .arg(&*union_kmc)
+                        .arg(&kmc_path_db)
+                        .arg("union")
+                        .arg(&*union_kmc_write)
+                        .output()
+                        .map_err(|e| eprintln!("Failed to execute KMC union command: {}", e))
+                        .expect("KMC union command failed");
+
+                    if !kmc_union.status.success() {
+                        eprintln!("KMC union command failed with status: {}", kmc_union.status);
+                        std::io::stderr().write_all(&kmc_union.stderr).expect("Failed to write to stderr");
+                    }
+                    let opts: zip::write::FileOptions<'_, ()> =
+                        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                    let mut dump_file = File::open(&kmc_path_dump).unwrap();
+                    if let Ok(_) = zip_writer.start_file_from_path(&kmc_path_dump, opts) {
+                        std::io::copy(&mut dump_file, &mut zip_writer).unwrap();
+                    }
+                    let _ = fs::rename(
+                        &union_kmc_write.with_extension("kmc_pre"),
+                        &union_kmc.with_extension("kmc_pre"),
+                    );
+                    let _ = fs::rename(
+                        &union_kmc_write.with_extension("kmc_suf"),
+                        &union_kmc.with_extension("kmc_suf"),
+                    );
+                    let _ = fs::remove_dir_all(&path_dir);
                 }
             });
         }
 
-        let io_tx = Arc::clone(&tx);
-        let io_mmap = Arc::clone(&mmap);
-        let io_ovlp_size = params_runtime.ovlp_size;
-        let io_buffer_size = params_threading.thread_buffer_size;
-        let io_threads_work = params_threading.threads_work;
+        let index_file = File::open(&params_io.path_idx)?;
+        let mut index_reader = BufReader::new(index_file);
+        let mut progress_index_rev_reader = RevBufReader::new(&mut index_reader);
+        let mut progress_index_last_line = String::new();
+        progress_index_rev_reader.read_line(&mut progress_index_last_line)?;
+        let _progress_index_last = progress_index_last_line
+            .split(",")
+            .next()
+            .unwrap()
+            .parse::<usize>()?;
 
+        let io_tx = Arc::clone(&tx);
+        let io_params_io = Arc::clone(&params_io);
+        let io_worker_threads = params_threading.threads_write;
+        
+        let rdb_file = File::open(&io_params_io.path_in).expect("Failed to open RDB file");
+        let index_file = File::open(&io_params_io.path_idx).expect("Failed to open index file");
+        let index_reader = BufReader::new(index_file);
+        let archive_rdb = Arc::new(RwLock::new(ZipArchive::new(rdb_file).expect("Unable to create zip archive")));
+        
         params_threading.thread_pool.execute(move || {
-            let n_chunks = (io_mmap.len() + io_buffer_size - 1) / io_buffer_size;
-            for i in 0..n_chunks {
-                let raw_start = i * io_buffer_size;
-                let raw_end = min(raw_start + io_buffer_size + io_ovlp_size, io_mmap.len());
-                let valid_start = find_chunk_start(&io_mmap[raw_start..], raw_start, io_ovlp_size);
-                let valid_end = find_chunk_end(&io_mmap[..raw_end], raw_end, io_ovlp_size);
-                io_tx.send(Some((valid_start, valid_end))).unwrap();
+            for line in index_reader.lines() {
+                if let Ok(line) = line {
+                    let index = line.split(',').next().unwrap().parse::<usize>()
+                        .expect("Error parsing index file");
+                    if let Ok(mut archive_rdb) = archive_rdb.write() {
+                        let mut barcode_read = archive_rdb.by_index(index)
+                            .expect(&format!("No file at index {}", &index));
+                        
+                        let barcode_read_path = barcode_read.mangled_name();
+                        let barcode = barcode_read_path.parent().unwrap();
+
+                        let path_dir_barcode = io_params_io.path_tmp.join(barcode);
+                        let _ = fs::create_dir_all(&path_dir_barcode);
+                        
+                        let path_temp_barcode_reads = path_dir_barcode.join("reads.fastq");
+                        let mut file_temp_barcode_reads = File::create(&path_temp_barcode_reads).unwrap();
+                        std::io::copy(&mut barcode_read, &mut file_temp_barcode_reads).unwrap();
+  
+                        let _ = io_tx.send(Some((barcode.to_path_buf(), barcode_read_path)));
+                    }
+                }
             }
-            for _ in 0..io_threads_work {
-                io_tx.send(None).unwrap();
+            
+            for _ in 0..io_worker_threads {
+                let _ = io_tx.send(None);
             }
         });
 
+        // Wait for the threads to complete
         params_threading.thread_pool.join();
-
-        let mut final_min_heap = BoundedMinHeap::with_capacity(params_runtime.features_nmin);
-        let mut final_max_heap = BoundedMaxHeap::with_capacity(params_runtime.features_nmax);
-
-        for state in params_threading.thread_states.iter() {
-            unsafe {
-                final_min_heap.extend((&*state.min_heap.get()).iter().copied());
-                final_max_heap.extend((&*state.max_heap.get()).iter().copied());
-            }
-        }
-
-        Ok((final_min_heap, final_max_heap))
+        Ok(())
     }
 }
