@@ -80,7 +80,7 @@ impl Command {
         let zip_paths: Vec<PathBuf> = thread_paths_out.iter().map(|e| e.0.clone() ).collect();
         let _ = match std::process::Command::new("zipmerge")
             .arg("-i")
-            .arg(self.path_out.join("rdb").with_extension("zip"))
+            .arg(self.path_out.join("rdb-count").with_extension("zip"))
             .args(&zip_paths)
             .output()
         {
