@@ -82,34 +82,34 @@ impl RDBCounter {
                         std::io::stderr().write_all(&kmc_dump.stderr).expect("Failed to write to stderr");
                     }
 
-                    let kmc_union = std::process::Command::new("kmc_tools")
-                        .arg("simple")
-                        .arg(&*union_kmc)
-                        .arg(&kmc_path_db)
-                        .arg("union")
-                        .arg(&*union_kmc_write)
-                        .output()
-                        .map_err(|e| eprintln!("Failed to execute KMC union command: {}", e))
-                        .expect("KMC union command failed");
+                    // let kmc_union = std::process::Command::new("kmc_tools")
+                    //     .arg("simple")
+                    //     .arg(&*union_kmc)
+                    //     .arg(&kmc_path_db)
+                    //     .arg("union")
+                    //     .arg(&*union_kmc_write)
+                    //     .output()
+                    //     .map_err(|e| eprintln!("Failed to execute KMC union command: {}", e))
+                    //     .expect("KMC union command failed");
 
-                    if !kmc_union.status.success() {
-                        eprintln!("KMC union command failed with status: {}", kmc_union.status);
-                        std::io::stderr().write_all(&kmc_union.stderr).expect("Failed to write to stderr");
-                    }
+                    // if !kmc_union.status.success() {
+                    //     eprintln!("KMC union command failed with status: {}", kmc_union.status);
+                    //     std::io::stderr().write_all(&kmc_union.stderr).expect("Failed to write to stderr");
+                    // }
                     let opts: zip::write::FileOptions<'_, ()> =
                         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
                     let mut dump_file = File::open(&kmc_path_dump).unwrap();
                     if let Ok(_) = zip_writer.start_file_from_path(&kmc_path_dump, opts) {
                         std::io::copy(&mut dump_file, &mut zip_writer).unwrap();
                     }
-                    let _ = fs::rename(
-                        &union_kmc_write.with_extension("kmc_pre"),
-                        &union_kmc.with_extension("kmc_pre"),
-                    );
-                    let _ = fs::rename(
-                        &union_kmc_write.with_extension("kmc_suf"),
-                        &union_kmc.with_extension("kmc_suf"),
-                    );
+                    // let _ = fs::rename(
+                    //     &union_kmc_write.with_extension("kmc_pre"),
+                    //     &union_kmc.with_extension("kmc_pre"),
+                    // );
+                    // let _ = fs::rename(
+                    //     &union_kmc_write.with_extension("kmc_suf"),
+                    //     &union_kmc.with_extension("kmc_suf"),
+                    // );
                     let _ = fs::remove_dir_all(&path_dir);
                 }
             });
