@@ -3,14 +3,21 @@ use clap::Args;
 use linya::Progress;
 use rev_buf_reader::RevBufReader;
 use std::{
-    fs::{self, File}, io::{BufRead, BufReader, BufWriter, Seek, SeekFrom}, path::PathBuf, sync::Arc, thread
+    fs::{self, File},
+    io::{BufRead, BufReader, BufWriter, Seek, SeekFrom},
+    path::PathBuf,
+    sync::Arc,
+    thread,
 };
 use zip::{write::FileOptions, HasZipMetadata, ZipArchive, ZipWriter};
 
-use super::{constants::{
-    COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_OUT,
-    COUNT_DEFAULT_PATH_TEMP,
-}, core::{core::RDBCounter, params, threading::DefaultThreadState}};
+use super::{
+    constants::{
+        COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_OUT,
+        COUNT_DEFAULT_PATH_TEMP,
+    },
+    core::{core::RDBCounter, params, threading::DefaultThreadState},
+};
 
 #[derive(Args)]
 pub struct Command {
@@ -55,13 +62,15 @@ impl Command {
         fs::create_dir_all(&self.path_out).unwrap();
         let thread_paths_out: Vec<(PathBuf, PathBuf)> = (0..threads_write)
             .map(|index| {
-                (self.path_out
-                    .join(format!("rdb-count-{}", index))
-                    .with_extension("zip"),
-                self.path_tmp.join(format!("temp_path-{}", index)))
+                (
+                    self.path_out
+                        .join(format!("rdb-count-{}", index))
+                        .with_extension("zip"),
+                    self.path_tmp.join(format!("temp_path-{}", index)),
+                )
             })
             .collect();
-       
+
         let thread_states: Vec<Arc<DefaultThreadState>> = thread_paths_out
             .iter()
             .map(|path| {
@@ -71,15 +80,15 @@ impl Command {
                 Arc::new(DefaultThreadState::new(zipfile, path.1.clone()))
             })
             .collect();
-        
+
         let _ = RDBCounter::extract(
             Arc::new(params_io),
             Arc::new(params_runtime),
             Arc::new(params_threading),
-            thread_states
+            thread_states,
         );
 
-        let zip_paths: Vec<PathBuf> = thread_paths_out.iter().map(|e| e.0.clone() ).collect();
+        let zip_paths: Vec<PathBuf> = thread_paths_out.iter().map(|e| e.0.clone()).collect();
         let _ = match std::process::Command::new("zipmerge")
             .arg("-isk")
             .arg(self.path_out.join("rdb-count").with_extension("zip"))
@@ -89,7 +98,7 @@ impl Command {
             Ok(_) => {}
             Err(e) => panic!("Failed to execute zipmerge command: {}", e),
         };
-        
+
         Ok(())
     }
 
