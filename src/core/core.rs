@@ -1,9 +1,13 @@
+use fs2::FileExt;
 use memmap2::MmapOptions;
-use std::{cmp::min, sync::Arc, usize};
+use std::{cmp::min, fs::File, sync::Arc, usize};
 
 use crate::utils::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap, KMERCodec};
 
-use super::params;
+use super::{
+    constants::{HUGE_PAGE_SIZE, OVLP_DIGITS},
+    params,
+};
 
 pub struct KMCProcessor {}
 
@@ -130,11 +134,17 @@ fn featurise_process_chunk(
 
 impl KMCProcessor {
     pub fn extract<'a>(
-        params_io: Arc<params::IO<'a>>,
-        params_runtime: Arc<params::Runtime>,
-        params_threading: Arc<params::Threading<'a>>,
+        params_io: params::IO<'a>,
+        params_runtime: params::Runtime,
+        params_threading: params::Threading<'a>,
     ) -> anyhow::Result<(BoundedMinHeap<u128>, BoundedMaxHeap<u128>)> {
-        let mmap = Arc::new(unsafe { MmapOptions::new().map(params_io.file_in) }.unwrap());
+        let params_io = Arc::new(params_io);
+        let params_runtime = Arc::new(params_runtime);
+        let params_threading = Arc::new(params_threading);
+
+        let file = File::open(params_io.path_in).unwrap();
+        let lock = file.lock_exclusive();
+        let mmap = Arc::new(unsafe { MmapOptions::new().map(&file) }.unwrap());
         let (tx, rx) = crossbeam::channel::bounded(256);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
@@ -144,6 +154,7 @@ impl KMCProcessor {
             let state = Arc::clone(&params_threading.thread_states[i]);
             let params_runtime = Arc::clone(&params_runtime);
 
+            let ovlp_size = params_runtime.kmer_size + OVLP_DIGITS;
             params_threading.thread_pool.execute(move || {
                 while let Ok(Some((start, end))) = rx.recv() {
                     let chunk = &mmap[start..end];
@@ -161,7 +172,7 @@ impl KMCProcessor {
                             max_heap,
                             params_runtime.codec,
                             params_runtime.kmer_size,
-                            params_runtime.ovlp_size,
+                            ovlp_size,
                         );
                     }
                 }
@@ -170,9 +181,9 @@ impl KMCProcessor {
 
         let io_tx = Arc::clone(&tx);
         let io_mmap = Arc::clone(&mmap);
-        let io_ovlp_size = params_runtime.ovlp_size;
         let io_buffer_size = params_threading.thread_buffer_size;
         let io_threads_work = params_threading.threads_work;
+        let io_ovlp_size = params_runtime.kmer_size + OVLP_DIGITS;
 
         params_threading.thread_pool.execute(move || {
             let n_chunks = (io_mmap.len() + io_buffer_size - 1) / io_buffer_size;
@@ -199,7 +210,7 @@ impl KMCProcessor {
                 final_max_heap.extend((&*state.max_heap.get()).iter().copied());
             }
         }
-
+        drop(lock);
         Ok((final_min_heap, final_max_heap))
     }
 }
