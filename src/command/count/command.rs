@@ -52,6 +52,7 @@ impl Command {
             threads_write: threads_write,
             thread_pool: &threadpool::ThreadPool::new(threads_read + threads_write),
         };
+        fs::create_dir_all(&self.path_out).unwrap();
         let thread_paths_out: Vec<(PathBuf, PathBuf)> = (0..threads_write)
             .map(|index| {
                 (self.path_out
@@ -60,12 +61,13 @@ impl Command {
                 self.path_tmp.join(format!("temp_path-{}", index)))
             })
             .collect();
-
+       
         let thread_states: Vec<Arc<DefaultThreadState>> = thread_paths_out
             .iter()
             .map(|path| {
-                let zipfile = File::create(path.0.clone()).unwrap();
                 let _ = fs::create_dir_all(path.1.clone());
+                println!("{:?}", path.0);
+                let zipfile = File::create(path.0.clone()).unwrap();
                 Arc::new(DefaultThreadState::new(zipfile, path.1.clone()))
             })
             .collect();
@@ -79,7 +81,7 @@ impl Command {
 
         let zip_paths: Vec<PathBuf> = thread_paths_out.iter().map(|e| e.0.clone() ).collect();
         let _ = match std::process::Command::new("zipmerge")
-            .arg("-i")
+            .arg("-isk")
             .arg(self.path_out.join("rdb-count").with_extension("zip"))
             .args(&zip_paths)
             .output()

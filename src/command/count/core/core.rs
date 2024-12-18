@@ -14,7 +14,7 @@ impl RDBCounter {
         params_threading: Arc<params::Threading<'a>>,
         thread_states: Vec<Arc<DefaultThreadState>>,
     ) -> anyhow::Result<()> {
-        let (tx, rx) = crossbeam::channel::bounded::<Option<(PathBuf, PathBuf)>>(64);
+        let (tx, rx) = crossbeam::channel::bounded::<Option<PathBuf>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
        for state in &thread_states {
@@ -47,9 +47,10 @@ impl RDBCounter {
             let union_kmc_write = thread_temp_path.join("kmc_write");
 
             params_threading.thread_pool.execute(move || {
-                while let Ok(Some((path_dir, path_temp_reads))) = rx.recv() {
-                    let path_dir = params_io.path_tmp.join(&path_dir);
-                    let path_temp_reads = params_io.path_tmp.join(&path_temp_reads);
+                while let Ok(Some(barcode)) = rx.recv() {
+                    
+                    let path_dir = params_io.path_tmp.join(&barcode);
+                    let path_temp_reads = path_dir.join("reads").with_extension("fastq");
                     let kmc_path_db = path_dir.join("kmc");
                     let kmc_path_dump = path_dir.join("dump.txt");
                     println!("Evaluating path {path_dir:?}");
@@ -99,8 +100,23 @@ impl RDBCounter {
                     let opts: zip::write::FileOptions<'_, ()> =
                         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
                     let mut dump_file = File::open(&kmc_path_dump).unwrap();
-                    if let Ok(_) = zip_writer.start_file_from_path(&kmc_path_dump, opts) {
+
+                    // this is so stupid
+                    let zip_path = barcode.join("dump.txt");
+                    if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
                         std::io::copy(&mut dump_file, &mut zip_writer).unwrap();
+                    }
+
+                    let mut pre_file = File::open(path_dir.join("kmc.kmc_pre")).unwrap();
+                    let zip_path = barcode.join("kmc.kmc_pre");
+                    if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
+                        std::io::copy(&mut pre_file, &mut zip_writer).unwrap();
+                    }
+
+                    let mut suf_file = File::open(path_dir.join("kmc.kmc_suf")).unwrap();
+                    let zip_path = barcode.join("kmc.kmc_suf");
+                    if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
+                        std::io::copy(&mut suf_file, &mut zip_writer).unwrap();
                     }
                     // let _ = fs::rename(
                     //     &union_kmc_write.with_extension("kmc_pre"),
@@ -154,7 +170,7 @@ impl RDBCounter {
                         let mut file_temp_barcode_reads = File::create(&path_temp_barcode_reads).unwrap();
                         std::io::copy(&mut barcode_read, &mut file_temp_barcode_reads).unwrap();
   
-                        let _ = io_tx.send(Some((barcode.to_path_buf(), barcode_read_path)));
+                        let _ = io_tx.send(Some(barcode.to_path_buf()));
                     }
                 }
             }
