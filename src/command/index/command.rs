@@ -25,7 +25,6 @@ impl Command {
         let index_file = File::create(&self.path_out)?;
         let mut index_writer = BufWriter::new(&index_file);
 
-
         for i in 0..archive.len() {
             let file = archive
                 .by_index(i)
