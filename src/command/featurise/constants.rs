@@ -1,4 +1,6 @@
-pub const COUNT_DEFAULT_PATH_IN: &str = "-";
-pub const COUNT_DEFAULT_PATH_TEMP: &str = "temp";
-pub const COUNT_DEFAULT_PATH_INDEX: &str = "index";
-pub const COUNT_DEFAULT_PATH_OUT: &str = "rdb-count.zip";
+pub const FEATURISE_DEFAULT_PATH_IN: &str = "";
+pub const FEATURISE_DEFAULT_PATH_TEMP: &str = "";
+pub const FEATURISE_DEFAULT_PATH_INDEX: &str = "";
+pub const FEATURISE_DEFAULT_PATH_OUT: &str = "";
+pub const FEATURISE_DEFAULT_FEATURES_MIN: usize = 100_0000;
+pub const FEATURISE_DEFAULT_FEATURES_MAX: usize = 10_000;
