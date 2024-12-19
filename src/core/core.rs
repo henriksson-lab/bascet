@@ -5,7 +5,7 @@ use std::{cmp::min, fs::File, sync::Arc, usize};
 use crate::utils::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap, KMERCodec};
 
 use super::{
-    constants::{HUGE_PAGE_SIZE, OVLP_DIGITS},
+    constants::{HUGE_PAGE_SIZE, KMC_COUNTER_MAX_DIGITS},
     params,
 };
 
@@ -154,7 +154,7 @@ impl KMCProcessor {
             let state = Arc::clone(&params_threading.thread_states[i]);
             let params_runtime = Arc::clone(&params_runtime);
 
-            let ovlp_size = params_runtime.kmer_size + OVLP_DIGITS;
+            let ovlp_size = params_runtime.kmer_size + KMC_COUNTER_MAX_DIGITS;
             params_threading.thread_pool.execute(move || {
                 while let Ok(Some((start, end))) = rx.recv() {
                     let chunk = &mmap[start..end];
@@ -183,7 +183,7 @@ impl KMCProcessor {
         let io_mmap = Arc::clone(&mmap);
         let io_buffer_size = params_threading.thread_buffer_size;
         let io_threads_work = params_threading.threads_work;
-        let io_ovlp_size = params_runtime.kmer_size + OVLP_DIGITS;
+        let io_ovlp_size = params_runtime.kmer_size + KMC_COUNTER_MAX_DIGITS;
 
         params_threading.thread_pool.execute(move || {
             let n_chunks = (io_mmap.len() + io_buffer_size - 1) / io_buffer_size;
