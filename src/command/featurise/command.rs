@@ -1,5 +1,5 @@
 use crate::{
-    core::constants::{HUGE_PAGE_SIZE, OVLP_DIGITS},
+    core::constants::{HUGE_PAGE_SIZE, KMC_COUNTER_MAX_DIGITS},
     utils::KMERCodec,
 };
 
@@ -21,7 +21,7 @@ use std::{
     thread,
 };
 use walkdir::WalkDir;
-use zip::{ZipArchive};
+use zip::ZipArchive;
 
 #[derive(Args)]
 pub struct Command {
@@ -56,7 +56,7 @@ impl Command {
         let seed = self.seed.unwrap_or_else(rand::random);
 
         let thread_buffer_size =
-            (HUGE_PAGE_SIZE / threads_work) - ((self.kmer_size as usize) + OVLP_DIGITS);
+            (HUGE_PAGE_SIZE / threads_work) - ((self.kmer_size as usize) + KMC_COUNTER_MAX_DIGITS);
         let thread_pool = threadpool::ThreadPool::new(threads_io + threads_work);
         let thread_states: Vec<Arc<crate::core::threading::DefaultThreadState>> = (0..threads_work)
             .map(|_| {
@@ -157,7 +157,8 @@ impl Command {
         let kmc_union = std::process::Command::new("kmc_tools")
             .arg("complex")
             .arg(&path_kmc_union_script)
-            .arg("-t").arg(format!("{}", threads_io + threads_work))
+            .arg("-t")
+            .arg(format!("{}", threads_io + threads_work))
             .output()?;
 
         if !kmc_union.status.success() {
@@ -187,7 +188,6 @@ impl Command {
         let path_features = self.path_out.parent().unwrap().join("features");
         let params_io = crate::core::params::IO {
             path_in: &path_dump,
-            path_out: &path_features,
         };
         let params_runtime = crate::core::params::Runtime {
             kmer_size: kmer_size,
@@ -207,10 +207,15 @@ impl Command {
         let file_features = File::create(&path_features).unwrap();
         let mut bufwriter_features = BufWriter::new(&file_features);
         if let Ok((min_features, max_features)) =
-            crate::core::core::KMCProcessor::extract(params_io, params_runtime, params_threading) {
-            
+            crate::core::core::KMCProcessor::extract(params_io, params_runtime, params_threading)
+        {
             for feature in min_features.iter().chain(max_features.iter()) {
-                let _ = writeln!(bufwriter_features, "{}", unsafe { codec.decode(*feature) });
+                let _ = writeln!(
+                    bufwriter_features,
+                    "{}, {}",
+                    (feature << 64) >> 64,
+                    unsafe { codec.decode(*feature) }
+                );
             }
         }
 
