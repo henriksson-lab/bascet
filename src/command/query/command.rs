@@ -164,7 +164,9 @@ impl Command {
             max_cell = max_cell.max(cell_index);
 
             let file_path = dir.join("dump.txt");
-            let params_io = crate::core::params::IO { path_in: &file_path };
+            let params_io = crate::core::params::IO {
+                path_in: &file_path,
+            };
 
             if let Ok((min_features, max_features)) = crate::core::core::KMCProcessor::extract(
                 params_io,
@@ -174,9 +176,10 @@ impl Command {
                 for feature in min_features.iter().chain(max_features.iter()) {
                     let kmer = (feature << 64) >> 64;
                     let count = feature >> 96;
+
                     if let Some(feature_index) = features.get(&kmer) {
                         max_feature = max_feature.max(*feature_index);
-                        
+
                         let _ = writeln!(
                             bufwriter_feature_matrix,
                             "\t{} {} {}",
@@ -191,7 +194,7 @@ impl Command {
 
         let _ = bufwriter_feature_matrix.flush();
         let mut file = OpenOptions::new().write(true).open(&self.path_out).unwrap();
-        file.seek(SeekFrom::Start(header.len() as u64 + 1)).unwrap();  // +1 for newline
+        file.seek(SeekFrom::Start(header.len() as u64 + 1)).unwrap(); // +1 for newline
         writeln!(file, "{} {} {}", max_cell, max_feature, line_count - 1).unwrap();
 
         Ok(())

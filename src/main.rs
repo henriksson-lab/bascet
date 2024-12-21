@@ -12,22 +12,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Prepare(command::Prepare),
-    Index(command::Index),
-    Query(command::Query),
+    Assemble(command::Assemble),
     Count(command::Count),
     Featurise(command::Featurise),
+    Index(command::Index),
+    Prepare(command::Prepare),
+    Query(command::Query),
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Prepare(mut cmd) => cmd.try_execute(),
-        Commands::Query(mut cmd) => cmd.try_execute(),
-        Commands::Index(mut cmd) => cmd.try_execute(),
+        Commands::Assemble(mut cmd) => cmd.try_execute(),
         Commands::Count(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
+        Commands::Index(mut cmd) => cmd.try_execute(),
+        Commands::Prepare(mut cmd) => cmd.try_execute(),
+        Commands::Query(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {

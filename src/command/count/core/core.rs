@@ -56,13 +56,35 @@ impl RDBCounter {
                 while let Ok(Some(barcode)) = rx.recv() {
                     let path_dir = params_io.path_tmp.join(&barcode);
                     let path_temp_reads = path_dir.join("reads").with_extension("fastq");
+                    let path_assembly = path_dir.join("assembly");
+                    let path_contigs = path_assembly.join("contigs.fasta");
                     let kmc_path_db = path_dir.join("kmc");
                     let kmc_path_dump = path_dir.join("dump.txt");
                     println!("Evaluating path {path_dir:?}");
+
+                    let spades = std::process::Command::new("spades.py")
+                        .arg("-s")
+                        .arg(&path_temp_reads)
+                        .arg("--sc")
+                        .arg("-o")
+                        .arg(&path_assembly)
+                        .arg("-t")
+                        .arg("1")
+                        .output()
+                        .expect("spades command failed");
+
+                    if !spades.status.success() {
+                        eprintln!("spades command failed with status: {}", spades.status);
+                        std::io::stderr()
+                            .write_all(&spades.stderr)
+                            .expect("Failed to write to stderr");
+                    }
+
                     let kmc = std::process::Command::new("kmc")
                         .arg(format!("-cs{}", u32::MAX - 1))
                         .arg(format!("-k{}", &params_runtime.kmer_size))
-                        .arg(&path_temp_reads)
+                        .arg("-fa")
+                        .arg(&path_contigs)
                         .arg(&kmc_path_db)
                         .arg(&*thread_temp_path)
                         .output()
@@ -135,7 +157,7 @@ impl RDBCounter {
                     //     &union_kmc_write.with_extension("kmc_suf"),
                     //     &union_kmc.with_extension("kmc_suf"),
                     // );
-                    let _ = fs::remove_dir_all(&path_dir);
+                    // let _ = fs::remove_dir_all(&path_dir);
                 }
             });
         }
