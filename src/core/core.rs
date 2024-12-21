@@ -4,10 +4,7 @@ use std::{cmp::min, fs::File, sync::Arc, usize};
 
 use crate::utils::{BoundedHeap, BoundedMaxHeap, BoundedMinHeap, KMERCodec};
 
-use super::{
-    constants::{HUGE_PAGE_SIZE, KMC_COUNTER_MAX_DIGITS},
-    params,
-};
+use super::{constants::KMC_COUNTER_MAX_DIGITS, params};
 
 pub struct KMCProcessor {}
 

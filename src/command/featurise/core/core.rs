@@ -22,24 +22,6 @@ impl RDBCounter {
         let (tx, rx) = crossbeam::channel::bounded::<Option<PathBuf>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
-        for state in &thread_states {
-            let union_dir = &state.temp_path;
-            // create an empty fastq to create an empty kmc database as a merge target
-            let path_empty_reads = Arc::new(union_dir.join("reads").with_extension("fastq"));
-            let _ = File::create(&*path_empty_reads);
-
-            let path_kmc_union = Arc::new(union_dir.join("kmc"));
-            let _ = std::process::Command::new("kmc")
-                .arg(format!("-cs{}", u32::MAX))
-                .arg(format!("-k{}", &params_runtime.kmer_size))
-                .arg(&*path_empty_reads)
-                .arg(&*path_kmc_union)
-                .arg(&params_io.path_tmp)
-                .arg("-t")
-                .arg("1")
-                .output()?;
-        }
-
         for tidx in 0..params_threading.threads_write {
             let rx = Arc::clone(&rx);
             let params_io = Arc::clone(&params_io);
@@ -49,8 +31,6 @@ impl RDBCounter {
             let thread_state = Arc::clone(&thread_states[tidx]);
             let mut zip_writer = unsafe { &mut *thread_state.zip_writer.get() };
             let thread_temp_path = Arc::clone(&thread_state.temp_path);
-            let union_kmc = thread_temp_path.join("kmc");
-            let union_kmc_write = thread_temp_path.join("kmc_write");
 
             params_threading.thread_pool.execute(move || {
                 while let Ok(Some(barcode)) = rx.recv() {
@@ -92,25 +72,10 @@ impl RDBCounter {
                             .expect("Failed to write to stderr");
                     }
 
-                    // let kmc_union = std::process::Command::new("kmc_tools")
-                    //     .arg("simple")
-                    //     .arg(&*union_kmc)
-                    //     .arg(&kmc_path_db)
-                    //     .arg("union")
-                    //     .arg(&*union_kmc_write)
-                    //     .output()
-                    //     .map_err(|e| eprintln!("Failed to execute KMC union command: {}", e))
-                    //     .expect("KMC union command failed");
-
-                    // if !kmc_union.status.success() {
-                    //     eprintln!("KMC union command failed with status: {}", kmc_union.status);
-                    //     std::io::stderr().write_all(&kmc_union.stderr).expect("Failed to write to stderr");
-                    // }
                     let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
                         .compression_method(zip::CompressionMethod::Stored);
-                    let mut dump_file = File::open(&kmc_path_dump).unwrap();
 
-                    // this is so stupid
+                    let mut dump_file = File::open(&kmc_path_dump).unwrap();
                     let zip_path = barcode.join("dump.txt");
                     if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
                         std::io::copy(&mut dump_file, &mut zip_writer).unwrap();
@@ -127,14 +92,7 @@ impl RDBCounter {
                     if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
                         std::io::copy(&mut suf_file, &mut zip_writer).unwrap();
                     }
-                    // let _ = fs::rename(
-                    //     &union_kmc_write.with_extension("kmc_pre"),
-                    //     &union_kmc.with_extension("kmc_pre"),
-                    // );
-                    // let _ = fs::rename(
-                    //     &union_kmc_write.with_extension("kmc_suf"),
-                    //     &union_kmc.with_extension("kmc_suf"),
-                    // );
+
                     let _ = fs::remove_dir_all(&path_dir);
                 }
             });
@@ -176,8 +134,17 @@ impl RDBCounter {
                             .by_index(index)
                             .expect(&format!("No file at index {}", &index));
 
-                        let barcode_read_path = barcode_read.mangled_name();
-                        let barcode = barcode_read_path.parent().unwrap();
+                        let barcode_path = barcode_read.mangled_name();
+                        let file_name = barcode_path
+                            .file_name()
+                            .and_then(|ext| ext.to_str())
+                            .unwrap();
+
+                        match file_name {
+                            "assembly.fastq" => {}
+                            _ => continue,
+                        }
+                        let barcode = barcode_path.parent().unwrap();
 
                         let path_dir_barcode = io_params_io.path_tmp.join(barcode);
                         let _ = fs::create_dir_all(&path_dir_barcode);

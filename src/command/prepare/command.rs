@@ -12,12 +12,9 @@ use super::{
 use anyhow::Result;
 use clap::Args;
 use clio::{Input, Output};
+use zip::{write::FileOptions, ZipWriter};
 use std::{
-    fs::File,
-    path::PathBuf,
-    rc::Rc,
-    sync::{Arc, RwLock},
-    thread,
+    fs::File, io::BufWriter, path::PathBuf, rc::Rc, sync::{Arc, RwLock}, thread
 };
 
 #[derive(Args)]
@@ -95,15 +92,34 @@ impl Command {
         );
         let _ = processor.process_bam();
 
+        let path_rdb_out = self.path_out.join("rdb").with_extension("zip");
         let _ = match std::process::Command::new("zipmerge")
             .arg("-i")
-            .arg(self.path_out.join("rdb").with_extension("zip"))
+            .arg(&path_rdb_out)
             .args(&thread_paths_out)
             .output()
         {
             Ok(_) => {}
             Err(e) => panic!("Failed to execute zipmerge command: {}", e),
         };
+
+        let file_rdb_out = File::open(path_rdb_out).unwrap();
+        let bufwriter_rdb_out = BufWriter::new(&file_rdb_out);
+        let zipwriter_rdb_out = ZipWriter::new(bufwriter_rdb_out);
+        let zipwriter_opts: FileOptions<'_, ()> =
+            FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        let zippath_index_reads = "rdb_reads.index";
+        if let Ok(_) = zipwriter_rdb_out.start_file(&fastq_path, opts) {
+            let mut index = 0;
+            while let Some((sequence, quality)) = batch.inner.pop() {
+                index += 1;
+                let _ = writeln!(zip_writer, "@{}::{}", &barcode_as_string, index);
+                let _ = writeln!(zip_writer, "{}", sequence);
+                let _ = writeln!(zip_writer, "+");
+                let _ = writeln!(zip_writer, "{}", quality);
+            }
+        }
 
         Ok(())
     }

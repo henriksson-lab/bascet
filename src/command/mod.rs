@@ -1,9 +1,12 @@
+pub mod assemble;
 pub mod count;
 pub mod featurise;
 pub mod index;
 pub mod prepare;
 pub mod query;
+pub mod constants;
 
+pub use assemble::command::Command as Assemble;
 pub use count::command::Command as Count;
 pub use featurise::command::Command as Featurise;
 pub use index::command::Command as Index;
