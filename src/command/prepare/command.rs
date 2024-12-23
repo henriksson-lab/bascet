@@ -1,98 +1,98 @@
-use crate::command::prepare::constants::{
-    PREPARE_DEFAULT_THREADS_READ, PREPARE_DEFAULT_THREADS_WRITE,
-};
+use crate::command::constants::RDB_PATH_INDEX_READS;
 
 use super::{
     constants::{
-        PREPARE_DEFAULT_ASSEMBLE, PREPARE_DEFAULT_CLEANUP, PREPARE_DEFAULT_MIN_READS_PER_CELL,
-        PREPARE_DEFAULT_PATH_OUT,
+        PREPARE_DEFAULT_CLEANUP, PREPARE_DEFAULT_MIN_READS_PER_CELL, PREPARE_DEFAULT_PATH_OUT,
+        PREPARE_DEFAULT_PATH_TMP,
     },
-    core::{core::BAMProcessor, params, threading::DefaultThreadState},
+    core::{core::BAMProcessor, params, state},
 };
 use anyhow::Result;
 use clap::Args;
-use clio::{Input, Output};
-use zip::{write::FileOptions, ZipWriter};
 use std::{
-    fs::File, io::BufWriter, path::PathBuf, rc::Rc, sync::{Arc, RwLock}, thread
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    sync::Arc,
+    thread,
 };
+use zip::{write::FileOptions, ZipWriter};
 
 #[derive(Args)]
 pub struct Command {
-    #[arg(short = 'i', value_parser)]
+    #[arg(short = 'i', long, value_parser)]
     path_in: PathBuf,
-
-    #[arg(short = 't', value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
+    #[arg(short = 't', value_parser, default_value = PREPARE_DEFAULT_PATH_TMP)]
     path_tmp: PathBuf,
-
     #[arg(short = 'o', value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
     path_out: PathBuf,
-
     #[arg(value_parser, default_value_t = PREPARE_DEFAULT_MIN_READS_PER_CELL)]
     min_reads_per_cell: usize,
-
-    #[arg(long, default_value_t = PREPARE_DEFAULT_ASSEMBLE)]
-    assemble: bool,
-
     #[arg(long, default_value_t = PREPARE_DEFAULT_CLEANUP)]
     cleanup: bool,
-
     #[arg(long, value_parser = clap::value_parser!(u32))]
     threads_read: Option<u32>,
-
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_write: Option<usize>,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        self.verify_input_file()?;
-
         let (threads_read, threads_write) = self.resolve_thread_config()?;
+ 
+        let path_rdb_out = self.path_out.join("rdb");
+        let file_rdb_out = File::create(&path_rdb_out).unwrap();
+        let bufwriter_rdb_out = BufWriter::new(&file_rdb_out);
+        let mut zipwriter_rdb_out = ZipWriter::new(bufwriter_rdb_out);
+        let zipwriter_opts: FileOptions<'_, ()> =
+            FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        if let Ok(_) = &zipwriter_rdb_out.start_file(&RDB_PATH_INDEX_READS, zipwriter_opts) {
+            writeln!(&mut zipwriter_rdb_out, "").expect("Could not write to rdb archive");
+        }
 
         let (thread_pool_write, thread_pool_read) = (
             threadpool::ThreadPool::new(threads_write),
             rust_htslib::tpool::ThreadPool::new(threads_read)?,
         );
-
         let thread_paths_out: Vec<PathBuf> = (0..threads_write)
-            .map(|index| {
-                self.path_out
-                    .join(format!("rdb-{}", index))
-                    .with_extension("zip")
-            })
-            .collect();
+        .map(|index| {
+            self.path_tmp
+            .join(format!("rdb-{}", index))
+        })
+        .collect();
+    
+    let thread_states: Vec<state::Threading> = thread_paths_out
+    .iter()
+    .map(|path| {
+        let file = File::create(path).unwrap();
+        return state::Threading::new(file);
+    })
+    .collect();
 
-        let thread_states: Vec<Arc<DefaultThreadState>> = thread_paths_out
-            .iter()
-            .map(|path| {
-                let file = File::create(path).unwrap();
-                Arc::new(DefaultThreadState::new(file))
-            })
-            .collect();
 
-        let processor = BAMProcessor::new(
-            params::IO {
-                path_in: self.path_in.clone(),
-                path_tmp: self.path_tmp.clone(),
-                path_out: self.path_out.clone(),
-            },
-            params::Runtime {
-                assemble: self.assemble,
-                cleanup: self.cleanup,
-                min_reads: self.min_reads_per_cell,
-            },
-            params::Threading {
-                threads_write,
-                threads_read,
-                thread_pool_write: &thread_pool_write,
-                thread_pool_read: &thread_pool_read,
-                thread_states: &thread_states,
-            },
+        let params_io = params::IO {
+            path_in: self.path_in.clone(),
+            path_tmp: self.path_tmp.clone(),
+            path_out: self.path_out.clone(),
+        };
+        let params_runtime = params::Runtime {
+            min_reads_per_cell: self.min_reads_per_cell,
+        };
+        let params_threading = params::Threading {
+            threads_write,
+            threads_read,
+        };
+
+        let _ = BAMProcessor::extract_cells(
+            &Arc::new(params_io),
+            &Arc::new(params_runtime),
+            &Arc::new(params_threading),
+            &Arc::new(thread_states),
+            &thread_pool_read,
+            &thread_pool_write,
         );
-        let _ = processor.process_bam();
-
-        let path_rdb_out = self.path_out.join("rdb").with_extension("zip");
+    
         let _ = match std::process::Command::new("zipmerge")
             .arg("-i")
             .arg(&path_rdb_out)
@@ -103,37 +103,22 @@ impl Command {
             Err(e) => panic!("Failed to execute zipmerge command: {}", e),
         };
 
-        let file_rdb_out = File::open(path_rdb_out).unwrap();
-        let bufwriter_rdb_out = BufWriter::new(&file_rdb_out);
-        let zipwriter_rdb_out = ZipWriter::new(bufwriter_rdb_out);
-        let zipwriter_opts: FileOptions<'_, ()> =
-            FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-
-        let zippath_index_reads = "rdb_reads.index";
-        if let Ok(_) = zipwriter_rdb_out.start_file(&fastq_path, opts) {
-            let mut index = 0;
-            while let Some((sequence, quality)) = batch.inner.pop() {
-                index += 1;
-                let _ = writeln!(zip_writer, "@{}::{}", &barcode_as_string, index);
-                let _ = writeln!(zip_writer, "{}", sequence);
-                let _ = writeln!(zip_writer, "+");
-                let _ = writeln!(zip_writer, "{}", quality);
-            }
-        }
-
         Ok(())
     }
 
-    fn verify_input_file(&self) -> Result<()> {
-        if let Ok(file) = File::open(&self.path_in) {
-            if file.metadata()?.len() == 0 {
-                anyhow::bail!("Empty input file");
-            }
-            Ok(())
-        } else {
-            anyhow::bail!("Input file does not exist");
-        }
-    }
+    // fn ensure_paths(&self) -> Result<()> {
+    //     if let Ok(file) = File::open(&self.path_in) {
+    //         if file.metadata()?.len() == 0 {
+    //             anyhow::bail!("Empty input file");
+    //         }
+    //         match self.path_in.extension().and_then(|ext| ext.to_str()) {
+    //             Some("cram" | "bam") => return Ok(()),
+    //             _ => anyhow::bail!("Input file must be a cram or bam file"),
+    //         };
+    //     } else {
+    //         anyhow::bail!("Input file does not exist or cannot be opened");
+    //     }
+    // }
 
     fn resolve_thread_config(&self) -> Result<(u32, usize)> {
         let available_threads = thread::available_parallelism()

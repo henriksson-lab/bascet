@@ -1,19 +1,19 @@
 use super::constants::CB_PATTERN;
-use super::params;
-use super::threading::ThreadState;
+use super::{params, state};
 use anyhow::Result;
 use crossbeam::queue::SegQueue;
 use rust_htslib::bam::{record::Aux, Read};
-use std::io::{Seek, Write};
+use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 use zip::write::FileOptions;
 
-struct Batch {
+struct BamCell {
     pub barcode: Vec<u8>,
     pub inner: SegQueue<(String, String)>,
 }
 
-impl Batch {
+impl BamCell {
     fn new(barcode: &[u8]) -> Self {
         Self {
             barcode: Vec::from(barcode),
@@ -22,61 +22,53 @@ impl Batch {
     }
 }
 
-pub struct BAMProcessor<'a, W>
-where
-    W: Seek + Write,
-{
-    pub params_io: Arc<params::IO>,
-    pub params_runtime: Arc<params::Runtime>,
-    pub params_threading: Arc<params::Threading<'a, W>>,
-}
+pub struct BAMProcessor {}
+impl BAMProcessor {
+    pub fn extract_cells(
+        params_io: &Arc<params::IO>,
+        params_runtime: &Arc<params::Runtime>,
+        params_threading: &Arc<params::Threading>,
 
-impl<'a, W> BAMProcessor<'a, W>
-where
-    W: Seek + Write + Send + 'static,
-{
-    pub fn new(
-        params_io: params::IO,
-        params_runtime: params::Runtime,
-        params_threading: params::Threading<'a, W>,
-    ) -> Self {
-        Self {
-            params_io: Arc::new(params_io),
-            params_runtime: Arc::new(params_runtime),
-            params_threading: Arc::new(params_threading),
-        }
-    }
-
-    pub fn process_bam(&self) -> Result<()> {
-        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<Batch>>>(64);
+        thread_states: &Arc<Vec<state::Threading>>,
+        thread_pool_read: &rust_htslib::tpool::ThreadPool,
+        thread_pool_write: &threadpool::ThreadPool,
+    ) -> Result<()> {
+        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<BamCell>>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-
-        for ti in 0..self.params_threading.threads_write {
+        
+        for tidx in 0..params_threading.threads_write {
             let rx = Arc::clone(&rx);
-            let params_runtime = Arc::clone(&self.params_runtime);
-            let thread_state = Arc::clone(&self.params_threading.thread_states[ti]);
-            let zip_writer = unsafe { &mut *thread_state.zip_writer.get() };
+            let params_runtime = Arc::clone(&params_runtime);
+            let thread_states = Arc::clone(&thread_states);
+            
+            thread_pool_write.execute(move || {
+                let thread_state = &thread_states[tidx];
 
-            self.params_threading.thread_pool_write.execute(move || {
-                while let Ok(Some(batch)) = rx.recv() {
-                    if batch.inner.len() < params_runtime.min_reads {
+                while let Ok(Some(bam_cell)) = rx.recv() {
+                    if bam_cell.inner.len() < params_runtime.min_reads_per_cell {
                         continue;
                     }
 
-                    let barcode_as_string = String::from_utf8_lossy(&batch.barcode).to_string();
-                    let fastq_path = format!("{}/reads.fastq", &barcode_as_string);
+                    let barcode_string = String::from_utf8_lossy(&bam_cell.barcode).to_string();
+                    let path_reads = Path::new(&barcode_string)
+                        .join("reads")
+                        .with_extension("fastq");
 
                     let opts: FileOptions<'_, ()> =
                         FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-                    if let Ok(_) = zip_writer.start_file(&fastq_path, opts) {
-                        let mut index = 0;
-                        while let Some((sequence, quality)) = batch.inner.pop() {
-                            index += 1;
-                            let _ = writeln!(zip_writer, "@{}::{}", &barcode_as_string, index);
-                            let _ = writeln!(zip_writer, "{}", sequence);
-                            let _ = writeln!(zip_writer, "+");
-                            let _ = writeln!(zip_writer, "{}", quality);
+                    {
+                        let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
+                        if let Ok(_) = zipwriter_rdb.start_file(path_reads.to_str().unwrap(), opts)
+                        {
+                            let mut index = 0;
+                            while let Some((sequence, quality)) = bam_cell.inner.pop() {
+                                index += 1;
+                                let _ = writeln!(zipwriter_rdb, "@{}::{}", &barcode_string, index);
+                                let _ = writeln!(zipwriter_rdb, "{}", sequence);
+                                let _ = writeln!(zipwriter_rdb, "+");
+                                let _ = writeln!(zipwriter_rdb, "{}", quality);
+                            }
                         }
                     }
                 }
@@ -84,25 +76,31 @@ where
         }
 
         // Process BAM file
-        let mut bam = rust_htslib::bam::Reader::from_path(&self.params_io.path_in)?;
-        let _ = bam.set_thread_pool(self.params_threading.thread_pool_read);
-        let mut record = rust_htslib::bam::Record::new();
-        let mut batch = Arc::new(Batch::new(b"Invalid Barcode"));
+        let mut bamreader_input = rust_htslib::bam::Reader::from_path(&params_io.path_in)?;
+        let _ = bamreader_input.set_thread_pool(thread_pool_read);
 
-        while bam.read(&mut record).is_some() {
-            if let Ok(aux) = record.aux(b"CB") {
+        let mut bam_record = rust_htslib::bam::Record::new();
+        let mut bam_cell = Arc::new(BamCell::new(b"Invalid Barcode"));
+
+        while let Some(_) = bamreader_input.read(&mut bam_record) {
+            if let Ok(aux) = bam_record.aux(b"CB") {
                 if let Aux::String(cb) = aux {
                     if !cb.is_empty() && CB_PATTERN.is_match(cb) {
-                        if &batch.barcode != cb.as_bytes() {
-                            let _ = tx.send(Some(Arc::clone(&batch)));
-                            batch = Arc::new(Batch::new(cb.as_bytes()));
+                        if &bam_cell.barcode != cb.as_bytes() {
+                            // first "finish" current cell
+                            let _ = tx.send(Some(Arc::clone(&bam_cell)));
+                            // start new cell
+                            bam_cell = Arc::new(BamCell::new(cb.as_bytes()));
                         }
-                        let (seq, qual) = (record.seq(), record.qual());
-                        let seq_string = String::from_utf8(seq.as_bytes())?;
-                        let qual_string =
-                            String::from_utf8(qual.iter().map(|q| q + 33).collect::<Vec<u8>>())?;
 
-                        batch
+                        let (seq, qual) = (bam_record.seq(), bam_record.qual());
+                        let seq_string = String::from_utf8(seq.as_bytes())
+                            .expect("Could not parse sequence string");
+                        let qual_string =
+                            String::from_utf8(qual.iter().map(|q| q + 33).collect::<Vec<u8>>())
+                                .expect("Could not parse qualities string");
+
+                        bam_cell
                             .inner
                             .push((seq_string.to_string(), qual_string.to_string()));
                     }
@@ -111,17 +109,17 @@ where
         }
 
         // Send final batch if not empty
-        if !batch.inner.is_empty() {
-            let _ = tx.send(Some(Arc::clone(&batch)));
+        if !bam_cell.inner.is_empty() {
+            let _ = tx.send(Some(Arc::clone(&bam_cell)));
         }
 
         // Send termination signals
-        for _ in 0..self.params_threading.threads_write {
+        for _ in 0..params_threading.threads_write {
             let _ = tx.send(None);
         }
 
         // Wait for all writer threads to complete
-        self.params_threading.thread_pool_write.join();
+        thread_pool_write.join();
 
         Ok(())
     }

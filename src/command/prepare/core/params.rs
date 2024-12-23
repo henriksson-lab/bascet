@@ -1,4 +1,4 @@
-use super::threading::ThreadState;
+use std::sync::Arc;
 
 pub struct IO {
     pub path_in: std::path::PathBuf,
@@ -7,18 +7,10 @@ pub struct IO {
 }
 
 pub struct Runtime {
-    pub assemble: bool,
-    pub cleanup: bool,
-    pub min_reads: usize,
+    pub min_reads_per_cell: usize,
 }
 
-pub struct Threading<'a, W>
-where
-    W: std::io::Seek + std::io::Write,
-{
+pub struct Threading {
     pub threads_write: usize,
     pub threads_read: u32,
-    pub thread_pool_write: &'a threadpool::ThreadPool,
-    pub thread_pool_read: &'a rust_htslib::tpool::ThreadPool,
-    pub thread_states: &'a Vec<std::sync::Arc<ThreadState<W>>>,
 }
