@@ -9,7 +9,6 @@ use std::{
     sync::Arc,
     thread,
 };
-use zip::{write::FileOptions, HasZipMetadata, ZipArchive, ZipWriter};
 
 use super::{
     constants::{
