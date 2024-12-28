@@ -15,8 +15,7 @@ enum Commands {
     Assemble(command::Assemble),
     Count(command::Count),
     Featurise(command::Featurise),
-    Index(command::Index),
-    Prepare(command::Prepare),
+    Partition(command::Partition),
     Query(command::Query),
 }
 
@@ -27,8 +26,7 @@ fn main() -> ExitCode {
         Commands::Assemble(mut cmd) => cmd.try_execute(),
         Commands::Count(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
-        Commands::Index(mut cmd) => cmd.try_execute(),
-        Commands::Prepare(mut cmd) => cmd.try_execute(),
+        Commands::Partition(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
     };
 

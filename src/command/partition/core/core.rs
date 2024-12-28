@@ -1,3 +1,5 @@
+use crate::command::constants::RDB_FILENAME_READS;
+
 use super::constants::CB_PATTERN;
 use super::{params, state};
 use anyhow::Result;
@@ -35,12 +37,12 @@ impl BAMProcessor {
     ) -> Result<()> {
         let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<BamCell>>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-        
+
         for tidx in 0..params_threading.threads_write {
             let rx = Arc::clone(&rx);
             let params_runtime = Arc::clone(&params_runtime);
             let thread_states = Arc::clone(&thread_states);
-            
+
             thread_pool_write.execute(move || {
                 let thread_state = &thread_states[tidx];
 
@@ -50,11 +52,9 @@ impl BAMProcessor {
                     }
 
                     let barcode_string = String::from_utf8_lossy(&bam_cell.barcode).to_string();
-                    let path_reads = Path::new(&barcode_string)
-                        .join("reads")
-                        .with_extension("fastq");
+                    let path_reads = Path::new(&barcode_string).join(RDB_FILENAME_READS);
 
-                    let opts: FileOptions<'_, ()> =
+                    let opts: FileOptions<()> =
                         FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
                     {

@@ -128,7 +128,7 @@ impl RDBCounter {
                     //     eprintln!("KMC union command failed with status: {}", kmc_union.status);
                     //     std::io::stderr().write_all(&kmc_union.stderr).expect("Failed to write to stderr");
                     // }
-                    let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+                    let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
                         .compression_method(zip::CompressionMethod::Stored);
                     let mut dump_file = File::open(&kmc_path_dump).unwrap();
 
