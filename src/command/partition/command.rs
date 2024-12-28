@@ -25,7 +25,7 @@ pub struct Command {
     path_out: PathBuf,
     #[arg(long, value_parser, default_value = PREPARE_DEFAULT_PATH_TMP)]
     path_tmp: PathBuf,
-    #[arg(value_parser, default_value_t = PREPARE_DEFAULT_MIN_READS_PER_CELL)]
+    #[arg(long, value_parser, default_value_t = PREPARE_DEFAULT_MIN_READS_PER_CELL)]
     min_reads_per_cell: usize,
     #[arg(long, default_value_t = PREPARE_DEFAULT_CLEANUP)]
     cleanup: bool,
