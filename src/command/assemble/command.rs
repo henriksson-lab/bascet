@@ -9,128 +9,65 @@ use std::{
 
 use super::{
     constants::{
-        ASSEMBLE_DEFAULT_PATH_IN, ASSEMBLE_DEFAULT_PATH_INDEX, ASSEMBLE_DEFAULT_PATH_OUT,
-        ASSEMBLE_DEFAULT_PATH_TEMP,
+        ASSEMBLE_DEFAULT_PATH_IN, ASSEMBLE_DEFAULT_PATH_OUT, ASSEMBLE_DEFAULT_PATH_TEMP,
+        ASSEMBLE_DEFAULT_THREADS_READ, ASSEMBLE_DEFAULT_THREADS_WORK,
+        ASSEMBLE_DEFAULT_THREADS_WRITE,
     },
-    core::{core::RDBAssembler, params},
+    core::{core::RDBAssembler, params, state},
 };
 
 #[derive(Args)]
 pub struct Command {
-    #[arg(short = 'i', value_parser, default_value = ASSEMBLE_DEFAULT_PATH_IN)]
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), default_value = ASSEMBLE_DEFAULT_PATH_IN)]
     pub path_in: PathBuf,
-    #[arg(short = 'j', value_parser, default_value = ASSEMBLE_DEFAULT_PATH_INDEX)]
-    pub path_index: PathBuf,
-    #[arg(short = 't', value_parser, default_value = ASSEMBLE_DEFAULT_PATH_TEMP)]
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = ASSEMBLE_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
-    #[arg(short = 'o', value_parser, default_value = ASSEMBLE_DEFAULT_PATH_OUT)]
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf), default_value = ASSEMBLE_DEFAULT_PATH_OUT)]
     pub path_out: PathBuf,
-    #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
-    pub kmer_size: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    threads_read: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    threads_write: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    threads_work: Option<usize>,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = ASSEMBLE_DEFAULT_THREADS_READ)]
+    threads_read: usize,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = ASSEMBLE_DEFAULT_THREADS_WRITE)]
+    threads_write: usize,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = ASSEMBLE_DEFAULT_THREADS_WORK)]
+    threads_work: usize,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        self.verify_input_file()?;
-        let kmer_size = self.verify_kmer_size()?;
-        let (threads_read, threads_write, threads_work) = self.resolve_thread_config()?;
+        let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_write)
+            .map(|index| self.path_tmp.join(format!("temp-{}.rdb", index)))
+            .collect();
+
+        let thread_states: Vec<state::Threading> = paths_threading_temp_out
+            .iter()
+            .map(|path| {
+                let file = File::create(path).unwrap();
+                return state::Threading::new(file);
+            })
+            .collect();
 
         let params_io = params::IO {
             path_in: self.path_in.clone(),
-            path_idx: self.path_index.clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
         };
-        let params_runtime = params::Runtime {
-            kmer_size: kmer_size,
-        };
+        let params_runtime = params::Runtime {};
         let params_threading = params::Threading {
-            threads_read: threads_read,
-            threads_write: threads_write,
-            threads_work: threads_work,
+            threads_read: self.threads_read,
+            threads_write: self.threads_write,
+            threads_work: self.threads_work,
         };
-        fs::create_dir_all(&self.path_out).unwrap();
 
-        let thread_pool = threadpool::ThreadPool::new(threads_read + threads_write + threads_work);
+        let thread_pool = threadpool::ThreadPool::new(self.threads_read + self.threads_write);
+
         let _ = RDBAssembler::assemble(
             Arc::new(params_io),
             Arc::new(params_runtime),
             Arc::new(params_threading),
+            Arc::new(thread_states),
             &thread_pool,
         );
 
         Ok(())
-    }
-
-    fn verify_input_file(&mut self) -> anyhow::Result<()> {
-        if let Ok(file) = File::open(&self.path_in) {
-            if file.metadata()?.len() == 0 {
-                anyhow::bail!("Empty input file");
-            }
-        }
-        match self.path_in.extension().and_then(|ext| ext.to_str()) {
-            Some("zip") => return Ok(()),
-            _ => anyhow::bail!("Input file must be a zip archive"),
-        };
-    }
-
-    fn verify_kmer_size(&self) -> Result<usize> {
-        if self.kmer_size < 48 {
-            return Ok(self.kmer_size);
-        }
-
-        anyhow::bail!("Invalid kmer size k:{}", self.kmer_size);
-    }
-
-    fn resolve_thread_config(&self) -> Result<(usize, usize, usize)> {
-        let available_threads = thread::available_parallelism()
-            .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
-            .get();
-
-        if available_threads < 3 {
-            anyhow::bail!("At least three threads must be available");
-        }
-
-        let (threads_read, threads_write, threads_work) =
-            match (self.threads_read, self.threads_write, self.threads_work) {
-                (Some(r), Some(w), Some(work)) => (r, w, work),
-                (Some(r), Some(w), None) => {
-                    let io_threads = r + w;
-                    (r, w, available_threads.saturating_sub(io_threads).max(1))
-                }
-                (Some(r), None, Some(work)) => (r, 1, work),
-                (None, Some(w), Some(work)) => (1, w, work),
-                (Some(r), None, None) => {
-                    let io_threads = r + 1; // 1 for write
-                    (r, 1, available_threads.saturating_sub(io_threads).max(1))
-                }
-                (None, Some(w), None) => {
-                    let io_threads = 1 + w; // 1 for read
-                    (1, w, available_threads.saturating_sub(io_threads).max(1))
-                }
-                (None, None, Some(work)) => (1, 1, work),
-                (None, None, None) => {
-                    let io_threads = 2; // 1 for read, 1 for write
-                    (1, 1, available_threads.saturating_sub(io_threads).max(1))
-                }
-            };
-
-        if threads_read == 0 {
-            anyhow::bail!("At least one read thread required");
-        }
-        if threads_write == 0 {
-            anyhow::bail!("At least one write thread required");
-        }
-        if threads_work == 0 {
-            anyhow::bail!("At least one work thread required");
-        }
-
-        Ok((threads_read, threads_write, threads_work))
     }
 }

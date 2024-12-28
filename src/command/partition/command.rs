@@ -12,7 +12,8 @@ use clap::Args;
 use std::{
     fs::{File, OpenOptions},
     io::{BufReader, Write},
-    path::PathBuf, sync::Arc,
+    path::PathBuf,
+    sync::Arc,
 };
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
@@ -36,49 +37,51 @@ pub struct Command {
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        let (thread_pool_write, thread_pool_read) = (
-            threadpool::ThreadPool::new(self.threads_write),
-            rust_htslib::tpool::ThreadPool::new(self.threads_read)?,
-        );
         let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_write)
             .map(|index| self.path_tmp.join(format!("temp-{}.rdb", index)))
             .collect();
 
-        let thread_states: Vec<state::Threading> = paths_threading_temp_out
-            .iter()
-            .map(|path| {
-                let file = File::create(path).unwrap();
-                return state::Threading::new(file);
-            })
-            .collect();
+        // let thread_states: Vec<state::Threading> = paths_threading_temp_out
+        //     .iter()
+        //     .map(|path| {
+        //         let file = File::create(path).unwrap();
+        //         return state::Threading::new(file);
+        //     })
+        //     .collect();
 
-        let params_io = params::IO {
-            path_in: self.path_in.clone(),
-            path_tmp: self.path_tmp.clone(),
-            path_out: self.path_out.clone(),
-        };
-        let params_runtime = params::Runtime {
-            min_reads_per_cell: self.min_reads_per_cell,
-        };
-        let params_threading = params::Threading {
-            threads_write: self.threads_write,
-            threads_read: self.threads_read,
-        };
+        // let (thread_pool_write, thread_pool_read) = (
+        //     threadpool::ThreadPool::new(self.threads_write),
+        //     rust_htslib::tpool::ThreadPool::new(self.threads_read)?,
+        // );
 
-        let _ = BAMProcessor::extract_cells(
-            &Arc::new(params_io),
-            &Arc::new(params_runtime),
-            &Arc::new(params_threading),
-            &Arc::new(thread_states),
-            &thread_pool_read,
-            &thread_pool_write,
-        );
+        // let params_io = params::IO {
+        //     path_in: self.path_in.clone(),
+        //     path_tmp: self.path_tmp.clone(),
+        //     path_out: self.path_out.clone(),
+        // };
+        // let params_runtime = params::Runtime {
+        //     min_reads_per_cell: self.min_reads_per_cell,
+        // };
+        // let params_threading = params::Threading {
+        //     threads_write: self.threads_write,
+        //     threads_read: self.threads_read,
+        // };
+
+        // let _ = BAMProcessor::extract_cells(
+        //     &Arc::new(params_io),
+        //     &Arc::new(params_runtime),
+        //     &Arc::new(params_threading),
+        //     &Arc::new(thread_states),
+        //     &thread_pool_read,
+        //     &thread_pool_write,
+        // );
 
         /* Merge temp zip archive into a new zip archive */
         merge_archives_and_delete(&self.path_out, &paths_threading_temp_out).unwrap();
         let mut files_to_index: Vec<(usize, String)> = Vec::new();
 
-        /* NOTE: Collect files from archive into a Vec */ {
+        /* NOTE: Collect files from archive into a Vec */
+        {
             let file_rdb_out = File::open(&self.path_out).unwrap();
             let mut bufreader_rdb_out = BufReader::new(&file_rdb_out);
             let archive_rdb_out = ZipArchive::new(&mut bufreader_rdb_out).unwrap();
@@ -92,7 +95,8 @@ impl Command {
             }
         }
 
-        /* NOTE: Write to index file */ {
+        /* NOTE: Write to index file */
+        {
             let file_rdb_out = OpenOptions::new()
                 .read(true)
                 .write(true)
