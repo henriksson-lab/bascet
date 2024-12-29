@@ -1,8 +1,13 @@
+use std::sync::LazyLock;
+
 use bitfield_struct::bitfield;
 use rand::{
     distributions::{Distribution, Uniform},
     Rng,
 };
+
+pub static NOISE_RANGE: LazyLock<Uniform<u32>> =
+    LazyLock::new(|| Uniform::from(u32::MIN..=u32::MAX));
 
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
     let mut table = [0u8; (b'T' - b'A' + 1) as usize];
@@ -55,28 +60,24 @@ const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
 //NOTE: all of this can probably make use of SIMD operations but I do not know how that'd work
 #[derive(Clone, Copy)]
-pub struct Codec<const K: usize>;
-impl<const K: usize> Codec<K> {
-    const KMER_SIZE: usize = K;
-
-    pub const fn new() -> Self {
-        Codec
+pub struct KMERCodec {
+    kmer_size: usize,
+}
+impl KMERCodec {
+    pub const fn new(kmer_size: usize) -> Self {
+        Self {
+            kmer_size: kmer_size,
+        }
     }
 
     #[inline(always)]
-    pub unsafe fn encode(
-        &self,
-        bytes: &[u8],
-        count: u32,
-        rng: &mut impl Rng,
-        range: Uniform<u16>,
-    ) -> EncodedKMER {
+    pub unsafe fn encode(&self, bytes: &[u8], count: u32, rng: &mut impl Rng) -> EncodedKMER {
         let chunk_size: usize = 4;
-        let kmer_size = Self::KMER_SIZE as usize;
+        let kmer_size = self.kmer_size as usize;
         let full_chunks = kmer_size / chunk_size;
         let remainder = kmer_size % chunk_size;
 
-        let mut encoded: u128 = 0;
+        let mut encoded = 0;
         let ptr = bytes.as_ptr();
 
         // Process chunks of 4 nucleotides
@@ -91,70 +92,64 @@ impl<const K: usize> Codec<K> {
                         * NT4_DIMSIZE
                         * NT4_DIMSIZE)
             };
-            encoded = (encoded << 8) | u128::from(NT4_LOOKUP[idx]);
+            encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
 
         // Handle remaining nucleotides
         let start = full_chunks * chunk_size;
         for i in 0..remainder {
-            encoded = (encoded << 2) | u128::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
-        }
-
-        EncodedKMER::new()
-            .with_kmer(encoded)
-            .with_count(count as u16)
-            .with_rand(range.sample(rng))
-    }
-
-    #[inline(always)]
-    pub unsafe fn encode_str(
-        &self,
-        kmer: &str,
-        count: u16,
-        rng: &mut impl Rng,
-        range: Uniform<u16>,
-    ) -> EncodedKMER {
-        let chunk_size: usize = 4;
-        let kmer_size = Self::KMER_SIZE as usize;
-        let full_chunks = kmer_size / chunk_size;
-        let remainder = kmer_size % chunk_size;
-
-        let bytes = kmer.as_bytes();
-        let mut encoded: u128 = 0;
-        let ptr = bytes.as_ptr();
-
-        // Process chunks of 4 nucleotides
-        for i in 0..full_chunks {
-            let chunk_ptr = ptr.add(i * chunk_size);
-            let idx = unsafe {
-                (*chunk_ptr.offset(0) - b'A') as usize
-                    + ((*chunk_ptr.offset(1) - b'A') as usize * NT4_DIMSIZE)
-                    + ((*chunk_ptr.offset(2) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE)
-                    + ((*chunk_ptr.offset(3) - b'A') as usize
-                        * NT4_DIMSIZE
-                        * NT4_DIMSIZE
-                        * NT4_DIMSIZE)
-            };
-            encoded = (encoded << 8) | u128::from(NT4_LOOKUP[idx]);
-        }
-
-        // Handle remaining nucleotides
-        let start = full_chunks * chunk_size;
-        for i in 0..remainder {
-            encoded = (encoded << 2) | u128::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
+            encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
         }
 
         EncodedKMER::new()
             .with_kmer(encoded)
             .with_count(count)
-            .with_rand(range.sample(rng))
+            .with_noise(NOISE_RANGE.sample(rng))
+    }
+
+    #[inline(always)]
+    pub unsafe fn encode_str(&self, kmer: &str, count: u32, rng: &mut impl Rng) -> EncodedKMER {
+        let chunk_size: usize = 4;
+        let kmer_size = self.kmer_size as usize;
+        let full_chunks = kmer_size / chunk_size;
+        let remainder = kmer_size % chunk_size;
+
+        let bytes = kmer.as_bytes();
+        let mut encoded = 0;
+        let ptr = bytes.as_ptr();
+
+        // Process chunks of 4 nucleotides
+        for i in 0..full_chunks {
+            let chunk_ptr = ptr.add(i * chunk_size);
+            let idx = unsafe {
+                (*chunk_ptr.offset(0) - b'A') as usize
+                    + ((*chunk_ptr.offset(1) - b'A') as usize * NT4_DIMSIZE)
+                    + ((*chunk_ptr.offset(2) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE)
+                    + ((*chunk_ptr.offset(3) - b'A') as usize
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE)
+            };
+            encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
+        }
+
+        // Handle remaining nucleotides
+        let start = full_chunks * chunk_size;
+        for i in 0..remainder {
+            encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
+        }
+
+        EncodedKMER::new()
+            .with_kmer(encoded)
+            .with_count(count)
+            .with_noise(NOISE_RANGE.sample(rng))
     }
 
     #[inline(always)]
     pub unsafe fn decode(&self, encoded: u128) -> String {
-        let mut sequence = Vec::with_capacity(Self::KMER_SIZE);
+        let mut sequence = Vec::with_capacity(self.kmer_size);
         let mut temp = EncodedKMER::from_bits(encoded).kmer();
-        for _ in 0..Self::KMER_SIZE {
+        for _ in 0..self.kmer_size {
             let nuc = (temp & 0b11) as usize;
             sequence.push(NT_REVERSE[nuc]);
             temp >>= 2;
@@ -166,12 +161,12 @@ impl<const K: usize> Codec<K> {
 
 #[bitfield(u128)]
 pub struct EncodedKMER {
-    #[bits(96)]
-    pub kmer: u128,
+    #[bits(64)]
+    pub kmer: u64,
 
-    #[bits(16)]
-    pub rand: u16,
+    #[bits(32)]
+    pub noise: u32,
 
-    #[bits(16)]
-    pub count: u16,
+    #[bits(32)]
+    pub count: u32,
 }
