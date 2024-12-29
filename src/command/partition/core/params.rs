@@ -11,6 +11,6 @@ pub struct Runtime {
 }
 
 pub struct Threading {
-    pub threads_write: usize,
+    pub threads_work: usize,
     pub threads_read: u32,
 }
