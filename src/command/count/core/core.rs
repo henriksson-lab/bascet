@@ -1,12 +1,14 @@
 use std::{
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     sync::{Arc, RwLock},
 };
 
 use rev_buf_reader::RevBufReader;
 use zip::ZipArchive;
+
+use crate::command::constants::RDB_PATH_INDEX_CONTIGS;
 
 use super::{params, state};
 
@@ -89,9 +91,9 @@ impl RDBCounter {
                             std::io::copy(&mut bufreader_dump, &mut *zipwriter_rdb).unwrap();
                         }
 
-                        let mut file_kmc_pre =
+                        let file_kmc_pre =
                             File::open(path_kmc_db.with_extension("kmc_pre")).unwrap();
-                        let mut bufreader_kmc_pre = BufReader::new(&file_dump);
+                        let mut bufreader_kmc_pre = BufReader::new(&file_kmc_pre);
                         let zippath_kmc_pre = barcode.join("kmc.kmc_pre");
                         if let Ok(_) =
                             zipwriter_rdb.start_file_from_path(&zippath_kmc_pre, opts_zipwriter)
@@ -99,9 +101,9 @@ impl RDBCounter {
                             std::io::copy(&mut bufreader_kmc_pre, &mut *zipwriter_rdb).unwrap();
                         }
 
-                        let mut file_kmc_suf =
+                        let file_kmc_suf =
                             File::open(path_kmc_db.with_extension("kmc_suf")).unwrap();
-                        let mut bufreader_kmc_suf = BufReader::new(&file_dump);
+                        let mut bufreader_kmc_suf = BufReader::new(&file_kmc_suf);
                         let zippath_kmc_suf = barcode.join("kmc.kmc_suf");
                         if let Ok(_) =
                             zipwriter_rdb.start_file_from_path(&zippath_kmc_suf, opts_zipwriter)
@@ -113,37 +115,55 @@ impl RDBCounter {
             });
         }
 
-        for line in index_reader.lines() {
-            if let Ok(line) = line {
-                let index = line
+        let file_rdb = File::open(&params_io.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb = BufReader::new(&file_rdb);
+        let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
+
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb);
+        let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
+            .expect("Failed to create zip archive from RDB");
+        let mut file_reads_index = archive_rdb_for_index
+            .by_name(RDB_PATH_INDEX_CONTIGS)
+            .expect("Could not find rdb reads index file");
+        let bufreader_reads_index = BufReader::new(&mut file_reads_index);
+
+        for line_reads_index in bufreader_reads_index.lines() {
+            if let Ok(line_reads_index) = line_reads_index {
+                println!("{line_reads_index}");
+                let index = line_reads_index
                     .split(',')
                     .next()
                     .unwrap()
                     .parse::<usize>()
-                    .expect("Error parsing index file");
-                if let Ok(mut archive_rdb) = archive_rdb.write() {
-                    let mut barcode_read = archive_rdb
-                        .by_index(index)
-                        .expect(&format!("No file at index {}", &index));
+                    .expect("Could not parse index file");
 
-                    let barcode_read_path = barcode_read.mangled_name();
-                    let barcode = barcode_read_path.parent().unwrap();
+                let mut zipfile_read = archive_rdb
+                    .by_index(index)
+                    .expect(&format!("No file at index {}", &index));
 
-                    let path_dir_barcode = io_params_io.path_tmp.join(barcode);
-                    let _ = fs::create_dir_all(&path_dir_barcode);
-
-                    let path_temp_barcode_reads = path_dir_barcode.join("reads.fastq");
-                    let mut file_temp_barcode_reads =
-                        File::create(&path_temp_barcode_reads).unwrap();
-                    std::io::copy(&mut barcode_read, &mut file_temp_barcode_reads).unwrap();
-
-                    let _ = io_tx.send(Some(barcode.to_path_buf()));
+                let path_read = zipfile_read.mangled_name();
+                match path_read.file_name().and_then(|ext| ext.to_str()) {
+                    Some("contigs.fasta") => {}
+                    Some(_) => continue,
+                    None => panic!("None value parsing read path"),
                 }
+
+                let path_barcode = path_read.parent().unwrap();
+                let path_barcode_dir = params_io.path_tmp.join(path_barcode);
+                let _ = fs::create_dir_all(&path_barcode_dir);
+
+                let path_temp_reads = path_barcode_dir.join(path_read.file_name().unwrap());
+                let file_temp_reads = File::create(&path_temp_reads).unwrap();
+                let mut bufwriter_temp_reads = BufWriter::new(&file_temp_reads);
+
+                std::io::copy(&mut zipfile_read, &mut bufwriter_temp_reads).unwrap();
+
+                tx.send(Some(path_barcode.to_path_buf())).unwrap();
             }
         }
 
-        for _ in 0..io_worker_threads {
-            let _ = io_tx.send(None);
+        for _ in 0..params_threading.threads_work {
+            let _ = tx.send(None);
         }
 
         // Wait for the threads to complete

@@ -11,7 +11,7 @@ use zip::{ZipArchive, ZipWriter};
 
 use crate::command::constants::RDB_PATH_INDEX_READS;
 
-use super::{params, state, threading::DefaultThreadState};
+use super::{params, state};
 
 pub struct RDBAssembler {}
 
