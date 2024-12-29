@@ -1,5 +1,5 @@
 use crate::{
-    command::constants::{DEFAULT_SEED_RANDOM, RDB_PATH_INDEX_KMC_DBS, RDB_PATH_INDEX_KMC_DUMPS},
+    command::constants::{DEFAULT_SEED_RANDOM, RDB_PATH_INDEX_KMC_DUMPS},
     core::constants::{HUGE_PAGE_SIZE, KMC_COUNTER_MAX_DIGITS},
     utils::KMERCodec,
 };

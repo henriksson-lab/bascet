@@ -1,11 +1,10 @@
 use std::{
     fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Read, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
-use rev_buf_reader::RevBufReader;
 use zip::ZipArchive;
 
 use crate::command::constants::RDB_PATH_INDEX_CONTIGS;
@@ -30,7 +29,7 @@ impl RDBCounter {
             let rx = Arc::clone(&rx);
             let params_io = Arc::clone(&params_io);
             let params_runtime = Arc::clone(&params_runtime);
-            let params_threading = Arc::clone(&params_threading);
+            let _params_threading = Arc::clone(&params_threading);
             let thread_states = Arc::clone(&thread_states);
 
             thread_pool.execute(move || {

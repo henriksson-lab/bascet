@@ -10,7 +10,7 @@ use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     command::constants::{RDB_PATH_INDEX_KMC_DBS, RDB_PATH_INDEX_KMC_DUMPS},
-    utils::{merge_archives, merge_archives_and_delete},
+    utils::merge_archives_and_delete,
 };
 
 use super::{

@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use robert::command::{self, constants::RDB_WORK_DIR};
+use robert::command;
 
 #[derive(Parser)]
 #[command(version, about)]
