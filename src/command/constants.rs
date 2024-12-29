@@ -5,3 +5,6 @@ pub const RDB_PATH_INDEX_KMC_SUF: &str = "rdb_kmc_suf.index";
 pub const RDB_PATH_INDEX_KMC_DUMPS: &str = "rdb_kmc_dumps.index";
 
 pub const RDB_FILENAME_READS: &str = "reads.fastq";
+
+pub static DEFAULT_SEED_RANDOM: std::sync::LazyLock<u64> =
+    std::sync::LazyLock::new(|| rand::random::<u64>());

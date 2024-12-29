@@ -17,10 +17,11 @@ pub struct RDBAssembler {}
 
 impl RDBAssembler {
     pub fn assemble(
-        params_io: Arc<params::IO>,
-        params_runtime: Arc<params::Runtime>,
-        params_threading: Arc<params::Threading>,
-        thread_states: Arc<Vec<state::Threading>>,
+        params_io: &Arc<params::IO>,
+        params_runtime: &Arc<params::Runtime>,
+        params_threading: &Arc<params::Threading>,
+
+        thread_states: &Arc<Vec<state::Threading>>,
         thread_pool: &threadpool::ThreadPool,
     ) -> anyhow::Result<()> {
         let (tx, rx) = crossbeam::channel::bounded::<Option<PathBuf>>(64);
@@ -33,6 +34,7 @@ impl RDBAssembler {
             let params_threading = Arc::clone(&params_threading);
             let thread_states = Arc::clone(&thread_states);
             thread_pool.execute(move || {
+                println!("Worker {tidx} started");
                 let thread_state = &thread_states[tidx];
                 while let Ok(Some(barcode)) = rx.recv() {
                     let path_temp = params_io.path_tmp.join(&barcode);
@@ -58,20 +60,26 @@ impl RDBAssembler {
                             .expect("Failed to write to stderr");
                     }
 
-                    let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
-                        .compression_method(zip::CompressionMethod::Stored);
-
                     let mut file_contigs = File::open(&path_contigs).unwrap();
-                    let zip_path = barcode.join("contigs.fastq");
+                    let zippath_contigs = barcode.join("contigs.fastq");
+                    let opts_zipwriter: zip::write::FileOptions<()> =
+                        zip::write::FileOptions::default()
+                            .compression_method(zip::CompressionMethod::Stored);
                     {
                         let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
-                        if let Ok(_) = zipwriter_rdb.start_file_from_path(&zip_path, opts) {
+                        if let Ok(_) = zipwriter_rdb.start_file(
+                            zippath_contigs.to_str().unwrap().to_string(),
+                            opts_zipwriter,
+                        ) {
                             std::io::copy(&mut file_contigs, &mut *zipwriter_rdb).unwrap();
                         }
                     }
                     let _ = fs::remove_dir_all(&path_temp);
                     println!("Finished {barcode:?}")
                 }
+                let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
+                zipwriter_rdb.finish().unwrap();
+                println!("Worker {tidx} exiting");
             });
         }
 
@@ -86,65 +94,60 @@ impl RDBAssembler {
         //     .unwrap()
         //     .parse::<usize>()?;
 
-        let io_tx = Arc::clone(&tx);
-        let io_params_io = Arc::clone(&params_io);
-        let io_worker_threads = params_threading.threads_write;
+        let file_rdb = File::open(&params_io.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb = BufReader::new(&file_rdb);
+        let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
 
-        thread_pool.execute(move || {
-            let file_rdb = File::open(&io_params_io.path_in).expect("Failed to open RDB file");
-            let mut bufreader_rdb = BufReader::new(&file_rdb);
-            let mut archive_rdb =
-                ZipArchive::new(&mut bufreader_rdb).expect("Failed to create zip archive from RDB");
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb);
+        let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
+            .expect("Failed to create zip archive from RDB");
+        let mut file_reads_index = archive_rdb_for_index
+            .by_name(&RDB_PATH_INDEX_READS)
+            .expect("Could not find rdb reads index file");
+        let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
-            let mut bufreader_rdb_for_index = BufReader::new(&file_rdb);
-            let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
-                .expect("Failed to create zip archive from RDB");
-            let mut file_reads_index = archive_rdb_for_index
-                .by_name(&RDB_PATH_INDEX_READS)
-                .expect("Could not find rdb reads index file");
-            let bufreader_reads_index = BufReader::new(&mut file_reads_index);
+        for line_reads_index in bufreader_reads_index.lines() {
+            if let Ok(line_reads_index) = line_reads_index {
+                let index = line_reads_index
+                    .split(',')
+                    .next()
+                    .unwrap()
+                    .parse::<usize>()
+                    .expect("Could not parse index file");
 
-            for line_reads_index in bufreader_reads_index.lines() {
-                if let Ok(line_reads_index) = line_reads_index {
-                    let index = line_reads_index
-                        .split(',')
-                        .next()
-                        .unwrap()
-                        .parse::<usize>()
-                        .expect("Could not parse index file");
+                let mut zipfile_read = archive_rdb
+                    .by_index(index)
+                    .expect(&format!("No file at index {}", &index));
 
-                    let mut zipfile_read = archive_rdb
-                        .by_index(index)
-                        .expect(&format!("No file at index {}", &index));
-
-                    let path_read = zipfile_read.mangled_name();
-                    match path_read.file_name().and_then(|ext| ext.to_str()) {
-                        Some("reads.fastq") => {}
-                        Some(_) => continue,
-                        None => panic!("None value parsing read path"),
-                    }
-
-                    let path_barcode = path_read.parent().unwrap();
-                    let path_barcode_dir = io_params_io.path_tmp.join(path_barcode);
-                    let _ = fs::create_dir_all(&path_barcode_dir);
-
-                    let path_temp_reads = path_barcode_dir.join("reads.fastq");
-                    let file_temp_reads = File::create(&path_temp_reads).unwrap();
-                    let mut bufwriter_temp_reads = BufWriter::new(&file_temp_reads);
-
-                    std::io::copy(&mut zipfile_read, &mut bufwriter_temp_reads).unwrap();
-
-                    let _ = io_tx.send(Some(path_barcode.to_path_buf()));
+                let path_read = zipfile_read.mangled_name();
+                match path_read.file_name().and_then(|ext| ext.to_str()) {
+                    Some("reads.fastq") => {}
+                    Some(_) => continue,
+                    None => panic!("None value parsing read path"),
                 }
-            }
 
-            for _ in 0..io_worker_threads {
-                let _ = io_tx.send(None);
+                let path_barcode = path_read.parent().unwrap();
+                let path_barcode_dir = params_io.path_tmp.join(path_barcode);
+                let _ = fs::create_dir_all(&path_barcode_dir);
+
+                let path_temp_reads = path_barcode_dir.join("reads.fastq");
+                let file_temp_reads = File::create(&path_temp_reads).unwrap();
+                let mut bufwriter_temp_reads = BufWriter::new(&file_temp_reads);
+
+                std::io::copy(&mut zipfile_read, &mut bufwriter_temp_reads).unwrap();
+
+                tx.send(Some(path_barcode.to_path_buf())).unwrap();
             }
-        });
+        }
+
+        for i in 0..params_threading.threads_write {
+            println!("Sending termination signal {i}");
+            tx.send(None).unwrap();
+        }
 
         // Wait for the threads to complete
         thread_pool.join();
+        println!("Finished Assembling!");
         Ok(())
     }
 }
