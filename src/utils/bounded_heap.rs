@@ -15,7 +15,7 @@ pub struct BoundedMinHeap<T>
 where
     T: Ord,
 {
-    mimxheap: super::min_max_heap::MinMaxHeap<T>,
+    mimxheap: min_max_heap::MinMaxHeap<T>,
     capacity: usize,
 }
 
@@ -30,12 +30,12 @@ where
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            mimxheap: super::min_max_heap::MinMaxHeap::with_capacity(capacity),
+            mimxheap: min_max_heap::MinMaxHeap::with_capacity(capacity),
             capacity: capacity,
         }
     }
 
-    super::delegate! {
+    delegate::delegate! {
         to self.mimxheap {
             //NOTE: #[inline] pub fn capacity(&self) -> usize; implemented on self
             #[inline] pub fn clear(&mut self);
@@ -128,7 +128,7 @@ pub struct BoundedMaxHeap<T>
 where
     T: Ord,
 {
-    mimxheap: super::min_max_heap::MinMaxHeap<T>,
+    mimxheap: min_max_heap::MinMaxHeap<T>,
     capacity: usize,
 }
 
@@ -143,12 +143,12 @@ where
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            mimxheap: super::min_max_heap::MinMaxHeap::with_capacity(capacity),
+            mimxheap: min_max_heap::MinMaxHeap::with_capacity(capacity),
             capacity: capacity,
         }
     }
 
-    super::delegate! {
+    delegate::delegate! {
         to self.mimxheap {
             //NOTE: #[inline] pub fn capacity(&self) -> usize; implemented on self
             #[inline] pub fn clear(&mut self);

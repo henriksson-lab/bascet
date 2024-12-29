@@ -1,5 +1,8 @@
-pub mod bounded_heap;
-pub mod kmc;
-pub mod kmer;
-pub mod simulate;
+pub mod command;
+pub mod core;
 pub mod utils;
+
+pub use core::constants;
+pub use core::core::KMCProcessor;
+pub use core::params;
+pub use core::state;
