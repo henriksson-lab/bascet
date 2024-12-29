@@ -55,10 +55,11 @@ impl Command {
             .collect();
 
         let _ = RDBCounter::extract(
-            Arc::new(params_io),
-            Arc::new(params_runtime),
-            Arc::new(params_threading),
-            thread_states,
+            &Arc::new(params_io),
+            &Arc::new(params_runtime),
+            &Arc::new(params_threading),
+            &Arc::new(thread_states),
+            &thread_pool,
         );
 
         Ok(())
