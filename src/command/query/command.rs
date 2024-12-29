@@ -175,6 +175,8 @@ impl Command {
                     }
                 }
             }
+
+            fs::remove_dir_all(path_dump.parent().unwrap()).unwrap();
         }
 
         let _ = bufwriter_feature_matrix.flush();
