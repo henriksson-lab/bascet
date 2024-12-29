@@ -21,7 +21,7 @@ use zip::{write::FileOptions, ZipArchive, ZipWriter};
 pub struct Command {
     #[arg(short = 'i', long, value_parser)]
     path_in: PathBuf,
-    #[arg(short = 'o', value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
+    #[arg(short = 'o', long, value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
     path_out: PathBuf,
     #[arg(long, value_parser, default_value = PREPARE_DEFAULT_PATH_TMP)]
     path_tmp: PathBuf,
@@ -32,12 +32,12 @@ pub struct Command {
     #[arg(long, default_value_t = PREPARE_DEFAULT_THREADS_READ)]
     threads_read: u32,
     #[arg(long, default_value_t = PREPARE_DEFAULT_THREADS_WRITE)]
-    threads_write: usize,
+    threads_work: usize,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_write)
+        let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_work)
             .map(|index| self.path_tmp.join(format!("temp-{}.rdb", index)))
             .collect();
 
@@ -50,7 +50,7 @@ impl Command {
             .collect();
 
         let (thread_pool_write, thread_pool_read) = (
-            threadpool::ThreadPool::new(self.threads_write),
+            threadpool::ThreadPool::new(self.threads_work),
             rust_htslib::tpool::ThreadPool::new(self.threads_read)?,
         );
 
@@ -63,7 +63,7 @@ impl Command {
             min_reads_per_cell: self.min_reads_per_cell,
         };
         let params_threading = params::Threading {
-            threads_write: self.threads_write,
+            threads_work: self.threads_work,
             threads_read: self.threads_read,
         };
 

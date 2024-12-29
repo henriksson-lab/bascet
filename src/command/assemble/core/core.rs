@@ -77,8 +77,6 @@ impl RDBAssembler {
                     let _ = fs::remove_dir_all(&path_temp);
                     println!("Finished {barcode:?}")
                 }
-                let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
-                zipwriter_rdb.finish().unwrap();
                 println!("Worker {tidx} exiting");
             });
         }
