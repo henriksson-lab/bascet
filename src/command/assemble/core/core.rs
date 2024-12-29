@@ -40,7 +40,6 @@ impl RDBAssembler {
                     let path_spades = path_temp.join("spades");
                     let path_contigs = path_spades.join("contigs.fasta");
 
-                    println!("Starting spades");
                     let spades = std::process::Command::new("spades.py")
                         .arg("-s")
                         .arg(&path_reads)
@@ -58,7 +57,7 @@ impl RDBAssembler {
                             .write_all(&spades.stderr)
                             .expect("Failed to write to stderr");
                     }
-                    println!("Finished spades");
+                    
                     let mut file_contigs = File::open(&path_contigs).unwrap();
                     let zippath_contigs = barcode.join("contigs.fasta");
                     let opts_zipwriter: zip::write::FileOptions<()> =
@@ -74,7 +73,6 @@ impl RDBAssembler {
                         }
                     }
                     let _ = fs::remove_dir_all(&path_temp);
-                    println!("Finished {barcode:?}")
                 }
                 println!("Worker {tidx} exiting");
                 // NOTE: included finishing the writers here before, chance that removing this fucked things up
@@ -108,6 +106,7 @@ impl RDBAssembler {
                     .expect(&format!("No file at index {}", &index_found));
 
                 let zippath_found = zipfile_found.mangled_name();
+                println!("{:?}", zippath_found.file_name());
                 match zippath_found.file_name().and_then(|ext| ext.to_str()) {
                     Some("reads.fastq") => {}
                     Some(_) => continue,
@@ -129,7 +128,7 @@ impl RDBAssembler {
         }
 
         for i in 0..params_threading.threads_write {
-            println!("Sending termination signal {i}");
+            println!("Sending termination signal to worker {i}");
             tx.send(None).unwrap();
         }
 
