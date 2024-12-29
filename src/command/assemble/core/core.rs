@@ -78,6 +78,7 @@ impl RDBAssembler {
                     println!("Finished {barcode:?}")
                 }
                 println!("Worker {tidx} exiting");
+                // NOTE: included finishing the writers here before, chance that removing this fucked things up
             });
         }
 
