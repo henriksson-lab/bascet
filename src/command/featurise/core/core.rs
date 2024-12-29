@@ -2,7 +2,6 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use itertools::Itertools;
@@ -10,7 +9,7 @@ use zip::ZipArchive;
 
 use crate::command::constants::RDB_PATH_INDEX_KMC_DBS;
 
-use super::{params, state};
+use super::params;
 
 pub struct KMCProcessor {}
 

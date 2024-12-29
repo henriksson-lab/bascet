@@ -1,16 +1,15 @@
 use anyhow::Result;
 use clap::Args;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::{BufReader, Write},
     path::PathBuf,
     sync::Arc,
-    thread,
 };
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    command::constants::{RDB_PATH_INDEX_CONTIGS, RDB_PATH_INDEX_READS},
+    command::constants::RDB_PATH_INDEX_CONTIGS,
     utils::merge_archives_and_delete,
 };
 

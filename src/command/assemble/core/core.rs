@@ -28,7 +28,7 @@ impl RDBAssembler {
         for tidx in 0..params_threading.threads_write {
             let rx = Arc::clone(&rx);
             let params_io = Arc::clone(&params_io);
-            let params_runtime = Arc::clone(&params_runtime);
+            let _params_runtime = Arc::clone(&params_runtime);
             let params_threading = Arc::clone(&params_threading);
             let thread_states = Arc::clone(&thread_states);
             thread_pool.execute(move || {
@@ -79,6 +79,7 @@ impl RDBAssembler {
             });
         }
 
+        // TODO //FIXME: for some reason this just stalls on husky
         let file_rdb = File::open(&params_io.path_in).expect("Failed to open RDB file");
         let mut bufreader_rdb = BufReader::new(&file_rdb);
         let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();

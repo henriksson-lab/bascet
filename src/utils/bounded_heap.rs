@@ -210,7 +210,7 @@ where
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for value in iter {
-            self.push(value);
+            let _ = self.push(value);
         }
     }
 }
@@ -255,7 +255,7 @@ where
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for value in iter {
-            self.push(value);
+            let _ = self.push(value);
         }
     }
 }

@@ -3,7 +3,7 @@ use memmap2::MmapOptions;
 use std::{
     cmp::min,
     fs::File,
-    sync::{Arc, Mutex},
+    sync::Arc,
     usize,
 };
 
@@ -156,9 +156,9 @@ impl KMCProcessor {
             let rx = Arc::clone(&rx);
             let mmap = Arc::clone(&mmap);
 
-            let params_io = Arc::clone(&params_io);
+            let _params_io = Arc::clone(&params_io);
             let params_runtime = Arc::clone(&params_runtime);
-            let params_threading = Arc::clone(&params_threading);
+            let _params_threading = Arc::clone(&params_threading);
 
             let thread_states = Arc::clone(&thread_states);
             let ovlp_size = params_runtime.kmer_size + KMC_COUNTER_MAX_DIGITS;
