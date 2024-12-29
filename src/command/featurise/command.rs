@@ -14,7 +14,12 @@ use super::{
 };
 use anyhow::Result;
 use clap::Args;
-use std::{fs::File, path::PathBuf, sync::Arc};
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 #[derive(Args)]
 pub struct Command {
     #[arg(short = 'i', value_parser, default_value = FEATURISE_DEFAULT_PATH_IN)]
@@ -48,8 +53,8 @@ impl Command {
         };
 
         if let Ok(path_dump) = core::KMCProcessor::merge(&params_io, &params_threading) {
-            let thread_buffer_size = (HUGE_PAGE_SIZE / self.threads_work)
-                - ((self.kmer_size as usize) + KMC_COUNTER_MAX_DIGITS);
+            let thread_buffer_size =
+                (HUGE_PAGE_SIZE / self.threads_work) - (self.kmer_size + KMC_COUNTER_MAX_DIGITS);
             let thread_states: Vec<crate::state::Threading> = (0..self.threads_work)
                 .map(|_| {
                     crate::state::Threading::from_seed(
@@ -63,10 +68,7 @@ impl Command {
 
             let thread_pool = threadpool::ThreadPool::new(self.threads_work);
 
-            let params_io = crate::core::params::IO {
-                path_in: path_dump,
-                path_out: self.path_out.clone(),
-            };
+            let params_io = crate::core::params::IO { path_in: path_dump };
 
             let codec = KMERCodec::new(self.kmer_size);
             let params_runtime = crate::core::params::Runtime {
@@ -82,13 +84,22 @@ impl Command {
                 threads_buffer_size: thread_buffer_size,
             };
 
-            core::KMCProcessor::featurise(
+            let file_out = File::create(&self.path_out).unwrap();
+            let mut bufwriter_out = BufWriter::new(&file_out);
+            if let Ok((min_features, max_features)) = crate::KMCProcessor::extract(
                 &Arc::new(params_io),
                 &Arc::new(params_runtime),
                 &Arc::new(params_threading),
                 &Arc::new(thread_states),
                 &thread_pool,
-            );
+            ) {
+                for feature in min_features.iter().chain(max_features.iter()) {
+                    let _ = writeln!(bufwriter_out, "{}, {}", (feature << 64) >> 64, unsafe {
+                        codec.decode(*feature)
+                    });
+                }
+            }
+            bufwriter_out.flush().unwrap();
         }
 
         Ok(())

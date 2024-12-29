@@ -177,29 +177,4 @@ impl KMCProcessor {
 
         Ok(path_dump)
     }
-
-    pub fn featurise(
-        params_io: &Arc<crate::params::IO>,
-        params_runtime: &Arc<crate::params::Runtime>,
-        params_threading: &Arc<crate::params::Threading>,
-        thread_states: &Arc<Vec<crate::state::Threading>>,
-        thread_pool: &threadpool::ThreadPool,
-    ) {
-        let file_out = File::create(&params_io.path_out).unwrap();
-        let mut bufwriter_out = BufWriter::new(&file_out);
-        if let Ok((min_features, max_features)) = crate::KMCProcessor::extract(
-            params_io,
-            params_runtime,
-            params_threading,
-            thread_states,
-            thread_pool,
-        ) {
-            for feature in min_features.iter().chain(max_features.iter()) {
-                let _ = writeln!(bufwriter_out, "{}, {}", (feature << 64) >> 64, unsafe {
-                    params_runtime.codec.decode(*feature)
-                });
-            }
-        }
-        bufwriter_out.flush().unwrap();
-    }
 }
