@@ -76,9 +76,10 @@ impl Command {
         /* Merge temp zip archive into a new zip archive */
         merge_archives_and_delete(&self.path_out, &paths_threading_temp_out).unwrap();
         let mut files_kmc_dump_to_index: Vec<(usize, String)> = Vec::new();
-        let mut files_kmc_dbs_to_index: Vec<(usize, String)> = Vec::new();
+        let mut files_kmc_dbs_to_index: Vec<(usize, usize, String)> = Vec::new();
 
-        /* NOTE: Collect files from archive into a Vec */ {
+        /* NOTE: Collect files from archive into a Vec */
+        {
             let file_rdb_out = File::open(&self.path_out).unwrap();
             let mut bufreader_rdb_out = BufReader::new(&file_rdb_out);
             let archive_rdb_out = ZipArchive::new(&mut bufreader_rdb_out).unwrap();
@@ -94,12 +95,15 @@ impl Command {
                 // HACK: kmc stores their dbs as two files, I will, for simlicity, ignore the second file
                 else if filename.ends_with("kmc_pre") {
                     let kmc_db = String::from(filename).replace(".kmc_pre", "");
-                    files_kmc_dbs_to_index.push((i, kmc_db));
+
+                    // HACK: .kmc_suf file is one file index away from the .kmc_pre file
+                    files_kmc_dbs_to_index.push((i, i + 1, kmc_db));
                 }
             }
         }
-        println!("{:?}", files_kmc_dbs_to_index);
-        /* NOTE: Write to index file */ {
+
+        /* NOTE: Write to index file */
+        {
             let file_rdb_out = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -120,7 +124,8 @@ impl Command {
                 }
             }
         }
-        /* NOTE: Write to index file */ {
+        /* NOTE: Write to index file */
+        {
             let file_rdb_out = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -134,8 +139,8 @@ impl Command {
                 for file_to_index in files_kmc_dbs_to_index {
                     writeln!(
                         &mut zipwriter_rdb_out,
-                        "{},{}",
-                        file_to_index.0, file_to_index.1
+                        "{},{},{}",
+                        file_to_index.0, file_to_index.1, file_to_index.2
                     )
                     .expect("Failed to write index entry")
                 }

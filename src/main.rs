@@ -14,7 +14,7 @@ struct Cli {
 enum Commands {
     Assemble(command::Assemble),
     Count(command::Count),
-    // Featurise(command::Featurise),
+    Featurise(command::Featurise),
     Partition(command::Partition),
     Query(command::Query),
 }
@@ -25,7 +25,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Commands::Assemble(mut cmd) => cmd.try_execute(),
         Commands::Count(mut cmd) => cmd.try_execute(),
-        // Commands::Featurise(mut cmd) => cmd.try_execute(),
+        Commands::Featurise(mut cmd) => cmd.try_execute(),
         Commands::Partition(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
     };

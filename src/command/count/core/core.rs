@@ -135,37 +135,33 @@ impl RDBCounter {
         let bufreader_reads_index = BufReader::new(&mut file_reads_index);
         for line_reads_index in bufreader_reads_index.lines() {
             if let Ok(line_reads_index) = line_reads_index {
-                let index = line_reads_index
-                    .split(',')
-                    .next()
-                    .unwrap()
-                    .parse::<usize>()
-                    .expect(&format!(
-                        "Could not parse index file at line: {}",
-                        line_reads_index
-                    ));
+                let line_reads_split: Vec<&str> = line_reads_index.split(",").collect();
+                let index_found = line_reads_split[1].parse::<usize>().expect(&format!(
+                    "Could not parse index file at line: {}",
+                    line_reads_index
+                ));
 
-                let mut zipfile_read = archive_rdb
-                    .by_index(index)
-                    .expect(&format!("No file at index {}", &index));
+                let mut zipfile_found = archive_rdb
+                    .by_index(index_found)
+                    .expect(&format!("No file at index {}", &index_found));
 
-                let path_read = zipfile_read.mangled_name();
-                match path_read.file_name().and_then(|ext| ext.to_str()) {
+                let zippath_found = zipfile_found.mangled_name();
+                match zippath_found.file_name().and_then(|ext| ext.to_str()) {
                     Some("contigs.fasta") => {}
                     Some(_) => continue,
                     None => panic!("None value parsing read path"),
                 }
 
-                let path_barcode = path_read.parent().unwrap();
-                let path_barcode_dir = params_io.path_tmp.join(path_barcode);
-                let _ = fs::create_dir_all(&path_barcode_dir);
+                let path_barcode = zippath_found.parent().unwrap();
+                let path_temp_dir = params_io.path_tmp.join(path_barcode);
+                let _ = fs::create_dir(&path_temp_dir);
 
-                let path_temp_reads = path_barcode_dir.join(path_read.file_name().unwrap());
-                let file_temp_reads = File::create(&path_temp_reads).unwrap();
-                let mut bufwriter_temp_reads = BufWriter::new(&file_temp_reads);
+                let path_temp = path_temp_dir.join(zippath_found.file_name().unwrap());
+                let file_temp = File::create(&path_temp).unwrap();
+                let mut bufwriter_temp = BufWriter::new(&file_temp);
 
-                std::io::copy(&mut zipfile_read, &mut bufwriter_temp_reads).unwrap();
-
+                let mut bufreader_found = BufReader::new(&mut zipfile_found);
+                std::io::copy(&mut bufreader_found, &mut bufwriter_temp).unwrap();
                 tx.send(Some(path_barcode.to_path_buf())).unwrap();
             }
         }
