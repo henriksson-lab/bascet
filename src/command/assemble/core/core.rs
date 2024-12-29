@@ -94,6 +94,7 @@ impl RDBAssembler {
         let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
         for line_reads_index in bufreader_reads_index.lines() {
+            println!("parsing line {:?}", line_reads_index);
             if let Ok(line_reads_index) = line_reads_index {
                 let line_reads_split: Vec<&str> = line_reads_index.split(",").collect();
                 let index_found = line_reads_split[0].parse::<usize>().expect(&format!(
