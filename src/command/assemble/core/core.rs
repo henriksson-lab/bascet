@@ -1,13 +1,11 @@
 use std::{
-    fmt::format,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
-use rev_buf_reader::RevBufReader;
-use zip::{ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 use crate::command::constants::RDB_PATH_INDEX_READS;
 
@@ -42,6 +40,7 @@ impl RDBAssembler {
                     let path_spades = path_temp.join("spades");
                     let path_contigs = path_spades.join("contigs.fasta");
 
+                    println!("Starting spades");
                     let spades = std::process::Command::new("spades.py")
                         .arg("-s")
                         .arg(&path_reads)
@@ -59,7 +58,7 @@ impl RDBAssembler {
                             .write_all(&spades.stderr)
                             .expect("Failed to write to stderr");
                     }
-
+                    println!("Finished spades");
                     let mut file_contigs = File::open(&path_contigs).unwrap();
                     let zippath_contigs = barcode.join("contigs.fasta");
                     let opts_zipwriter: zip::write::FileOptions<()> =
