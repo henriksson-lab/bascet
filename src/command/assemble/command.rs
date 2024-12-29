@@ -1,10 +1,17 @@
 use anyhow::Result;
 use clap::Args;
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
+    io::{BufReader, Write},
     path::PathBuf,
     sync::Arc,
     thread,
+};
+use zip::{write::FileOptions, ZipArchive, ZipWriter};
+
+use crate::{
+    command::constants::{RDB_PATH_INDEX_CONTIGS, RDB_PATH_INDEX_READS},
+    utils::merge_archives_and_delete,
 };
 
 use super::{
@@ -61,12 +68,54 @@ impl Command {
         let thread_pool = threadpool::ThreadPool::new(self.threads_read + self.threads_write);
 
         let _ = RDBAssembler::assemble(
-            Arc::new(params_io),
-            Arc::new(params_runtime),
-            Arc::new(params_threading),
-            Arc::new(thread_states),
+            &Arc::new(params_io),
+            &Arc::new(params_runtime),
+            &Arc::new(params_threading),
+            &Arc::new(thread_states),
             &thread_pool,
         );
+
+        /* Merge temp zip archive into a new zip archive */
+        merge_archives_and_delete(&self.path_out, &paths_threading_temp_out).unwrap();
+        let mut files_to_index: Vec<(usize, String)> = Vec::new();
+
+        /* NOTE: Collect files from archive into a Vec */
+        {
+            let file_rdb_out = File::open(&self.path_out).unwrap();
+            let mut bufreader_rdb_out = BufReader::new(&file_rdb_out);
+            let archive_rdb_out = ZipArchive::new(&mut bufreader_rdb_out).unwrap();
+            // Get files in the new archive
+            for i in 0..archive_rdb_out.len() {
+                let file_name = archive_rdb_out
+                    .name_for_index(i)
+                    .expect("Failed to read ZIP entry");
+
+                files_to_index.push((i, String::from(file_name)));
+            }
+        }
+
+        /* NOTE: Write to index file */
+        {
+            let file_rdb_out = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.path_out)
+                .unwrap();
+
+            let mut zipwriter_rdb_out = ZipWriter::new_append(&file_rdb_out).unwrap();
+            let opts_zipwriter: FileOptions<()> =
+                FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            if let Ok(_) = &zipwriter_rdb_out.start_file(RDB_PATH_INDEX_CONTIGS, opts_zipwriter) {
+                for file_to_index in files_to_index {
+                    writeln!(
+                        &mut zipwriter_rdb_out,
+                        "{},{}",
+                        file_to_index.0, file_to_index.1
+                    )
+                    .expect("Failed to write index entry")
+                }
+            }
+        }
 
         Ok(())
     }

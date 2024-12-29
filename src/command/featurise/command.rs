@@ -1,4 +1,5 @@
 use crate::{
+    command::constants::{DEFAULT_SEED_RANDOM, RDB_PATH_INDEX_CONTIGS},
     core::constants::{HUGE_PAGE_SIZE, KMC_COUNTER_MAX_DIGITS},
     utils::KMERCodec,
 };
@@ -6,9 +7,10 @@ use crate::{
 use super::{
     constants::{
         FEATURISE_DEFAULT_FEATURES_MAX, FEATURISE_DEFAULT_FEATURES_MIN, FEATURISE_DEFAULT_PATH_IN,
-        FEATURISE_DEFAULT_PATH_INDEX, FEATURISE_DEFAULT_PATH_OUT, FEATURISE_DEFAULT_PATH_TEMP,
+        FEATURISE_DEFAULT_PATH_OUT, FEATURISE_DEFAULT_PATH_TEMP, FEATURISE_DEFAULT_THREADS_READ,
+        FEATURISE_DEFAULT_THREADS_WORK,
     },
-    core::{core::RDBCounter, params, threading::DefaultThreadState},
+    core::{core::RDBCounter, params, state::Threading},
 };
 use anyhow::Result;
 use clap::Args;
@@ -27,8 +29,6 @@ use zip::ZipArchive;
 pub struct Command {
     #[arg(short = 'i', value_parser, default_value = FEATURISE_DEFAULT_PATH_IN)]
     pub path_in: PathBuf,
-    #[arg(short = 'j', value_parser, default_value = FEATURISE_DEFAULT_PATH_INDEX)]
-    pub path_index: PathBuf,
     #[arg(short = 't', value_parser, default_value = FEATURISE_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
     #[arg(short = 'o', value_parser, default_value = FEATURISE_DEFAULT_PATH_OUT)]
@@ -39,72 +39,57 @@ pub struct Command {
     pub features_nmin: usize,
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = FEATURISE_DEFAULT_FEATURES_MAX)]
     pub features_nmax: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub threads_io: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub threads_work: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(u64))]
-    pub seed: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = FEATURISE_DEFAULT_THREADS_READ)]
+    pub threads_read: usize,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = FEATURISE_DEFAULT_THREADS_WORK)]
+    pub threads_work: usize,
+    #[arg(long, value_parser = clap::value_parser!(u64), default_value_t = *DEFAULT_SEED_RANDOM)]
+    pub seed: u64,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        self.verify_input_file()?;
-        let kmer_size = self.verify_kmer_size()?;
-        let (threads_io, threads_work) = self.resolve_thread_config()?;
-        let (features_nmin, features_nmax) = self.verify_features()?;
-        let seed = self.seed.unwrap_or_else(rand::random);
+        let file_rdb = File::open(&self.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb = BufReader::new(&file_rdb);
+        let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
 
-        let thread_buffer_size =
-            (HUGE_PAGE_SIZE / threads_work) - ((self.kmer_size as usize) + KMC_COUNTER_MAX_DIGITS);
-        let thread_pool = threadpool::ThreadPool::new(threads_io + threads_work);
-        let thread_states: Vec<Arc<crate::core::threading::DefaultThreadState>> = (0..threads_work)
-            .map(|_| {
-                Arc::new(crate::core::threading::DefaultThreadState::from_seed(
-                    seed,
-                    thread_buffer_size,
-                    features_nmin,
-                    features_nmax,
-                ))
-            })
-            .collect();
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb);
+        let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
+            .expect("Failed to create zip archive from RDB");
+        let mut file_reads_index = archive_rdb_for_index
+            .by_name(&RDB_PATH_INDEX_CONTIGS)
+            .expect("Could not find rdb reads index file");
+        let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
-        let rdb_file = File::open(&self.path_in).expect("Failed to open RDB file");
-        let index_file = File::open(&self.path_index).expect("Failed to open index file");
-        let index_reader = BufReader::new(index_file);
-        let mut archive_rdb = ZipArchive::new(rdb_file).expect("Unable to create zip archive");
-
-        for line in index_reader.lines() {
-            if let Ok(line) = line {
-                let index = line
+        for line_reads_index in bufreader_reads_index.lines() {
+            if let Ok(line_reads_index) = line_reads_index {
+                let index = line_reads_index
                     .split(',')
                     .next()
                     .unwrap()
                     .parse::<usize>()
-                    .expect("Error parsing index file");
+                    .expect("Could not parse index file");
 
-                let mut barcode_kmc = archive_rdb
+                let mut zipfile_read = archive_rdb
                     .by_index(index)
                     .expect(&format!("No file at index {}", &index));
 
-                let barcode_path = barcode_kmc.mangled_name();
-                let barcode_kmc_ext = barcode_path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .unwrap();
-                match barcode_kmc_ext {
-                    "kmc_pre" | "kmc_suf" => {}
-                    _ => continue,
+                let path_read = zipfile_read.mangled_name();
+                match path_read.file_name().and_then(|ext| ext.to_str()) {
+                    Some("kmc.kmc_pre" | "kmc.kmc_suf") => {}
+                    Some(_) => continue,
+                    None => panic!("None value parsing read path"),
                 }
 
-                let barcode = barcode_path.parent().unwrap();
+                let path_barcode = path_read.parent().unwrap();
+                let path_barcode_dir = self.path_tmp.join(path_barcode);
+                let _ = fs::create_dir_all(&path_barcode_dir);
 
-                let path_dir_barcode = self.path_tmp.join(barcode);
-                let _ = fs::create_dir_all(&path_dir_barcode);
+                let path_temp_reads = path_barcode_dir.join(path_read.file_name().unwrap());
+                let file_temp_reads = File::create(&path_temp_reads).unwrap();
+                let mut bufwriter_temp_reads = BufWriter::new(&file_temp_reads);
 
-                let path_temp_barcode_kmc = path_dir_barcode.join(format!("kmc.{barcode_kmc_ext}"));
-                let mut file_temp_barcode_kmc = File::create(&path_temp_barcode_kmc).unwrap();
-                std::io::copy(&mut barcode_kmc, &mut file_temp_barcode_kmc).unwrap();
+                std::io::copy(&mut zipfile_read, &mut bufwriter_temp_reads).unwrap();
             }
         }
 
@@ -184,7 +169,23 @@ impl Command {
             );
         }
 
-        let codec = KMERCodec::new(kmer_size);
+        let thread_buffer_size = (HUGE_PAGE_SIZE / self.threads_work)
+            - ((self.kmer_size as usize) + KMC_COUNTER_MAX_DIGITS);
+        let thread_states: Vec<Arc<crate::core::threading::DefaultThreadState>> = (0..self
+            .threads_work)
+            .map(|_| {
+                Arc::new(crate::core::threading::DefaultThreadState::from_seed(
+                    seed,
+                    thread_buffer_size,
+                    self.features_nmin,
+                    self.features_nmax,
+                ))
+            })
+            .collect();
+
+        let thread_pool = threadpool::ThreadPool::new(self.threads_work);
+
+        let codec = KMERCodec::new(self.kmer_size);
         let path_features = self.path_out.parent().unwrap().join("features");
         let params_io = crate::core::params::IO {
             path_in: &path_dump,
@@ -247,31 +248,5 @@ impl Command {
             anyhow::bail!("Ref features_nmin and features_nmax cannot be 0");
         }
         Ok((self.features_nmin, self.features_nmax))
-    }
-
-    fn resolve_thread_config(&self) -> Result<(usize, usize)> {
-        let available_threads = thread::available_parallelism()
-            .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
-            .get();
-
-        if available_threads < 2 {
-            anyhow::bail!("At least two threads must be available");
-        }
-
-        let (threads_io, threads_work) = match (self.threads_io, self.threads_work) {
-            (Some(i), Some(w)) => (i, w),
-            (Some(i), None) => (i, available_threads.saturating_sub(i).max(1)),
-            (None, Some(w)) => (1, w),
-            (None, None) => (1, available_threads.saturating_sub(1).max(1)),
-        };
-
-        if threads_io == 0 {
-            anyhow::bail!("At least one IO thread required");
-        }
-        if threads_work == 0 {
-            anyhow::bail!("At least one work thread required");
-        }
-
-        Ok((threads_io, threads_work))
     }
 }
