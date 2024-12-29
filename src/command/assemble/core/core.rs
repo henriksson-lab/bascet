@@ -82,17 +82,6 @@ impl RDBAssembler {
             });
         }
 
-        // let index_file = File::open(&params_io.path_idx)?;
-        // let mut index_reader = BufReader::new(index_file);
-        // let mut progress_index_rev_reader = RevBufReader::new(&mut index_reader);
-        // let mut progress_index_last_line = String::new();
-        // progress_index_rev_reader.read_line(&mut progress_index_last_line)?;
-        // let _progress_index_last = progress_index_last_line
-        //     .split(",")
-        //     .next()
-        //     .unwrap()
-        //     .parse::<usize>()?;
-
         let file_rdb = File::open(&params_io.path_in).expect("Failed to open RDB file");
         let mut bufreader_rdb = BufReader::new(&file_rdb);
         let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
@@ -110,7 +99,7 @@ impl RDBAssembler {
         for line_reads_index in bufreader_reads_index.lines() {
             if let Ok(line_reads_index) = line_reads_index {
                 let line_reads_split: Vec<&str> = line_reads_index.split(",").collect();
-                let index_found = line_reads_split[1].parse::<usize>().expect(&format!(
+                let index_found = line_reads_split[0].parse::<usize>().expect(&format!(
                     "Could not parse index file at line: {}",
                     line_reads_index
                 ));
