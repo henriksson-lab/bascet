@@ -61,7 +61,7 @@ impl RDBAssembler {
                     }
 
                     let mut file_contigs = File::open(&path_contigs).unwrap();
-                    let zippath_contigs = barcode.join("contigs.fastq");
+                    let zippath_contigs = barcode.join("contigs.fasta");
                     let opts_zipwriter: zip::write::FileOptions<()> =
                         zip::write::FileOptions::default()
                             .compression_method(zip::CompressionMethod::Stored);
@@ -98,11 +98,13 @@ impl RDBAssembler {
         let mut bufreader_rdb = BufReader::new(&file_rdb);
         let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
 
-        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb);
+        let file_rdb_for_index = File::open(&params_io.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb_for_index);
         let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
             .expect("Failed to create zip archive from RDB");
+
         let mut file_reads_index = archive_rdb_for_index
-            .by_name(&RDB_PATH_INDEX_READS)
+            .by_name(RDB_PATH_INDEX_READS)
             .expect("Could not find rdb reads index file");
         let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
@@ -130,7 +132,7 @@ impl RDBAssembler {
                 let path_barcode_dir = params_io.path_tmp.join(path_barcode);
                 let _ = fs::create_dir_all(&path_barcode_dir);
 
-                let path_temp_reads = path_barcode_dir.join("reads.fastq");
+                let path_temp_reads = path_barcode_dir.join(path_read.file_name().unwrap());
                 let file_temp_reads = File::create(&path_temp_reads).unwrap();
                 let mut bufwriter_temp_reads = BufWriter::new(&file_temp_reads);
 

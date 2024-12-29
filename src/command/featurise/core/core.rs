@@ -106,11 +106,13 @@ impl RDBCounter {
         let mut bufreader_rdb = BufReader::new(&file_rdb);
         let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
 
-        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb);
+        let file_rdb_for_index = File::open(&params_io.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb_for_index);
         let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
             .expect("Failed to create zip archive from RDB");
+
         let mut file_reads_index = archive_rdb_for_index
-            .by_name(RDB_PATH_INDEX_CONTIGS)
+            .by_name(RDB_PATH_INDEX_KMC_DUMPS)
             .expect("Could not find rdb reads index file");
         let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
