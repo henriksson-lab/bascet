@@ -75,7 +75,8 @@ impl RDBAssembler {
                     let _ = fs::remove_dir_all(&path_temp);
                 }
                 println!("Worker {tidx} exiting");
-                // NOTE: included finishing the writers here before, chance that removing this fucked things up
+                // NOTE:included finishing the writers here before, chance that removing this fucked things up
+                //      but unfortunately borrow checker didnt like that at all
             });
         }
 

@@ -56,7 +56,9 @@ impl BAMProcessor {
                     let path_reads = Path::new(&barcode_string).join(RDB_FILENAME_READS);
 
                     let opts: FileOptions<()> =
-                        FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+                        FileOptions::default().compression_method(zip::CompressionMethod::Zstd);
+
+                    // FIXME: this is super slow because zipwriter does not use a buffer for writing on 1.1.1.
                     if let Ok(_) = zipwriter_rdb.start_file(path_reads.to_str().unwrap(), opts) {
                         let mut index = 0;
                         while let Some((sequence, quality)) = bam_cell.inner.pop() {
