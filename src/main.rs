@@ -21,7 +21,7 @@ enum Commands {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-
+    
     let result = match cli.command {
         Commands::Assemble(mut cmd) => cmd.try_execute(),
         Commands::Count(mut cmd) => cmd.try_execute(),

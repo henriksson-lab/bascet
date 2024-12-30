@@ -203,6 +203,8 @@ where
         }
     }
 }
+
+// NOTE: need to call push to guarantee order
 impl<T> Extend<T> for BoundedMinHeap<T>
 where
     T: Ord,
@@ -248,6 +250,8 @@ where
         return Ok(());
     }
 }
+
+// NOTE: need to call push to guarantee order
 impl<T> Extend<T> for BoundedMaxHeap<T>
 where
     T: Ord,
