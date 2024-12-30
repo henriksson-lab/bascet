@@ -62,7 +62,7 @@ impl RDBAssembler {
                     let zippath_contigs = barcode.join("contigs.fasta");
                     let opts_zipwriter: zip::write::FileOptions<()> =
                         zip::write::FileOptions::default()
-                            .compression_method(zip::CompressionMethod::Stored);
+                            .compression_method(zip::CompressionMethod::Zstd);
                     {
                         let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
                         if let Ok(_) = zipwriter_rdb.start_file(
@@ -73,6 +73,7 @@ impl RDBAssembler {
                         }
                     }
                     let _ = fs::remove_dir_all(&path_temp);
+                    println!("Finished {barcode:?}");
                 }
                 println!("Worker {tidx} exiting");
                 // NOTE:included finishing the writers here before, chance that removing this fucked things up
@@ -96,7 +97,7 @@ impl RDBAssembler {
         let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
         for line_reads_index in bufreader_reads_index.lines() {
-            println!("parsing line {:?}", line_reads_index);
+            // println!("parsing line {:?}", line_reads_index);
             if let Ok(line_reads_index) = line_reads_index {
                 let line_reads_split: Vec<&str> = line_reads_index.split(",").collect();
                 let index_found = line_reads_split[0].parse::<usize>().expect(&format!(
@@ -109,7 +110,7 @@ impl RDBAssembler {
                     .expect(&format!("No file at index {}", &index_found));
 
                 let zippath_found = zipfile_found.mangled_name();
-                println!("{:?}", zippath_found.file_name());
+                // println!("{:?}", zippath_found.file_name());
                 match zippath_found.file_name().and_then(|ext| ext.to_str()) {
                     Some("reads.fastq") => {}
                     Some(_) => continue,
