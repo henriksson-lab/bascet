@@ -67,10 +67,11 @@ pub fn check_dep_samtools() {
 pub struct GetRaw {}
 
 impl GetRaw {
-    pub fn extract<'a>(
+    pub fn getraw<'a>(
         params_io: Arc<params::IO>,
         params_runtime: Arc<params::Runtime>,
         params_threading: Arc<params::Threading>,
+        thread_pool: &threadpool::ThreadPool,
         //thread_states: Vec<Arc<DefaultThreadState>>,
     ) -> anyhow::Result<()> {
 
