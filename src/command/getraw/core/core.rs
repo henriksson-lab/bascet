@@ -7,10 +7,13 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
+use std::sync::Arc;
+use std::io::Read;
+
 
 use semver::{Version, VersionReq};
 
-use super::{io, io::Barcode};
+use super::{io, io::Barcode, params};
 
 
 use bio::pattern_matching::myers::Myers;
@@ -64,7 +67,26 @@ pub fn check_dep_samtools() {
 pub struct GetRaw {}
 
 impl GetRaw {
+    pub fn extract<'a>(
+        params_io: Arc<params::IO>,
+        params_runtime: Arc<params::Runtime>,
+        params_threading: Arc<params::Threading>,
+        //thread_states: Vec<Arc<DefaultThreadState>>,
+    ) -> anyhow::Result<()> {
 
+
+
+
+
+
+
+
+
+
+
+
+        Ok(())
+    }
 }
 
 
@@ -72,12 +94,13 @@ impl GetRaw {
 pub fn prepare(
     forward: &PathBuf,
     reverse: &PathBuf,
-    output: &PathBuf,
+    output_complete: &PathBuf,
+    output_incomplete: &PathBuf,
     barcode_files: &Vec<PathBuf>,
     preset: &Option<PathBuf>,
     sorted: &bool,
 ) {
-    info!("Starting babbles prepare");
+    info!("Running command: getraw");
     // TODO
     // - remove the "bad" cells
     // - sort the CRAM
@@ -99,8 +122,17 @@ pub fn prepare(
     let starts = find_probable_barcode_boundaries(reverse_file, &mut barcodes, &pools, 1000);
     let mut reverse_file = io::open_fastq(&reverse); // reopen the file to read from beginning
 
-    // Open cram utput file
-    let (cram_header, mut cram_writer) = io::create_cram_file(&output.with_extension("cram"));
+    // Open cram output files
+    let (cram_header_complete, mut cram_writer_complete) = io::create_cram_file(&output_complete.with_extension("cram"));
+    let (cram_header_incomplete, mut cram_writer_incomplete) = io::create_cram_file(&output_incomplete.with_extension("cram"));
+
+
+
+
+    //////////////////////////// below can certainly be multithreaded
+    //////////////////////////// below can certainly be multithreaded
+    //////////////////////////// below can certainly be multithreaded
+
 
     // Read the fastq files, detect barcodes and write to cram
     while let Some(record) = reverse_file.next() {
@@ -140,16 +172,24 @@ pub fn prepare(
 
         // Finally, write the forward and reverse together with barcode info in the output cram
         io::write_records_pair_to_cram(
-            &cram_header,
-            &mut cram_writer,
+            &cram_header_complete,
+            &mut cram_writer_complete,
             forward_record,
             reverse_record,
             &hits_names,
             &hits_seq,
         );
-    }
-    cram_writer.try_finish(&cram_header).unwrap();
 
+    }
+
+    ///////////////////// end of multithreading
+
+
+    //Flush the files
+    cram_writer_complete.try_finish(&cram_header_complete).unwrap();
+    cram_writer_incomplete.try_finish(&cram_header_incomplete).unwrap();
+
+    //Sort the output files if requested; only performed for complete entries
     if *sorted {
         info!("sorting cram file with samtools");
         check_dep_samtools();
@@ -159,8 +199,8 @@ pub fn prepare(
             .arg("-t")
             .arg("CB")
             .arg("-o")
-            .arg(&output.with_extension("sorted.cram")) // TODO change output name
-            .arg(&output.with_extension("cram"))
+            .arg(&output_complete.with_extension("sorted.cram")) // TODO change output name
+            .arg(&output_complete.with_extension("cram"))
             // to change to unsorted? need earlier logic for sorted vs unsorted file names
             .output();
         match samtools_sort {
@@ -180,10 +220,86 @@ pub fn prepare(
 
 
 
-fn validate_barcode_inputs(barcode_files: &Vec<PathBuf>, preset: &Option<PathBuf>) -> Vec<Barcode> {
-    // takes either presets or barcode files and returns a vector of Barcodes
-    // TODO while presets are being implemented,  barcode files support is currently disabled
+/* 
+fn read_barcodes_file(
+    opened: &dyn Read, ///////// difficult type!
+    barcodes: &mut Vec<Barcode> 
+) {
+
+    //as bytes gives: &[u8]
+
     let mut barcodes: Vec<Barcode> = Vec::new();
+
+    let mut n_barcodes = 0;
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_reader(*opened);
+    for result in reader.deserialize() {
+        let record: Row = result.unwrap();
+        let b = Barcode {
+            index: n_barcodes,
+            name: record.well,
+            pool: record.pos,
+            sequence: record.seq.as_bytes().to_vec(),
+            pattern: Myers::<u64>::new(record.seq.as_bytes().to_vec()),
+        };
+        barcodes.push(b);
+        n_barcodes += 1;
+    }
+    if n_barcodes==0 {
+        println!("Warning: empty barcodes file");
+    }
+}
+*/
+
+
+
+
+
+
+fn validate_barcode_inputs(
+    barcode_files: &Vec<PathBuf>, 
+    preset: &Option<PathBuf>
+) -> Vec<Barcode> {
+
+
+    let mut barcodes: Vec<Barcode> = Vec::new();
+
+
+
+    //let a = include_str!("hello.txt");
+    let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
+    let c = String::from_utf8(atrandi_bcs.to_vec()).unwrap();
+
+    //read_barcodes_file(&atrandi_bcs.as_ref(), &mut barcodes);
+
+    let mut n_barcodes = 0; //TODO: why is this needed later?
+
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_reader(c.as_bytes());
+    for result in reader.deserialize() {
+        let record: Row = result.unwrap();
+        let b = Barcode {
+            index: n_barcodes,
+            name: record.well,
+            pool: record.pos,
+            sequence: record.seq.as_bytes().to_vec(),
+            pattern: Myers::<u64>::new(record.seq.as_bytes().to_vec()),
+        };
+        barcodes.push(b);
+        n_barcodes += 1;
+    }
+
+    if n_barcodes==0 {
+        println!("Warning: empty barcodes file");
+    }
+    //TODO support reading of new files too
+
+/* 
+
+    // takes either presets or barcode files and returns a vector of Barcodes
+    // TODO while presets are being implemented, barcode files support is currently disabled
     match preset {
         Some(preset) => {
             debug!("loading barcode preset: {:?}", preset);
@@ -199,6 +315,8 @@ fn validate_barcode_inputs(barcode_files: &Vec<PathBuf>, preset: &Option<PathBuf
                 }
             };
             let mut n_barcodes = 0;
+
+            
             let mut reader = csv::ReaderBuilder::new()
                 .delimiter(b'\t')
                 .from_reader(opened);
@@ -214,12 +332,22 @@ fn validate_barcode_inputs(barcode_files: &Vec<PathBuf>, preset: &Option<PathBuf
                 barcodes.push(b);
                 n_barcodes += 1;
             }
+            
+            if(n_barcodes==0){
+                println!("Warning: empty barcodes file");
+            }
+
+            read_barcodes_file(&opened, &mut barcodes);
+
         }
         None => {
             // load the barcodes here
             println!("loading barcodes: {:?}", barcode_files);
         }
     }
+*/
+
+
     barcodes
 }
 
