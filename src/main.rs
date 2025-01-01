@@ -18,6 +18,8 @@ enum Commands {
     Index(command::Index),
     Prepare(command::Prepare),
     Query(command::Query),
+    GetRaw(command::GetRaw),
+    //MapCell(command::MapCell),
 }
 
 fn main() -> ExitCode {
@@ -30,6 +32,8 @@ fn main() -> ExitCode {
         Commands::Index(mut cmd) => cmd.try_execute(),
         Commands::Prepare(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
+        Commands::GetRaw(mut cmd) => cmd.try_execute(),
+        //Commands::MapCell(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
