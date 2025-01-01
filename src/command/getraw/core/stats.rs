@@ -1,6 +1,6 @@
 // This file is part of babbles which is released under the MIT license.
 // See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
-use log::{error, info, trace, warn};
+use log::{error, info, trace};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
