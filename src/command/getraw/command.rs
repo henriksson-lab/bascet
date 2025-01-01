@@ -73,6 +73,7 @@ impl Command {
         let thread_pool = threadpool::ThreadPool::new(threads_read + threads_write + threads_work);
 
 
+        println!("runnging getraw");
 
         let _ = GetRaw::getraw(
             Arc::new(params_io),
