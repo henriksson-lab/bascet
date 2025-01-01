@@ -16,19 +16,19 @@ use super::{
 
 #[derive(Args)]
 pub struct Command {
-    #[arg(short = 'i', value_parser)]
+    #[arg(long = "i1", value_parser)]
     pub path_forward: PathBuf,
-    #[arg(short = 'j', value_parser)]
+    #[arg(long = "i2", value_parser)]
     pub path_reverse: PathBuf,
-    #[arg(short = 'o', value_parser)]
+    #[arg(short = 'o', long="out-complete", value_parser)]
     pub path_output_complete: PathBuf,
-    #[arg(short = 'p', value_parser)]
-    pub path_output_incomplete: PathBuf, /////// should we make this optional?
-    #[arg(short = 'b', value_parser)]
+    #[arg(long = "out-incomplete", value_parser)]
+    pub path_output_incomplete: PathBuf, 
+    #[arg(long = "bc", value_parser)]
     pub barcode_file: Option<PathBuf>, 
     #[arg(short = 't', value_parser, default_value = GETRAW_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
-    #[arg(short = 's', value_parser)]
+    #[arg(short = 's', long = "sort")]
     pub sort: bool,  
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_work: Option<usize>,
@@ -73,15 +73,13 @@ impl Command {
         let thread_pool = threadpool::ThreadPool::new(threads_read + threads_write + threads_work);
 
 
-        /*
 
-        let _ = RDBAssembler::assemble(
+        let _ = GetRaw::getraw(
             Arc::new(params_io),
             Arc::new(params_runtime),
             Arc::new(params_threading),
             &thread_pool,
         );
-        */
 
         Ok(())
     }
@@ -116,11 +114,14 @@ fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
             print!("Warning: input file is empty");
         }
     }
-    match path_in.extension().and_then(|ext| ext.to_str()) {
-        Some("fq") => return Ok(()),
-        Some("fastq") => return Ok(()),
-        Some("fq.gz") => return Ok(()),
-        Some("fastq.gz") => return Ok(()),
-        _ => anyhow::bail!("Input file must be a fastq file"),
-    };
+
+    let filename = path_in.file_name().unwrap().to_str().unwrap();
+
+    if filename.ends_with("fq") | filename.ends_with("fq.gz") | filename.ends_with("fastq.gz") | filename.ends_with("fastq.gz")  {
+        //ok
+    } else {
+        anyhow::bail!("Input file must be a fastq file")
+    }
+
+    Ok(())
 }
