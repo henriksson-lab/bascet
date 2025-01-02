@@ -68,10 +68,6 @@ impl Command {
 
         //fs::create_dir_all(&self.path_out).unwrap();
 
-        let threads_read = 1;
-        let threads_write = 1;
-        let thread_pool = threadpool::ThreadPool::new(threads_read + threads_write + threads_work);
-
 
         println!("runnging getraw");
 
@@ -79,7 +75,6 @@ impl Command {
             Arc::new(params_io),
             Arc::new(params_runtime),
             Arc::new(params_threading),
-            &thread_pool,
         );
 
         Ok(())
