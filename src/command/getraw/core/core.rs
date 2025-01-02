@@ -19,7 +19,7 @@ use crossbeam::channel::Sender;
 
 use semver::{Version, VersionReq};
 
-use super::{io, io::Barcode, params};
+use super::{io, barcode, barcode::Barcode, params};
 
 
 use bio::pattern_matching::myers::Myers;
@@ -41,7 +41,7 @@ struct Row {
 //unable to access qual record!!
 //https://docs.rs/seq_io/latest/seq_io/fastq/struct.OwnedRecord.html
 
-struct BamCell {
+struct ReadPair {
     reverse_record: OwnedRecord,
     forward_record: OwnedRecord
 }
@@ -80,7 +80,7 @@ pub fn check_dep_samtools() {
 }
 
 
-type ReadWithBarcode = (Arc<BamCell>, Arc<Vec<String>>, Arc<Vec<String>>);
+type ReadWithBarcode = (Arc<ReadPair>, Arc<Vec<String>>, Arc<Vec<String>>);
 
 
 fn create_writer_thread(
@@ -90,7 +90,7 @@ fn create_writer_thread(
 
     let outfile = outfile.clone();
 
-    let (tx, rx) = crossbeam::channel::bounded::<Option<(Arc<BamCell>, Arc<Vec<String>>, Arc<Vec<String>>)>>(10000);
+    let (tx, rx) = crossbeam::channel::bounded::<Option<(Arc<ReadPair>, Arc<Vec<String>>, Arc<Vec<String>>)>>(10000);
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
     //let rx_writer = Arc::clone(&rx_writer_complete);
     //let params_io_w = Arc::clone(&params_io);
@@ -131,7 +131,6 @@ impl GetRaw {
         params_io: Arc<params::IO>,
         params_runtime: Arc<params::Runtime>,
         params_threading: Arc<params::Threading>,
-//        thread_pool: &threadpool::ThreadPool,
     ) -> anyhow::Result<()> {
 
         info!("Running command: getraw");
@@ -162,7 +161,7 @@ impl GetRaw {
 
         // Start worker threads
         let thread_pool_work = threadpool::ThreadPool::new(params_threading.threads_work);
-        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<BamCell>>>(1000);
+        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<ReadPair>>>(1000);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
         for tidx in 0..params_threading.threads_work {
             let rx = Arc::clone(&rx);
@@ -243,16 +242,15 @@ impl GetRaw {
             });
         }
 
-        // This is the read thread
+        // Read the fastq files, send to worker threads
         println!("Starting to read input file");
-        // Read the fastq files, detect barcodes and write to cram
         while let Some(record) = reverse_file.next() {
 
             //println!("read line");
             let reverse_record: seq_io::fastq::RefRecord<'_> = record.expect("Error reading record");
             let forward_record = forward_file.next().unwrap().expect("Error reading record");
 
-            let recpair = BamCell {
+            let recpair = ReadPair {
              reverse_record: reverse_record.to_owned_record(),
              forward_record: forward_record.to_owned_record()
            };
@@ -372,6 +370,14 @@ fn validate_barcode_inputs(
         .from_reader(c.as_bytes());
     for result in reader.deserialize() {
         let record: Row = result.unwrap();
+
+        let b = Barcode::new(
+                n_barcodes,
+                record.well.as_str(),
+                record.pos,
+                record.seq.as_bytes()
+        );    
+
         let b = Barcode {
             index: n_barcodes,
             name: record.well,
@@ -450,7 +456,7 @@ fn validate_barcode_inputs(
 
 fn find_probable_barcode_boundaries(
     mut fastq_file: FastqReader<Box<dyn std::io::Read>>,
-    barcodes: &mut Vec<io::Barcode>,
+    barcodes: &mut Vec<Barcode>,
     pools: &HashSet<u32>,
     n_reads: u32,
 ) -> Vec<(u32, usize, usize)> {
