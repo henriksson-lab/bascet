@@ -26,6 +26,7 @@ use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 use bio::alignment::Alignment;
 use bio::pattern_matching::myers::Myers;
 
+
 #[derive(Clone, Debug)]
 pub struct Barcode {
     pub index: usize,
@@ -35,8 +36,9 @@ pub struct Barcode {
     pub pattern: Myers<u64>,
 }
 impl Barcode {
-    pub fn seek(
+    pub fn seek( ////////////// why mutable??
         &mut self,
+//        &self,
         record: &[u8],
         distance: u8,
     ) -> Vec<(&String, u32, Vec<u8>, usize, usize, i32)> {
@@ -45,7 +47,7 @@ impl Barcode {
         // matching based on dynamic programming. Journal of the ACM (JACM) 46, 395–415.
         let mut hits: Vec<(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
         let mut aln = Alignment::default();
-        let mut matches = self.pattern.find_all_lazy(record, distance);
+        let mut matches = self.pattern.find_all_lazy(record, distance);  //^^^^^^^^^^^^ `self` is a `&` reference, so the data it refers to cannot be borrowed as mutable
         let maybe_matches = matches.by_ref().min_set_by_key(|&(_, dist)| dist);
         if maybe_matches.len() > 0 {
             for (best_end, _) in maybe_matches {
@@ -309,7 +311,12 @@ pub fn create_cram_file(name: &PathBuf) -> (sam::Header, cram::io::Writer<File>)
         .add_comment("babbles")
         .build();
 
-    let out_buffer = open_buffer_for_writing(name, true, true);
+    //Delete file if it exists
+    if std::fs::exists(name).expect("Cannot check if cram file already exists") {
+        std::fs::remove_file(name).expect("Failing to remove target cram file");
+    }
+
+    let out_buffer = open_buffer_for_writing(name, true, false);  //fail_on_exists makes rust just end. set to false because hard to debug
     let mut writer = cram::io::Writer::new(out_buffer);
 
     writer
@@ -321,8 +328,10 @@ pub fn create_cram_file(name: &PathBuf) -> (sam::Header, cram::io::Writer<File>)
 pub fn write_records_pair_to_cram(
     header: &sam::Header,
     cram_writer: &mut cram::io::Writer<File>,
-    forward: seq_io::fastq::RefRecord,
-    reverse: seq_io::fastq::RefRecord,
+    forward: &impl seq_io::fastq::Record,
+    reverse: &impl seq_io::fastq::Record,
+//    forward: seq_io::fastq::RefRecord,
+//    reverse: seq_io::fastq::RefRecord,
     barcodes_hits: &Vec<String>,
     barcodes_seq: &Vec<String>,
 ) {

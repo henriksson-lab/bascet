@@ -1,15 +1,21 @@
+use clap::builder::Str;
 // This file is part of babbles which is released under the MIT license.
 // See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
+use seq_io::fastq::Record;
+use seq_io::fastq::RefRecord;
+use seq_io::fastq::OwnedRecord;
+use std::clone;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::sync::Arc;
 use std::io::Read;
-
+use crossbeam::channel::Sender;
 
 use semver::{Version, VersionReq};
 
@@ -27,6 +33,18 @@ struct Row {
     seq: String,
 }
 
+
+//let reverse_record = record.expect("Error reading record");
+//let forward_record = forward_file.next().unwrap().expect("Error reading record");
+
+
+//unable to access qual record!!
+//https://docs.rs/seq_io/latest/seq_io/fastq/struct.OwnedRecord.html
+
+struct BamCell {
+    reverse_record: OwnedRecord,
+    forward_record: OwnedRecord
+}
 
 
 
@@ -62,6 +80,48 @@ pub fn check_dep_samtools() {
 }
 
 
+type ReadWithBarcode = (Arc<BamCell>, Arc<Vec<String>>, Arc<Vec<String>>);
+
+
+fn create_writer_thread(
+    outfile: &PathBuf,
+    thread_pool: &threadpool::ThreadPool
+) -> anyhow::Result<Arc<Sender<Option<ReadWithBarcode>>>> {
+
+    let outfile = outfile.clone();
+
+    let (tx, rx) = crossbeam::channel::bounded::<Option<(Arc<BamCell>, Arc<Vec<String>>, Arc<Vec<String>>)>>(10000);
+    let (tx, rx) = (Arc::new(tx), Arc::new(rx));
+    //let rx_writer = Arc::clone(&rx_writer_complete);
+    //let params_io_w = Arc::clone(&params_io);
+
+    thread_pool.execute(move || {
+        // Open cram output file
+        println!("Creating output file: {}",outfile.display());
+        let (cram_header, mut cram_writer) = io::create_cram_file(&outfile.with_extension("cram"));
+
+        // Write reads
+        while let Ok(Some((bam_cell,hits_names, hits_seq))) = rx.recv() {
+            let reverse_record=&bam_cell.reverse_record;
+            let forward_record=&bam_cell.forward_record;
+            io::write_records_pair_to_cram(
+                &cram_header,
+                &mut cram_writer,
+                forward_record,
+                reverse_record,
+                &hits_names,
+                &hits_seq,
+            );
+            
+        }
+        //Flush the file
+        cram_writer.try_finish(&cram_header).unwrap();
+    });
+
+    
+
+    Ok(tx)
+}
 
 
 pub struct GetRaw {}
@@ -71,23 +131,10 @@ impl GetRaw {
         params_io: Arc<params::IO>,
         params_runtime: Arc<params::Runtime>,
         params_threading: Arc<params::Threading>,
-        thread_pool: &threadpool::ThreadPool,
+//        thread_pool: &threadpool::ThreadPool,
     ) -> anyhow::Result<()> {
 
-
-//        params_io.barcode_file;
-
-
         info!("Running command: getraw");
-        // TODO
-        // - remove the "bad" cells
-        // - sort the CRAM
-        // - add the possibility to index
-
-        // prepare  converts fastq to bam
-        // and perform barcode detection
-
-        println!("validate barcode");
 
         // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
         let mut barcodes: Vec<Barcode> = validate_barcode_inputs(&params_io.barcode_file);
@@ -103,92 +150,128 @@ impl GetRaw {
         let starts = find_probable_barcode_boundaries(reverse_file, &mut barcodes, &pools, 1000);
         let mut reverse_file = io::open_fastq(&params_io.path_reverse); // reopen the file to read from beginning
 
+        // Make it possible to share data with threads
+        let barcodes = Arc::new(barcodes);
+        let pools = Arc::new(pools);
+        let starts = Arc::new(starts);
 
-        println!("open cram");
+        // Start writer threads
+        let thread_pool_write = threadpool::ThreadPool::new(2);
+        let tx_writer_complete = create_writer_thread(&params_io.path_output_complete, &thread_pool_write).expect("Failed to get writer threads");
+        let tx_writer_incomplete = create_writer_thread(&params_io.path_output_incomplete, &thread_pool_write).expect("Failed to get writer threads");
 
-        // Open cram output files
-        let (cram_header_complete, mut cram_writer_complete) = io::create_cram_file(&params_io.path_output_complete.with_extension("cram"));
-        let (cram_header_incomplete, mut cram_writer_incomplete) = io::create_cram_file(&params_io.path_output_incomplete.with_extension("cram"));
+        // Start worker threads
+        let thread_pool_work = threadpool::ThreadPool::new(params_threading.threads_work);
+        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<BamCell>>>(1000);
+        let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
+        for tidx in 0..params_threading.threads_work {
+            let rx = Arc::clone(&rx);
+            let params_runtime = Arc::clone(&params_runtime);
+
+            let barcodes = Arc::clone(&barcodes);
+            let pools = Arc::clone(&pools);
+            let starts = Arc::clone(&starts);
+            let tx_writer_complete=Arc::clone(&tx_writer_complete);
+            let tx_writer_incomplete=Arc::clone(&tx_writer_incomplete);
+
+            println!("Starting worker thread {}",tidx);
+
+            thread_pool_work.execute(move || {
+                //Ugly copy, for myers algorithm structure
+                let barcodes_old=barcodes;
+                let mut barcodes:Vec<Barcode> = Vec::new();
+                for bc in barcodes_old.iter() {
+                    barcodes.push(bc.clone());
+                }
+
+                while let Ok(Some(bam_cell)) = rx.recv() {
+
+                    let reverse_record=&bam_cell.reverse_record;
+                    let forward_record=&bam_cell.forward_record;
+
+                    // One hit is (name, pool, seq, start, stop, score)
+                    // Note: since we are passing a slide to the seek function, the hit's position is
+                    // relative to the start of the slice (the probable start of the barcode)
+                    let mut hits: Vec<(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
+                    let mut best_hits: Vec<&(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
+
+                    //for barcode in barcodes.iter() {
+                    for barcode in barcodes.iter_mut() {
+                        let (start, stop) = get_boundaries(barcode.pool, &starts);
+                        let slice = &bam_cell.reverse_record.seq()[start..stop];
+                        hits.extend(barcode.seek(slice, 1)); // seek returns the best hit for that query   .................. this is mutable. wtf? myers lazy algorithm
+                    }
+
+                    // For each pool, only keep the best barcode hit
+                    for pool in pools.iter() {
+                        let pool_hits: Vec<&(&String, u32, Vec<u8>, usize, usize, i32)> =
+                            hits.iter().filter(|x| pool == &x.1).collect();
+                        if pool_hits.len() > 0 {
+                            // take the element with the lowest score
+                            let best_hit = pool_hits.iter().min_by(|a, b| a.5.cmp(&b.5)).unwrap();
+                            best_hits.push(*best_hit);
+                        }
+                    }
+
+                    //Get the name of the barcodes
+                    let hits_names: Vec<String> = best_hits.iter().map(|x| x.0.to_string()).collect();
+                    let hits_seq: Vec<String> = best_hits
+                        .iter()
+                        .map(|x| String::from_utf8(x.2.clone()).unwrap())
+                        .collect();
+
+                    let hits_names=Arc::new(hits_names);
+                    let hits_seq=Arc::new(hits_seq);
 
 
+                    // Finally, write the forward and reverse together with barcode info in the output cram.
+                    // Separate complete entries from incomplete ones
+                    if hits_names.len()==n_pools {
+                        let _ = tx_writer_complete.send(Some(((
+                            Arc::clone(&bam_cell),
+                            Arc::clone(&hits_names),
+                            Arc::clone(&hits_seq)
+                        ))));
+                    } else {
+                        let _ = tx_writer_incomplete.send(Some(((
+                            Arc::clone(&bam_cell),
+                            Arc::clone(&hits_names),
+                            Arc::clone(&hits_seq)
+                        ))));
+                    }
+                }
+            });
+        }
 
-
-        //////////////////////////// below can certainly be multithreaded
-        //////////////////////////// below can certainly be multithreaded
-        //////////////////////////// below can certainly be multithreaded
-
-        println!("looop");
-
-
+        // This is the read thread
+        println!("Starting to read input file");
         // Read the fastq files, detect barcodes and write to cram
         while let Some(record) = reverse_file.next() {
 
- //           println!("one line");
-
-
-
-            let reverse_record = record.expect("Error reading record");
+            //println!("read line");
+            let reverse_record: seq_io::fastq::RefRecord<'_> = record.expect("Error reading record");
             let forward_record = forward_file.next().unwrap().expect("Error reading record");
 
-            // One hit is (name, pool, seq, start, stop, score)
-            // Note: since we are passing a slide to the seek function, the hit's position is
-            // relative to the start of the slice (the probable start of the barcode)
-            let mut hits: Vec<(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
-            let mut best_hits: Vec<&(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
-
-            for barcode in barcodes.iter_mut() {
-                let (start, stop) = get_boundaries(barcode.pool, &starts);
-                let slice = &reverse_record.seq()[start..stop];
-                hits.extend(barcode.seek(slice, 1)); // seek returns the best hit for that query
-            }
-
-            // For each pool, only keep the best barcode hit
-            for pool in pools.iter() {
-                let pool_hits: Vec<&(&String, u32, Vec<u8>, usize, usize, i32)> =
-                    hits.iter().filter(|x| pool == &x.1).collect();
-                if pool_hits.len() > 0 {
-                    // take the element with the lowest score
-                    let best_hit = pool_hits.iter().min_by(|a, b| a.5.cmp(&b.5)).unwrap();
-                    best_hits.push(*best_hit);
-                }
-            }
-
-            //Get the name of the barcodes
-            let hits_names: Vec<String> = best_hits.iter().map(|x| x.0.to_string()).collect();
-            let hits_seq: Vec<String> = best_hits
-                .iter()
-                .map(|x| String::from_utf8(x.2.clone()).unwrap())
-                .collect();
-
-            // Finally, write the forward and reverse together with barcode info in the output cram.
-            // Separate complete entries from incomplete ones
-            if hits_names.len()==n_pools {
-                io::write_records_pair_to_cram(
-                    &cram_header_complete,
-                    &mut cram_writer_complete,
-                    forward_record,
-                    reverse_record,
-                    &hits_names,
-                    &hits_seq,
-                );
-            } else {
-                io::write_records_pair_to_cram(
-                    &cram_header_incomplete,
-                    &mut cram_writer_incomplete,
-                    forward_record,
-                    reverse_record,
-                    &hits_names,
-                    &hits_seq,
-                );
-            }
+            let recpair = BamCell {
+             reverse_record: reverse_record.to_owned_record(),
+             forward_record: forward_record.to_owned_record()
+           };
+            
+            let recpair = Arc::new(recpair);
+            let _ = tx.send(Some(Arc::clone(&recpair)));    
         }
 
-        ///////////////////// end of multithreading
+        // Send termination signals to workers, then wait for them to complete
+        for _ in 0..params_threading.threads_work {
+            let _ = tx.send(None);
+        }
+        thread_pool_work.join();
+        
+        // Send termination signals to writers, then wait for them to complete
+        let _ = tx_writer_complete.send(None);
+        let _ = tx_writer_incomplete.send(None);
+        thread_pool_write.join();
 
-
-        //Flush the files
-        cram_writer_complete.try_finish(&cram_header_complete).unwrap();
-        cram_writer_incomplete.try_finish(&cram_header_incomplete).unwrap();
 
         //Sort the output files if requested.
         //this only performed for complete entries
