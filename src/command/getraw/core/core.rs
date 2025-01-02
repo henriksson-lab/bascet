@@ -1,39 +1,18 @@
-use clap::builder::Str;
 // This file is part of babbles which is released under the MIT license.
 // See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
-use itertools::Itertools;
-use log::{debug, error, info, trace, warn};
-use seq_io::fastq::Record;
-use seq_io::fastq::RefRecord;
+use log::{debug, error, info};
 use seq_io::fastq::OwnedRecord;
-use std::clone;
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::path::Path;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::sync::Arc;
-use std::io::Read;
 use crossbeam::channel::Sender;
 
 use semver::{Version, VersionReq};
 
-use super::{io, barcode, barcode::Barcode, params};
+use super::{io, barcode, params};
 
-
-use bio::pattern_matching::myers::Myers;
-use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
-
-
-
-//let reverse_record = record.expect("Error reading record");
-//let forward_record = forward_file.next().unwrap().expect("Error reading record");
-
-
-//unable to access qual record!!
-//https://docs.rs/seq_io/latest/seq_io/fastq/struct.OwnedRecord.html
 
 struct ReadPair {
     reverse_record: OwnedRecord,
@@ -74,7 +53,7 @@ pub fn check_dep_samtools() {
 }
 
 
-type ReadWithBarcode = (Arc<ReadPair>, Arc<Vec<String>>, Arc<Vec<String>>);
+type ReadWithBarcode = (Arc<ReadPair>, Arc<Vec<String>>);
 
 
 fn create_writer_thread(
@@ -84,10 +63,8 @@ fn create_writer_thread(
 
     let outfile = outfile.clone();
 
-    let (tx, rx) = crossbeam::channel::bounded::<Option<(Arc<ReadPair>, Arc<Vec<String>>, Arc<Vec<String>>)>>(10000);
+    let (tx, rx) = crossbeam::channel::bounded::<Option<ReadWithBarcode>>(10000);
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-    //let rx_writer = Arc::clone(&rx_writer_complete);
-    //let params_io_w = Arc::clone(&params_io);
 
     thread_pool.execute(move || {
         // Open cram output file
@@ -95,7 +72,7 @@ fn create_writer_thread(
         let (cram_header, mut cram_writer) = io::create_cram_file(&outfile.with_extension("cram"));
 
         // Write reads
-        while let Ok(Some((bam_cell,hits_names, hits_seq))) = rx.recv() {
+        while let Ok(Some((bam_cell,hits_names))) = rx.recv() {
             let reverse_record=&bam_cell.reverse_record;
             let forward_record=&bam_cell.forward_record;
             io::write_records_pair_to_cram(
@@ -103,8 +80,7 @@ fn create_writer_thread(
                 &mut cram_writer,
                 forward_record,
                 reverse_record,
-                &hits_names,
-                &hits_seq,
+                &hits_names
             );
             
         }
@@ -123,30 +99,24 @@ pub struct GetRaw {}
 impl GetRaw {
     pub fn getraw<'a>(
         params_io: Arc<params::IO>,
-        params_runtime: Arc<params::Runtime>,
+        _params_runtime: Arc<params::Runtime>,
         params_threading: Arc<params::Threading>,
     ) -> anyhow::Result<()> {
 
         info!("Running command: getraw");
 
         // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
-        let mut barcodes: Vec<Barcode> = barcode::validate_barcode_inputs(&params_io.barcode_file);
-        let pools = get_pools(&barcodes); // get unique pool names
-        let n_pools=pools.len();
+        let mut barcodes: barcode::CombinatorialBarcoding = barcode::read_barcodes(&params_io.barcode_file);
+        //let pools = barcode::get_pools(&barcodes); // get unique pool names
+        let n_pools=barcodes.num_pools();
 
         // Open fastq files
         let mut forward_file = io::open_fastq(&params_io.path_forward);
         let reverse_file = io::open_fastq(&params_io.path_reverse);
 
         // Find probable barcode starts and ends
-        // Vec<(pool, barcodes_start, barcodes_end)>
-        let starts = barcode::find_probable_barcode_boundaries(reverse_file, &mut barcodes, &pools, 1000);
+        barcodes.find_probable_barcode_boundaries(reverse_file, 1000).expect("Failed to detect barcode setup from reads");
         let mut reverse_file = io::open_fastq(&params_io.path_reverse); // reopen the file to read from beginning
-
-        // Make it possible to share data with threads
-        let barcodes = Arc::new(barcodes);
-        let pools = Arc::new(pools);
-        let starts = Arc::new(starts);
 
         // Start writer threads
         let thread_pool_write = threadpool::ThreadPool::new(2);
@@ -159,78 +129,33 @@ impl GetRaw {
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
         for tidx in 0..params_threading.threads_work {
             let rx = Arc::clone(&rx);
-            let params_runtime = Arc::clone(&params_runtime);
-
-            let barcodes = Arc::clone(&barcodes);
-            let pools = Arc::clone(&pools);
-            let starts = Arc::clone(&starts);
             let tx_writer_complete=Arc::clone(&tx_writer_complete);
             let tx_writer_incomplete=Arc::clone(&tx_writer_incomplete);
 
             println!("Starting worker thread {}",tidx);
 
+            let mut barcodes = barcodes.clone(); //This is needed to keep mutating the pattern in this structure
+
             thread_pool_work.execute(move || {
-                //Ugly copy, for myers algorithm structure
-                let barcodes_old=barcodes;
-                let mut barcodes:Vec<Barcode> = Vec::new();
-                for bc in barcodes_old.iter() {
-                    barcodes.push(bc.clone());
-                }
 
                 while let Ok(Some(bam_cell)) = rx.recv() {
 
-                    let reverse_record=&bam_cell.reverse_record;
-                    let forward_record=&bam_cell.forward_record;
-
-                    // One hit is (name, pool, seq, start, stop, score)
-                    // Note: since we are passing a slide to the seek function, the hit's position is
-                    // relative to the start of the slice (the probable start of the barcode)
-                    let mut hits: Vec<(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
-                    let mut best_hits: Vec<&(&String, u32, Vec<u8>, usize, usize, i32)> = Vec::new();
-
-                    //for barcode in barcodes.iter() {
-                    for barcode in barcodes.iter_mut() {
-                        let (start, stop) = get_boundaries(barcode.pool, &starts);
-                        let slice = &bam_cell.reverse_record.seq()[start..stop];
-                        hits.extend(barcode.seek(slice, 1)); // seek returns the best hit for that query   .................. this is mutable. wtf? myers lazy algorithm
-                    }
-
-                    // For each pool, only keep the best barcode hit
-                    for pool in pools.iter() {
-                        let pool_hits: Vec<&(&String, u32, Vec<u8>, usize, usize, i32)> =
-                            hits.iter().filter(|x| pool == &x.1).collect();
-                        if pool_hits.len() > 0 {
-                            // take the element with the lowest score
-                            let best_hit = pool_hits.iter().min_by(|a, b| a.5.cmp(&b.5)).unwrap();
-                            best_hits.push(*best_hit);
-                        }
-                    }
-
-                    //Get the name of the barcodes
-                    let hits_names: Vec<String> = best_hits.iter().map(|x| x.0.to_string()).collect();
-                    let hits_seq: Vec<String> = best_hits
-                        .iter()
-                        .map(|x| String::from_utf8(x.2.clone()).unwrap())
-                        .collect();
-
-                    let hits_names=Arc::new(hits_names);
-                    let hits_seq=Arc::new(hits_seq);
-
+                    
+                    let hits_names = barcodes.detect_barcode(&bam_cell.reverse_record.seq());
+                    let hits_names = Arc::new(hits_names);
 
                     // Finally, write the forward and reverse together with barcode info in the output cram.
                     // Separate complete entries from incomplete ones
                     if hits_names.len()==n_pools {
-                        let _ = tx_writer_complete.send(Some(((
+                        let _ = tx_writer_complete.send(Some((
                             Arc::clone(&bam_cell),
                             Arc::clone(&hits_names),
-                            Arc::clone(&hits_seq)
-                        ))));
+                        )));
                     } else {
-                        let _ = tx_writer_incomplete.send(Some(((
+                        let _ = tx_writer_incomplete.send(Some((
                             Arc::clone(&bam_cell),
                             Arc::clone(&hits_names),
-                            Arc::clone(&hits_seq)
-                        ))));
+                        )));
                     }
                 }
             });
@@ -305,66 +230,11 @@ impl GetRaw {
 
 
 
-/* 
-fn read_barcodes_file(
-    opened: &dyn Read, ///////// difficult type!
-    barcodes: &mut Vec<Barcode> 
-) {
-
-    //as bytes gives: &[u8]
-
-    let mut barcodes: Vec<Barcode> = Vec::new();
-
-    let mut n_barcodes = 0;
-    let mut reader = csv::ReaderBuilder::new()
-        .delimiter(b'\t')
-        .from_reader(*opened);
-    for result in reader.deserialize() {
-        let record: Row = result.unwrap();
-        let b = Barcode {
-            index: n_barcodes,
-            name: record.well,
-            pool: record.pos,
-            sequence: record.seq.as_bytes().to_vec(),
-            pattern: Myers::<u64>::new(record.seq.as_bytes().to_vec()),
-        };
-        barcodes.push(b);
-        n_barcodes += 1;
-    }
-    if n_barcodes==0 {
-        println!("Warning: empty barcodes file");
-    }
-}
-*/
-
-
-
-
-
-
-
-
-
-fn get_pools(barcodes: &Vec<Barcode>) -> HashSet<u32> {
-    // from a vector of Barcodes, return the distinct barcode pools
-    let pools = barcodes.iter().map(|x| x.pool).collect::<HashSet<_>>();
-    pools
-}
-
-
-
-fn get_boundaries(pool: u32, starts: &Vec<(u32, usize, usize)>) -> (usize, usize) {
-    // get the start and end for a pool
-    // unwrapping here is safe because (i) pools are unique and (ii)
-    // find_probable_barcode_boundaries() garantees one element per pool
-    let elem = starts.iter().find(|x| x.0 == pool).unwrap();
-    (elem.1, elem.2)
-}
-
 
 
 #[cfg(test)]
 mod tests {
+/* 
     use super::*;
 
     #[test]
@@ -373,13 +243,14 @@ mod tests {
         let starts: Vec<(u32, usize, usize)> = vec![(2, 10, 20), (1, 30, 40)];
         assert_eq!(get_boundaries(pool, &starts), (30, 40));
     }
+    */
 
     /* 
     #[test]
     fn test_validate_barcode_inputs_and_pools() {
         let no_barcodes = vec![];
         let preset: Option<PathBuf> = Some(PathBuf::from("data/barcodes/atrandi/barcodes.tsv"));
-        let bc = validate_barcode_inputs(&no_barcodes, &preset);
+        let bc = read_barcodes(&no_barcodes, &preset);
         assert_eq!(bc[0].sequence, b"GTAACCGA".to_vec());
         assert_eq!(bc[0].name, "A1");
 
@@ -387,6 +258,7 @@ mod tests {
         assert_eq!(pools, HashSet::from([1, 2, 3, 4]));
     }*/
 
+    /* 
     #[test]
     fn test_find_probable_barcode_boundaries() {
         let reads_file = PathBuf::from("data/test_reads_R2.fastq");
@@ -403,4 +275,5 @@ mod tests {
         let boundaries = barcode::find_probable_barcode_boundaries(reads, &mut barcodes, &pools, 9);
         assert_eq!(boundaries, vec![(1, 36, 44)]);
     }
+    */
 }

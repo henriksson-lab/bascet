@@ -259,10 +259,7 @@ pub fn write_records_pair_to_cram(
     cram_writer: &mut cram::io::Writer<File>,
     forward: &impl seq_io::fastq::Record,
     reverse: &impl seq_io::fastq::Record,
-//    forward: seq_io::fastq::RefRecord,
-//    reverse: seq_io::fastq::RefRecord,
-    barcodes_hits: &Vec<String>,
-    barcodes_seq: &Vec<String>,
+    barcodes_hits: &Vec<String>
 ) {
     // create the forward record
     let fname = forward
@@ -273,10 +270,6 @@ pub fn write_records_pair_to_cram(
         .unwrap();
     let mut forward_tags = Data::default();
     forward_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
-    forward_tags.insert(
-        Tag::CELL_BARCODE_SEQUENCE,
-        Value::from(barcodes_seq.join("-")),
-    );
     let forward_builder = cram::record::Builder::default()
         .set_name(fname.0)
         .set_read_length(forward.seq().len())
@@ -300,10 +293,6 @@ pub fn write_records_pair_to_cram(
         .unwrap(); // TODO assert names are same
     let mut reverse_tags = Data::default();
     reverse_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
-    reverse_tags.insert(
-        Tag::CELL_BARCODE_SEQUENCE,
-        Value::from(barcodes_seq.join("-")),
-    );
     let reverse_builder = cram::record::Builder::default()
         .set_name(rname.0)
         .set_read_length(reverse.seq().len())

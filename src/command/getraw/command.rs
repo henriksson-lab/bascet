@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
 use std::{
-    fs::{self, File},
+    fs::File,
     path::PathBuf,
     sync::Arc,
     thread,
@@ -82,7 +82,7 @@ impl Command {
 
 
 
-    fn resolve_thread_config(&self) -> Result<(usize)> {
+    fn resolve_thread_config(&self) -> Result<usize> {
         let available_threads = thread::available_parallelism()
             .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
             .get();
