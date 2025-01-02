@@ -68,9 +68,6 @@ impl Command {
 
         //fs::create_dir_all(&self.path_out).unwrap();
 
-
-        println!("runnging getraw");
-
         let _ = GetRaw::getraw(
             Arc::new(params_io),
             Arc::new(params_runtime),
