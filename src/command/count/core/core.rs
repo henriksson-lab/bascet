@@ -1,92 +1,55 @@
 use std::{
     fs::{self, File},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
-use rev_buf_reader::RevBufReader;
 use zip::ZipArchive;
 
-use super::{params, threading::DefaultThreadState};
+use crate::command::constants::RDB_PATH_INDEX_CONTIGS;
+
+use super::{params, state};
 
 pub struct RDBCounter {}
 
 impl RDBCounter {
     pub fn extract<'a>(
-        params_io: Arc<params::IO>,
-        params_runtime: Arc<params::Runtime>,
-        params_threading: Arc<params::Threading<'a>>,
-        thread_states: Vec<Arc<DefaultThreadState>>,
+        params_io: &Arc<params::IO>,
+        params_runtime: &Arc<params::Runtime>,
+        params_threading: &Arc<params::Threading>,
+
+        thread_states: &Arc<Vec<state::Threading>>,
+        thread_pool: &threadpool::ThreadPool,
     ) -> anyhow::Result<()> {
         let (tx, rx) = crossbeam::channel::bounded::<Option<PathBuf>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
-        for state in &thread_states {
-            let union_dir = &state.temp_path;
-            // create an empty fastq to create an empty kmc database as a merge target
-            let path_empty_reads = Arc::new(union_dir.join("reads").with_extension("fastq"));
-            let _ = File::create(&*path_empty_reads);
-
-            let path_kmc_union = Arc::new(union_dir.join("kmc"));
-            let _ = std::process::Command::new("kmc")
-                .arg(format!("-cs{}", u32::MAX))
-                .arg(format!("-k{}", &params_runtime.kmer_size))
-                .arg(&*path_empty_reads)
-                .arg(&*path_kmc_union)
-                .arg(&params_io.path_tmp)
-                .arg("-t")
-                .arg("1")
-                .output()?;
-        }
-
-        for tidx in 0..params_threading.threads_write {
+        for tidx in 0..params_threading.threads_work {
             let rx = Arc::clone(&rx);
             let params_io = Arc::clone(&params_io);
             let params_runtime = Arc::clone(&params_runtime);
-            let params_threading = Arc::clone(&params_threading);
+            let _params_threading = Arc::clone(&params_threading);
+            let thread_states = Arc::clone(&thread_states);
 
-            let thread_state = Arc::clone(&thread_states[tidx]);
-            let mut zip_writer = unsafe { &mut *thread_state.zip_writer.get() };
-            let thread_temp_path = Arc::clone(&thread_state.temp_path);
-            let union_kmc = thread_temp_path.join("kmc");
-            let union_kmc_write = thread_temp_path.join("kmc_write");
+            thread_pool.execute(move || {
+                println!("Worker {tidx} started");
+                let thread_state = &thread_states[tidx];
 
-            params_threading.thread_pool.execute(move || {
                 while let Ok(Some(barcode)) = rx.recv() {
-                    let path_dir = params_io.path_tmp.join(&barcode);
-                    let path_temp_reads = path_dir.join("reads").with_extension("fastq");
-                    let path_assembly = path_dir.join("assembly");
-                    let path_contigs = path_assembly.join("contigs.fasta");
-                    let kmc_path_db = path_dir.join("kmc");
-                    let kmc_path_dump = path_dir.join("dump.txt");
-                    println!("Evaluating path {path_dir:?}");
-
-                    let spades = std::process::Command::new("spades.py")
-                        .arg("-s")
-                        .arg(&path_temp_reads)
-                        .arg("--sc")
-                        .arg("-o")
-                        .arg(&path_assembly)
-                        .arg("-t")
-                        .arg("1")
-                        .output()
-                        .expect("spades command failed");
-
-                    if !spades.status.success() {
-                        eprintln!("spades command failed with status: {}", spades.status);
-                        std::io::stderr()
-                            .write_all(&spades.stderr)
-                            .expect("Failed to write to stderr");
-                    }
+                    let path_temp = params_io.path_tmp.join(&barcode);
+                    let path_contigs = path_temp.join("contigs.fasta");
+                    let path_kmc_db = path_temp.join("kmc");
+                    let path_kmc_dump = path_temp.join("dump.txt");
 
                     let kmc = std::process::Command::new("kmc")
                         .arg(format!("-cs{}", u32::MAX - 1))
                         .arg(format!("-k{}", &params_runtime.kmer_size))
+                        .arg("-ci=1")
                         .arg("-fa")
                         .arg(&path_contigs)
-                        .arg(&kmc_path_db)
-                        .arg(&*thread_temp_path)
+                        .arg(&path_kmc_db)
+                        .arg(&path_temp)
                         .output()
                         .map_err(|e| eprintln!("Failed to execute KMC command: {}", e))
                         .expect("KMC command failed");
@@ -100,9 +63,9 @@ impl RDBCounter {
 
                     let kmc_dump = std::process::Command::new("kmc_tools")
                         .arg("transform")
-                        .arg(&kmc_path_db)
+                        .arg(&path_kmc_db)
                         .arg("dump")
-                        .arg(&kmc_path_dump)
+                        .arg(&path_kmc_dump)
                         .output()
                         .map_err(|e| eprintln!("Failed to execute KMC dump command: {}", e))
                         .expect("KMC dump command failed");
@@ -114,113 +77,100 @@ impl RDBCounter {
                             .expect("Failed to write to stderr");
                     }
 
-                    // let kmc_union = std::process::Command::new("kmc_tools")
-                    //     .arg("simple")
-                    //     .arg(&*union_kmc)
-                    //     .arg(&kmc_path_db)
-                    //     .arg("union")
-                    //     .arg(&*union_kmc_write)
-                    //     .output()
-                    //     .map_err(|e| eprintln!("Failed to execute KMC union command: {}", e))
-                    //     .expect("KMC union command failed");
+                    {
+                        let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
+                        let opts_zipwriter: zip::write::FileOptions<()> =
+                            zip::write::FileOptions::default()
+                                .compression_method(zip::CompressionMethod::Stored);
 
-                    // if !kmc_union.status.success() {
-                    //     eprintln!("KMC union command failed with status: {}", kmc_union.status);
-                    //     std::io::stderr().write_all(&kmc_union.stderr).expect("Failed to write to stderr");
-                    // }
-                    let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
-                        .compression_method(zip::CompressionMethod::Stored);
-                    let mut dump_file = File::open(&kmc_path_dump).unwrap();
+                        let file_dump = File::open(&path_kmc_dump).unwrap();
+                        let mut bufreader_dump = BufReader::new(&file_dump);
+                        let zippath_dump = barcode.join("dump.txt");
+                        if let Ok(_) =
+                            zipwriter_rdb.start_file_from_path(&zippath_dump, opts_zipwriter)
+                        {
+                            std::io::copy(&mut bufreader_dump, &mut *zipwriter_rdb).unwrap();
+                        }
 
-                    // this is so stupid
-                    let zip_path = barcode.join("dump.txt");
-                    if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
-                        std::io::copy(&mut dump_file, &mut zip_writer).unwrap();
+                        let file_kmc_pre =
+                            File::open(path_kmc_db.with_extension("kmc_pre")).unwrap();
+                        let mut bufreader_kmc_pre = BufReader::new(&file_kmc_pre);
+                        let zippath_kmc_pre = barcode.join("kmc.kmc_pre");
+                        if let Ok(_) =
+                            zipwriter_rdb.start_file_from_path(&zippath_kmc_pre, opts_zipwriter)
+                        {
+                            std::io::copy(&mut bufreader_kmc_pre, &mut *zipwriter_rdb).unwrap();
+                        }
+
+                        let file_kmc_suf =
+                            File::open(path_kmc_db.with_extension("kmc_suf")).unwrap();
+                        let mut bufreader_kmc_suf = BufReader::new(&file_kmc_suf);
+                        let zippath_kmc_suf = barcode.join("kmc.kmc_suf");
+                        if let Ok(_) =
+                            zipwriter_rdb.start_file_from_path(&zippath_kmc_suf, opts_zipwriter)
+                        {
+                            std::io::copy(&mut bufreader_kmc_suf, &mut *zipwriter_rdb).unwrap();
+                        }
                     }
 
-                    let mut pre_file = File::open(path_dir.join("kmc.kmc_pre")).unwrap();
-                    let zip_path = barcode.join("kmc.kmc_pre");
-                    if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
-                        std::io::copy(&mut pre_file, &mut zip_writer).unwrap();
-                    }
-
-                    let mut suf_file = File::open(path_dir.join("kmc.kmc_suf")).unwrap();
-                    let zip_path = barcode.join("kmc.kmc_suf");
-                    if let Ok(_) = zip_writer.start_file_from_path(&zip_path, opts) {
-                        std::io::copy(&mut suf_file, &mut zip_writer).unwrap();
-                    }
-                    // let _ = fs::rename(
-                    //     &union_kmc_write.with_extension("kmc_pre"),
-                    //     &union_kmc.with_extension("kmc_pre"),
-                    // );
-                    // let _ = fs::rename(
-                    //     &union_kmc_write.with_extension("kmc_suf"),
-                    //     &union_kmc.with_extension("kmc_suf"),
-                    // );
-                    // let _ = fs::remove_dir_all(&path_dir);
+                    fs::remove_dir_all(&path_temp).unwrap();
+                    println!("Finished {barcode:?}");
                 }
             });
         }
 
-        let index_file = File::open(&params_io.path_idx)?;
-        let mut index_reader = BufReader::new(index_file);
-        let mut progress_index_rev_reader = RevBufReader::new(&mut index_reader);
-        let mut progress_index_last_line = String::new();
-        progress_index_rev_reader.read_line(&mut progress_index_last_line)?;
-        let _progress_index_last = progress_index_last_line
-            .split(",")
-            .next()
-            .unwrap()
-            .parse::<usize>()?;
+        let file_rdb = File::open(&params_io.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb = BufReader::new(&file_rdb);
+        let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
 
-        let io_tx = Arc::clone(&tx);
-        let io_params_io = Arc::clone(&params_io);
-        let io_worker_threads = params_threading.threads_write;
+        let file_rdb_for_index = File::open(&params_io.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb_for_index);
+        let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
+            .expect("Failed to create zip archive from RDB");
 
-        let rdb_file = File::open(&io_params_io.path_in).expect("Failed to open RDB file");
-        let index_file = File::open(&io_params_io.path_idx).expect("Failed to open index file");
-        let index_reader = BufReader::new(index_file);
-        let archive_rdb = Arc::new(RwLock::new(
-            ZipArchive::new(rdb_file).expect("Unable to create zip archive"),
-        ));
+        let mut file_reads_index = archive_rdb_for_index
+            .by_name(RDB_PATH_INDEX_CONTIGS)
+            .expect("Could not find rdb reads index file");
+        let bufreader_reads_index = BufReader::new(&mut file_reads_index);
+        for line_reads_index in bufreader_reads_index.lines() {
+            if let Ok(line_reads_index) = line_reads_index {
+                let line_reads_split: Vec<&str> = line_reads_index.split(",").collect();
+                let index_found = line_reads_split[1].parse::<usize>().expect(&format!(
+                    "Could not parse index file at line: {}",
+                    line_reads_index
+                ));
 
-        params_threading.thread_pool.execute(move || {
-            for line in index_reader.lines() {
-                if let Ok(line) = line {
-                    let index = line
-                        .split(',')
-                        .next()
-                        .unwrap()
-                        .parse::<usize>()
-                        .expect("Error parsing index file");
-                    if let Ok(mut archive_rdb) = archive_rdb.write() {
-                        let mut barcode_read = archive_rdb
-                            .by_index(index)
-                            .expect(&format!("No file at index {}", &index));
+                let mut zipfile_found = archive_rdb
+                    .by_index(index_found)
+                    .expect(&format!("No file at index {}", &index_found));
 
-                        let barcode_read_path = barcode_read.mangled_name();
-                        let barcode = barcode_read_path.parent().unwrap();
-
-                        let path_dir_barcode = io_params_io.path_tmp.join(barcode);
-                        let _ = fs::create_dir_all(&path_dir_barcode);
-
-                        let path_temp_barcode_reads = path_dir_barcode.join("reads.fastq");
-                        let mut file_temp_barcode_reads =
-                            File::create(&path_temp_barcode_reads).unwrap();
-                        std::io::copy(&mut barcode_read, &mut file_temp_barcode_reads).unwrap();
-
-                        let _ = io_tx.send(Some(barcode.to_path_buf()));
-                    }
+                let zippath_found = zipfile_found.mangled_name();
+                match zippath_found.file_name().and_then(|ext| ext.to_str()) {
+                    Some("contigs.fasta") => {}
+                    Some(_) => continue,
+                    None => panic!("None value parsing read path"),
                 }
-            }
 
-            for _ in 0..io_worker_threads {
-                let _ = io_tx.send(None);
+                let path_barcode = zippath_found.parent().unwrap();
+                let path_temp_dir = params_io.path_tmp.join(path_barcode);
+                let _ = fs::create_dir(&path_temp_dir);
+
+                let path_temp = path_temp_dir.join(zippath_found.file_name().unwrap());
+                let file_temp = File::create(&path_temp).unwrap();
+                let mut bufwriter_temp = BufWriter::new(&file_temp);
+
+                let mut bufreader_found = BufReader::new(&mut zipfile_found);
+                std::io::copy(&mut bufreader_found, &mut bufwriter_temp).unwrap();
+                tx.send(Some(path_barcode.to_path_buf())).unwrap();
             }
-        });
+        }
+
+        for _ in 0..params_threading.threads_work {
+            let _ = tx.send(None);
+        }
 
         // Wait for the threads to complete
-        params_threading.thread_pool.join();
+        thread_pool.join();
         Ok(())
     }
 }

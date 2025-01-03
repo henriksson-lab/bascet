@@ -1,150 +1,151 @@
 use anyhow::Result;
 use clap::Args;
-use linya::Progress;
-use rev_buf_reader::RevBufReader;
 use std::{
-    fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Seek, SeekFrom},
+    fs::{File, OpenOptions},
+    io::{BufReader, Write},
     path::PathBuf,
     sync::Arc,
-    thread,
 };
-use zip::{write::FileOptions, HasZipMetadata, ZipArchive, ZipWriter};
+use zip::{write::FileOptions, ZipArchive, ZipWriter};
+
+use crate::{
+    command::constants::{RDB_PATH_INDEX_KMC_DBS, RDB_PATH_INDEX_KMC_DUMPS},
+    utils::merge_archives_and_delete,
+};
 
 use super::{
     constants::{
-        COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_INDEX, COUNT_DEFAULT_PATH_OUT,
-        COUNT_DEFAULT_PATH_TEMP,
+        COUNT_DEFAULT_PATH_IN, COUNT_DEFAULT_PATH_OUT, COUNT_DEFAULT_PATH_TEMP,
+        COUNT_DEFAULT_THREADS_READ, COUNT_DEFAULT_THREADS_WORK,
     },
-    core::{core::RDBCounter, params, threading::DefaultThreadState},
+    core::{core::RDBCounter, params, state},
 };
 
 #[derive(Args)]
 pub struct Command {
     #[arg(short = 'i', value_parser, default_value = COUNT_DEFAULT_PATH_IN)]
     pub path_in: PathBuf,
-    #[arg(short = 'j', value_parser, default_value = COUNT_DEFAULT_PATH_INDEX)]
-    pub path_index: PathBuf,
     #[arg(short = 't', value_parser, default_value = COUNT_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
     #[arg(short = 'o', value_parser, default_value = COUNT_DEFAULT_PATH_OUT)]
     pub path_out: PathBuf,
     #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
     pub kmer_size: usize,
-    #[arg(long, value_parser = clap::value_parser!(u32))]
-    threads_read: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    threads_write: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub seed: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = COUNT_DEFAULT_THREADS_READ)]
+    pub threads_read: usize,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = COUNT_DEFAULT_THREADS_WORK)]
+    pub threads_work: usize,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        self.verify_input_file()?;
-        let kmer_size = self.verify_kmer_size()?;
-        let (threads_read, threads_write) = self.resolve_thread_config()?;
+        let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_work)
+            .map(|index| self.path_tmp.join(format!("temp-{}.rdb", index)))
+            .collect();
 
+        let thread_states: Vec<state::Threading> = paths_threading_temp_out
+            .iter()
+            .map(|path| {
+                let file = File::create(path).unwrap();
+                return state::Threading::new(file);
+            })
+            .collect();
+
+        let thread_pool = threadpool::ThreadPool::new(self.threads_read + self.threads_work);
         let params_io = params::IO {
             path_in: self.path_in.clone(),
-            path_idx: self.path_index.clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
         };
         let params_runtime = params::Runtime {
-            kmer_size: kmer_size,
+            kmer_size: self.kmer_size,
         };
         let params_threading = params::Threading {
-            threads_read: threads_read,
-            threads_write: threads_write,
-            thread_pool: &threadpool::ThreadPool::new(threads_read + threads_write),
+            threads_read: self.threads_read,
+            threads_work: self.threads_work,
         };
-        fs::create_dir_all(&self.path_out).unwrap();
-        let thread_paths_out: Vec<(PathBuf, PathBuf)> = (0..threads_write)
-            .map(|index| {
-                (
-                    self.path_out
-                        .join(format!("rdb-count-{}", index))
-                        .with_extension("zip"),
-                    self.path_tmp.join(format!("temp_path-{}", index)),
-                )
-            })
-            .collect();
-
-        let thread_states: Vec<Arc<DefaultThreadState>> = thread_paths_out
-            .iter()
-            .map(|path| {
-                let _ = fs::create_dir_all(path.1.clone());
-                println!("{:?}", path.0);
-                let zipfile = File::create(path.0.clone()).unwrap();
-                Arc::new(DefaultThreadState::new(zipfile, path.1.clone()))
-            })
-            .collect();
 
         let _ = RDBCounter::extract(
-            Arc::new(params_io),
-            Arc::new(params_runtime),
-            Arc::new(params_threading),
-            thread_states,
+            &Arc::new(params_io),
+            &Arc::new(params_runtime),
+            &Arc::new(params_threading),
+            &Arc::new(thread_states),
+            &thread_pool,
         );
 
-        let zip_paths: Vec<PathBuf> = thread_paths_out.iter().map(|e| e.0.clone()).collect();
-        let _ = match std::process::Command::new("zipmerge")
-            .arg("-isk")
-            .arg(self.path_out.join("rdb-count").with_extension("zip"))
-            .args(&zip_paths)
-            .output()
+        /* Merge temp zip archive into a new zip archive */
+        merge_archives_and_delete(&self.path_out, &paths_threading_temp_out).unwrap();
+        let mut files_kmc_dump_to_index: Vec<(usize, String)> = Vec::new();
+        let mut files_kmc_dbs_to_index: Vec<(usize, usize, String)> = Vec::new();
+
+        /* NOTE: Collect files from archive into a Vec */
         {
-            Ok(_) => {}
-            Err(e) => panic!("Failed to execute zipmerge command: {}", e),
-        };
+            let file_rdb_out = File::open(&self.path_out).unwrap();
+            let mut bufreader_rdb_out = BufReader::new(&file_rdb_out);
+            let archive_rdb_out = ZipArchive::new(&mut bufreader_rdb_out).unwrap();
+            // Get files in the new archive
+            for i in 0..archive_rdb_out.len() {
+                let filename = archive_rdb_out
+                    .name_for_index(i)
+                    .expect("Failed to read ZIP entry");
 
-        Ok(())
-    }
+                if filename.ends_with("dump.txt") {
+                    files_kmc_dump_to_index.push((i, String::from(filename)));
+                }
+                // HACK: kmc stores their dbs as two files, I will, for simlicity, ignore the second file
+                else if filename.ends_with("kmc_pre") {
+                    let kmc_db = String::from(filename).replace(".kmc_pre", "");
 
-    fn verify_input_file(&mut self) -> anyhow::Result<()> {
-        if let Ok(file) = File::open(&self.path_in) {
-            if file.metadata()?.len() == 0 {
-                anyhow::bail!("Empty input file");
+                    // HACK: .kmc_suf file is one file index away from the .kmc_pre file
+                    files_kmc_dbs_to_index.push((i, i + 1, kmc_db));
+                }
             }
         }
-        match self.path_in.extension().and_then(|ext| ext.to_str()) {
-            Some("zip") => return Ok(()),
-            _ => anyhow::bail!("Input file must be a zip archive"),
-        };
-    }
 
-    fn verify_kmer_size(&self) -> Result<usize> {
-        if self.kmer_size < 48 {
-            return Ok(self.kmer_size);
+        /* NOTE: Write to index file */
+        {
+            let file_rdb_out = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.path_out)
+                .unwrap();
+
+            let mut zipwriter_rdb_out = ZipWriter::new_append(&file_rdb_out).unwrap();
+            let opts_zipwriter: FileOptions<()> =
+                FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            if let Ok(_) = &zipwriter_rdb_out.start_file(RDB_PATH_INDEX_KMC_DUMPS, opts_zipwriter) {
+                for file_to_index in files_kmc_dump_to_index {
+                    writeln!(
+                        &mut zipwriter_rdb_out,
+                        "{},{}",
+                        file_to_index.0, file_to_index.1
+                    )
+                    .expect("Failed to write index entry")
+                }
+            }
         }
+        /* NOTE: Write to index file */
+        {
+            let file_rdb_out = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.path_out)
+                .unwrap();
 
-        anyhow::bail!("Invalid kmer size k:{}", self.kmer_size);
-    }
-
-    fn resolve_thread_config(&self) -> Result<(usize, usize)> {
-        let available_threads = thread::available_parallelism()
-            .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
-            .get();
-
-        if available_threads < 2 {
-            anyhow::bail!("At least two threads must be available");
+            let mut zipwriter_rdb_out = ZipWriter::new_append(&file_rdb_out).unwrap();
+            let opts_zipwriter: FileOptions<()> =
+                FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            if let Ok(_) = &zipwriter_rdb_out.start_file(RDB_PATH_INDEX_KMC_DBS, opts_zipwriter) {
+                for file_to_index in files_kmc_dbs_to_index {
+                    writeln!(
+                        &mut zipwriter_rdb_out,
+                        "{},{},{}",
+                        file_to_index.0, file_to_index.1, file_to_index.2
+                    )
+                    .expect("Failed to write index entry")
+                }
+            }
         }
-
-        let (threads_read, threads_write) = match (self.threads_read, self.threads_write) {
-            (Some(i), Some(w)) => (i, w),
-            (Some(i), None) => (i, available_threads.saturating_sub(i).max(1)),
-            (None, Some(w)) => (1, w),
-            (None, None) => (1, available_threads.saturating_sub(1).max(1)),
-        };
-
-        if threads_read == 0 {
-            anyhow::bail!("At least one IO thread required");
-        }
-        if threads_write == 0 {
-            anyhow::bail!("At least one work thread required");
-        }
-
-        Ok((threads_read, threads_write))
+        Ok(())
     }
 }
