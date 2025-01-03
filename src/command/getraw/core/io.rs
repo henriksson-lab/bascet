@@ -3,12 +3,13 @@
 use itertools::Itertools;
 use log::{debug, error, info};
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 
 use bgzip::{write::BGZFMultiThreadWriter, write::BGZFWriter, BGZFError, Compression};
 
+use noodles::bam;
 use noodles::cram;
 use noodles::sam;
 use noodles_bgzf as bgzf;
@@ -24,6 +25,292 @@ use seq_io::fasta::{Reader as FastaReader, Record as FastaRecord};
 use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 
 
+struct GeneralWriter<W> where W: Write {
+    bam_writer: Option<bam::io::Writer<noodles_bgzf::Writer<W>>>,
+    cram_writer: Option<cram::io::Writer<W>>
+}
+impl GeneralWriter<File> {
+
+    /* 
+    pub fn write_header(&mut self, header: &sam::Header) -> Result<()>{
+        unsafe {
+            match &mut self {
+                GeneralWriter { bam_writer } => bam_writer.write_header(header),
+                GeneralWriter { cram_writer } => cram_writer.write_header(header),
+            }    
+        }
+    }
+
+    pub fn write_file_header(&mut self, header: &sam::Header) -> Result<()>{
+        unsafe {
+            match &mut self {
+                GeneralWriter { bam_writer } => bam_writer.write_file_header(header),
+                GeneralWriter { cram_writer } => cram_writer.write_file_header(header),
+            }    
+        }
+    }
+
+
+    pub fn try_finish(&mut self, header: &sam::Header) -> Result<()>{
+        unsafe {
+            match &mut self {
+                GeneralWriter { bam_writer } => bam_writer.try_finish(header),
+                GeneralWriter { cram_writer } => cram_writer.try_finish(header),
+            }    
+        }
+    }
+
+    */
+
+    pub fn write_records_pair_to_bam(
+        &mut self,
+        header: &sam::Header,
+        forward: &impl seq_io::fastq::Record,
+        reverse: &impl seq_io::fastq::Record,
+        barcodes_hits: &Vec<String>
+    ) {
+        if let Some(writer) = &mut self.bam_writer {
+            write_records_pair_to_bam(header,writer, forward, reverse, barcodes_hits);
+        }
+        if let Some(writer) = &mut self.cram_writer {
+            write_records_pair_to_cram(header, writer, forward, reverse, barcodes_hits);
+        }
+    }
+
+}
+
+
+
+////////////// BAM file version
+pub fn write_records_pair_to_bam(
+    header: &sam::Header,
+    bam_writer: &mut bam::io::Writer<noodles_bgzf::Writer<File>>,
+    forward: &impl seq_io::fastq::Record,
+    reverse: &impl seq_io::fastq::Record,
+    barcodes_hits: &Vec<String>
+) {
+/* 
+
+    
+    // create the forward record
+    let fname = forward
+        .id()
+        .unwrap()
+        .as_bytes()
+        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
+        .unwrap();
+    let mut forward_tags = Data::default();
+    forward_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
+    let forward_builder = bam::record::Builder::default()
+        .set_name(fname.0)
+        .set_read_length(forward.seq().len())
+        .set_bases(noodles::sam::alignment::record_buf::Sequence::from(
+            forward.seq(),
+        ))
+        .set_quality_scores(noodles::sam::alignment::record_buf::QualityScores::from(
+            forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>(),
+        ))
+        .set_flags(cram::record::Flags::from(0x07))
+        .set_bam_flags(noodles::sam::alignment::record::Flags::from(0x4D))
+        .set_tags(forward_tags);
+    let forward_record = forward_builder.build();
+
+    let mut record = bam::Record::default();
+    //record.
+
+    sam::alignment::Record::
+
+
+
+    //NOW THE REVERSE
+    let rname = reverse
+        .id()
+        .unwrap()
+        .as_bytes()
+        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
+        .unwrap(); // TODO assert names are same
+    let mut reverse_tags = Data::default();
+    reverse_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
+    let reverse_builder = bam::record::Builder::default()
+        .set_name(rname.0)
+        .set_read_length(reverse.seq().len())
+        .set_bases(noodles::sam::alignment::record_buf::Sequence::from(
+            reverse.seq(),
+        ))
+        .set_quality_scores(noodles::sam::alignment::record_buf::QualityScores::from(
+            reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>(),
+        ))
+        .set_flags(cram::record::Flags::from(0x03))
+        .set_bam_flags(noodles::sam::alignment::record::Flags::from(0x8D))
+        .set_tags(reverse_tags);
+    let reverse_record = reverse_builder.build();
+
+    // bam flags
+    // tags to find forward and reverse: (see samtools doc)
+    // >>> 64 + 1 + 4 + 8
+    // 77
+    // >>> 128 + 1 + 4 + 8
+    // 141
+
+    bam_writer
+        .write_record(&header, forward_record)
+        .expect("Failed to write read to cram");
+    bam_writer
+        .write_record(&header, reverse_record)
+        .expect("Failed to write read to cram");
+    */
+}
+
+
+
+
+
+
+
+////////////// CRAM file version
+pub fn write_records_pair_to_cram(
+    header: &sam::Header,
+    cram_writer: &mut cram::io::Writer<File>,
+    forward: &impl seq_io::fastq::Record,
+    reverse: &impl seq_io::fastq::Record,
+    barcodes_hits: &Vec<String>
+) {
+    // create the forward record
+    let fname = forward
+        .id()
+        .unwrap()
+        .as_bytes()
+        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
+        .unwrap();
+    let mut forward_tags = Data::default();
+    forward_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
+    let forward_builder = cram::record::Builder::default()
+        .set_name(fname.0)
+        .set_read_length(forward.seq().len())
+        .set_bases(noodles::sam::alignment::record_buf::Sequence::from(
+            forward.seq(),
+        ))
+        .set_quality_scores(noodles::sam::alignment::record_buf::QualityScores::from(
+            forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>(),
+        ))
+        .set_flags(cram::record::Flags::from(0x07))
+        .set_bam_flags(noodles::sam::alignment::record::Flags::from(0x4D))
+        .set_tags(forward_tags);
+    let forward_record = forward_builder.build();
+
+    //NOW THE REVERSE
+    let rname = reverse
+        .id()
+        .unwrap()
+        .as_bytes()
+        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
+        .unwrap(); // TODO assert names are same
+    let mut reverse_tags = Data::default();
+    reverse_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
+    let reverse_builder = cram::record::Builder::default()
+        .set_name(rname.0)
+        .set_read_length(reverse.seq().len())
+        .set_bases(noodles::sam::alignment::record_buf::Sequence::from(
+            reverse.seq(),
+        ))
+        .set_quality_scores(noodles::sam::alignment::record_buf::QualityScores::from(
+            reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>(),
+        ))
+        .set_flags(cram::record::Flags::from(0x03))
+        .set_bam_flags(noodles::sam::alignment::record::Flags::from(0x8D))
+        .set_tags(reverse_tags);
+    let reverse_record = reverse_builder.build();
+
+    // bam flags
+    // tags to find forward and reverse: (see samtools doc)
+    // >>> 64 + 1 + 4 + 8
+    // 77
+    // >>> 128 + 1 + 4 + 8
+    // 141
+
+    cram_writer
+        .write_record(&header, forward_record)
+        .expect("Failed to write read to cram");
+    cram_writer
+        .write_record(&header, reverse_record)
+        .expect("Failed to write read to cram");
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* 
+
+pub fn create_cram_or_bam_file<W>(
+    name: &PathBuf
+) -> (sam::Header, Box<dyn GeneralWriter<W>>) {
+
+    //TODO
+
+
+    debug!("Creating CRAM/BAM file: {}", name.display());
+    let header = sam::Header::builder()
+        .set_header(Default::default()) // need a Map here
+        // to add other header felds with Map::other_fields_mut()
+        // or tag or program
+        .add_comment("babbles")
+        .build();
+
+    //Delete file if it exists
+    if std::fs::exists(name).expect("Cannot check if cram/bam file already exists") {
+        std::fs::remove_file(name).expect("Failing to remove target cram/bam file");
+    }
+
+    let out_buffer = open_buffer_for_writing(name, true, false);  //fail_on_exists makes rust just end. set to false because hard to debug
+
+    let mut writer = if name.ends_with("cram") {
+
+        let mut writer = cram::io::Writer::new(out_buffer);
+
+        writer
+            .write_header(&header)
+            .expect("Failed to write header to CRAM file");
+        (header, Box::new(writer))
+    
+
+    } else if name.ends_with("cram") {
+
+        let mut writer = bam::io::Writer::new(out_buffer);
+
+        writer
+            .write_header(&header)
+            .expect("Failed to write header to BAM file");
+
+        (header, Box::new(writer))
+    } else {
+        panic!("unsupported file format");
+    };
+    writer
+
+}
+
+
+
+
+*/
+
+
+
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
 pub struct BGZFFastqReader {
     pub reader: noodles_bgzf::Reader<File>,
@@ -231,6 +518,9 @@ pub fn fastq_to_bgz(path: &PathBuf, output: &PathBuf) {
     writer.close().unwrap();
 }
 
+
+
+
 pub fn create_cram_file(name: &PathBuf) -> (sam::Header, cram::io::Writer<File>) {
     debug!("Creating CRAM file: {}", name.display());
     let header = sam::Header::builder()
@@ -254,73 +544,12 @@ pub fn create_cram_file(name: &PathBuf) -> (sam::Header, cram::io::Writer<File>)
     (header, writer)
 }
 
-pub fn write_records_pair_to_cram(
-    header: &sam::Header,
-    cram_writer: &mut cram::io::Writer<File>,
-    forward: &impl seq_io::fastq::Record,
-    reverse: &impl seq_io::fastq::Record,
-    barcodes_hits: &Vec<String>
-) {
-    // create the forward record
-    let fname = forward
-        .id()
-        .unwrap()
-        .as_bytes()
-        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
-        .unwrap();
-    let mut forward_tags = Data::default();
-    forward_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
-    let forward_builder = cram::record::Builder::default()
-        .set_name(fname.0)
-        .set_read_length(forward.seq().len())
-        .set_bases(noodles::sam::alignment::record_buf::Sequence::from(
-            forward.seq(),
-        ))
-        .set_quality_scores(noodles::sam::alignment::record_buf::QualityScores::from(
-            forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>(),
-        ))
-        .set_flags(cram::record::Flags::from(0x07))
-        .set_bam_flags(noodles::sam::alignment::record::Flags::from(0x4D))
-        .set_tags(forward_tags);
-    let forward_record = forward_builder.build();
 
-    //NOW THE REVERSE
-    let rname = reverse
-        .id()
-        .unwrap()
-        .as_bytes()
-        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
-        .unwrap(); // TODO assert names are same
-    let mut reverse_tags = Data::default();
-    reverse_tags.insert(Tag::CELL_BARCODE_ID, Value::from(barcodes_hits.join("-")));
-    let reverse_builder = cram::record::Builder::default()
-        .set_name(rname.0)
-        .set_read_length(reverse.seq().len())
-        .set_bases(noodles::sam::alignment::record_buf::Sequence::from(
-            reverse.seq(),
-        ))
-        .set_quality_scores(noodles::sam::alignment::record_buf::QualityScores::from(
-            reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>(),
-        ))
-        .set_flags(cram::record::Flags::from(0x03))
-        .set_bam_flags(noodles::sam::alignment::record::Flags::from(0x8D))
-        .set_tags(reverse_tags);
-    let reverse_record = reverse_builder.build();
 
-    // bam flags
-    // tags to find forward and reverse: (see samtools doc)
-    // >>> 64 + 1 + 4 + 8
-    // 77
-    // >>> 128 + 1 + 4 + 8
-    // 141
 
-    cram_writer
-        .write_record(&header, forward_record)
-        .expect("Failed to write read to cram");
-    cram_writer
-        .write_record(&header, reverse_record)
-        .expect("Failed to write read to cram");
-}
+
+
+
 
 #[cfg(test)]
 mod tests {

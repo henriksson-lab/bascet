@@ -2,6 +2,7 @@
 // See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
 use log::{debug, error, info};
 use seq_io::fastq::OwnedRecord;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
@@ -14,6 +15,7 @@ use super::{io, barcode, params};
 
 use seq_io::fastq::Record as FastqRecord;
 
+#[derive(Debug,Clone)]
 struct ReadPair {
     reverse_record: OwnedRecord,
     forward_record: OwnedRecord
@@ -55,43 +57,57 @@ pub fn check_dep_samtools() {
 
 type ReadWithBarcode = (Arc<ReadPair>, Arc<Vec<String>>);
 
+type ListReadWithBarcode = Arc<Vec<(ReadPair,Vec<String>)>>;
+
+
 
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool
-) -> anyhow::Result<Arc<Sender<Option<ReadWithBarcode>>>> {
+) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
 
     let outfile = outfile.clone();
 
-    let (tx, rx) = crossbeam::channel::bounded::<Option<ReadWithBarcode>>(10000);
+    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(10000);
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
     thread_pool.execute(move || {
         // Open cram output file
         println!("Creating output file: {}",outfile.display());
-        let (cram_header, mut cram_writer) = io::create_cram_file(&outfile.with_extension("cram"));
+        let mut writer = create_new_bam(&outfile).expect("failed to create bam-like file");
 
         // Write reads
-        while let Ok(Some((bam_cell,hits_names))) = rx.recv() {
-            let reverse_record=&bam_cell.reverse_record;
-            let forward_record=&bam_cell.forward_record;
-            io::write_records_pair_to_cram(
-                &cram_header,
-                &mut cram_writer,
-                forward_record,
-                reverse_record,
-                &hits_names
-            );
+        let mut n_written=0;
+        while let Ok(Some(list_pairs)) = rx.recv() {
+            for (bam_cell, hits_names) in list_pairs.iter() {
+                let reverse_record=&bam_cell.reverse_record;
+                let forward_record=&bam_cell.forward_record;
+
+                write_records_pair_to_bamlike(
+                    &mut writer,
+                    forward_record,
+                    reverse_record,
+                    &hits_names
+                );
+                
+                if n_written%10000 == 0 {
+                    println!("written to {:?} -- {:?}",outfile, n_written);
+                }
+                n_written = n_written + 1;
+            }
+
             
         }
         //Flush the file
-        cram_writer.try_finish(&cram_header).unwrap();
+        //cram_writer.try_finish(&cram_header).unwrap();
     });
-
-    
-
     Ok(tx)
 }
+
+
+
+
+
 
 
 pub struct GetRaw {}
@@ -125,7 +141,7 @@ impl GetRaw {
 
         // Start worker threads
         let thread_pool_work = threadpool::ThreadPool::new(params_threading.threads_work);
-        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<ReadPair>>>(1000);
+        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<Vec<ReadPair>>>>(10);   //added vec
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
         for tidx in 0..params_threading.threads_work {
             let rx = Arc::clone(&rx);
@@ -138,44 +154,61 @@ impl GetRaw {
 
             thread_pool_work.execute(move || {
 
-                while let Ok(Some(bam_cell)) = rx.recv() {
+                while let Ok(Some(list_bam_cell)) = rx.recv() {
+                    let mut pairs_complete: Vec<(ReadPair, Vec<String>)> = Vec::with_capacity(list_bam_cell.len());
+                    let mut pairs_incomplete: Vec<(ReadPair, Vec<String>)> = Vec::with_capacity(list_bam_cell.len());
 
-                    
-                    let hits_names = barcodes.detect_barcode(&bam_cell.reverse_record.seq());
-                    let hits_names = Arc::new(hits_names);
-
-                    // Finally, write the forward and reverse together with barcode info in the output cram.
-                    // Separate complete entries from incomplete ones
-                    if hits_names.len()==n_pools {
-                        let _ = tx_writer_complete.send(Some((
-                            Arc::clone(&bam_cell),
-                            Arc::clone(&hits_names),
-                        )));
-                    } else {
-                        let _ = tx_writer_incomplete.send(Some((
-                            Arc::clone(&bam_cell),
-                            Arc::clone(&hits_names),
-                        )));
+                    for bam_cell in list_bam_cell.iter() {
+                        let hits_names = barcodes.detect_barcode(&bam_cell.reverse_record.seq());
+                        if hits_names.len()==n_pools {
+                            pairs_complete.push((bam_cell.clone(), hits_names.clone()));
+                        } else {
+                            pairs_complete.push((bam_cell.clone(), hits_names.clone()));
+                        }
                     }
+
+                let _ = tx_writer_complete.send(Some(Arc::new(pairs_complete)));
+                let _ = tx_writer_incomplete.send(Some(Arc::new(pairs_incomplete)));
+
                 }
             });
         }
 
         // Read the fastq files, send to worker threads
         println!("Starting to read input file");
-        while let Some(record) = reverse_file.next() {
+        let mut num_read = 0;
+        loop {
 
-            //println!("read line");
-            let reverse_record: seq_io::fastq::RefRecord<'_> = record.expect("Error reading record");
-            let forward_record = forward_file.next().unwrap().expect("Error reading record");
+            let mut curit = 0;
+            let mut list_recpair:Vec<ReadPair> = Vec::with_capacity(1000);
+            while(curit<1000){
+                if let Some(record) = reverse_file.next() {
+                    let reverse_record: seq_io::fastq::RefRecord<'_> = record.expect("Error reading record rev");
+                    let forward_record = forward_file.next().unwrap().expect("Error reading record fwd");
+        
+                    let recpair = ReadPair {
+                        reverse_record: reverse_record.to_owned_record(),
+                        forward_record: forward_record.to_owned_record()
+                    };  
+                    list_recpair.push(recpair);
 
-            let recpair = ReadPair {
-             reverse_record: reverse_record.to_owned_record(),
-             forward_record: forward_record.to_owned_record()
-           };
-            
-            let recpair = Arc::new(recpair);
-            let _ = tx.send(Some(Arc::clone(&recpair)));    
+                    num_read = num_read + 1;
+
+                    if num_read%10000 == 0 {
+                        println!("read: {:?}", num_read);
+                    }
+        
+                } else {
+                    break;
+                }
+                curit = curit + 1;
+            }
+
+            if !list_recpair.is_empty() {
+                let _ = tx.send(Some(Arc::new(list_recpair)));    
+            } else {
+                break;
+            }
         }
 
         // Send termination signals to workers, then wait for them to complete
@@ -277,3 +310,117 @@ mod tests {
     }
     */
 }
+
+
+
+/////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
+
+/// ideal partition:
+/// zip/bc/r1.fq
+/// zip/bc/r2.fq
+
+
+/////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////
+
+// generally seems like a better lib? unified SAM/BAM/CRAM interface
+// https://github.com/rust-bio/rust-htslib/blob/master/src/bam/mod.rs
+
+
+use rust_htslib;
+use rust_htslib::bam;
+use rust_htslib::bam::record::Aux;
+use std::path::Path;
+//use std::path::PathBuf;
+use anyhow;
+use anyhow::bail;
+
+
+
+//detect file format from file extension
+pub fn detect_bam_file_format(fname: &Path) -> anyhow::Result<bam::Format> {
+
+    let fext = fname.extension().expect("Output file lacks file extension");
+    match fext.to_str().expect("Failing string conversion") {
+        "sam" => Ok(bam::Format::Sam),
+        "bam" => Ok(bam::Format::Bam),
+        "cram" => Ok(bam::Format::Cram),
+        _ => bail!("Cannot detect BAM/CRAM/SAM type from file extension")
+    }
+}
+
+
+pub fn create_new_bam(
+    fname: &Path
+// num_threads
+// compression level
+) -> anyhow::Result<bam::Writer> {
+
+    let file_format = detect_bam_file_format(fname)?;
+
+    let mut header = bam::Header::new();
+    header.push_comment("Debarcoded by Bascet".as_bytes());
+
+    let mut writer = bam::Writer::from_path(fname, &header, file_format).unwrap();
+
+    writer.set_threads(5);  //  need we also give a pool? https://docs.rs/rust-htslib/latest/rust_htslib/bam/struct.Writer.html#method.set_threads
+    writer.set_compression_level(bam::CompressionLevel::Fastest);  //or no compression, do later ; for user to specify
+
+    Ok(writer)
+}
+
+
+
+pub fn write_records_pair_to_bamlike(
+    writer: &mut bam::Writer,
+    forward: &impl seq_io::fastq::Record,
+    reverse: &impl seq_io::fastq::Record,
+    barcodes_hits: &Vec<String>
+) {
+    // create the forward record
+    let fname = forward
+        .id()
+        .unwrap()
+        .as_bytes()
+        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
+        .unwrap().0;
+
+    let cell_barcode = barcodes_hits.join("-");
+
+    ////// Forward record
+    let mut record = bam::Record::new();
+    record.set(
+        fname,
+        None,
+        forward.seq(),
+        forward.qual()
+    );
+    record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
+    record.set_flags(0x4D); // 0x4D  read paired, read unmapped, mate unmapped, first in pair
+    //.set_flags(cram::record::Flags::from(0x07))   what is this?
+    //forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>()    need to move quality around?
+    writer.write(&record).expect("Failed to write forward read");
+    
+    ////// Reverse record
+    let mut record = bam::Record::new();
+    record.set(
+        fname,
+        None,
+        reverse.seq(),
+        reverse.qual()
+    );
+    record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
+    record.set_flags(0x8D); // 0x8D  read paired, read unmapped, mate unmapped, second in pair
+    //.set_flags(cram::record::Flags::from(0x03))  hm?
+    //reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>()    need to move quality around?
+    writer.write(&record).expect("Failed to write reverse read");;
+
+}
+
+
+
+//Can .drop to end file earlier
+
