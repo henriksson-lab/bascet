@@ -68,7 +68,8 @@ fn create_writer_thread(
 
     let outfile = outfile.clone();
 
-    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(10000);
+    //Limit how many chunks can be in pipe
+    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
     thread_pool.execute(move || {
@@ -89,8 +90,8 @@ fn create_writer_thread(
                     reverse_record,
                     &hits_names
                 );
-                
-                if n_written%10000 == 0 {
+
+                if n_written%100000 == 0 {
                     println!("written to {:?} -- {:?}",outfile, n_written);
                 }
                 n_written = n_written + 1;
@@ -98,8 +99,6 @@ fn create_writer_thread(
 
             
         }
-        //Flush the file
-        //cram_writer.try_finish(&cram_header).unwrap();
     });
     Ok(tx)
 }
@@ -139,9 +138,10 @@ impl GetRaw {
         let tx_writer_complete = create_writer_thread(&params_io.path_output_complete, &thread_pool_write).expect("Failed to get writer threads");
         let tx_writer_incomplete = create_writer_thread(&params_io.path_output_incomplete, &thread_pool_write).expect("Failed to get writer threads");
 
-        // Start worker threads
+        // Start worker threads.
+        // Limit how many chunks can be in the air at the same time, as writers must be able to keep up with the reader
         let thread_pool_work = threadpool::ThreadPool::new(params_threading.threads_work);
-        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<Vec<ReadPair>>>>(10);   //added vec
+        let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<Vec<ReadPair>>>>(100);   
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
         for tidx in 0..params_threading.threads_work {
             let rx = Arc::clone(&rx);
@@ -179,9 +179,14 @@ impl GetRaw {
         let mut num_read = 0;
         loop {
 
+            //Read out chunks. By sending in blocks, we can
+            //1. keep threads asleep until they got enough work to do to motivate waking them up
+            //2. avoid send operations, which likely aren't for free
+            let chunk_size = 1000;
+
             let mut curit = 0;
-            let mut list_recpair:Vec<ReadPair> = Vec::with_capacity(1000);
-            while(curit<1000){
+            let mut list_recpair:Vec<ReadPair> = Vec::with_capacity(chunk_size);
+            while(curit<chunk_size){
                 if let Some(record) = reverse_file.next() {
                     let reverse_record: seq_io::fastq::RefRecord<'_> = record.expect("Error reading record rev");
                     let forward_record = forward_file.next().unwrap().expect("Error reading record fwd");
@@ -194,7 +199,7 @@ impl GetRaw {
 
                     num_read = num_read + 1;
 
-                    if num_read%10000 == 0 {
+                    if num_read % 100000 == 0 {
                         println!("read: {:?}", num_read);
                     }
         

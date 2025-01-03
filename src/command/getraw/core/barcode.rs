@@ -111,8 +111,6 @@ impl CombinatorialBarcoding {
     )  {
 
         //Create new pool if needed
-        //let &mut pool = player_stats.entry(poolname).or_insert(BarcodePool::new());
-
         if !(self.map_name_to_index.contains_key(poolname)) {
             let mut pool = BarcodePool::new();
             pool.bc_length = sequence.len();
@@ -176,17 +174,24 @@ impl CombinatorialBarcoding {
         seq: &[u8]
     ) -> Vec<String> {
         let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
-        //full_bc.push("foo".to_string()); 
+        let mut total_score = 0;
         for p in &mut self.pools {
 
-            //full_bc.push("foo".to_string());
-
             let one_bc = p.detect_barcode(seq);
-            if let Some((this_bc, _score)) = one_bc {
+            if let Some((this_bc, score)) = one_bc {
                 full_bc.push(this_bc);
+                total_score = total_score + score;
+            } else {
+                //If we cannot decode a barcode, abort early. This saves a good % of time
+                return full_bc;
             }
+
+            if total_score > 1 {
+                // early return if mismatch too high. This saves a good % of time
+                return full_bc;
+            }
+
         }
-        
         full_bc
     }
 
