@@ -2,7 +2,6 @@
 // See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
 use log::{debug, error, info};
 use seq_io::fastq::OwnedRecord;
-use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
@@ -186,7 +185,7 @@ impl GetRaw {
 
             let mut curit = 0;
             let mut list_recpair:Vec<ReadPair> = Vec::with_capacity(chunk_size);
-            while(curit<chunk_size){
+            while curit<chunk_size {
                 if let Some(record) = reverse_file.next() {
                     let reverse_record: seq_io::fastq::RefRecord<'_> = record.expect("Error reading record rev");
                     let forward_record = forward_file.next().unwrap().expect("Error reading record fwd");
@@ -421,7 +420,7 @@ pub fn write_records_pair_to_bamlike(
     record.set_flags(0x8D); // 0x8D  read paired, read unmapped, mate unmapped, second in pair
     //.set_flags(cram::record::Flags::from(0x03))  hm?
     //reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>()    need to move quality around?
-    writer.write(&record).expect("Failed to write reverse read");;
+    writer.write(&record).expect("Failed to write reverse read");
 
 }
 
