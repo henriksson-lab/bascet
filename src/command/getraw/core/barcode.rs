@@ -176,12 +176,17 @@ impl CombinatorialBarcoding {
         seq: &[u8]
     ) -> Vec<String> {
         let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
+        //full_bc.push("foo".to_string()); 
         for p in &mut self.pools {
+
+            //full_bc.push("foo".to_string());
+
             let one_bc = p.detect_barcode(seq);
             if let Some((this_bc, _score)) = one_bc {
                 full_bc.push(this_bc);
             }
         }
+        
         full_bc
     }
 
@@ -386,6 +391,4 @@ pub fn read_barcodes(
     }
     cb
 }
-
-
 
