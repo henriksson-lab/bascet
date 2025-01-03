@@ -162,13 +162,12 @@ impl GetRaw {
                         if hits_names.len()==n_pools {
                             pairs_complete.push((bam_cell.clone(), hits_names.clone()));
                         } else {
-                            pairs_complete.push((bam_cell.clone(), hits_names.clone()));
+                            pairs_incomplete.push((bam_cell.clone(), hits_names.clone()));
                         }
                     }
 
                 let _ = tx_writer_complete.send(Some(Arc::new(pairs_complete)));
                 let _ = tx_writer_incomplete.send(Some(Arc::new(pairs_incomplete)));
-
                 }
             });
         }
@@ -396,30 +395,30 @@ pub fn write_records_pair_to_bamlike(
 
     ////// Forward record
     let mut record = bam::Record::new();
+    let qual = forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>();
     record.set(
         fname,
         None,
         forward.seq(),
-        forward.qual()
+        qual.as_slice()  //forward.qual()
     );
     record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
     record.set_flags(0x4D); // 0x4D  read paired, read unmapped, mate unmapped, first in pair
     //.set_flags(cram::record::Flags::from(0x07))   what is this?
-    //forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>()    need to move quality around?
     writer.write(&record).expect("Failed to write forward read");
     
     ////// Reverse record
     let mut record = bam::Record::new();
+    let qual = reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>();
     record.set(
         fname,
         None,
         reverse.seq(),
-        reverse.qual()
+        qual.as_slice() //reverse.qual()
     );
     record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
     record.set_flags(0x8D); // 0x8D  read paired, read unmapped, mate unmapped, second in pair
     //.set_flags(cram::record::Flags::from(0x03))  hm?
-    //reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>()    need to move quality around?
     writer.write(&record).expect("Failed to write reverse read");
 
 }
