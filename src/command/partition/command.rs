@@ -1,3 +1,12 @@
+use crate::{command::constants::RDB_PATH_INDEX_READS, utils::merge_archives_and_delete};
+
+use super::{
+    constants::{
+        PREPARE_DEFAULT_CLEANUP, PREPARE_DEFAULT_MIN_READS_PER_CELL, PREPARE_DEFAULT_PATH_OUT,
+        PREPARE_DEFAULT_PATH_TMP, PREPARE_DEFAULT_THREADS_READ, PREPARE_DEFAULT_THREADS_WRITE,
+    },
+    core::{core::BAMProcessor, params, state},
+};
 use anyhow::Result;
 use clap::Args;
 use std::{
@@ -8,39 +17,27 @@ use std::{
 };
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
-use crate::{
-    command::constants::RDB_PATH_INDEX_CONTIGS,
-    utils::merge_archives_and_delete,
-};
-
-use super::{
-    constants::{
-        ASSEMBLE_DEFAULT_PATH_IN, ASSEMBLE_DEFAULT_PATH_OUT, ASSEMBLE_DEFAULT_PATH_TEMP,
-        ASSEMBLE_DEFAULT_THREADS_READ, ASSEMBLE_DEFAULT_THREADS_WORK,
-        ASSEMBLE_DEFAULT_THREADS_WRITE,
-    },
-    core::{core::RDBAssembler, params, state},
-};
-
 #[derive(Args)]
 pub struct Command {
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), default_value = ASSEMBLE_DEFAULT_PATH_IN)]
-    pub path_in: PathBuf,
-    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = ASSEMBLE_DEFAULT_PATH_TEMP)]
-    pub path_tmp: PathBuf,
-    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf), default_value = ASSEMBLE_DEFAULT_PATH_OUT)]
-    pub path_out: PathBuf,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = ASSEMBLE_DEFAULT_THREADS_READ)]
-    threads_read: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = ASSEMBLE_DEFAULT_THREADS_WRITE)]
-    threads_write: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = ASSEMBLE_DEFAULT_THREADS_WORK)]
+    #[arg(short = 'i', long, value_parser)]
+    path_in: PathBuf,
+    #[arg(short = 'o', long, value_parser, default_value = PREPARE_DEFAULT_PATH_OUT)]
+    path_out: PathBuf,
+    #[arg(long, value_parser, default_value = PREPARE_DEFAULT_PATH_TMP)]
+    path_tmp: PathBuf,
+    #[arg(long, value_parser, default_value_t = PREPARE_DEFAULT_MIN_READS_PER_CELL)]
+    min_reads_per_cell: usize,
+    #[arg(long, default_value_t = PREPARE_DEFAULT_CLEANUP)]
+    cleanup: bool,
+    #[arg(long, default_value_t = PREPARE_DEFAULT_THREADS_READ)]
+    threads_read: u32,
+    #[arg(long, default_value_t = PREPARE_DEFAULT_THREADS_WRITE)]
     threads_work: usize,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_write)
+        let paths_threading_temp_out: Vec<PathBuf> = (0..self.threads_work)
             .map(|index| self.path_tmp.join(format!("temp-{}.rdb", index)))
             .collect();
 
@@ -52,26 +49,31 @@ impl Command {
             })
             .collect();
 
+        let (thread_pool_write, thread_pool_read) = (
+            threadpool::ThreadPool::new(self.threads_work),
+            rust_htslib::tpool::ThreadPool::new(self.threads_read)?,
+        );
+
         let params_io = params::IO {
             path_in: self.path_in.clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
         };
-        let params_runtime = params::Runtime {};
+        let params_runtime = params::Runtime {
+            min_reads_per_cell: self.min_reads_per_cell,
+        };
         let params_threading = params::Threading {
-            threads_read: self.threads_read,
-            threads_write: self.threads_write,
             threads_work: self.threads_work,
+            threads_read: self.threads_read,
         };
 
-        let thread_pool = threadpool::ThreadPool::new(self.threads_read + self.threads_write);
-
-        let _ = RDBAssembler::assemble(
+        let _ = BAMProcessor::extract_cells(
             &Arc::new(params_io),
             &Arc::new(params_runtime),
             &Arc::new(params_threading),
             &Arc::new(thread_states),
-            &thread_pool,
+            &thread_pool_read,
+            &thread_pool_write,
         );
 
         /* Merge temp zip archive into a new zip archive */
@@ -104,7 +106,7 @@ impl Command {
             let mut zipwriter_rdb_out = ZipWriter::new_append(&file_rdb_out).unwrap();
             let opts_zipwriter: FileOptions<()> =
                 FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-            if let Ok(_) = &zipwriter_rdb_out.start_file(RDB_PATH_INDEX_CONTIGS, opts_zipwriter) {
+            if let Ok(_) = &zipwriter_rdb_out.start_file(RDB_PATH_INDEX_READS, opts_zipwriter) {
                 for file_to_index in files_to_index {
                     writeln!(
                         &mut zipwriter_rdb_out,
@@ -118,4 +120,18 @@ impl Command {
 
         Ok(())
     }
+
+    // fn ensure_paths(&self) -> Result<()> {
+    //     if let Ok(file) = File::open(&self.path_in) {
+    //         if file.metadata()?.len() == 0 {
+    //             anyhow::bail!("Empty input file");
+    //         }
+    //         match self.path_in.extension().and_then(|ext| ext.to_str()) {
+    //             Some("cram" | "bam") => return Ok(()),
+    //             _ => anyhow::bail!("Input file must be a cram or bam file"),
+    //         };
+    //     } else {
+    //         anyhow::bail!("Input file does not exist or cannot be opened");
+    //     }
+    // }
 }

@@ -1,4 +1,5 @@
 use crate::{
+    command::constants::{DEFAULT_SEED_RANDOM, RDB_PATH_INDEX_KMC_DUMPS},
     core::constants::{HUGE_PAGE_SIZE, KMC_COUNTER_MAX_DIGITS},
     utils::KMERCodec,
 };
@@ -7,134 +8,125 @@ use clap::Args;
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
     sync::Arc,
-    thread,
 };
-use walkdir::WalkDir;
 use zip::ZipArchive;
 
 use super::constants::{
     QUERY_DEFAULT_FEATURES_MAX, QUERY_DEFAULT_FEATURES_MIN, QUERY_DEFAULT_PATH_IN,
-    QUERY_DEFAULT_PATH_OUT, QUERY_DEFAULT_PATH_REF,
+    QUERY_DEFAULT_PATH_OUT, QUERY_DEFAULT_PATH_REF, QUERY_DEFAULT_PATH_TEMP,
+    QUERY_DEFAULT_THREADS_READ, QUERY_DEFAULT_THREADS_WORK,
 };
 
 #[derive(Args)]
 pub struct Command {
     #[arg(short = 'i', value_parser, default_value = QUERY_DEFAULT_PATH_IN)]
     pub path_in: PathBuf,
-    #[arg(short = 'j', value_parser, default_value = QUERY_DEFAULT_PATH_IN)]
-    pub path_index: PathBuf,
-    #[arg(short = 't', value_parser, default_value = QUERY_DEFAULT_PATH_IN)]
+    #[arg(short = 't', value_parser, default_value = QUERY_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
     #[arg(short = 'o', value_parser, default_value = QUERY_DEFAULT_PATH_OUT)]
     pub path_out: PathBuf,
-    #[arg(short = 'r', value_parser, default_value = QUERY_DEFAULT_PATH_REF)]
-    pub path_ref: PathBuf,
     #[arg(short = 'k', long, value_parser = clap::value_parser!(usize))]
     pub kmer_size: usize,
+    #[arg(long, value_parser, default_value = QUERY_DEFAULT_PATH_REF)]
+    pub path_ref: PathBuf,
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_MIN)]
     pub features_nmin: usize,
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_MAX)]
     pub features_nmax: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub threads_io: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(usize))]
-    pub threads_work: Option<usize>,
-    #[arg(long, value_parser = clap::value_parser!(u64))]
-    pub seed: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_THREADS_READ)]
+    pub threads_read: usize,
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_THREADS_WORK)]
+    pub threads_work: usize,
+    #[arg(long, value_parser = clap::value_parser!(u64), default_value_t = *DEFAULT_SEED_RANDOM)]
+    pub seed: u64,
 }
 
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
-        self.verify_input_file()?;
-        let kmer_size = self.verify_kmer_size()?;
-        let (threads_io, threads_work) = self.resolve_thread_config()?;
-        let (features_nmin, features_nmax) = self.verify_features()?;
-        let seed = self.seed.unwrap_or_else(rand::random);
+        // TODO: rewrite to use a read, work and write threading pattern
 
-        let thread_buffer_size =
-            (HUGE_PAGE_SIZE / threads_work) - ((kmer_size as usize) + KMC_COUNTER_MAX_DIGITS);
-        let thread_pool = threadpool::ThreadPool::new(threads_io + threads_work);
-        let thread_states: Vec<Arc<crate::core::threading::DefaultThreadState>> = (0..threads_work)
-            .map(|_| {
-                Arc::new(crate::core::threading::DefaultThreadState::from_seed(
-                    seed,
-                    thread_buffer_size,
-                    features_nmin,
-                    features_nmax,
-                ))
-            })
-            .collect();
+        let file_rdb = File::open(&self.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb = BufReader::new(&file_rdb);
+        let mut archive_rdb = ZipArchive::new(&mut bufreader_rdb).unwrap();
 
-        let rdb_file = File::open(&self.path_in).expect("Failed to open RDB file");
-        let index_file = File::open(&self.path_index).expect("Failed to open index file");
-        let index_reader = BufReader::new(index_file);
-        let mut archive_rdb = ZipArchive::new(rdb_file).expect("Unable to create zip archive");
+        let file_rdb_for_index = File::open(&self.path_in).expect("Failed to open RDB file");
+        let mut bufreader_rdb_for_index = BufReader::new(&file_rdb_for_index);
+        let mut archive_rdb_for_index = ZipArchive::new(&mut bufreader_rdb_for_index)
+            .expect("Failed to create zip archive from RDB");
 
-        for line in index_reader.lines() {
-            if let Ok(line) = line {
-                let index = line
-                    .split(',')
-                    .next()
-                    .unwrap()
-                    .parse::<usize>()
-                    .expect("Error parsing index file");
+        let mut file_reads_index = archive_rdb_for_index
+            .by_name(RDB_PATH_INDEX_KMC_DUMPS)
+            .expect("Could not find rdb reads index file");
+        let bufreader_reads_index = BufReader::new(&mut file_reads_index);
 
-                let mut barcode_kmc = archive_rdb
-                    .by_index(index)
-                    .expect(&format!("No file at index {}", &index));
+        let mut queries: Vec<(usize, PathBuf)> = Vec::new();
+        for line_reads_index in bufreader_reads_index.lines() {
+            if let Ok(line_reads_index) = line_reads_index {
+                let line_reads_split: Vec<&str> = line_reads_index.split(',').collect();
+                {
+                    let index_found = line_reads_split[0].parse::<usize>().expect(&format!(
+                        "Could not parse index file at line: {}",
+                        line_reads_index
+                    ));
 
-                let barcode_path = barcode_kmc.mangled_name();
-                let barcode_kmc_ext = barcode_path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .unwrap();
-                match barcode_kmc_ext {
-                    "txt" => {}
-                    _ => continue,
+                    let mut zipfile_found = archive_rdb
+                        .by_index(index_found)
+                        .expect(&format!("No file at index {}", &index_found));
+
+                    let zippath_found = zipfile_found.mangled_name();
+                    match zippath_found.file_name().and_then(|ext| ext.to_str()) {
+                        Some("dump.txt") => {}
+                        Some(_) => continue,
+                        None => panic!("None value parsing read path"),
+                    }
+
+                    let path_barcode = zippath_found.parent().unwrap();
+                    let path_temp_dir = self.path_tmp.join(path_barcode);
+                    let _ = fs::create_dir(&path_temp_dir);
+
+                    let path_temp = path_temp_dir.join(zippath_found.file_name().unwrap());
+                    let file_temp = File::create(&path_temp).unwrap();
+                    let mut bufwriter_temp = BufWriter::new(&file_temp);
+
+                    let mut bufreader_found = BufReader::new(&mut zipfile_found);
+                    std::io::copy(&mut bufreader_found, &mut bufwriter_temp).unwrap();
+                    queries.push((index_found, path_temp));
                 }
-
-                let barcode = barcode_path.parent().unwrap();
-
-                let path_dir_barcode = self.path_tmp.join(barcode);
-                let _ = fs::create_dir_all(&path_dir_barcode);
-
-                let path_temp_barcode_kmc = path_dir_barcode.join("dump.txt");
-                let mut file_temp_barcode_kmc = File::create(&path_temp_barcode_kmc).unwrap();
-                std::io::copy(&mut barcode_kmc, &mut file_temp_barcode_kmc).unwrap();
             }
         }
+        let thread_buffer_size =
+            (HUGE_PAGE_SIZE / self.threads_work) - (self.kmer_size + KMC_COUNTER_MAX_DIGITS);
+        let thread_states: Arc<Vec<crate::state::Threading>> = Arc::new(
+            (0..self.threads_work)
+                .map(|_| {
+                    crate::state::Threading::from_seed(
+                        self.seed,
+                        thread_buffer_size,
+                        self.features_nmin,
+                        self.features_nmax,
+                    )
+                })
+                .collect(),
+        );
+        let thread_pool = threadpool::ThreadPool::new(self.threads_work);
 
-        let dumps: Vec<PathBuf> = WalkDir::new(&self.path_tmp)
-            .into_iter()
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                if path.is_file() || path == self.path_tmp {
-                    return None;
-                }
-                Some(path.to_path_buf())
-            })
-            .collect();
-
-        let codec = KMERCodec::new(kmer_size);
-        let params_runtime = crate::core::params::Runtime {
-            kmer_size: kmer_size,
-            features_nmin: features_nmin,
-            features_nmax: features_nmax,
+        let codec = KMERCodec::new(self.kmer_size);
+        let params_runtime = Arc::new(crate::core::params::Runtime {
+            kmer_size: self.kmer_size,
+            features_nmin: self.features_nmin,
+            features_nmax: self.features_nmax,
             codec: codec,
-            seed: seed,
-        };
-        let params_threading = crate::core::params::Threading {
-            threads_io: threads_io,
-            threads_work: threads_work,
-            thread_buffer_size: thread_buffer_size,
-            thread_pool: &thread_pool,
-            thread_states: &thread_states,
-        };
-        let mut features: HashMap<u128, usize> = HashMap::new();
+            seed: self.seed,
+        });
+        let params_threading = Arc::new(crate::core::params::Threading {
+            threads_read: self.threads_read,
+            threads_work: self.threads_work,
+            threads_buffer_size: thread_buffer_size,
+        });
+        let mut features_reference: HashMap<u128, usize> = HashMap::new();
         let file_features_ref = File::open(&self.path_ref).unwrap();
         let bufreader_features_ref = BufReader::new(&file_features_ref);
         for (feature_index, rline) in bufreader_features_ref.lines().enumerate() {
@@ -145,112 +137,61 @@ impl Command {
                     .unwrap()
                     .parse::<u128>()
                     .expect("Error parsing feature");
-                features.insert(feature, feature_index + 1);
+                features_reference.insert(feature, feature_index + 1);
             }
         }
 
         let file_feature_matrix = File::create(&self.path_out).unwrap();
         let mut bufwriter_feature_matrix = BufWriter::new(&file_feature_matrix);
         let header = "%%MatrixMarket matrix coordinate integer general";
-        let _ = writeln!(bufwriter_feature_matrix, "{}", header);
-        let _ = writeln!(bufwriter_feature_matrix, "0 0 0");
+        writeln!(bufwriter_feature_matrix, "{}", header).unwrap();
+        writeln!(bufwriter_feature_matrix, "0 0 0").unwrap();
 
-        let mut line_count = 0;
-        let mut max_cell = 0;
-        let mut max_feature = 0;
-
-        for (cell_index, dir) in dumps.iter().enumerate() {
-            let cell_index = cell_index + 1;
-            max_cell = max_cell.max(cell_index);
-
-            let file_path = dir.join("dump.txt");
-            let params_io = crate::core::params::IO {
-                path_in: &file_path,
+        let mut count_lines_written = 0;
+        for (cell_index, path_dump) in &queries {
+            let params_io = crate::params::IO {
+                path_in: path_dump.clone(),
             };
 
-            if let Ok((min_features, max_features)) = crate::core::core::KMCProcessor::extract(
-                params_io,
-                params_runtime,
-                params_threading,
+            if let Ok((min_features, max_features)) = crate::KMCProcessor::extract(
+                &Arc::new(params_io),
+                &Arc::clone(&params_runtime),
+                &Arc::clone(&params_threading),
+                &Arc::clone(&thread_states),
+                &thread_pool,
             ) {
                 for feature in min_features.iter().chain(max_features.iter()) {
                     let kmer = (feature << 64) >> 64;
                     let count = feature >> 96;
 
-                    if let Some(feature_index) = features.get(&kmer) {
-                        max_feature = max_feature.max(*feature_index);
-
-                        let _ = writeln!(
+                    if let Some(feature_index) = features_reference.get(&kmer) {
+                        writeln!(
                             bufwriter_feature_matrix,
                             "\t{} {} {}",
                             cell_index, feature_index, count
-                        );
-
-                        line_count += 1;
+                        )
+                        .unwrap();
+                        count_lines_written += 1;
                     }
                 }
             }
+
+            fs::remove_dir_all(path_dump.parent().unwrap()).unwrap();
         }
 
         let _ = bufwriter_feature_matrix.flush();
         let mut file = OpenOptions::new().write(true).open(&self.path_out).unwrap();
-        file.seek(SeekFrom::Start(header.len() as u64 + 1)).unwrap(); // +1 for newline
-        writeln!(file, "{} {} {}", max_cell, max_feature, line_count - 1).unwrap();
+        file.seek(SeekFrom::Start(header.len() as u64 + 1)).unwrap(); // +1 for newline char
+
+        writeln!(
+            file,
+            "{} {} {}",
+            self.features_nmin + self.features_nmax - 1,
+            (&queries).iter().map(|(i, _)| i).max().unwrap() - 1,
+            count_lines_written - 1
+        )
+        .unwrap();
 
         Ok(())
-    }
-
-    fn verify_input_file(&mut self) -> anyhow::Result<()> {
-        if let Ok(file) = File::open(&self.path_in) {
-            if file.metadata()?.len() == 0 {
-                anyhow::bail!("Empty input file");
-            }
-        }
-        match self.path_in.extension().and_then(|ext| ext.to_str()) {
-            Some("zip") => return Ok(()),
-            _ => anyhow::bail!("Input file must be a zip archive"),
-        };
-    }
-
-    fn verify_features(&self) -> Result<(usize, usize)> {
-        if self.features_nmin == 0 && self.features_nmax == 0 {
-            anyhow::bail!("Ref features_nmin and features_nmax cannot be 0");
-        }
-
-        Ok((self.features_nmin, self.features_nmax))
-    }
-
-    fn verify_kmer_size(&self) -> Result<usize> {
-        if self.kmer_size < 48 {
-            return Ok(self.kmer_size);
-        }
-
-        anyhow::bail!("Invalid kmer size k:{}", self.kmer_size);
-    }
-
-    fn resolve_thread_config(&self) -> Result<(usize, usize)> {
-        let available_threads = thread::available_parallelism()
-            .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
-            .get();
-
-        if available_threads < 2 {
-            anyhow::bail!("At least two threads must be available");
-        }
-
-        let (threads_io, threads_work) = match (self.threads_io, self.threads_work) {
-            (Some(i), Some(w)) => (i, w),
-            (Some(i), None) => (i, available_threads.saturating_sub(i).max(1)),
-            (None, Some(w)) => (1, w),
-            (None, None) => (1, available_threads.saturating_sub(1).max(1)),
-        };
-
-        if threads_io == 0 {
-            anyhow::bail!("At least one IO thread required");
-        }
-        if threads_work == 0 {
-            anyhow::bail!("At least one work thread required");
-        }
-
-        Ok((threads_io, threads_work))
     }
 }

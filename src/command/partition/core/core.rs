@@ -1,3 +1,5 @@
+use crate::command::constants::RDB_FILENAME_READS;
+
 use super::constants::CB_PATTERN;
 use super::{params, state};
 use anyhow::Result;
@@ -35,14 +37,15 @@ impl BAMProcessor {
     ) -> Result<()> {
         let (tx, rx) = crossbeam::channel::bounded::<Option<Arc<BamCell>>>(64);
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-        
-        for tidx in 0..params_threading.threads_write {
+
+        for tidx in 0..params_threading.threads_work {
             let rx = Arc::clone(&rx);
             let params_runtime = Arc::clone(&params_runtime);
             let thread_states = Arc::clone(&thread_states);
-            
+
             thread_pool_write.execute(move || {
                 let thread_state = &thread_states[tidx];
+                let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
 
                 while let Ok(Some(bam_cell)) = rx.recv() {
                     if bam_cell.inner.len() < params_runtime.min_reads_per_cell {
@@ -50,25 +53,20 @@ impl BAMProcessor {
                     }
 
                     let barcode_string = String::from_utf8_lossy(&bam_cell.barcode).to_string();
-                    let path_reads = Path::new(&barcode_string)
-                        .join("reads")
-                        .with_extension("fastq");
+                    let path_reads = Path::new(&barcode_string).join(RDB_FILENAME_READS);
 
-                    let opts: FileOptions<'_, ()> =
-                        FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+                    let opts: FileOptions<()> =
+                        FileOptions::default().compression_method(zip::CompressionMethod::Zstd);
 
-                    {
-                        let mut zipwriter_rdb = thread_state.zip_writer.lock().unwrap();
-                        if let Ok(_) = zipwriter_rdb.start_file(path_reads.to_str().unwrap(), opts)
-                        {
-                            let mut index = 0;
-                            while let Some((sequence, quality)) = bam_cell.inner.pop() {
-                                index += 1;
-                                let _ = writeln!(zipwriter_rdb, "@{}::{}", &barcode_string, index);
-                                let _ = writeln!(zipwriter_rdb, "{}", sequence);
-                                let _ = writeln!(zipwriter_rdb, "+");
-                                let _ = writeln!(zipwriter_rdb, "{}", quality);
-                            }
+                    // FIXME: this is super slow because zipwriter does not use a buffer for writing on 1.1.1.
+                    if let Ok(_) = zipwriter_rdb.start_file(path_reads.to_str().unwrap(), opts) {
+                        let mut index = 0;
+                        while let Some((sequence, quality)) = bam_cell.inner.pop() {
+                            index += 1;
+                            let _ = writeln!(zipwriter_rdb, "@{}::{}", &barcode_string, index);
+                            let _ = writeln!(zipwriter_rdb, "{}", sequence);
+                            let _ = writeln!(zipwriter_rdb, "+");
+                            let _ = writeln!(zipwriter_rdb, "{}", quality);
                         }
                     }
                 }
@@ -114,7 +112,7 @@ impl BAMProcessor {
         }
 
         // Send termination signals
-        for _ in 0..params_threading.threads_write {
+        for _ in 0..params_threading.threads_work {
             let _ = tx.send(None);
         }
 

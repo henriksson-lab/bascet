@@ -15,8 +15,7 @@ enum Commands {
     Assemble(command::Assemble),
     Count(command::Count),
     Featurise(command::Featurise),
-    Index(command::Index),
-    Prepare(command::Prepare),
+    Partition(command::Partition),
     Query(command::Query),
     Getraw(command::GetRaw),
     //MapCell(command::MapCell),
@@ -24,13 +23,12 @@ enum Commands {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-
+    
     let result = match cli.command {
         Commands::Assemble(mut cmd) => cmd.try_execute(),
         Commands::Count(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
-        Commands::Index(mut cmd) => cmd.try_execute(),
-        Commands::Prepare(mut cmd) => cmd.try_execute(),
+        Commands::Partition(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Getraw(mut cmd) => cmd.try_execute(),
         //Commands::MapCell(mut cmd) => cmd.try_execute(),

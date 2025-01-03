@@ -203,6 +203,8 @@ where
         }
     }
 }
+
+// NOTE: need to call push to guarantee order
 impl<T> Extend<T> for BoundedMinHeap<T>
 where
     T: Ord,
@@ -210,7 +212,7 @@ where
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for value in iter {
-            self.push(value);
+            let _ = self.push(value);
         }
     }
 }
@@ -248,6 +250,8 @@ where
         return Ok(());
     }
 }
+
+// NOTE: need to call push to guarantee order
 impl<T> Extend<T> for BoundedMaxHeap<T>
 where
     T: Ord,
@@ -255,7 +259,7 @@ where
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for value in iter {
-            self.push(value);
+            let _ = self.push(value);
         }
     }
 }

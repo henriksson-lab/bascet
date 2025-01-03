@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    io::{BufWriter, Seek, Write},
-    sync::Mutex,
-};
+use std::{fs::File, io::BufWriter, sync::Mutex};
 
 use zip::ZipWriter;
 
