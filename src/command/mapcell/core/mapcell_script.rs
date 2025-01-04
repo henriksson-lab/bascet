@@ -1,7 +1,11 @@
 use anyhow::bail;
 use core::fmt;
 use std::process;
+use std::path::Path;
 use std::path::PathBuf;
+use std::io;
+
+use path_clean::PathClean;
 
 
 #[derive(Clone,Debug,Eq,PartialEq)]
@@ -88,10 +92,16 @@ impl MapCellScript {
         input_dir: &PathBuf,
         output_dir: &PathBuf,
         num_threads: usize
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<(bool, String)> {
 
-
-        let run_output = process::Command::new(&self.path_script)
+        //Run script in output folder to make life easier for end user
+        let input_dir = to_absolute_path(&input_dir).expect("Could not get absolute directory for input");
+        let output_dir = to_absolute_path(&output_dir).expect("Could not get absolute directory for output"); 
+        let path_script = to_absolute_path(&self.path_script).expect("Could not get absolute directory for script"); 
+        
+        //Invoke command
+        let run_output = process::Command::new(&path_script)
+            .current_dir(&output_dir)
             .arg("--num-threads").arg(num_threads.to_string())
             .arg("--input-dir").arg(&input_dir)
             .arg("--output-dir").arg(&output_dir)
@@ -99,12 +109,13 @@ impl MapCellScript {
         let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
         let run_output_string = run_output_string.trim();
 
+        //Check if script ran fine
         let last_line = run_output_string.split("\n").last(); //can this ever fail?
         let success = if let Some(last_line) = last_line { last_line=="MAPCELL-OK" } else { false };
 
         //debug!("last scrip init line {:?}", last_line);
 
-        Ok(success)
+        Ok((success, String::from(run_output_string)))
     }  
 
 }
@@ -180,4 +191,15 @@ fn get_script_api_version(path_script: &PathBuf) -> anyhow::Result<String> {
 
 
 
+pub fn to_absolute_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let path = path.as_ref();
+
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    }.clean();
+
+    Ok(absolute_path)
+}
 

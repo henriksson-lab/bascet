@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::process;
 use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::bail;
 use crossbeam::channel::Receiver;
@@ -43,13 +45,13 @@ impl MapCell {
         } else {
             let _ = fs::create_dir(&params_io.path_tmp);  
         }
-        //Check if using a new script or a preset
-        if params_io.path_script.to_str().expect("argument conversion error").starts_with("!") {
+        //Check if using a new script or a preset. user scripts start with _
+        if !params_io.path_script.to_str().expect("argument conversion error").starts_with("_") {
             println!("using preset {:?}", params_io.path_script);
 
             let map_presets = get_preset_scripts();
             let preset_name=params_io.path_script.to_str().expect("failed to get string from script path");
-            let preset_name=&preset_name[1..]; //Remove the initial !
+            //let preset_name=&preset_name[1..]; //Remove the initial !
 
             if let Some(&ref preset_script_code) = map_presets.get(preset_name) {
                 //If using a preset, create the file
@@ -141,7 +143,9 @@ impl MapCell {
         // Merge temp zip archives into one new zip archive 
         println!("Merging zip from writers");
         utils::merge_archives_and_delete(&params_io.path_out, &list_out_zipfiles).unwrap();
-        let _ = fs::remove_dir_all(&params_io.path_out);
+
+        //Finally remove the temp directory
+        let _ = fs::remove_dir_all(&params_io.path_tmp);
 
         Ok(())
     }
@@ -246,7 +250,7 @@ fn create_writer(
             let path_output_dir = params_io.path_tmp.join(format!("output-{}", cell_id));
             let _ = fs::create_dir(&path_output_dir);  
 
-            let success = mapcell_script.invoke(
+            let (success, script_output) = mapcell_script.invoke(
                 &path_input_dir,
                 &path_output_dir,
             params_io.threads_work
@@ -254,6 +258,14 @@ fn create_writer(
 
             if !success && mapcell_script.missing_file_mode==MissingFileMode::Fail {
                 panic!("Failed to process a cell, and this script is set to fail in such a scenario");
+            }
+
+            //Store script output as log file
+            {
+                let path_logfile = path_output_dir.join("cellmap.log");
+                let log_file = File::create(&path_logfile).unwrap();
+                let mut buf_writer = BufWriter::new(log_file);
+                let _ = std::io::copy(&mut script_output.as_bytes(), &mut buf_writer).unwrap();   
             }
 
             //Check what files we got out
@@ -276,7 +288,7 @@ fn create_writer(
 
                 //Set up zip file
                 let compression_mode = match mapcell_script.compression_mode {
-//                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::Zstd,
+//                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::Zstd,  //R unzip does not support natively
                     mapcell_script::CompressionMode::Default => zip::CompressionMethod::DEFLATE,  //not as fast; for testing only
                     mapcell_script::CompressionMode::Uncompressed => zip::CompressionMethod::Stored,
                 };
@@ -302,8 +314,6 @@ fn create_writer(
 }
 
 
-use std::path::Path;
-use std::path::PathBuf;
 
 fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
     let mut buf = vec![];
