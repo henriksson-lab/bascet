@@ -54,7 +54,7 @@ impl Command {
             threads_work: self.threads_work,
         };
 
-        let _ = MapCell::run(params_io);
+        let _ = MapCell::run(params_io).expect("mapcell failed");
 
         println!("Mapcell has finished!");
         Ok(())

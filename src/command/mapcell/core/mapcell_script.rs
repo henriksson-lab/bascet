@@ -88,7 +88,7 @@ impl MapCellScript {
         input_dir: &PathBuf,
         output_dir: &PathBuf,
         num_threads: usize
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<(bool, String)> {
 
 
         let run_output = process::Command::new(&self.path_script)
@@ -104,7 +104,7 @@ impl MapCellScript {
 
         //debug!("last scrip init line {:?}", last_line);
 
-        Ok(success)
+        Ok((success, String::from(run_output_string)))
     }  
 
 }
