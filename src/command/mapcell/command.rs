@@ -9,20 +9,19 @@ use super::core::core::MapCell;
 #[derive(Args)]
 pub struct Command {
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
-    pub path_in: PathBuf,
+    pub path_in: Option<PathBuf>,
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = constants::MAPCELL_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
-    pub path_out: PathBuf,
+    pub path_out: Option<PathBuf>,
 
 
     //The script to run
     #[arg(short = 's', value_parser = clap::value_parser!(PathBuf))]
-    pub path_script: PathBuf,
+    pub path_script: Option<PathBuf>,
 
-    // built-in software: can read into binary and write script to run at need
-
-    // help feature to show built-in software
+    #[arg(long = "show-presets")]
+    pub show_presets: bool,
 
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_READ)]
     threads_read: usize,
@@ -37,11 +36,25 @@ pub struct Command {
 impl Command {
     pub fn try_execute(&mut self) -> Result<()> {
 
+
+        if self.show_presets {
+            let names = super::core::core::get_preset_script_names();
+            println!("Available preset scripts: {:?}", names);
+            return Ok(());
+        }
+
+        /* 
+        if self.path_in == "" {
+            //|| self.path_out == "" 
+            bail!("Input and output must be given")
+        }
+*/
+
         let params_io = params::IO {
-            path_in: self.path_in.clone(),
+            path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
-            path_out: self.path_out.clone(),
-            path_script: self.path_script.clone(),
+            path_out: self.path_out.as_ref().expect("Output file was not provided").clone(),
+            path_script: self.path_script.as_ref().expect("Script file was not provided").clone(),
 
             threads_read: self.threads_read,
             threads_write: self.threads_write,
@@ -54,3 +67,4 @@ impl Command {
         Ok(())
     }
 }
+
