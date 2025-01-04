@@ -2,6 +2,9 @@ use std::fs;
 use std::sync::Arc;
 use std::fs::File;
 use std::io::BufWriter;
+use std::process;
+
+use itertools::Itertools;
 use log::info;
 use log::debug;
 
@@ -27,7 +30,8 @@ impl MapCell {
     pub fn run(
         params_io: params::IO
     ) -> anyhow::Result<()> {
-        let params_io = Arc::new(params_io);
+
+        let mut params_io = params_io.clone();
 
         //Create thread pool. note that worker threads here refer to script threads (script manages it)
         let thread_pool = threadpool::ThreadPool::new(params_io.threads_read + params_io.threads_write);
@@ -39,6 +43,38 @@ impl MapCell {
         } else {
             let _ = fs::create_dir(&params_io.path_tmp);  
         }
+        //Check if using a new script or a preset
+        if params_io.path_script.to_str().expect("argument conversion error").starts_with("!") {
+            println!("using preset {:?}", params_io.path_script);
+
+            let map_presets = get_preset_scripts();
+            let preset_name=params_io.path_script.to_str().expect("failed to get string from script path");
+            let preset_name=&preset_name[1..]; //Remove the initial !
+
+            if let Some(&ref preset_script_code) = map_presets.get(preset_name) {
+                //If using a preset, create the file
+                let path_script = params_io.path_tmp.join("preset_script.sh");
+                {
+                    let script_file = File::create(&path_script).unwrap();
+                    let mut buf_writer = BufWriter::new(script_file);
+                    let _ = std::io::copy(&mut preset_script_code.as_slice(), &mut buf_writer).unwrap();   
+                }
+                //Make the script executable
+                let _ = process::Command::new("chmod")
+                    .arg("u+x")
+                    .arg(path_script.to_str().expect("failed to convert string"))
+                    .output()?;
+                //Use this script
+                println!("Extracted preset script to {:?}", &path_script);
+                params_io.path_script = path_script;
+            } else {
+                bail!("Preset {} does not exist", preset_name);
+            }
+        } else {
+            println!("Using user provided script");
+        }
+
+        let params_io = Arc::new(params_io);
 
 
         //Initialize script
@@ -288,4 +324,25 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
     }
 
     Ok(buf)
+}
+
+
+
+
+
+use std::collections::HashMap;
+
+const PRESET_SCRIPT_TEST: &[u8] = include_bytes!("test_script.sh");
+
+pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
+    let mut map: HashMap<String, Vec<u8>> = HashMap::new();
+    map.insert("test".to_string(), PRESET_SCRIPT_TEST.to_vec());
+    map
+}
+
+
+pub fn get_preset_script_names() -> Vec<String> {
+    let map= get_preset_scripts();
+    let names: Vec<String> =map.keys().sorted().cloned().collect();
+    names
 }
