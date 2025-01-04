@@ -145,7 +145,7 @@ impl MapCell {
         utils::merge_archives_and_delete(&params_io.path_out, &list_out_zipfiles).unwrap();
 
         //Finally remove the temp directory
-        let _ = fs::remove_dir_all(&params_io.path_out);
+        let _ = fs::remove_dir_all(&params_io.path_tmp);
 
         Ok(())
     }
@@ -262,7 +262,7 @@ fn create_writer(
 
             //Store script output as log file
             {
-                let path_logfile = path_input_dir.join("cellmap.log");
+                let path_logfile = path_output_dir.join("cellmap.log");
                 let log_file = File::create(&path_logfile).unwrap();
                 let mut buf_writer = BufWriter::new(log_file);
                 let _ = std::io::copy(&mut script_output.as_bytes(), &mut buf_writer).unwrap();   
