@@ -43,13 +43,6 @@ impl Command {
             return Ok(());
         }
 
-        /* 
-        if self.path_in == "" {
-            //|| self.path_out == "" 
-            bail!("Input and output must be given")
-        }
-*/
-
         let params_io = params::IO {
             path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
