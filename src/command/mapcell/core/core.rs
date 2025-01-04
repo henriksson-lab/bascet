@@ -3,20 +3,20 @@ use std::sync::Arc;
 use std::fs::File;
 use std::io::BufWriter;
 use std::process;
+use std::collections::HashMap;
 
+use anyhow::bail;
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
 use itertools::Itertools;
 use log::info;
 use log::debug;
-
 use zip::ZipWriter;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-use anyhow::bail;
 
-use crate::command::mapcell::core::mapcell_script;
-use crate::utils::merge_archives_and_delete;
+use crate::utils;
 
 use super::params;
+use super::mapcell_script;
 use super::bascet::BascetShardReader;
 use super::mapcell_script::MapCellScript;
 use super::mapcell_script::MissingFileMode;
@@ -140,7 +140,7 @@ impl MapCell {
         
         // Merge temp zip archives into one new zip archive 
         println!("Merging zip from writers");
-        merge_archives_and_delete(&params_io.path_out, &list_out_zipfiles).unwrap();
+        utils::merge_archives_and_delete(&params_io.path_out, &list_out_zipfiles).unwrap();
         let _ = fs::remove_dir_all(&params_io.path_out);
 
         Ok(())
@@ -330,7 +330,6 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
 
 
 
-use std::collections::HashMap;
 
 const PRESET_SCRIPT_TEST: &[u8] = include_bytes!("test_script.sh");
 
