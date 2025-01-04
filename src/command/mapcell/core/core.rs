@@ -46,12 +46,12 @@ impl MapCell {
             let _ = fs::create_dir(&params_io.path_tmp);  
         }
         //Check if using a new script or a preset. user scripts start with _
-        if !params_io.path_script.to_str().expect("argument conversion error").starts_with("_") {
+        if params_io.path_script.to_str().expect("argument conversion error").starts_with("_") {
             println!("using preset {:?}", params_io.path_script);
 
             let map_presets = get_preset_scripts();
             let preset_name=params_io.path_script.to_str().expect("failed to get string from script path");
-            //let preset_name=&preset_name[1..]; //Remove the initial !
+            let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
 
             if let Some(&ref preset_script_code) = map_presets.get(preset_name) {
                 //If using a preset, create the file
