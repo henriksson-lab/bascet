@@ -145,7 +145,9 @@ impl MapCell {
         utils::merge_archives_and_delete(&params_io.path_out, &list_out_zipfiles).unwrap();
 
         //Finally remove the temp directory
-        let _ = fs::remove_dir_all(&params_io.path_tmp);
+        if !params_io.keep_files {
+            let _ = fs::remove_dir_all(&params_io.path_tmp);
+        }
 
         Ok(())
     }
@@ -300,8 +302,10 @@ fn create_writer(
             }
 
             //Remove input and output files
-            let _ = fs::remove_dir_all(&path_input_dir);
-            let _ = fs::remove_dir_all(&path_output_dir);
+            if !params_io.keep_files {
+                let _ = fs::remove_dir_all(&path_input_dir);
+                let _ = fs::remove_dir_all(&path_output_dir);
+            }
         }
         let _ = zip_writer.finish();   
         debug!("Writer exiting");
