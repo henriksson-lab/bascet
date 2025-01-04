@@ -13,4 +13,7 @@ pub struct IO {
 
     //How many threads should the invoked script use? Passed on as a parameter. Not all commands will support this
     pub threads_work: usize,
+
+
+    pub keep_files: bool
 }

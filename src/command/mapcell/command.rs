@@ -23,6 +23,9 @@ pub struct Command {
     #[arg(long = "show-presets")]
     pub show_presets: bool,
 
+    #[arg(long = "keep-files")]
+    pub keep_files: bool,
+
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_READ)]
     threads_read: usize,
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_WRITE)]
@@ -52,6 +55,8 @@ impl Command {
             threads_read: self.threads_read,
             threads_write: self.threads_write,
             threads_work: self.threads_work,
+
+            keep_files: self.keep_files            
         };
 
         let _ = MapCell::run(params_io).expect("mapcell failed");
