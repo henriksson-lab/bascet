@@ -2,7 +2,7 @@
 // See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
 use log::{debug, error};
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::process;
 

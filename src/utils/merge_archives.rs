@@ -27,6 +27,8 @@ where
     Ok(())
 }
 
+
+/// Take multiple zip-files, and merge into a new one. Then delete the source zip files
 pub fn merge_archives_and_delete<P>(destination: &P, sources: &Vec<P>) -> anyhow::Result<()>
 where
     P: AsRef<std::path::Path>,

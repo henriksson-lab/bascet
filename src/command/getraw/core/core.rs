@@ -54,7 +54,7 @@ pub fn check_dep_samtools() {
 }
 
 
-type ReadWithBarcode = (Arc<ReadPair>, Arc<Vec<String>>);
+//type ReadWithBarcode = (Arc<ReadPair>, Arc<Vec<String>>);
 
 type ListReadWithBarcode = Arc<Vec<(ReadPair,Vec<String>)>>;
 
@@ -369,8 +369,8 @@ pub fn create_new_bam(
 
     let mut writer = bam::Writer::from_path(fname, &header, file_format).unwrap();
 
-    writer.set_threads(5);  //  need we also give a pool? https://docs.rs/rust-htslib/latest/rust_htslib/bam/struct.Writer.html#method.set_threads
-    writer.set_compression_level(bam::CompressionLevel::Fastest);  //or no compression, do later ; for user to specify
+    _ = writer.set_threads(5);  //  need we also give a pool? https://docs.rs/rust-htslib/latest/rust_htslib/bam/struct.Writer.html#method.set_threads
+    _ = writer.set_compression_level(bam::CompressionLevel::Fastest);  //or no compression, do later ; for user to specify
 
     Ok(writer)
 }
@@ -402,7 +402,7 @@ pub fn write_records_pair_to_bamlike(
         forward.seq(),
         qual.as_slice()  //forward.qual()
     );
-    record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
+    _ = record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
     record.set_flags(0x4D); // 0x4D  read paired, read unmapped, mate unmapped, first in pair
     //.set_flags(cram::record::Flags::from(0x07))   what is this?
     writer.write(&record).expect("Failed to write forward read");
@@ -416,7 +416,7 @@ pub fn write_records_pair_to_bamlike(
         reverse.seq(),
         qual.as_slice() //reverse.qual()
     );
-    record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
+    _ = record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
     record.set_flags(0x8D); // 0x8D  read paired, read unmapped, mate unmapped, second in pair
     //.set_flags(cram::record::Flags::from(0x03))  hm?
     writer.write(&record).expect("Failed to write reverse read");

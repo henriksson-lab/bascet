@@ -13,7 +13,6 @@ use bio::pattern_matching::myers::Myers;
 
 use std::path::PathBuf;
 
-use seq_io::fasta::Record as FastaRecord;
 use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 
 use itertools::Itertools;
@@ -163,7 +162,7 @@ impl CombinatorialBarcoding {
             self.scan_startpos(&record.seq());
         }
 
-        self.pick_startpos();
+        _ = self.pick_startpos();
 
         Ok(())
     }
