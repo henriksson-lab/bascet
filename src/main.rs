@@ -18,7 +18,7 @@ enum Commands {
     Partition(command::Partition),
     Query(command::Query),
     Getraw(command::GetRaw),
-    //MapCell(command::MapCell),
+    Mapcell(command::MapCell),
 }
 
 fn main() -> ExitCode {
@@ -31,7 +31,7 @@ fn main() -> ExitCode {
         Commands::Partition(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Getraw(mut cmd) => cmd.try_execute(),
-        //Commands::MapCell(mut cmd) => cmd.try_execute(),
+        Commands::Mapcell(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
