@@ -21,6 +21,7 @@ enum Commands {
     Query(command::Query),
     Getraw(command::GetRaw),
     Mapcell(command::MapCell),
+    Extract(command::Extract),
 }
 
 fn main() -> ExitCode {
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Getraw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
+        Commands::Extract(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
