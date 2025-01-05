@@ -101,15 +101,16 @@ impl MapCell {
 
         //Create all readers
         // note from julian: readers alter the file? at least make separate readers. start with just 1
-        for tidx in 0..params_io.threads_read {
-            let send_num_stop = if tidx==0 { params_io.threads_write} else { 0 };
+        let reader_thread_group = ThreadGroup::new(params_io.threads_read);//: &Arc<ThreadGroup>
+
+        for _tidx in 0..params_io.threads_read {
             _ = create_reader(
                 &params_io,
                 &thread_pool,
                 &mapcell_script,
                 &rx_cell_to_read,
                 &tx_loaded_cell,
-                send_num_stop
+                &reader_thread_group
             );
         }
 
@@ -137,7 +138,14 @@ impl MapCell {
             _ = tx_cell_to_read.send(None).unwrap();
         }
 
-        //Wait for all threads to complete. Readers tell writers to finish
+        //Wait for all reader threads to complete. Readers tell writers to finish
+        reader_thread_group.join();
+
+        //Terminate all writers. Then wait for all threads to finish
+        for i in 0..params_io.threads_write {
+            debug!("Sending termination signal to writer {i}");
+            _ = tx_loaded_cell.send(None).unwrap();
+        }
         thread_pool.join();
         
         // Merge temp zip archives into one new zip archive 
@@ -156,20 +164,22 @@ impl MapCell {
 
 
 
-
 fn create_reader(
     params_io: &Arc<params::IO>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<MapCellScript>,
     rx: &Arc<Receiver<Option<String>>>,
     tx: &Arc<Sender<Option<String>>>,
-    send_num_stop: usize
+    thread_group: &Arc<ThreadGroup>
 ) -> anyhow::Result<()> {
 
     let rx = Arc::clone(rx);
     let tx = Arc::clone(tx);
+
     let params_io = Arc::clone(&params_io);
     let mapcell_script = Arc::clone(mapcell_script);
+
+    let thread_group = Arc::clone(thread_group);
 
     thread_pool.execute(move || {
         debug!("Worker started");
@@ -203,15 +213,7 @@ fn create_reader(
                 } 
             }
         }
-
-
-        //Once a reader reaches end, can tell all writers to close up.
-        //This is typically the responsibility of thread #0
-        for _i in 0..send_num_stop {
-            debug!("Reader is sending termination signal to writer");
-            _ = tx.send(None).unwrap();
-        }
-
+        thread_group.is_done();
     });
     Ok(())
 }
@@ -359,3 +361,49 @@ pub fn get_preset_script_names() -> Vec<String> {
     let names: Vec<String> =map.keys().sorted().cloned().collect();
     names
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/////////////////// barrier for a set of threads
+struct ThreadGroup {
+    rx_done: Receiver<()>,
+    tx_done: Sender<()>,
+    num_thread: usize
+}
+impl ThreadGroup {
+    pub fn new(num_thread:usize) -> Arc<ThreadGroup> {
+        let (tx_done, rx_done) = crossbeam::channel::bounded::<()>(1000);
+        return Arc::new(ThreadGroup {
+            rx_done: rx_done,
+            tx_done: tx_done,
+            num_thread: num_thread
+        })
+    }
+
+    pub fn join(&self) {
+        for _i in 0..self.num_thread {
+            _ = self.rx_done.recv();
+        }
+    }
+
+    pub fn is_done(&self) {
+        _ = self.tx_done.send(());
+    }
+}
+
+
+////// would be nice to generalize this pattern, and then hide some things like number of threads etc
