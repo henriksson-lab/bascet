@@ -254,17 +254,20 @@ fn create_writer(
             let path_output_dir = params_io.path_tmp.join(format!("output-{}", cell_id));
             let _ = fs::create_dir(&path_output_dir);  
 
+            debug!("Writer for '{}', running script", cell_id);
             let (success, script_output) = mapcell_script.invoke(
                 &path_input_dir,
                 &path_output_dir,
             params_io.threads_work
             ).expect("Failed to invoke script");
+            debug!("Writer for '{}', done running script", cell_id);
 
             if !success && mapcell_script.missing_file_mode==MissingFileMode::Fail {
                 panic!("Failed to process a cell, and this script is set to fail in such a scenario");
             }
 
             //Store script output as log file
+            debug!("Writer for '{}', adding log file to zip", cell_id);
             {
                 let path_logfile = path_output_dir.join("cellmap.log");
                 let log_file = File::create(&path_logfile).unwrap();
@@ -281,11 +284,12 @@ fn create_writer(
             let fname_as_string: Vec<String> = list_output_files.iter().map(|f| f.display().to_string() ).collect();
             let names_in_zip: Vec<&str> = fname_as_string.iter().map(|f| &f[basepath_len..] ).collect();
 
-            debug!("got files {:?}", list_output_files);
-            debug!("got names {:?}", names_in_zip);
+            debug!("Writer for '{}', got files {:?}", cell_id, list_output_files);
+            debug!("Writer for '{}', got names {:?}", cell_id, names_in_zip);
 
             //Add each file to the zip
             for (file_path, &file_name) in list_output_files.iter().zip(names_in_zip.iter()) {
+                debug!("Writer for '{}', adding to zip: {}",cell_id, file_path.display());
 
                 //Open file for reading
                 let mut file_input = File::open(&file_path).unwrap();
@@ -309,6 +313,8 @@ fn create_writer(
                 let _ = fs::remove_dir_all(&path_output_dir);
             }
         }
+        debug!("Writer got stop signal, now finishing zip");
+
         let _ = zip_writer.finish();   
         debug!("Writer exiting");
         // note from julian: included finishing the writers here before, chance that removing this fucked things up
