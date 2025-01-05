@@ -6,6 +6,7 @@ pub mod partition;
 pub mod query;
 pub mod getraw;
 pub mod mapcell;
+pub mod extract;
 
 pub use assemble::command::Command as Assemble;
 pub use count::command::Command as Count;
@@ -14,3 +15,4 @@ pub use partition::command::Command as Partition;
 pub use query::command::Command as Query;
 pub use getraw::command::Command as GetRaw;
 pub use mapcell::command::Command as MapCell;
+pub use extract::command::Command as Extract;
