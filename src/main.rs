@@ -3,6 +3,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use robert::command;
 
+
+
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
@@ -24,6 +26,9 @@ enum Commands {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     
+
+    env_logger::init();
+
     let result = match cli.command {
         Commands::Assemble(mut cmd) => cmd.try_execute(),
         Commands::Count(mut cmd) => cmd.try_execute(),
