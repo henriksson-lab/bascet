@@ -296,8 +296,8 @@ fn create_writer(
 
                 //Set up zip file
                 let compression_mode = match mapcell_script.compression_mode {
-//                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::Zstd,  //R unzip does not support natively
-                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::DEFLATE,  //not as fast; for testing only
+                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::Zstd,  //R unzip does not support natively
+//                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::DEFLATE,  //not as fast; for testing only
                     mapcell_script::CompressionMode::Uncompressed => zip::CompressionMethod::Stored,
                 };
                 let opts_zipwriter: zip::write::FileOptions<()> = zip::write::FileOptions::default().compression_method(compression_mode);
