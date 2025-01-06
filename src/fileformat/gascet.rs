@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::fs::File;
 //use anyhow::bail;
+use log::debug;
 
 use super::bascet::ShardReader;
 
@@ -121,7 +122,6 @@ impl ShardReader for GascetShardReader {
 
             let line = line.expect("Failed to get one line from the gascet");
 
-
             let rp = parse_gascet_readpair(&line);
 
             let rec_r1 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r1, rp.q1);
@@ -132,7 +132,7 @@ impl ShardReader for GascetShardReader {
 
             num_read = num_read + 1;                
         }
-        println!("wrote {} reads to fastq", num_read);
+        debug!("wrote {} reads to fastq", num_read);
 
         //Flushing is essential for buffered writer ---  will this flush all the way down? possible bug here!! if so, just use bufferedwriter directly
         //fqwriter_r1.flush();
