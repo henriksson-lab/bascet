@@ -16,15 +16,15 @@ use log::debug;
 use zip::ZipWriter;
 
 use crate::utils;
-use crate::fileformat::bascet::ShardReader;
-use crate::fileformat::bascet::BascetShardReader;
 use crate::fileformat::mapcell_script;
 use crate::fileformat::mapcell_script::MapCellScript;
 use crate::fileformat::mapcell_script::MissingFileMode;
+use crate::fileformat::bascet::BascetShardReader;
 use crate::fileformat::gascet::GascetShardReader;
-use crate::fileformat::gascet::detect_shard_format;
-use crate::fileformat::gascet::get_suitable_shard_reader;
-use crate::fileformat::gascet::DetectedFileformat;
+use crate::fileformat::shard::ShardReader;
+use crate::fileformat::shard::detect_shard_format;
+use crate::fileformat::shard::get_suitable_shard_reader;
+use crate::fileformat::shard::DetectedFileformat;
 
 
 use super::params;

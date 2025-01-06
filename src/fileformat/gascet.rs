@@ -6,7 +6,9 @@ use std::fs::File;
 //use anyhow::bail;
 use log::debug;
 
-use super::bascet::ShardReader;
+use super::shard::ShardReader;
+use super::shard::ReadPair;
+use super::shard::CellID;
 
 use rust_htslib::tbx::Reader as TabixReader;
 use rust_htslib::tbx::Read;
@@ -16,19 +18,9 @@ use noodles::fastq::Writer as FastqWriter;
 use noodles::fastq::record::Definition;
 use noodles::fastq::Record as FastqRecord;
 
-pub type CellID = String;
 
 
 
-
-#[derive(Debug,Clone)]
-pub struct ReadPair {
-    pub r1: Vec<u8>,
-    pub r2: Vec<u8>,
-    pub q1: Vec<u8>,
-    pub q2: Vec<u8>,
-    pub umi: Vec<u8>
-}
 
 
 
@@ -237,39 +229,3 @@ fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
 }
 
 
-
-
-#[derive(Debug,Clone,PartialEq,Eq)]
-pub enum DetectedFileformat {
-    Gascet,
-    Bascet,
-    Other
-}
-
-
-pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
-    let p_string = p.file_name().expect("cannot convert OS string when detecting file format").to_string_lossy();
-
-    if p_string.ends_with("gascet.gz") {
-        DetectedFileformat::Gascet
-    } else if p_string.ends_with("zip") {
-        DetectedFileformat::Bascet
-    } else {
-        DetectedFileformat::Other
-    }
-}
-
-
-use super::bascet::BascetShardReader;  //suggests that we should put this in another file!
-
-
-pub fn get_suitable_shard_reader(
-    p: &PathBuf, 
-    format: &DetectedFileformat
-) -> Box::<dyn ShardReader> {
-    match format {
-        DetectedFileformat::Gascet => Box::new(GascetShardReader::new(&p).expect("Failed to create gascet reader")),
-        DetectedFileformat::Bascet => Box::new(BascetShardReader::new(&p).expect("Failed to create bascet reader")),
-        _ => panic!("Cannot figure out how to open input file as a shard (could not detect type)")
-    }
-}
