@@ -17,15 +17,9 @@ use seq_io::fastq::Record as FastqRecord;
 
 use super::{io, barcode, params};
 
+use crate::fileformat::gascet::ReadPair;
+use crate::fileformat::gascet::write_records_pair_to_gascet;
 
-#[derive(Debug,Clone)]
-struct ReadPair {
-    r1: Vec<u8>,
-    r2: Vec<u8>,
-    q1: Vec<u8>,
-    q2: Vec<u8>,
-    umi: Vec<u8>
-}
 
 #[derive(Debug,Clone)]
 struct RecordPair {
@@ -52,7 +46,7 @@ fn loop_writer<W>(  //<W>
     while let Ok(Some(list_pairs)) = rx.recv() {
         for (bam_cell, hits_names) in list_pairs.iter() {
 
-            write_records_pair_to_bedlike::<W>(
+            write_records_pair_to_gascet::<W>(
                 &mut writer, 
                 &hits_names, 
                 &bam_cell
@@ -209,8 +203,8 @@ impl GetRaw {
                         let umi:Vec<u8>=Vec::new();
                         let readpair = ReadPair { 
                             r1: bam_cell.forward_record.seq().to_vec(), 
-                            r2: bam_cell.reverse_record.qual().to_vec(), 
-                            q1: bam_cell.forward_record.seq().to_vec(), 
+                            r2: bam_cell.forward_record.seq().to_vec(), 
+                            q1: bam_cell.reverse_record.qual().to_vec(), 
                             q2: bam_cell.reverse_record.qual().to_vec(), 
                             umi: umi
                         };
@@ -330,9 +324,13 @@ fn read_all_reads(
 
 
 /// Concatenate or merge sort files, then process them with bgzip
-// sort --merge  some_sorted.pregascet.0 some_sorted.pregascet.1 ... | bgzip -c /dev/stdin > test.gascet.0.gz
+// sort --merge  some_sorted.pregascet.0 some_sorted.pregascet.1 ... | bgzip -c /dev/stdin > test.gascet.0.gz    
 //
-//  later: tabix -p bed test.gascet.0.gz   
+// we could also skip bgsort but it should be fast; we need to recompress it later otherwise. but it is a huge gain in ratio and need for temporary space!
+// also, output file is ready for use unless merging with other shards is needed
+//
+//  later index: tabix -p bed test.gascet.0.gz   
+// able to get a cell: tabix out_complete.0.gascet.gz A1_H5_D9_H12 | head
 pub fn catsort_files(
     list_inputfiles: &Vec<PathBuf>, 
     path_final: &PathBuf, 
@@ -342,7 +340,7 @@ pub fn catsort_files(
 
     //Final destination file
     let file_final_output = File::create(path_final).unwrap();
-    println!("Writing final output file: {:?}    from input files {:?}",path_final, list_inputfiles);
+    println!("Compressing and writing final output file: {:?}    from input files {:?}",path_final, list_inputfiles);
 
     //Compress on the fly with bgzip, pipe output to a file
     let mut process_b = if use_bgzip {
@@ -437,60 +435,3 @@ mod tests {
 }
 
 
-
-/////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////
-
-/// ideal partition:
-/// zip/bc/r1.fq
-/// zip/bc/r2.fq
-
-
-/////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////
-
-// generally seems like a better lib? unified SAM/BAM/CRAM interface
-// https://github.com/rust-bio/rust-htslib/blob/master/src/bam/mod.rs
-
-
-
-
-
-fn write_records_pair_to_bedlike<W>(
-    writer: &mut BufWriter<impl Write>, //Write, //BufWriter<W>,
-    cell_id: &Vec<String>,  
-    read: &ReadPair,
-) where W:Write {
-    //Structure of each line:
-    //cell_id  1   1   r1  r2  q1  q2 umi
-
-    let cell_id = cell_id.join("_");  //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
-
-    let tab="\t".as_bytes();
-    let one="1".as_bytes();
-    let newline="\n".as_bytes();
-
-
-    _ = writer.write_all(cell_id.as_bytes());
-    _ = writer.write_all(tab);
-
-    _ = writer.write_all(one);
-    _ = writer.write_all(tab);
-
-    _ = writer.write_all(one);
-    _ = writer.write_all(tab);
-
-    _ = writer.write_all(&read.r1);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.r2);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.q1);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.q2);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.umi);
-    _ = writer.write_all(newline);
-
-}

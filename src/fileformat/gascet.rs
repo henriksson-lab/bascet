@@ -1,411 +1,242 @@
-/// disabled mod for now
-
-/* 
-General
-Annotated
-Single
-CEll
-Table
-*/
-
-use std::cmp::Ordering;
-use std::sync::Arc;
-use std::fs::File;
-use std::io::Read;
+use std::collections::HashSet;
+use std::io::BufWriter;
+use std::io::Write;
 use std::path::PathBuf;
-use std::hash::{Hash, Hasher};
+use std::fs::File;
+//use std::io::BufReader;
+//use std::io::BufWriter;
+//use std::collections::HashMap;
+//use zip::read::ZipArchive;
+//use log::debug;
+//use anyhow::bail;
 
-//use std::collections::BinaryHeap;
+use super::bascet::ShardReader;
 
-//use priority_queue::PriorityQueue;
+use rust_htslib::tbx::Reader as TabixReader;
+use rust_htslib::tbx::Read;
+//use noodles_bgzf::Writer as FastqWriter;   // why both bgzf and fastq??   ... this is for fastq.gz!!!
+//use noodles_fastq::record::Definition;
+//use noodles_fastq;
 
-//use anyhow::Result;
-use anyhow::bail;
-//use log::info;
-use log::debug;
-use rand_distr::num_traits::ToPrimitive;
+use noodles::fastq::Writer as FastqWriter;
+use noodles::fastq::record::Definition;
+//use noodles::fastq as noodles_fastq;
+use noodles::fastq::Record as FastqRecord;
 
-
-//Note: already got a multithreaded writer!
-//use bgzip::{write::BGZFMultiThreadWriter, write::BGZFWriter, BGZFError, Compression};
-
-/* 
-use bgzip::read::BGZFWriter;
-use bgzip::read::BGZFError;
-use bgzip::read::Compression;
-*/
-
-use bgzip::read::BGZFMultiThreadReader;
-
-// https://docs.rs/bgzip/latest/bgzip/read/struct.BGZFMultiThreadReader.html
+type CellID = String;
 
 
 
 
-
-
-
-
-#[derive(Debug)]  
-struct GascetReadPair {
-//    pub barcode: Vec<u8>,
-    pub umi: Vec<u8>,
-
+#[derive(Debug,Clone)]
+pub struct ReadPair {
     pub r1: Vec<u8>,
     pub r2: Vec<u8>,
-
     pub q1: Vec<u8>,
-    pub q2: Vec<u8>,    
+    pub q2: Vec<u8>,
+    pub umi: Vec<u8>
 }
 
-type BarcodedGascetReadPair = (Vec<u8>, GascetReadPair);
 
 
-
-
-#[derive(Debug)]  
-struct GascetHeader {
-    pub version_major: u8,
-    pub version_minor: u8,
-    pub is_sorted_by_barcode: bool,
+//#[derive(Debug)]  //// not sure about all of these
+pub struct GascetShardReader {
+    tabix_reader: TabixReader     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
 }
-impl GascetHeader {
-    pub fn read(file: &mut impl Read) -> anyhow::Result<GascetHeader>{
 
-        let magic = "GASCET".as_bytes();
-        let mut buffer_for_magic = [0u8; 6];
-        file.read_exact(&mut buffer_for_magic).expect("Failed to read gascet magic");
 
-        if magic != buffer_for_magic {
-            bail!("This does not appear to be a bascet file");
-        }
 
-        let version_major = read_u8(file);
-        let version_minor = read_u8(file);
-        let is_sorted_by_barcode = read_u8(file)>0;
-        let _reserved_for_index = read_u64(file);  //Pointer to the index in the file
 
-        Ok(GascetHeader {
-            version_major: version_major,
-            version_minor: version_minor,
-            is_sorted_by_barcode: is_sorted_by_barcode,
+
+impl ShardReader for GascetShardReader {
+
+
+
+
+    fn new(fname: &PathBuf) -> anyhow::Result<GascetShardReader> {
+
+        //TODO : check that the index .tbi-file is present; give better error message
+
+        // Create a tabix reader for reading a tabix-indexed BED file.
+        //let path_bed = "file.bed.gz";
+        let tbx_reader = TabixReader::from_path(&fname)
+            .expect(&format!("Could not open {:?}", fname));
+
+        Ok(GascetShardReader {
+            tabix_reader: tbx_reader
         })
     }
-}
 
 
-struct GascetWriter {
+    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
+        Ok(self.tabix_reader.seqnames())
+    }
 
-
-
-    
-}
-impl GascetWriter {
-
-
-    pub fn new() -> GascetWriter {
-        GascetWriter {
-
-        }
+    fn get_files_for_cell(&mut self, _cell_id: &CellID) -> anyhow::Result<Vec<String>>{
+        println!("get files for cell in gascet not implemented");
+        Ok(Vec::new())
     }
 
 
-    pub fn sort_by_barcode(reads: &mut Vec<BarcodedGascetReadPair>){
-        reads.sort_by(|(bc1,_),(bc2,_)| bc1.cmp(bc2));
-    }
 
+    fn extract_to_outdir (
+        &mut self, 
+        cell_id: &String, 
+        needed_files: &Vec<String>,
+        _fail_if_missing: bool,
+        out_directory: &PathBuf
+    ) -> anyhow::Result<bool>{
 
-    pub fn write(&self, _reads: &Vec<GascetReadPair>){
+        let mut valid_files_to_request: HashSet<&str> = HashSet::new();
+        valid_files_to_request.extend(["r1.fq","r2.fq"].iter());
 
-
-
-    }
-}
-
-
-
-struct SortedGascetReader {
-
-    header: GascetHeader,
-    pub current_cell: Option<Vec<u8>>,
-    current_cell_reads: Arc<Vec<GascetReadPair>>,
-    file_reader: BGZFMultiThreadReader<File>,
-    got_more_cells: bool
-
-}
-impl SortedGascetReader {
-
-
-    pub fn new(file_name: &PathBuf) -> anyhow::Result<SortedGascetReader> {
-
-        let mut opened = match File::open(file_name) {
-            Ok(file) => file,
-            Err(_) => {
-                bail!("Could not open gascet file {}", &file_name.display())
+        //Figure out which files to get
+        //let mut list_toget: Vec<&String> = Vec::new();
+        for f in needed_files {
+            if f=="*" {
+                //panic!("asking * from a gascet is not supported");
+            } else if !valid_files_to_request.contains(f.as_str()) {
+                panic!("Unable to request file {}", f);
             }
-        };
+        }
 
-        //Read the header
-        let header = GascetHeader::read(&mut opened).expect("Failed to read gascet header");
-        debug!("Read gascet header {:?}", header);
+        //Get tabix id for the cell
+        let tid = self.tabix_reader.tid(&cell_id).expect("Could not tabix ID for cell");
 
-        let file_reader: BGZFMultiThreadReader<File> = BGZFMultiThreadReader::new(opened).expect("BGZF reader open failed");
+        ///// Prepare r1 fastq
+        let path_outfile = out_directory.join(PathBuf::from("r1.fq"));
+        let file_out = File::create(&path_outfile).unwrap();
+        let bufwriter_out = BufWriter::new(file_out);
+        let mut fqwriter_r1 = FastqWriter::new(bufwriter_out);
 
-        Ok(SortedGascetReader {
-            header: header,
-            current_cell: None,
-            current_cell_reads: Arc::new(Vec::new()),
-            file_reader: file_reader,
-            got_more_cells: true
-        })
-    }
 
-    pub fn get_current_cell_no_move(&self) -> Option<Vec<u8>> {
-        self.current_cell.clone()
-    }
-    
-    // Return which cell we are currently on. Read another cell if needed
-    pub fn get_current_cell(&mut self) -> Option<Vec<u8>> {
+        ///// Prepare r2 fastq
+        let path_outfile = out_directory.join(PathBuf::from("r2.fq"));
+        let file_out = File::create(&path_outfile).unwrap();
+        let bufwriter_out = BufWriter::new(file_out);
+        let mut fqwriter_r2 = FastqWriter::new(bufwriter_out);
         
-        //Try read more cells if needed
-        if self.current_cell==None {
-            self.try_read_cell();
+        // Seek to the reads (all of them)
+        self.tabix_reader
+            .fetch(tid, 0, 100) //hopefully ok!
+            .expect("could not find reads");
+
+
+        //For now, keep it simple and just provide r1.fq and r2.fq.
+        //Read through all records in region.
+        let mut num_read = 0;
+        for line in self.tabix_reader.records() {
+
+            let line = line.expect("Failed to get one line from the gascet");
+
+
+            let rp = parse_gascet_readpair(&line);
+
+            let rec_r1 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r1, rp.q1);
+            let rec_r2 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r2, rp.q2);
+
+            let _ = fqwriter_r1.write_record(&rec_r1);
+            let _ = fqwriter_r2.write_record(&rec_r2);
+
+            num_read = num_read + 1;                
         }
-        return self.current_cell.clone();
+        println!("wrote {} reads to fastq", num_read);
+
+        //Flushing is essential for buffered writer ---  will this flush all the way down? possible bug here!! if so, just use bufferedwriter directly
+        //fqwriter_r1.flush();
+        //fqwriter_r2.flush();
+
+        Ok(true)
     }
 
-    pub fn try_read_cell(&mut self) {
 
-        if self.got_more_cells {
-            let cell_id = read_string(&mut self.file_reader);
-            let _size_cell_bytes = read_u64(&mut self.file_reader); //Can be used to skip forward quickly
-            let num_reads = read_u32(&mut self.file_reader); 
 
-            //Check if we have reached the end yet. the end is simply "", a reserved name for a cell
-            if cell_id=="".as_bytes() {
-                self.got_more_cells = false;
-            } else {
+}
 
-                self.current_cell = Some(cell_id);
-                let mut current_cell_reads  = Vec::new();
 
-                for _i in 0..num_reads {
 
-                    let umi = read_string(&mut self.file_reader);
-                    let r1 = read_string(&mut self.file_reader);
-                    let r2 = read_string(&mut self.file_reader);
-                    let q1 = read_string(&mut self.file_reader);
-                    let q2 = read_string(&mut self.file_reader);
 
-                    current_cell_reads.push(GascetReadPair {
-                        umi: umi,
-                        r1: r1,
-                        r2: r2,
-                        q1: q1,
-                        q2: q2
-                    });
-                }
-                self.current_cell_reads = Arc::new(current_cell_reads);
 
-            }
+
+pub fn write_records_pair_to_gascet<W>(
+    writer: &mut BufWriter<impl Write>, 
+    cell_id: &Vec<String>,    //Should put together earlier todo
+    read: &ReadPair,
+) where W:Write {
+    //Structure of each line:
+    //cell_id  1   1   r1  r2  q1  q2 umi
+
+    let cell_id = cell_id.join("_");  //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
+
+    let tab="\t".as_bytes();
+    let one="1".as_bytes();
+    let newline="\n".as_bytes();
+
+
+    _ = writer.write_all(cell_id.as_bytes());
+    _ = writer.write_all(tab);
+
+    _ = writer.write_all(one);
+    _ = writer.write_all(tab);
+
+    _ = writer.write_all(one);
+    _ = writer.write_all(tab);
+
+    _ = writer.write_all(&read.r1);
+    _ = writer.write_all(tab);
+    _ = writer.write_all(&read.r2);
+    _ = writer.write_all(tab);
+    _ = writer.write_all(&read.q1);
+    _ = writer.write_all(tab);
+    _ = writer.write_all(&read.q2);
+    _ = writer.write_all(tab);
+    _ = writer.write_all(&read.umi);
+    _ = writer.write_all(newline);
+
+}
+
+
+
+pub fn parse_gascet_readpair(
+    line: &Vec<u8>,   
+) -> ReadPair {
+
+    //Structure of each line:
+    //cell_id  1   1   r1  r2  q1  q2 umi
+
+    let tab = b'\t';
+    let parts = split_delimited(line, &tab);
+
+//    let mut split: Vec< = line.split(b'\t').collect();
+//    let collection = splitter.collect::<Vec<&[u8]>>();
+
+//    let collection = splitter.collect();
+
+
+    ReadPair {
+        r1: parts[3].to_vec(),
+        r2: parts[4].to_vec(),
+        q1: parts[5].to_vec(),
+        q2: parts[6].to_vec(),
+        umi: parts[7].to_vec()
+    }
+}
+
+
+
+
+fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
+    where T: PartialEq<T> {
+        let mut indices: Vec<usize> = input.iter().enumerate().filter(|(_, value)| *value == delim).map(|(i, _)| i).collect();
+        if indices.get(0) != Some(&0) {
+            indices.insert(0, 0);
         }
-    }
+        let mut output = Vec::new();
 
-    /// Get the reads, consider this cell handled
-    pub fn consume(&mut self) -> Arc<Vec<GascetReadPair>> { 
-        let current_reads = Arc::clone(&self.current_cell_reads);
-        self.current_cell_reads = Arc::new(Vec::new()); 
-        current_reads
-    }
-
-}
-
-
-impl Ord for SortedGascetReader {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        //self.get_current_cell().cmp(&other.get_current_cell())
-        other.current_cell.cmp(&self.current_cell)  //Note inverse ordering, such that binary heap ends up popping smallest cell id first
-    }
-}
-
-impl PartialOrd for SortedGascetReader {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { //Note inverse ordering, such that binary heap ends up popping smallest cell id first
-        //Some(self.cmp(other))
-        Some(other.cmp(self))
-    }
-}
-
-
-///// This enables sorting of readers by current cell. note that the reader should be taken out of any sorted structure before going to the next cell
-impl PartialEq for SortedGascetReader {
-    fn eq(&self, other: &Self) -> bool {
-        self.current_cell == other.current_cell
-    }
-}
-impl Eq for SortedGascetReader { }
-
-impl Hash for SortedGascetReader {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.current_cell.hash(state);
-    }
-}
-
-
-
-/* 
-
-
-sorting mechanism - doing this in a struct is actually quite hard!
-either "just do it" in a reader. no functions needed. 
-otherwise, https://doc.rust-lang.org/std/cell/struct.UnsafeCell.html   might help
-unclear if priority queue copies the Arc or not. do not want to copy file readers
-
-///////////////////////// Mechanism for reading sorted cells from multiple sources, merging 
-struct SortedGascetReaderMerger {
-//    pq: BinaryHeap<Arc<SortedGascetReader>> 
-    pq: PriorityQueue<Arc<SortedGascetReader>,Vec<u8>>,
-//    list_readers: Vec<SortedGascetReader>
-}
-impl SortedGascetReaderMerger {
-
-
-    pub fn new(readers: &mut Vec<Arc<SortedGascetReader>>) -> SortedGascetReaderMerger {
-
-        SortedGascetReaderMerger {
-            pq: PriorityQueue::new()
-            //BinaryHeap::new()
+        for pair in indices.windows(2) {
+            output.push(&input[pair[0]..pair[1]]);
         }
-    }
+        output.push(&input[*indices.last().unwrap()..]);
 
-    pub fn add_reader(&mut self, r: &mut Arc<SortedGascetReader>) {
-            r.try_read_cell();
-            if let Some(current_cell) = r.get_current_cell_no_move()  {
- //               self.pq.push(&mut r, r.current_cell);
-                self.pq.push(Arc::clone(r), current_cell);
-            }
-    }
-
-    pub fn get_cell_and_reads(&mut self) -> Option<(Vec<u8>, Vec<Arc<Vec<GascetReadPair>>>)> {
-
-        if let Some((mut first_reader,_priority)) = self.pq.pop() {
-            //Figure out which cell we are concatenating now
-            let cell_id = first_reader.get_current_cell_no_move().expect("could not find a cell but is expected");
-
-            //Set up lists of lists, starting with the first reader
-            let mut list_of_lists: Vec<Arc<Vec<GascetReadPair>>> = Vec::new();
-            list_of_lists.push(first_reader.consume());
-
-            //Re-add this reader to get more cells later
-            self.add_reader(&mut Arc::clone(&first_reader));
-
-            while let Some((other_reader,_priority)) = self.pq.peek() {
-                let mut other_reader= Arc::clone(&other_reader);
-                if other_reader.get_current_cell_no_move().expect("failed to get other cell id")==cell_id {
-
-                    //Remove this reader and 
-                    _ = self.pq.pop();
-                    list_of_lists.push(other_reader.consume());
-
-                    //Re-add this reader to get more cells later
-                    self.add_reader(&mut other_reader);
-                } else {
-                    //we are done adding lists of reads
-                    break;
-                }
-            }
-
-            Some((cell_id, list_of_lists))
-        } else {
-            None
-        }
-    }
-
+        output
 }
-
-
-
-*/
-
-
-
-
-
-
-
-
-/// use little endian instead?
-
-fn read_u8(reader: &mut impl Read) -> u8 {
-    let mut buffer = [0u8; 1];
-    let _ = reader.read_exact(&mut buffer).expect("Failed to read u16");
-    buffer[0]
-}
-
-fn read_u16(reader: &mut impl Read) -> u16 {
-    let mut buffer = [0u8; 2];
-    let _ = reader.read_exact(&mut buffer).expect("Failed to read u16");
-    u16::from_be_bytes(buffer)
-}
-
-fn read_u32(reader: &mut impl Read) -> u32 {
-    let mut buffer = [0u8; 4];
-    let _ = reader.read_exact(&mut buffer).expect("Failed to read u32");
-    u32::from_be_bytes(buffer)
-}
-
-fn read_u64(reader: &mut impl Read) -> u64 {
-    let mut buffer = [0u8; 8];
-    let _ = reader.read_exact(&mut buffer).expect("Failed to read u64");
-    u64::from_be_bytes(buffer)
-}
-
-
-fn read_string(reader: &mut impl Read) -> Vec<u8> {
-    let string_len = read_u32(reader);
-    let string_len = string_len.to_usize().expect("Size too large");
-    let mut content: Vec<u8> = Vec::with_capacity(string_len);
-    let _ = reader.read_exact(&mut content.as_mut_slice()).expect("Failed to read string");
-    content
-}
-
-
-/*****
- * 
- * all numbers are big endian. bool is u8
- * 
- * === One file
- * 
- * 6bytes: "BASCET"
- * u8: major version int
- * u8: minor version int
- * bool: is sorted
- * -- after this, data is in bgzf format --
- * [reads for one cell]
- * string: ""             /// note that "" is not a valid cell name
- * <eof>
- * 
- * 
- * === Reads for one cell
- * 
- * string: Name of cell
- * u64: length of block in bytes, not including name of cell
- * u32: number of reads
- * [reads]
- * 
- * 
- * === One read is like this:
- * 
- * string: umi
- * string: r1
- * string: r2
- * string: qual1
- * string: qual2
- * 
- * 
- * ==== one string
- * u32: length of string in bytes  /// overkill. but if we ever get a long read, it can in principle be > 65kb. thus u16 is a bit small. not worth the saving of u16
- * [u8] the string
- * 
- * 
- */
-

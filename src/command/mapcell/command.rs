@@ -10,10 +10,15 @@ use super::core::core::MapCell;
 
 #[derive(Args)]
 pub struct Command {
+    // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: Option<PathBuf>,
+
+    // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = constants::MAPCELL_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
+
+    // Output bascet
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
     pub path_out: Option<PathBuf>,
 
@@ -22,16 +27,21 @@ pub struct Command {
     #[arg(short = 's', value_parser = clap::value_parser!(PathBuf))]
     pub path_script: Option<PathBuf>,
 
+    //Show a list of preset scripts available
     #[arg(long = "show-presets")]
     pub show_presets: bool,
 
+    //Keep files extracted for the script. For debugging purposes
     #[arg(long = "keep-files")]
     pub keep_files: bool,
 
+    //Thread settings
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_READ)]
     threads_read: usize,
+
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_WRITE)]
     threads_write: usize,
+    
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_WORK)]
     threads_work: usize,
 }
