@@ -3,11 +3,6 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
 use std::fs::File;
-//use std::io::BufReader;
-//use std::io::BufWriter;
-//use std::collections::HashMap;
-//use zip::read::ZipArchive;
-//use log::debug;
 //use anyhow::bail;
 
 use super::bascet::ShardReader;
@@ -15,15 +10,12 @@ use super::bascet::ShardReader;
 use rust_htslib::tbx::Reader as TabixReader;
 use rust_htslib::tbx::Read;
 //use noodles_bgzf::Writer as FastqWriter;   // why both bgzf and fastq??   ... this is for fastq.gz!!!
-//use noodles_fastq::record::Definition;
-//use noodles_fastq;
 
 use noodles::fastq::Writer as FastqWriter;
 use noodles::fastq::record::Definition;
-//use noodles::fastq as noodles_fastq;
 use noodles::fastq::Record as FastqRecord;
 
-type CellID = String;
+pub type CellID = String;
 
 
 
@@ -160,13 +152,11 @@ impl ShardReader for GascetShardReader {
 
 pub fn write_records_pair_to_gascet<W>(
     writer: &mut BufWriter<impl Write>, 
-    cell_id: &Vec<String>,    //Should put together earlier todo
+    cell_id: &CellID,    
     read: &ReadPair,
 ) where W:Write {
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi
-
-    let cell_id = cell_id.join("_");  //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
 
     let tab="\t".as_bytes();
     let one="1".as_bytes();

@@ -17,6 +17,7 @@ use seq_io::fastq::Record as FastqRecord;
 
 use super::{io, barcode, params};
 
+use crate::fileformat::gascet::CellID;
 use crate::fileformat::gascet::ReadPair;
 use crate::fileformat::gascet::write_records_pair_to_gascet;
 
@@ -27,7 +28,7 @@ struct RecordPair {
     forward_record: OwnedRecord
 }
 
-type ListReadWithBarcode = Arc<Vec<(ReadPair,Vec<String>)>>;
+type ListReadWithBarcode = Arc<Vec<(ReadPair,CellID)>>;
 type ListRecordPair = Arc<Vec<RecordPair>>;
 
 
@@ -66,7 +67,7 @@ fn loop_writer<W>(  //<W>
 
 
 
-//////////////// Writer to BED-like format
+//////////////// Writer to gascet format
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -105,7 +106,7 @@ fn create_writer_thread(
             debug!("Waiting for sorter process to exit");
             let _result = process.wait().unwrap();
 
-            //todo how to terminate pipe??
+            //todo how to terminate pipe?? seems to happen now
 
         } else {
 
@@ -147,7 +148,7 @@ impl GetRaw {
         // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
         let mut barcodes: barcode::CombinatorialBarcoding = barcode::read_barcodes(&params_io.barcode_file);
         //let pools = barcode::get_pools(&barcodes); // get unique pool names
-        let n_pools=barcodes.num_pools();
+        //let n_pools=barcodes.num_pools();
 
         // Open fastq files
         let mut forward_file = io::open_fastq(&params_io.path_forward);
@@ -194,17 +195,34 @@ impl GetRaw {
             thread_pool_work.execute(move || {
 
                 while let Ok(Some(list_bam_cell)) = rx.recv() {
-                    let mut pairs_complete: Vec<(ReadPair, Vec<String>)> = Vec::with_capacity(list_bam_cell.len());
-                    let mut pairs_incomplete: Vec<(ReadPair, Vec<String>)> = Vec::with_capacity(list_bam_cell.len());
+                    let mut pairs_complete: Vec<(ReadPair, CellID)> = Vec::with_capacity(list_bam_cell.len());
+                    let mut pairs_incomplete: Vec<(ReadPair, CellID)> = Vec::with_capacity(list_bam_cell.len());
 
                     for bam_cell in list_bam_cell.iter() {
+
+
+                        let (is_ok, cellid, readpair) = barcodes.detect_barcode_and_trim(
+                            &bam_cell.reverse_record.seq(),
+                            &bam_cell.reverse_record.qual(),
+                            &bam_cell.forward_record.seq(),
+                            &bam_cell.forward_record.qual()
+                        );
+
+                        if is_ok {
+                            pairs_complete.push((readpair, cellid));
+                        } else {
+                            pairs_incomplete.push((readpair, cellid));
+                        }
+
+                            
+                        /* 
                         let hits_names = barcodes.detect_barcode(&bam_cell.reverse_record.seq());
 
                         let umi:Vec<u8>=Vec::new();
                         let readpair = ReadPair { 
                             r1: bam_cell.forward_record.seq().to_vec(), 
-                            r2: bam_cell.forward_record.seq().to_vec(), 
-                            q1: bam_cell.reverse_record.qual().to_vec(), 
+                            r2: bam_cell.reverse_record.seq().to_vec(), 
+                            q1: bam_cell.forward_record.qual().to_vec(), 
                             q2: bam_cell.reverse_record.qual().to_vec(), 
                             umi: umi
                         };
@@ -214,6 +232,8 @@ impl GetRaw {
                         } else {
                             pairs_incomplete.push((readpair, hits_names.clone()));
                         }
+                        */
+
                     }
 
                 let _ = tx_writer_complete.send(Some(Arc::new(pairs_complete)));

@@ -8,8 +8,7 @@ use log::debug;
 use anyhow::bail;
 
 
-
-type CellID = String;
+use crate::fileformat::gascet::CellID;
 
 
 pub trait ShardReader {

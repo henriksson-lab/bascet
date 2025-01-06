@@ -1,9 +1,9 @@
 use anyhow::bail;
-
 //use log::info;
 use log::debug;
 //use log::warn;
 //use log::trace;
+use std::path::PathBuf;
 
 
 use std::collections::HashMap;
@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use bio::alignment::Alignment;
 use bio::pattern_matching::myers::Myers;
 
-use std::path::PathBuf;
-
 use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 
 use itertools::Itertools;
 
+use crate::fileformat::gascet::CellID;
+use crate::fileformat::gascet::ReadPair;
 
 
 #[derive(Clone, Debug)]
@@ -84,7 +84,8 @@ pub struct CombinatorialBarcoding {
 
     pub names: Vec<String>,
     pub map_name_to_index: HashMap<String,usize>,
-    pub pools: Vec<BarcodePool>
+    pub pools: Vec<BarcodePool>,
+    pub trim_bcread_len: usize
 
 }
 impl CombinatorialBarcoding {
@@ -94,7 +95,8 @@ impl CombinatorialBarcoding {
         CombinatorialBarcoding{
             names: vec![],
             map_name_to_index: HashMap::new(),
-            pools: vec![]
+            pools: vec![],
+            trim_bcread_len: 0
         }
     }
 
@@ -158,16 +160,30 @@ impl CombinatorialBarcoding {
         for _ in 0..n_reads {
             let record = fastq_file.next().unwrap();
             let record = record.expect("Error reading record for checking barcode position; input file too short");
-
             self.scan_startpos(&record.seq());
         }
 
+        //Pick the locations of all barcodes
         _ = self.pick_startpos();
+
+        //Figure out how much we need to trim. Set it based on the last BC position.
+        //This assumes no adapters after the last BC (could provide!)
+        let mut trim_bcread_len: usize = 0;
+        for p in &mut self.pools {
+            let possible_end = p.quick_testpos+p.bc_length;
+            if possible_end > trim_bcread_len {
+                trim_bcread_len = possible_end;
+            }
+        }         
+        self.trim_bcread_len = trim_bcread_len;
+        println!("Detected amount to trim from barcode read: {}", trim_bcread_len);
 
         Ok(())
     }
 
 
+
+    ////////// Detect barcode only
     pub fn detect_barcode(
         &mut self,
         seq: &[u8]
@@ -184,9 +200,8 @@ impl CombinatorialBarcoding {
                 //If we cannot decode a barcode, abort early. This saves a good % of time
                 return full_bc;
             }
-
+            // early return if mismatch too high. This saves a good % of time
             if total_score > 1 {
-                // early return if mismatch too high. This saves a good % of time
                 return full_bc;
             }
 
@@ -194,8 +209,65 @@ impl CombinatorialBarcoding {
         full_bc
     }
 
+    ////////// Detect barcode, and trim if ok
+    pub fn detect_barcode_and_trim(
+        &mut self,
+        bc_seq: &[u8],
+        bc_qual: &[u8],
+        other_seq: &[u8],
+        other_qual: &[u8]
+    ) -> (bool, CellID, ReadPair) {
+
+        let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
+        let mut total_score = 0;
+        for p in &mut self.pools {
+
+            let one_bc = p.detect_barcode(bc_seq);
+            if let Some((this_bc, score)) = one_bc {
+                full_bc.push(this_bc);
+                total_score = total_score + score;
+            } else {
+                //If we cannot decode a barcode, abort early. This saves a good % of time
+                //No trimming performed
+                return (
+                    false,
+                    bcvec_to_string(&full_bc), 
+                    ReadPair{r1: bc_seq.to_vec(), r2: other_seq.to_vec(), q1: bc_qual.to_vec(), q2: other_qual.to_vec(), umi: vec![].to_vec()}
+                );
+            }
+
+            if total_score > 1 {
+                // early return if mismatch too high. This saves a good % of time
+                return (
+                    false,
+                    bcvec_to_string(&full_bc), 
+                    ReadPair{r1: bc_seq.to_vec(), r2: other_seq.to_vec(), q1: bc_qual.to_vec(), q2: other_qual.to_vec(), umi: vec![].to_vec()}
+                );
+            }
+        }
+
+        //We got a full barcode. Trim barcode read next
+        //TODO: need to also trim other read, if it overlaps the BC read and go into the adapters. 
+        //could simply scan for fragment after BCs in other read? could use the fancy data structure over last BC if we wanted
+        return (
+            true,
+            bcvec_to_string(&full_bc), 
+            ReadPair{
+                r1: bc_seq[self.trim_bcread_len..].to_vec(), 
+                r2: other_seq.to_vec(), 
+                q1: bc_qual[self.trim_bcread_len..].to_vec(), 
+                q2: other_qual.to_vec(), 
+                umi: vec![].to_vec()
+            }
+        );
+    }
+
+
 
 }
+
+
+
 
 
 
@@ -396,3 +468,13 @@ pub fn read_barcodes(
     cb
 }
 
+
+
+
+
+
+
+fn bcvec_to_string(cell_id: &Vec<String>) -> CellID {
+    //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
+    cell_id.join("_")
+}
