@@ -5,22 +5,64 @@ use std::io::BufWriter;
 use std::collections::HashMap;
 use zip::read::ZipArchive;
 use log::debug;
-//use anyhow::bail;
+use anyhow::bail;
+
+
+
+type CellID = String;
+
+
+pub trait ShardReader {
+
+    fn extract_to_outdir (
+        &mut self, 
+        cell_id: &CellID, 
+        needed_files: &Vec<String>,
+        fail_if_missing: bool,
+        out_directory: &PathBuf
+    ) -> anyhow::Result<bool>;
+
+    fn new(fname: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
+
+    fn get_files_for_cell(&mut self, cell_id: &CellID) -> anyhow::Result<Vec<String>>;
+
+    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>>;
+}
+
+
+
 
 
 //#[derive(Debug)]  //// not sure about all of these
 pub struct BascetShardReader {
 
-    pub files_for_cell: HashMap::<String,Vec<String>>,
+    pub files_for_cell: HashMap::<CellID,Vec<String>>,
     zip_shard: ZipArchive<BufReader<File>>
 
 }
 
-impl BascetShardReader {
+
+impl ShardReader for BascetShardReader {
+
+
+    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
+        let ret = self.files_for_cell.keys().map(|s| s.to_string()).collect::<Vec<String>>();
+        Ok(ret)
+    }
 
 
 
-    pub fn new(fname: &PathBuf) -> anyhow::Result<BascetShardReader> {
+    fn get_files_for_cell(&mut self, cell_id: &CellID) -> anyhow::Result<Vec<String>>{
+        if let Some(flist) = self.files_for_cell.get(cell_id) {
+            Ok(flist.clone())
+        } else {
+            bail!("Cell {:?} not in bascet", &cell_id)
+        }
+    }
+
+
+
+    fn new(fname: &PathBuf) -> anyhow::Result<BascetShardReader> {
 
         let file = File::open(fname).expect("Failed to open bascet shard");
         let bufreader_shard = BufReader::new(file);
@@ -56,7 +98,9 @@ impl BascetShardReader {
 
 
 
-    pub fn extract_to_outdir (
+
+
+    fn extract_to_outdir (
         &mut self, 
         cell_id: &String, 
         needed_files: &Vec<String>,

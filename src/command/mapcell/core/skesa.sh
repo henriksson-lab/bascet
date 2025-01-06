@@ -1,6 +1,6 @@
 #!/bin/bash
 
-## Trivial wrapper that just counts the number of lines in the input fastq
+## Run SKESA assembly
 
 
 #Default settings
@@ -15,7 +15,7 @@ for i in "$@"; do
   exit 0
   ;;
   --expect-files)
-  echo "*" # Tell which files should extracted from the input file. Can enable * to give them all. or "foo.txt,bar.txt"
+  echo "r1.fq,r2.fq" # Tell which files should extracted from the input file. Can enable * to give them all. or "foo.txt,bar.txt"    ### TODO allow separation by whitespace
   exit 0
   ;;
   --missing-file-mode)
@@ -67,15 +67,21 @@ echo "output directory is unset";
 exit 1;
 fi
 
-echo "Running QUAST"
+echo "Running SKESA"
 
 echo "INPUT_DIR   = ${INPUT_DIR}"
 echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-quast.py -o ./ -t ${USE_THREADS} ${INPUT_DIR}/contig.fa
-#head ${INPUT_DIR}/contig.fa > firstpart.txt
+skesa --reads ${INPUT_DIR}/r1.fq,${INPUT_DIR}/r2.fq --cores ${USE_THREADS}  > contig.fa
+cp ${INPUT_DIR}/r1.fq r1.fq  #testing
+cp ${INPUT_DIR}/r2.fq r2.fq  #testing
+
+#TODO what if input dir got whitespace? does it happen?
+
+
+#--memory 48
 
 ### The last line must be "MAPCELL-OK".
 echo "MAPCELL-OK"

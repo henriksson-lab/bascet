@@ -16,10 +16,12 @@ use log::debug;
 use zip::ZipWriter;
 
 use crate::utils;
+use crate::fileformat::bascet::ShardReader;
 use crate::fileformat::bascet::BascetShardReader;
 use crate::fileformat::mapcell_script;
 use crate::fileformat::mapcell_script::MapCellScript;
 use crate::fileformat::mapcell_script::MissingFileMode;
+use crate::fileformat::gascet::GascetShardReader;
 
 use super::params;
 
@@ -45,6 +47,9 @@ impl MapCell {
         } else {
             let _ = fs::create_dir(&params_io.path_tmp);  
         }
+
+
+
         //Check if using a new script or a preset. user scripts start with _
         if params_io.path_script.to_str().expect("argument conversion error").starts_with("_") {
             println!("using preset {:?}", params_io.path_script);
@@ -85,10 +90,22 @@ impl MapCell {
         println!("Script expects files: {:?}", mapcell_script.expect_files);
         println!("Script file missing mode: {}", mapcell_script.missing_file_mode);
 
-        //Limit cells in queue to how many we can process at the final stage
-        let shard = BascetShardReader::new(&params_io.path_in)?;
-        let list_cells = shard.files_for_cell.keys().collect::<Vec<&String>>();
+        //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
+        println!("Input file: {:?}",params_io.path_in);
+        let input_filename_string = params_io.path_in.file_name().expect("cannot covert OS string").to_string_lossy();
+        let mut shard_reader: Box::<dyn ShardReader> = if input_filename_string.ends_with("gascet.gz") {
+            Box::new(GascetShardReader::new(&params_io.path_in)?)
+        } else if params_io.path_in.ends_with("zip") {
+            Box::new(BascetShardReader::new(&params_io.path_in)?) 
+        } else {
+            panic!("Cannot recognize input file format");
+        };
+        let list_cells = shard_reader.get_cell_ids().expect("Could not read list of cells"); 
+        //files_for_cell(cell_id)files_for_cell.keys().collect::<Vec<&String>>();
         let queue_limit = params_io.threads_write*2;
+
+
+
 
         //Queue of cells to be extracted
         let (tx_cell_to_read, rx_cell_to_read) = crossbeam::channel::bounded::<Option<String>>(queue_limit);
@@ -99,20 +116,39 @@ impl MapCell {
         let (tx_loaded_cell, rx_loaded_cell) = (Arc::new(tx_loaded_cell), Arc::new(rx_loaded_cell));
 
 
-        //Create all readers
+        //Create all readers. Detect what we need from the file extension
         // note from julian: readers alter the file? at least make separate readers. start with just 1
-        let reader_thread_group = ThreadGroup::new(params_io.threads_read);//: &Arc<ThreadGroup>
+        let reader_thread_group = ThreadGroup::new(params_io.threads_read);
 
-        for _tidx in 0..params_io.threads_read {
-            _ = create_reader(
-                &params_io,
-                &thread_pool,
-                &mapcell_script,
-                &rx_cell_to_read,
-                &tx_loaded_cell,
-                &reader_thread_group
-            );
+        if input_filename_string.ends_with("gascet.gz") {
+            print!("Detected input as gascet");
+            for _tidx in 0..params_io.threads_read {
+                _ = create_shard_reader::<GascetShardReader>(
+                    &params_io,
+                    &thread_pool,
+                    &mapcell_script,
+                    &rx_cell_to_read,
+                    &tx_loaded_cell,
+                    &reader_thread_group
+                );
+            }
+        } else if input_filename_string.ends_with("zip") {
+            print!("Detected input as bascet");
+            for _tidx in 0..params_io.threads_read {
+                _ = create_shard_reader::<BascetShardReader>(
+                    &params_io,
+                    &thread_pool,
+                    &mapcell_script,
+                    &rx_cell_to_read,
+                    &tx_loaded_cell,
+                    &reader_thread_group
+                );
+            }
+        } else {
+            bail!("Cannot tell the type of the input format");
         }
+
+
 
         //Create all writers
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
@@ -163,8 +199,67 @@ impl MapCell {
 
 
 
+//////////////////////////////////// Reader for shard files (bascet and gascet)
+fn create_shard_reader<R>(
+    params_io: &Arc<params::IO>,
+    thread_pool: &threadpool::ThreadPool,
+    mapcell_script: &Arc<MapCellScript>,
+    rx: &Arc<Receiver<Option<String>>>,
+    tx: &Arc<Sender<Option<String>>>,
+    thread_group: &Arc<ThreadGroup>
+) -> anyhow::Result<()> where R:ShardReader {
 
-fn create_reader(
+    let rx = Arc::clone(rx);
+    let tx = Arc::clone(tx);
+
+    let params_io = Arc::clone(&params_io);
+    let mapcell_script = Arc::clone(mapcell_script);
+
+    let thread_group = Arc::clone(thread_group);
+
+    thread_pool.execute(move || {
+        debug!("Worker started");
+
+        let mut shard = R::new(&params_io.path_in).expect("Failed to create bascet reader");
+
+        while let Ok(Some(cell_id)) = rx.recv() {
+            info!("request to read {}",cell_id);
+
+            let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
+            let _ = fs::create_dir(&path_cell_dir);  
+
+
+            let fail_if_missing = mapcell_script.missing_file_mode != MissingFileMode::Ignore;
+            let success = shard.extract_to_outdir(
+                &cell_id, 
+                &mapcell_script.expect_files,
+                fail_if_missing,
+                &path_cell_dir
+            ).expect("error during extraction");
+
+            if success {
+                //Inform writer that the cell is ready for processing
+                _ = tx.send(Some(cell_id));
+            } else {
+                if mapcell_script.missing_file_mode==MissingFileMode::Fail {
+                    panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
+                } 
+                if mapcell_script.missing_file_mode==MissingFileMode::Ignore {
+                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell(&cell_id));
+                } 
+            }
+        }
+        thread_group.is_done();
+    });
+    Ok(())
+}
+
+
+/* 
+
+
+//////////////////////////////////// Reader for GASCET files (bed files)
+fn create_gascet_reader(
     params_io: &Arc<params::IO>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<MapCellScript>,
@@ -184,7 +279,7 @@ fn create_reader(
     thread_pool.execute(move || {
         debug!("Worker started");
 
-        let mut shard = BascetShardReader::new(&params_io.path_in).expect("Failed to create bascet reader");
+        let mut shard = GascetShardReader::new(&params_io.path_in).expect("Failed to create gascet reader");
 
         while let Ok(Some(cell_id)) = rx.recv() {
             info!("request to read {}",cell_id);
@@ -198,9 +293,9 @@ fn create_reader(
                 &cell_id, 
                 &mapcell_script.expect_files,
                 fail_if_missing,
-                &path_cell_dir//&PathBuf::from("/Users/mahogny/Desktop/rust/hack_robert/testdata/out")
+                &path_cell_dir
             ).expect("error during extraction");
-
+ 
             if success {
                 //Inform writer that the cell is ready for processing
                 _ = tx.send(Some(cell_id));
@@ -218,11 +313,12 @@ fn create_reader(
     Ok(())
 }
 
+*/
 
 
 
 
-
+///////////////////////////// Worker thread that integrates the writing
 fn create_writer(
     params_io: &Arc<params::IO>,
     zip_file: &PathBuf,
@@ -355,12 +451,14 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
 
 const PRESET_SCRIPT_TEST: &[u8] = include_bytes!("test_script.sh");
 const PRESET_SCRIPT_QUAST: &[u8] = include_bytes!("quast.sh");
+const PRESET_SCRIPT_SKESA: &[u8] = include_bytes!("skesa.sh");
 
 
 pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
     let mut map: HashMap<String, Vec<u8>> = HashMap::new();
     map.insert("testing".to_string(), PRESET_SCRIPT_TEST.to_vec());
     map.insert("quast".to_string(), PRESET_SCRIPT_QUAST.to_vec());
+    map.insert("skesa".to_string(), PRESET_SCRIPT_SKESA.to_vec());
     map
 }
 
