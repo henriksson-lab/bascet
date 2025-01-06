@@ -40,6 +40,15 @@ pub struct Command {
     #[arg(long = "keep-files")]
     pub keep_files: bool,
 
+
+
+    //TODO: allow a pre-filter script
+    //TODO: allow a post-filter script
+
+    //TODO: call script to check if needed commands are present
+
+
+
     //Thread settings
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_READ)]
     threads_read: usize,

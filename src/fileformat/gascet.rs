@@ -197,12 +197,16 @@ pub fn parse_gascet_readpair(
     let tab = b'\t';
     let parts = split_delimited(line, &tab);
 
-//    let mut split: Vec< = line.split(b'\t').collect();
-//    let collection = splitter.collect::<Vec<&[u8]>>();
-
-//    let collection = splitter.collect();
-
-
+/* 
+    println!("");
+    println!("");
+    println!("");
+    println!("'{:?}'", parts[0].to_vec());
+    println!("'{:?}'", parts[1].to_vec());
+    println!("'{:?}'", parts[2].to_vec());
+    println!("'{:?}'", parts[3].to_vec());
+//    '[9, 84, 84, 71, 65, 65, 84, 65, 84, 71, 65, 84, 71, 84, 65, 71, 65, 84, 65, 65, 84, 65, 65, 65, 65, 65, 84, 65, 67, 65, 71, 84, 71, 84, 65, 84, 65, 84, 67, 71, 65, 84, 71, 67, 71, 84, 84, 71, 65, 65, 67, 67, 71, 84, 67, 71, 84, 65, 84, 84, 71, 
+*/
     ReadPair {
         r1: parts[3].to_vec(),
         r2: parts[4].to_vec(),
@@ -217,16 +221,17 @@ pub fn parse_gascet_readpair(
 
 fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
     where T: PartialEq<T> {
-        let mut indices: Vec<usize> = input.iter().enumerate().filter(|(_, value)| *value == delim).map(|(i, _)| i).collect();
+        let indices: Vec<usize> = input.iter().enumerate().filter(|(_, value)| *value == delim).map(|(i, _)| i).collect();
+        /* 
         if indices.get(0) != Some(&0) {
             indices.insert(0, 0);
-        }
+        }*/
         let mut output = Vec::new();
-
+        output.push(&input[0..(*indices.first().unwrap())]);
         for pair in indices.windows(2) {
-            output.push(&input[pair[0]..pair[1]]);
+            output.push(&input[(pair[0]+1)..pair[1]]);
         }
-        output.push(&input[*indices.last().unwrap()..]);
+        output.push(&input[(*indices.last().unwrap()+1)..]);
 
         output
 }
