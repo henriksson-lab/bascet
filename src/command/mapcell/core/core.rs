@@ -22,6 +22,10 @@ use crate::fileformat::mapcell_script;
 use crate::fileformat::mapcell_script::MapCellScript;
 use crate::fileformat::mapcell_script::MissingFileMode;
 use crate::fileformat::gascet::GascetShardReader;
+use crate::fileformat::gascet::detect_shard_format;
+use crate::fileformat::gascet::get_suitable_shard_reader;
+use crate::fileformat::gascet::DetectedFileformat;
+
 
 use super::params;
 
@@ -92,14 +96,8 @@ impl MapCell {
 
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
         println!("Input file: {:?}",params_io.path_in);
-        let input_filename_string = params_io.path_in.file_name().expect("cannot covert OS string").to_string_lossy();
-        let mut shard_reader: Box::<dyn ShardReader> = if input_filename_string.ends_with("gascet.gz") {
-            Box::new(GascetShardReader::new(&params_io.path_in)?)
-        } else if params_io.path_in.ends_with("zip") {
-            Box::new(BascetShardReader::new(&params_io.path_in)?) 
-        } else {
-            panic!("Cannot recognize input file format");
-        };
+        let input_shard_type = detect_shard_format(&params_io.path_in);
+        let mut shard_reader = get_suitable_shard_reader(&params_io.path_in, &input_shard_type);
         let list_cells = shard_reader.get_cell_ids().expect("Could not read list of cells"); 
         //files_for_cell(cell_id)files_for_cell.keys().collect::<Vec<&String>>();
         let queue_limit = params_io.threads_write*2;
@@ -120,7 +118,7 @@ impl MapCell {
         // note from julian: readers alter the file? at least make separate readers. start with just 1
         let reader_thread_group = ThreadGroup::new(params_io.threads_read);
 
-        if input_filename_string.ends_with("gascet.gz") {
+        if input_shard_type == DetectedFileformat::Gascet {
             println!("Detected input as gascet");
             for _tidx in 0..params_io.threads_read {
                 _ = create_shard_reader::<GascetShardReader>(
@@ -132,7 +130,7 @@ impl MapCell {
                     &reader_thread_group
                 );
             }
-        } else if input_filename_string.ends_with("zip") {
+        } else if input_shard_type == DetectedFileformat::Bascet {
             println!("Detected input as bascet");
             for _tidx in 0..params_io.threads_read {
                 _ = create_shard_reader::<BascetShardReader>(
