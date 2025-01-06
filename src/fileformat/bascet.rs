@@ -8,31 +8,13 @@ use log::debug;
 use anyhow::bail;
 
 
-use crate::fileformat::gascet::CellID;
-
-
-pub trait ShardReader {
-
-    fn extract_to_outdir (
-        &mut self, 
-        cell_id: &CellID, 
-        needed_files: &Vec<String>,
-        fail_if_missing: bool,
-        out_directory: &PathBuf
-    ) -> anyhow::Result<bool>;
-
-    fn new(fname: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
-
-    fn get_files_for_cell(&mut self, cell_id: &CellID) -> anyhow::Result<Vec<String>>;
-
-    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>>;
-}
+use super::shard::ShardReader;
+use super::shard::CellID;
 
 
 
 
 
-//#[derive(Debug)]  //// not sure about all of these
 pub struct BascetShardReader {
 
     pub files_for_cell: HashMap::<CellID,Vec<String>>,
@@ -78,7 +60,8 @@ impl ShardReader for BascetShardReader {
             if file_name=="" {
                 //This must be a directory
             } else {
-                //Create map for this cell if not yet present. TODO update to better call for insert
+                //Create map for this cell if not yet present. 
+                //TODO update to better call for insert
                 if !files_for_cell.contains_key(cell_name) {
                     files_for_cell.insert(String::from(cell_name), Vec::new());
                 }

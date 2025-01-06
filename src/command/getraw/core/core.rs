@@ -17,8 +17,8 @@ use seq_io::fastq::Record as FastqRecord;
 
 use super::{io, barcode, params};
 
-use crate::fileformat::gascet::CellID;
-use crate::fileformat::gascet::ReadPair;
+use crate::fileformat::shard::CellID;
+use crate::fileformat::shard::ReadPair;
 use crate::fileformat::gascet::write_records_pair_to_gascet;
 
 

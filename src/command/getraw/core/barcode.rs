@@ -4,8 +4,6 @@ use log::debug;
 //use log::warn;
 //use log::trace;
 use std::path::PathBuf;
-
-
 use std::collections::HashMap;
 
 use bio::alignment::Alignment;
@@ -15,8 +13,8 @@ use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 
 use itertools::Itertools;
 
-use crate::fileformat::gascet::CellID;
-use crate::fileformat::gascet::ReadPair;
+use crate::fileformat::shard::CellID;
+use crate::fileformat::shard::ReadPair;
 
 
 #[derive(Clone, Debug)]
