@@ -27,6 +27,11 @@ pub struct Command {
     #[arg(short = 's', value_parser = clap::value_parser!(PathBuf))]
     pub path_script: Option<PathBuf>,
 
+    //If we should show script output in terminal
+    #[arg(long = "show-script-output")]
+    pub show_script_output: bool,
+
+
     //Show a list of preset scripts available
     #[arg(long = "show-presets")]
     pub show_presets: bool,
@@ -68,6 +73,7 @@ impl Command {
             threads_write: self.threads_write,
             threads_work: self.threads_work,
 
+            show_script_output: self.show_script_output,
             keep_files: self.keep_files            
         };
 

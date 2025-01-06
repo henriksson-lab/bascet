@@ -121,7 +121,7 @@ impl MapCell {
         let reader_thread_group = ThreadGroup::new(params_io.threads_read);
 
         if input_filename_string.ends_with("gascet.gz") {
-            print!("Detected input as gascet");
+            println!("Detected input as gascet");
             for _tidx in 0..params_io.threads_read {
                 _ = create_shard_reader::<GascetShardReader>(
                     &params_io,
@@ -133,7 +133,7 @@ impl MapCell {
                 );
             }
         } else if input_filename_string.ends_with("zip") {
-            print!("Detected input as bascet");
+            println!("Detected input as bascet");
             for _tidx in 0..params_io.threads_read {
                 _ = create_shard_reader::<BascetShardReader>(
                     &params_io,
@@ -255,67 +255,6 @@ fn create_shard_reader<R>(
 }
 
 
-/* 
-
-
-//////////////////////////////////// Reader for GASCET files (bed files)
-fn create_gascet_reader(
-    params_io: &Arc<params::IO>,
-    thread_pool: &threadpool::ThreadPool,
-    mapcell_script: &Arc<MapCellScript>,
-    rx: &Arc<Receiver<Option<String>>>,
-    tx: &Arc<Sender<Option<String>>>,
-    thread_group: &Arc<ThreadGroup>
-) -> anyhow::Result<()> {
-
-    let rx = Arc::clone(rx);
-    let tx = Arc::clone(tx);
-
-    let params_io = Arc::clone(&params_io);
-    let mapcell_script = Arc::clone(mapcell_script);
-
-    let thread_group = Arc::clone(thread_group);
-
-    thread_pool.execute(move || {
-        debug!("Worker started");
-
-        let mut shard = GascetShardReader::new(&params_io.path_in).expect("Failed to create gascet reader");
-
-        while let Ok(Some(cell_id)) = rx.recv() {
-            info!("request to read {}",cell_id);
-
-            let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
-            let _ = fs::create_dir(&path_cell_dir);  
-
-
-            let fail_if_missing = mapcell_script.missing_file_mode != MissingFileMode::Ignore;
-            let success = shard.extract_to_outdir(
-                &cell_id, 
-                &mapcell_script.expect_files,
-                fail_if_missing,
-                &path_cell_dir
-            ).expect("error during extraction");
- 
-            if success {
-                //Inform writer that the cell is ready for processing
-                _ = tx.send(Some(cell_id));
-            } else {
-                if mapcell_script.missing_file_mode==MissingFileMode::Fail {
-                    panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
-                } 
-                if mapcell_script.missing_file_mode==MissingFileMode::Ignore {
-                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.files_for_cell.get(&cell_id));
-                } 
-            }
-        }
-        thread_group.is_done();
-    });
-    Ok(())
-}
-
-*/
-
-
 
 
 ///////////////////////////// Worker thread that integrates the writing
@@ -360,6 +299,11 @@ fn create_writer(
 
             if !success && mapcell_script.missing_file_mode==MissingFileMode::Fail {
                 panic!("Failed to process a cell, and this script is set to fail in such a scenario");
+            }
+
+            //Show script output in terminal if requested
+            if params_io.show_script_output {
+                println!("{}",&script_output);
             }
 
             //Store script output as log file
