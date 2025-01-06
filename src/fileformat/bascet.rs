@@ -76,11 +76,15 @@ impl ShardReader for BascetShardReader {
             let file_name = parts[1];
 
             if file_name=="" {
-                //This is a directory. It is seen before any files in it, so can use this moment to allocate the cell without needing to do it again
-                files_for_cell.insert(String::from(cell_name), Vec::new());
+                //This must be a directory
             } else {
-                let file_name = parts[1];
-                let dict = files_for_cell.get_mut(cell_name).expect("cell missing, but this should be impossible");
+                //Create map for this cell if not yet present. TODO update to better call for insert
+                if !files_for_cell.contains_key(cell_name) {
+                    files_for_cell.insert(String::from(cell_name), Vec::new());
+                }
+                let dict = files_for_cell.
+                    get_mut(cell_name).
+                   expect(&format!("cell missing, but this should be impossible. cell={:?}", cell_name));
                 dict.push(String::from(file_name));
             }
         }
