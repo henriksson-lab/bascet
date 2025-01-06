@@ -15,6 +15,9 @@ use niffler::get_reader;
 use seq_io::fasta::Reader as FastaReader;
 use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 
+use semver::{Version, VersionReq};
+
+use std::process::Command;
 
 
 pub struct BGZFFastqReader {
@@ -221,6 +224,43 @@ pub fn fastq_to_bgz(path: &PathBuf, output: &PathBuf) {
 
 
 
+pub fn check_dep_samtools() {
+    debug!("Checking for the correct samtools");
+    let req_samtools_version = VersionReq::parse(">=1.18").unwrap();
+    let samtools = Command::new("samtools").arg("version").output();
+    match samtools {
+        Ok(samtools) => {
+            let samtools_version = String::from_utf8_lossy(
+                samtools
+                    .stdout
+                    .split(|c| *c == b'\n')
+                    .next()
+                    .unwrap()
+                    .split(|c| *c == b' ')
+                    .last()
+                    .unwrap(),
+            );
+            let samtools_version = samtools_version.parse::<Version>().unwrap();
+            if req_samtools_version.matches(&samtools_version) {
+                debug!("Samtools version is recent enough");
+            } else {
+                error!("babbles extract requires Samtools >= 1.18");
+                process::exit(1)
+            }
+        }
+        Err(_error) => {
+            error!("Samtools is either not installed or not in PATH");
+            process::exit(1)
+        }
+    };
+}
+
+
+
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,3 +313,159 @@ mod tests {
         assert_eq!(hits[0].3, 4); // start
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+use rust_htslib;
+use rust_htslib::bam;
+use std::path::Path;
+//use std::path::PathBuf;
+use anyhow;
+use anyhow::bail;
+
+
+
+//detect file format from file extension
+pub fn detect_bam_file_format(fname: &Path) -> anyhow::Result<bam::Format> {
+
+    let fext = fname.extension().expect("Output file lacks file extension");
+    match fext.to_str().expect("Failing string conversion") {
+        "sam" => Ok(bam::Format::Sam),
+        "bam" => Ok(bam::Format::Bam),
+        "cram" => Ok(bam::Format::Cram),
+        _ => bail!("Cannot detect BAM/CRAM/SAM type from file extension")
+    }
+}
+
+/* 
+
+use rust_htslib::bam::record::Aux;
+
+pub fn create_new_bam(
+    fname: &Path
+// num_threads
+// compression level
+) -> anyhow::Result<bam::Writer> {
+
+    let file_format = detect_bam_file_format(fname)?;
+
+    let mut header = bam::Header::new();
+    header.push_comment("Debarcoded by Bascet".as_bytes());
+
+    let mut writer = bam::Writer::from_path(fname, &header, file_format).unwrap();
+
+    _ = writer.set_threads(5);  //  need we also give a pool? https://docs.rs/rust-htslib/latest/rust_htslib/bam/struct.Writer.html#method.set_threads
+    _ = writer.set_compression_level(bam::CompressionLevel::Fastest);  //or no compression, do later ; for user to specify
+
+    Ok(writer)
+}
+
+*/
+
+
+
+/* 
+
+
+pub fn write_records_pair_to_bamlike(
+    writer: &mut bam::Writer,
+    forward: &impl seq_io::fastq::Record,
+    reverse: &impl seq_io::fastq::Record,
+    barcodes_hits: &Vec<String>
+) {
+    // create the forward record
+    let fname = forward
+        .id()
+        .unwrap()
+        .as_bytes()
+        .split_last_chunk::<2>() // we want to remove the paired identifiers /1 and /2
+        .unwrap().0;
+
+    let cell_barcode = barcodes_hits.join("_");  //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
+
+    ////// Forward record
+    let mut record = bam::Record::new();
+    let qual = forward.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>();
+    record.set(
+        fname,
+        None,
+        forward.seq(),
+        qual.as_slice()  //forward.qual()
+    );
+    _ = record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
+    record.set_flags(0x4D); // 0x4D  read paired, read unmapped, mate unmapped, first in pair
+    //.set_flags(cram::record::Flags::from(0x07))   what is this?
+    writer.write(&record).expect("Failed to write forward read");
+    
+    ////// Reverse record
+    let mut record = bam::Record::new();
+    let qual = reverse.qual().iter().map(|&n| n - 33).collect::<Vec<u8>>();
+    record.set(
+        fname,
+        None,
+        reverse.seq(),
+        qual.as_slice() //reverse.qual()
+    );
+    _ = record.push_aux("CB".as_bytes(), Aux::String(cell_barcode.as_str()));
+    record.set_flags(0x8D); // 0x8D  read paired, read unmapped, mate unmapped, second in pair
+    //.set_flags(cram::record::Flags::from(0x03))  hm?
+    writer.write(&record).expect("Failed to write reverse read");
+
+}
+*/
+
+
+/* 
+
+/////////////////////////////////// Writer to tagged BAM file
+fn create_writer_thread(
+    outfile: &PathBuf,
+    thread_pool: &threadpool::ThreadPool
+) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
+
+    let outfile = outfile.clone();
+
+    //Limit how many chunks can be in pipe
+    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
+    let (tx, rx) = (Arc::new(tx), Arc::new(rx));
+
+    thread_pool.execute(move || {
+        // Open cram output file
+        println!("Creating output file: {}",outfile.display());
+        let mut writer = create_new_bam(&outfile).expect("failed to create bam-like file");
+
+        // Write reads
+        let mut n_written=0;
+        while let Ok(Some(list_pairs)) = rx.recv() {
+            for (bam_cell, hits_names) in list_pairs.iter() {
+                let reverse_record=&bam_cell.reverse_record;
+                let forward_record=&bam_cell.forward_record;
+
+                write_records_pair_to_bamlike(
+                    &mut writer,
+                    forward_record,
+                    reverse_record,
+                    &hits_names
+                );
+
+                if n_written%100000 == 0 {
+                    println!("written to {:?} -- {:?}",outfile, n_written);
+                }
+                n_written = n_written + 1;
+            }
+
+            
+        }
+    });
+    Ok(tx)
+}
+
+*/
