@@ -4,7 +4,7 @@
 General
 Annotated
 Single
-CEll read
+CEll
 Table
 */
 

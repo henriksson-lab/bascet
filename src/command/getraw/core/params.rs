@@ -8,14 +8,8 @@ pub struct IO {
 
     pub barcode_file: Option<std::path::PathBuf>,
     pub sort: bool,
+
+    pub threads_work: usize,   
+
 }
 
-pub struct Runtime {
-    //pub kmer_size: usize,
-}
-pub struct Threading {
-    pub threads_work: usize,   
-    //pub threads_read: usize,
-    //pub threads_write: usize,
-    //pub thread_pool: &'a threadpool::ThreadPool,
-}

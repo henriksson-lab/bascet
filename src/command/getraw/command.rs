@@ -8,28 +8,42 @@ use std::{
 };
 
 use super::{
-    constants::{
-        GETRAW_DEFAULT_PATH_TEMP,
-    },
+    constants::GETRAW_DEFAULT_PATH_TEMP,
     core::{core::GetRaw, params},
 };
 
 #[derive(Args)]
 pub struct Command {
+    // FASTQ for r1
     #[arg(long = "i1", value_parser)]
     pub path_forward: PathBuf,
+
+    // FASTQ for r2
     #[arg(long = "i2", value_parser)]
     pub path_reverse: PathBuf,
+
+    // Output filename for complete reads
     #[arg(short = 'o', long="out-complete", value_parser)]
     pub path_output_complete: PathBuf,
+
+    // Output filename for incomplete reads
     #[arg(long = "out-incomplete", value_parser)]
     pub path_output_incomplete: PathBuf, 
+
+    // Optional: file with barcodes to use
     #[arg(long = "bc", value_parser)]
     pub barcode_file: Option<PathBuf>, 
+
+
+    // Temporary file directory. TODO - use system temp directory as default? TEMP variable?
     #[arg(short = 't', value_parser, default_value = GETRAW_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
-    #[arg(short = 's', long = "sort")]
-    pub sort: bool,  
+
+    //Whether to sort or not
+    #[arg(long = "no-sort")]
+    pub no_sort: bool,  
+
+    // Optional: How many threads to use. Need better way of specifying? TODO
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_work: Option<usize>,
 }
@@ -39,11 +53,6 @@ impl Command {
 
         verify_input_fq_file(&self.path_forward)?;
         verify_input_fq_file(&self.path_reverse)?;
-         
-        //let kmer_size = self.verify_kmer_size()?;
-        //let (threads_read, threads_write, threads_work) = self.resolve_thread_config()?;
-
-        //let (threads_read, threads_write, threads_work) = self.resolve_thread_config()?;
 
         let threads_work = self.resolve_thread_config()?;
 
@@ -55,23 +64,14 @@ impl Command {
             path_output_complete: self.path_output_complete.clone(),            
             path_output_incomplete: self.path_output_incomplete.clone(),            
             barcode_file: self.barcode_file.clone(),            
-            sort: self.sort,            
-        };
-        let params_runtime = params::Runtime {
-            //kmer_size: kmer_size,
-        };
-
-
-        let params_threading = params::Threading {
+            sort: !self.no_sort,            
             threads_work: threads_work,
         };
 
         //fs::create_dir_all(&self.path_out).unwrap();
 
         let _ = GetRaw::getraw(
-            Arc::new(params_io),
-            Arc::new(params_runtime),
-            Arc::new(params_threading),
+            Arc::new(params_io)
         );
 
         Ok(())
@@ -81,7 +81,7 @@ impl Command {
 
 
 
-
+    ///////  todo keep this or not?
     fn resolve_thread_config(&self) -> Result<usize> {
         let available_threads = thread::available_parallelism()
             .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
@@ -99,7 +99,7 @@ impl Command {
 
 
 
-
+/////// Check that the specified file is a fastq file
 fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
     if let Ok(file) = File::open(&path_in) {
         if file.metadata()?.len() == 0 {
