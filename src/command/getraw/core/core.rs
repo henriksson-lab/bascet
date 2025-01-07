@@ -270,7 +270,6 @@ impl GetRaw {
         thread_pool_write.join();
 
 
-
         //Sort the complete output files and compress the output.
         let mut list_inputfiles:Vec<PathBuf> = Vec::new(); 
         list_inputfiles.push(path_temp_complete_sorted.clone());
@@ -292,7 +291,6 @@ impl GetRaw {
         //// Index the final file with tabix  
         println!("Indexing final output file");
         tirp::index_tirp(&path_temp_complete_sorted).expect("Failed to index file");
-
 
         //// Store histogram
         println!("Storing histogram for final output file");
