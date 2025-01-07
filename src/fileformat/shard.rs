@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 
-use super::bascet::BascetShardReader;
-use super::gascet::GascetShardReader;
+use super::zip::ZipBascetShardReader;
+use super::tirp::TirpBascetShardReader;
 
 
 ///////////////////////////////
@@ -83,8 +86,102 @@ pub fn get_suitable_shard_reader(
     format: &DetectedFileformat
 ) -> Box::<dyn ShardReader> {
     match format {
-        DetectedFileformat::Gascet => Box::new(GascetShardReader::new(&p).expect("Failed to create gascet reader")),
-        DetectedFileformat::Bascet => Box::new(BascetShardReader::new(&p).expect("Failed to create bascet reader")),
+        DetectedFileformat::Gascet => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create gascet reader")),
+        DetectedFileformat::Bascet => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create bascet reader")),
         _ => panic!("Cannot figure out how to open input file as a shard (could not detect type)")
     }
 }
+
+
+
+
+
+///////////////////////////////
+/////////////////////////////// Histogram for BC counting
+///////////////////////////////
+
+
+
+pub struct BarcodeHistogram {
+    histogram: HashMap<CellID, u64>
+}
+
+
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+struct HistogramCsvRow {
+    bc: String,
+    cnt: u64
+}
+
+
+
+
+impl BarcodeHistogram {
+
+    pub fn new() -> BarcodeHistogram {
+        BarcodeHistogram {
+            histogram: HashMap::new()
+        }
+    }
+
+    pub fn inc(&mut self, cellid: &CellID){        
+        let counter = self.histogram.entry(cellid.clone()).or_insert(0);
+        *counter += 1;
+    }
+
+    pub fn add_histogram(&mut self, other: &BarcodeHistogram) {
+        for (cellid,v) in other.histogram.iter() {
+            let counter = self.histogram.entry(cellid.clone()).or_insert(0);
+            *counter += v;    
+        }
+    }
+
+
+    pub fn from_file(fname: &PathBuf) -> anyhow::Result<BarcodeHistogram> {
+
+        //Open file
+        let file = File::open(fname)?;
+        let reader= BufReader::new(file);
+
+        //Read it as a CSV file
+        let mut hist = BarcodeHistogram::new();
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(b'\t')
+            .from_reader(reader);
+        for result in reader.deserialize() {
+            let record: HistogramCsvRow = result.unwrap();
+            hist.histogram.insert(record.bc, record.cnt);
+        }
+        Ok(hist)
+    }
+
+    pub fn write(
+        &self, 
+        fname: &PathBuf
+    ) -> anyhow::Result<()> {
+
+            //Open file
+            let file = File::open(fname)?;
+            let writer= BufWriter::new(file);
+        
+            let mut writer = csv::WriterBuilder::new()
+                .delimiter(b'\t')
+                .from_writer(writer);
+
+            for (bc, cnt) in self.histogram.iter() {
+                let _ = writer.serialize(HistogramCsvRow {
+                    bc: bc.to_string(),
+                    cnt: *cnt
+                });
+            }
+
+            let _ = writer.flush();
+        Ok(())
+    }
+
+
+}
+
+
+
