@@ -49,6 +49,12 @@ impl Shardify {
         info!("Running command: shardify");
 
 
+        if false {
+            crate::utils::check_tabix().expect("tabix not found");
+            println!("Required software is in place");
+        }
+
+
         //Open up readers for all input tabix files
         let mut list_input_files: Vec<TirpBascetShardReader> = Vec::new();
         for p in params.path_in.iter() {
@@ -106,11 +112,8 @@ impl Shardify {
             ).unwrap();
         }
 
-
-
-
         //Loop through all the cells that we want
-        println!("Starting to write output");
+        debug!("Starting to write output");
         let n_input = params.path_in.len();
         let n_output = params.path_out.len();
         for cellid in include_cells {
@@ -126,6 +129,7 @@ impl Shardify {
             let mut all_reads_list: Vec<ListReadPair> = Vec::new();
             for _ in 0..n_input {
                 let r =rx_write_seq.recv().expect("Failed to get data from input reader");
+                debug!("sending {}", r.len());
                 all_reads_list.push(r);
             }
 
@@ -166,7 +170,6 @@ impl Shardify {
 
 type ListReadPair = Arc<Vec<ReadPair>>;
 type MergedListReadWithBarcode = Arc<(CellID,Vec<ListReadPair>)>;
-//type OneListReadWithBarcode = Arc<(CellID,ListReadPair)>;
 
 
 //////////////// Writer to TIRP format, taking multiple blocks of reads for the same cell
@@ -178,6 +181,7 @@ fn create_writer_thread(
 
     let outfile = outfile.clone();
     let rx=Arc::clone(rx);
+    let outfile_keep = outfile.clone();
 
     thread_pool.execute(move || {
         // Open output file
@@ -218,6 +222,11 @@ fn create_writer_thread(
         debug!("Writing histogram");
         let hist_path = tirp::get_histogram_path_for_tirp(&outfile);
         hist.write(&hist_path).expect("Failed to write histogram");
+
+        //// Index the final file with tabix  
+        println!("Indexing final output file");
+        tirp::index_tirp(&outfile_keep).expect("Failed to index output file");
+        
 
     });
     Ok(())

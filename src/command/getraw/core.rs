@@ -311,7 +311,7 @@ impl GetRaw {
 
         //// Index the final file with tabix  
         println!("Indexing final output file");
-        tirp::index_tirp(&path_temp_complete_sorted).expect("Failed to index file");
+        tirp::index_tirp(&params_io.path_output_complete).expect("Failed to index file");
 
         //// Store histogram
         println!("Storing histogram for final output file");

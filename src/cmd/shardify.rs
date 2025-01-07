@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::fs::read_to_string;
 use anyhow::Result;
 use clap::Args;
 
@@ -32,15 +33,18 @@ pub struct ShardifyCMD {
     pub include_cells: Option<PathBuf>,
 
 }
-
-
-
 impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
+        //Read optional list of cells
+        let include_cells = if let Some(p) = &self.include_cells {
+            let name_of_cells = read_cell_list_file(&p);
+            Some(name_of_cells)
+        } else {
+            None
+        };
 
-        let include_cells: Option<Vec<String>> = Some(Vec::new());
-
+        //Set up parameters and run the function
         let params = ShardifyParams {
             path_in: self.path_in.clone(),
             path_tmp: self.path_tmp.clone(),
@@ -48,11 +52,22 @@ impl ShardifyCMD {
 
             include_cells: include_cells
         };
-
+        
         let _ = Shardify::run(Arc::new(params)).expect("shardify failed");
 
-        println!("Mapcell has finished!");
+        println!("Shardify has finished!");
         Ok(())
     }
 }
 
+
+
+
+
+fn read_cell_list_file(filename: &PathBuf) -> Vec<String> {
+    read_to_string(filename) 
+        .expect("Failed to read file with list of cells")  
+        .lines() 
+        .map(String::from)  
+        .collect()  
+}
