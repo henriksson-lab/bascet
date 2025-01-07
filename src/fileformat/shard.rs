@@ -88,9 +88,9 @@ pub fn get_suitable_shard_reader(
     format: &DetectedFileformat
 ) -> Box::<dyn ShardReader> {
     match format {
-        DetectedFileformat::TIRP => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create gascet reader")),
-        DetectedFileformat::ZIP => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create bascet reader")),
-        _ => panic!("Cannot figure out how to open input file as a shard (could not detect type)")
+        DetectedFileformat::TIRP => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),
+        DetectedFileformat::ZIP => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create ZIP reader")),
+        _ => panic!("Cannot figure out how to open input file (could not detect shard type)")
     }
 }
 

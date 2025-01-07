@@ -1,6 +1,6 @@
 #!/bin/bash
 
-## Run SKESA assembly
+## Run SPADES assembly
 
 
 #Default settings
@@ -74,15 +74,8 @@ echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-skesa --reads ${INPUT_DIR}/r1.fq,${INPUT_DIR}/r2.fq --cores ${USE_THREADS}  > contigs.fa
-#cp ${INPUT_DIR}/r1.fq r1.fq  #testing
-#cp ${INPUT_DIR}/r2.fq r2.fq  #testing
-
-#TODO what if input dir got whitespace? does it happen?
-
-
-#--memory 48
+spades.py -1 ${INPUT_DIR}/r1.fq -2 ${INPUT_DIR}/r2.fq --sc -o spades
+mv spades/contigs.fasta contigs.fasta
 
 ### The last line must be "MAPCELL-OK".
 echo "MAPCELL-OK"
-
