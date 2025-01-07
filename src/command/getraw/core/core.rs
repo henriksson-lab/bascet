@@ -192,7 +192,6 @@ impl GetRaw {
         let list_hist_complete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
         let list_hist_incomplete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
 
-        
 
         let thread_pool_write = threadpool::ThreadPool::new(2);
         let tx_writer_complete = create_writer_thread(
@@ -300,11 +299,11 @@ impl GetRaw {
         debug!("Collecting histograms");
         sum_and_store_histogram(
             &list_hist_complete,
-            &get_histogram_path_for_tirp(&path_temp_complete_sorted)
+            &get_histogram_path_for_tirp(&params_io.path_output_complete)
         );
         sum_and_store_histogram(
             &list_hist_incomplete,
-            &get_histogram_path_for_tirp(&path_temp_incomplete_sorted)
+            &get_histogram_path_for_tirp(&params_io.path_output_incomplete)
         );
 
         //// Remove temp files
@@ -332,7 +331,7 @@ pub fn sum_and_store_histogram(
         //let one_hist = rx.recv().expect("Could not get one histrogram");
         totalhist.add_histogram(&one_hist);
     }
-    totalhist.write(&path).expect("Failed to write histogram");
+    totalhist.write(&path).expect(format!("Failed to write histogram to {:?}", path).as_str());
 }
 
 
