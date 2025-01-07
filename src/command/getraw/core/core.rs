@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::Mutex;
 use crossbeam::channel::Sender;
 use crossbeam::channel::Receiver;
 use std::io::{BufWriter, Write, Read};
@@ -79,20 +80,18 @@ fn loop_writer<W>(
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
+    list_hist: &Arc<Mutex<Vec<shard::BarcodeHistogram>>>,
     sort: bool
-) -> anyhow::Result< (
-    Arc<Sender<Option<ListReadWithBarcode>>>, Arc<Receiver<Arc<shard::BarcodeHistogram>>> )> {
+) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
 
     let outfile = outfile.clone();
+
+    let list_hist = Arc::clone(list_hist);
 
     //Create input read queue
     //Limit how many chunks can be in pipe
     let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-
-    //Create output histogram queue
-    let (tx_hist, rx_hist) = crossbeam::channel::bounded::<Arc<shard::BarcodeHistogram>>(1000);   //TODO get unbounded
-    let (tx_hist, rx_hist) = (Arc::new(tx_hist), Arc::new(rx_hist));
 
     thread_pool.execute(move || {
         // Open output file
@@ -135,10 +134,14 @@ fn create_writer_thread(
         }
 
         //Keep histogram for final summary
-        _ = tx_hist.send(Arc::new(hist));
+        {
+            let mut list_hist = list_hist.lock().unwrap();//: Mutex<Vec<shard::BarcodeHistogram>>
+            list_hist.push(hist);
+        }
+//        _ = tx_hist.send(Arc::new(hist));
 
     });
-    Ok((tx, rx_hist))
+    Ok(tx)
 }
 
 
@@ -161,6 +164,13 @@ impl GetRaw {
         info!("Running command: getraw");
         println!("Will sort: {}", params_io.sort);
 
+        if false {
+            crate::utils::check_bgzip().expect("bgzip not found");
+            crate::utils::check_tabix().expect("tabix not found");
+            println!("Required software is in place");
+        }
+
+
         //Make temp dir
         _ = fs::create_dir(&params_io.path_tmp);
 
@@ -179,15 +189,22 @@ impl GetRaw {
         let path_temp_complete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_complete.bed"));
         let path_temp_incomplete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_incomplete.bed"));
 
+        let list_hist_complete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
+        let list_hist_incomplete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
+
+        
+
         let thread_pool_write = threadpool::ThreadPool::new(2);
-        let (tx_writer_complete, rx_histograms_complete) = create_writer_thread(
+        let tx_writer_complete = create_writer_thread(
             &path_temp_complete_sorted, 
             &thread_pool_write, 
+            &list_hist_complete,
             true).
             expect("Failed to get writer threads");
-        let (tx_writer_incomplete,rx_histograms_incomplete) = create_writer_thread(
+        let tx_writer_incomplete = create_writer_thread(
             &path_temp_incomplete_sorted, 
             &thread_pool_write,
+            &list_hist_incomplete,
              false).
              expect("Failed to get writer threads");
 
@@ -282,13 +299,11 @@ impl GetRaw {
         println!("Storing histogram for final output file");
         debug!("Collecting histograms");
         sum_and_store_histogram(
-            params_io.threads_work,
-            &rx_histograms_complete,
+            &list_hist_complete,
             &get_histogram_path_for_tirp(&path_temp_complete_sorted)
         );
         sum_and_store_histogram(
-            params_io.threads_work,
-            &rx_histograms_incomplete,
+            &list_hist_incomplete,
             &get_histogram_path_for_tirp(&path_temp_incomplete_sorted)
         );
 
@@ -305,14 +320,16 @@ impl GetRaw {
 
 
 pub fn sum_and_store_histogram(
-    num_hist: usize,
-    rx: &Arc<Receiver<Arc<shard::BarcodeHistogram>>>,
+    list_hist: &Arc<Mutex<Vec<shard::BarcodeHistogram>>>,
     path: &PathBuf
 ) {
     debug!("Collecting histograms");
+
+    let list_hist = list_hist.lock().unwrap();
+
     let mut totalhist = shard::BarcodeHistogram::new();
-    for _ in 0..num_hist {
-        let one_hist = rx.recv().expect("Could not get one histrogram");
+    for one_hist in list_hist.iter() {
+        //let one_hist = rx.recv().expect("Could not get one histrogram");
         totalhist.add_histogram(&one_hist);
     }
     totalhist.write(&path).expect("Failed to write histogram");
