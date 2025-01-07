@@ -73,7 +73,7 @@ pub fn loop_tirp_writer<W>(
     while let Ok(Some(list_pairs)) = rx.recv() {
         for (bam_cell, cell_id) in list_pairs.iter() {
 
-            tirp::write_records_pair_to_tirp::<W>(
+            tirp::write_records_pair_to_tirp( //::<W>
                 &mut writer, 
                 &cell_id, 
                 &bam_cell

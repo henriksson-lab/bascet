@@ -173,11 +173,12 @@ impl TirpBascetShardReader {
 
 
 
-pub fn write_records_pair_to_tirp<W>(
-    writer: &mut BufWriter<impl Write>, 
+pub fn write_records_pair_to_tirp(
+//    writer: &mut BufWriter<impl Write>, 
+    writer: &mut impl Write, 
     cell_id: &CellID,    
     read: &ReadPair,
-) where W:Write {
+)  { //where W:Write
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi
 
