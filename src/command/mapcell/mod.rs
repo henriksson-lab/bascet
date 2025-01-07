@@ -139,7 +139,7 @@ impl MapCell {
         // note from julian: readers alter the file? at least make separate readers. start with just 1
         let reader_thread_group = ThreadGroup::new(params.threads_read);
 
-        if input_shard_type == DetectedFileformat::Gascet {
+        if input_shard_type == DetectedFileformat::TIRP {
             println!("Detected input as gascet");
             for _tidx in 0..params.threads_read {
                 _ = create_shard_reader::<TirpBascetShardReader>(
@@ -151,7 +151,7 @@ impl MapCell {
                     &reader_thread_group
                 );
             }
-        } else if input_shard_type == DetectedFileformat::Bascet {
+        } else if input_shard_type == DetectedFileformat::ZIP {
             println!("Detected input as bascet");
             for _tidx in 0..params.threads_read {
                 _ = create_shard_reader::<ZipBascetShardReader>(

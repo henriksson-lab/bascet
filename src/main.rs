@@ -1,8 +1,9 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use robert::command;
 
+use robert::command;
+use robert::cmd;
 
 
 #[derive(Parser)]
@@ -19,9 +20,11 @@ enum Commands {
     Featurise(command::Featurise),
     Partition(command::Partition),
     Query(command::Query),
-    Getraw(command::GetRawCMD),
-    Mapcell(command::MapCellCMD),
-    Extract(command::ExtractCMD),
+
+    Getraw(cmd::GetRawCMD),
+    Mapcell(cmd::MapCellCMD),
+    Extract(cmd::ExtractCMD),
+    Shardify(cmd::ShardifyCMD),
 }
 
 fn main() -> ExitCode {
@@ -39,6 +42,7 @@ fn main() -> ExitCode {
         Commands::Getraw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
+        Commands::Shardify(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {

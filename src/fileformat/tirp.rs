@@ -1,11 +1,11 @@
+use log::debug;
 use std::collections::HashSet;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
 use std::fs::File;
 use std::process::Command;
-//use anyhow::bail;
-use log::debug;
+use anyhow::bail;
 
 use super::shard::ShardReader;
 use super::shard::ReadPair;
@@ -13,7 +13,6 @@ use super::shard::CellID;
 
 use rust_htslib::tbx::Reader as TabixReader;
 use rust_htslib::tbx::Read;
-//use noodles_bgzf::Writer as FastqWriter;   // why both bgzf and fastq??   ... this is for fastq.gz!!!
 
 use noodles::fastq::Writer as FastqWriter;
 use noodles::fastq::record::Definition;
@@ -42,9 +41,12 @@ impl ShardReader for TirpBascetShardReader {
     fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {
 
         //TODO : check that the index .tbi-file is present; give better error message
+        let hist_path = get_histogram_path_for_tirp(&fname);
+        if !hist_path.exists() {
+            bail!("Cannot find tabix index for {}; is this really a TIRP file?", fname.display());
+        }
 
         // Create a tabix reader for reading a tabix-indexed BED file.
-        //let path_bed = "file.bed.gz";
         let tbx_reader = TabixReader::from_path(&fname)
             .expect(&format!("Could not open {:?}", fname));
 
@@ -59,10 +61,9 @@ impl ShardReader for TirpBascetShardReader {
     }
 
     fn get_files_for_cell(&mut self, _cell_id: &CellID) -> anyhow::Result<Vec<String>>{
-        println!("get files for cell in TIRP not implemented");
+        println!("request files for cell in TIRP, but this is not implemented");
         Ok(Vec::new())
     }
-
 
 
     fn extract_to_outdir (
@@ -107,15 +108,13 @@ impl ShardReader for TirpBascetShardReader {
             .fetch(tid, 0, 100) //hopefully ok!
             .expect("could not find reads");
 
-
         //For now, keep it simple and just provide r1.fq and r2.fq.
         //Read through all records in region.
         let mut num_read = 0;
         for line in self.tabix_reader.records() {
 
-            let line = line.expect("Failed to get one line from the gascet");
-
-            let rp = parse_gascet_readpair(&line);
+            let line = line.expect("Failed to get one TIRP line");
+            let rp = parse_tirp_readpair(&line);
 
             let rec_r1 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r1, rp.q1);
             let rec_r2 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r2, rp.q2);
@@ -134,6 +133,38 @@ impl ShardReader for TirpBascetShardReader {
         Ok(true)
     }
 
+}
+
+
+
+impl TirpBascetShardReader {
+
+    pub fn has_cell(&mut self, cellid: &CellID) -> bool {
+        self.tabix_reader.seqnames().contains(&cellid)
+    }
+
+    pub fn get_reads_for_cell(
+        &mut self, 
+        cell_id: &String, 
+    ) -> anyhow::Result<Vec<ReadPair>>{
+
+        //Get tabix id for the cell
+        let tid = self.tabix_reader.tid(&cell_id).expect("Could not tabix ID for cell");
+
+        // Seek to the reads (all of them)
+        self.tabix_reader
+            .fetch(tid, 0, 100) //hopefully ok!
+            .expect("could not find reads");
+
+        //Get all reads
+        let mut reads:Vec<ReadPair> = Vec::new();
+        for line in self.tabix_reader.records() {
+            let line = line.expect("Failed to get one TIRP line");
+            let rp = parse_tirp_readpair(&line);
+            reads.push(rp);
+        }
+        Ok(reads)
+    }
 
 
 }
@@ -142,8 +173,7 @@ impl ShardReader for TirpBascetShardReader {
 
 
 
-
-pub fn write_records_pair_to_gascet<W>(
+pub fn write_records_pair_to_tirp<W>(
     writer: &mut BufWriter<impl Write>, 
     cell_id: &CellID,    
     read: &ReadPair,
@@ -180,7 +210,7 @@ pub fn write_records_pair_to_gascet<W>(
 
 
 
-pub fn parse_gascet_readpair(
+pub fn parse_tirp_readpair(
     line: &Vec<u8>,   
 ) -> ReadPair {
 
@@ -190,16 +220,6 @@ pub fn parse_gascet_readpair(
     let tab = b'\t';
     let parts = split_delimited(line, &tab);
 
-/* 
-    println!("");
-    println!("");
-    println!("");
-    println!("'{:?}'", parts[0].to_vec());
-    println!("'{:?}'", parts[1].to_vec());
-    println!("'{:?}'", parts[2].to_vec());
-    println!("'{:?}'", parts[3].to_vec());
-//    '[9, 84, 84, 71, 65, 65, 84, 65, 84, 71, 65, 84, 71, 84, 65, 71, 65, 84, 65, 65, 84, 65, 65, 65, 65, 65, 84, 65, 67, 65, 71, 84, 71, 84, 65, 84, 65, 84, 67, 71, 65, 84, 71, 67, 71, 84, 84, 71, 65, 65, 67, 67, 71, 84, 67, 71, 84, 65, 84, 84, 71, 
-*/
     ReadPair {
         r1: parts[3].to_vec(),
         r2: parts[4].to_vec(),
@@ -215,10 +235,6 @@ pub fn parse_gascet_readpair(
 fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
     where T: PartialEq<T> {
         let indices: Vec<usize> = input.iter().enumerate().filter(|(_, value)| *value == delim).map(|(i, _)| i).collect();
-        /* 
-        if indices.get(0) != Some(&0) {
-            indices.insert(0, 0);
-        }*/
         let mut output = Vec::new();
         output.push(&input[0..(*indices.first().unwrap())]);
         for pair in indices.windows(2) {
@@ -241,5 +257,18 @@ pub fn index_tirp(p: &PathBuf) -> anyhow::Result<()> {
 
     let _ = process.output().expect("Failed to run tabix");
     Ok(())
+}
+
+
+
+
+
+pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
+    let p = p.as_os_str().as_encoded_bytes();
+    let mut histpath = p.to_vec();
+    let mut ext = ".hist".as_bytes().to_vec();
+    histpath.append(&mut ext);
+    let histpath = String::from_utf8(histpath).expect("unable to form histogram path");
+    PathBuf::from(histpath)    
 }
 

@@ -59,8 +59,8 @@ type ListRecordPair = Arc<Vec<RecordPair>>;
 
 
 
-///// loop in writer thread, to send to a writer
-fn loop_writer<W>(  
+///// loop for a writer thread, sending output to a Writer
+pub fn loop_tirp_writer<W>(  
     rx: &Arc<Receiver<Option<ListReadWithBarcode>>>,
     hist: &mut shard::BarcodeHistogram,
     writer: W 
@@ -73,7 +73,7 @@ fn loop_writer<W>(
     while let Ok(Some(list_pairs)) = rx.recv() {
         for (bam_cell, cell_id) in list_pairs.iter() {
 
-            tirp::write_records_pair_to_gascet::<W>(
+            tirp::write_records_pair_to_tirp::<W>(
                 &mut writer, 
                 &cell_id, 
                 &bam_cell
@@ -95,7 +95,9 @@ fn loop_writer<W>(
 
 
 
-//////////////// Writer to TIRP format
+
+
+//////////////// Writer to TIRP format, sorting on the fly
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -134,7 +136,7 @@ fn create_writer_thread(
             let mut stdin = process.stdin.as_mut().unwrap();
 
             debug!("sorter process ready");
-            loop_writer(&rx, &mut hist, &mut stdin);
+            loop_tirp_writer(&rx, &mut hist, &mut stdin);
 
             //Wait for process to finish
             debug!("Waiting for sorter process to exit");
@@ -146,8 +148,8 @@ fn create_writer_thread(
 
             debug!("starting non-sorted write loop");
 
-            let mut writer=BufWriter::new(file_output);
-            loop_writer(&rx, &mut hist, &mut writer);
+            let mut writer=BufWriter::new(file_output);  //TODO  put in a buffered writer in loop. no need to do twice
+            loop_tirp_writer(&rx, &mut hist, &mut writer);
             _ = writer.flush();
 
         }
@@ -316,11 +318,11 @@ impl GetRaw {
         debug!("Collecting histograms");
         sum_and_store_histogram(
             &list_hist_complete,
-            &get_histogram_path_for_tirp(&params_io.path_output_complete)
+            &tirp::get_histogram_path_for_tirp(&params_io.path_output_complete)
         );
         sum_and_store_histogram(
             &list_hist_incomplete,
-            &get_histogram_path_for_tirp(&params_io.path_output_incomplete)
+            &tirp::get_histogram_path_for_tirp(&params_io.path_output_incomplete)
         );
 
         //// Remove temp files
@@ -351,17 +353,6 @@ pub fn sum_and_store_histogram(
     totalhist.write(&path).expect(format!("Failed to write histogram to {:?}", path).as_str());
 }
 
-
-
-
-pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
-    let p = p.as_os_str().as_encoded_bytes();
-    let mut histpath = p.to_vec();
-    let mut ext = ".hist".as_bytes().to_vec();
-    histpath.append(&mut ext);
-    let histpath = String::from_utf8(histpath).expect("unable to form histogram path");
-    PathBuf::from(histpath)    
-}
 
 
 
