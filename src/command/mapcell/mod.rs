@@ -415,6 +415,7 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
 const PRESET_SCRIPT_TEST: &[u8] = include_bytes!("test_script.sh");
 const PRESET_SCRIPT_QUAST: &[u8] = include_bytes!("quast.sh");
 const PRESET_SCRIPT_SKESA: &[u8] = include_bytes!("skesa.sh");
+const PRESET_SCRIPT_SPADES: &[u8] = include_bytes!("spades.sh");
 
 
 pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
@@ -422,6 +423,7 @@ pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
     map.insert("testing".to_string(), PRESET_SCRIPT_TEST.to_vec());
     map.insert("quast".to_string(), PRESET_SCRIPT_QUAST.to_vec());
     map.insert("skesa".to_string(), PRESET_SCRIPT_SKESA.to_vec());
+    map.insert("spades".to_string(), PRESET_SCRIPT_SPADES.to_vec());
     map
 }
 

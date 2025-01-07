@@ -49,9 +49,13 @@ impl Shardify {
         info!("Running command: shardify");
 
 
+        // https://github.com/zaeleus/noodles/blob/master/noodles-tabix/examples/tabix_write.rs
+        // noodles writing index while writing bed-like file
+        // noodles can read, and get virtual position, https://github.com/zaeleus/noodles/blob/master/noodles-bgzf/src/reader.rs
+        // multithreaded reader can also get virtual position https://github.com/zaeleus/noodles/blob/master/noodles-bgzf/src/multithreaded_reader.rs
+
         if false {
-//            crate::utils::check_bgzip().expect("bgzip not found");  ////////////// can we use this with tabix? https://docs.rs/noodles-bgzf/latest/noodles_bgzf/multithreaded_writer/struct.MultithreadedWriter.html
-            crate::utils::check_tabix().expect("tabix not found");
+            crate::utils::check_tabix().expect("tabix not found");  /////// can we write tabix files with rust?? bgzip is possible
             println!("Required software is in place");
         }
 
@@ -188,21 +192,6 @@ fn create_writer_thread(
         // Open output file
         println!("Creating pre-TIRP output file: {}",outfile.display());
         debug!("starting write loop");
-
-
-
-
-
-
-
-
-
-
-//        https://docs.rs/noodles-bgzf/latest/noodles_bgzf/multithreaded_writer/struct.MultithreadedWriter.html
-
-
-
-
 
 
         let mut hist = shard::BarcodeHistogram::new();
