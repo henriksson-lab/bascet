@@ -22,7 +22,10 @@ test_extract:
 
 
 test_skesa:
-	rm -Rf temp; cargo +nightly run mapcell -i testdata/out_complete.0.gascet.gz -o testdata/skesa.0.zip -s _skesa --show-script-output
+	rm -Rf temp; cargo +nightly run mapcell -i testdata/out_complete.0.tirp.gz -o testdata/skesa.0.zip -s _skesa --show-script-output
+
+test_shardify:
+	rm -Rf temp; cargo +nightly run shardify -i testdata/out_complete.0.tirp.gz -o testdata/filtered.0.tirp.gz
 
 
 test_getraw:

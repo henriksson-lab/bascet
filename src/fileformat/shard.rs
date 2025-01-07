@@ -62,8 +62,10 @@ pub trait ShardReader {
 
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub enum DetectedFileformat {
-    Gascet,
-    Bascet,
+    TIRP,
+    ZIP,
+    FASTQ,
+    BAM,
     Other
 }
 
@@ -71,10 +73,10 @@ pub enum DetectedFileformat {
 pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
     let p_string = p.file_name().expect("cannot convert OS string when detecting file format").to_string_lossy();
 
-    if p_string.ends_with("gascet.gz") {
-        DetectedFileformat::Gascet
-    } else if p_string.ends_with("zip") {
-        DetectedFileformat::Bascet
+    if p_string.ends_with("tirp.gz") {
+        DetectedFileformat::TIRP
+    } else if p_string.ends_with("zip") { 
+        DetectedFileformat::ZIP
     } else {
         DetectedFileformat::Other
     }
@@ -86,8 +88,8 @@ pub fn get_suitable_shard_reader(
     format: &DetectedFileformat
 ) -> Box::<dyn ShardReader> {
     match format {
-        DetectedFileformat::Gascet => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create gascet reader")),
-        DetectedFileformat::Bascet => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create bascet reader")),
+        DetectedFileformat::TIRP => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create gascet reader")),
+        DetectedFileformat::ZIP => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create bascet reader")),
         _ => panic!("Cannot figure out how to open input file as a shard (could not detect type)")
     }
 }
@@ -97,14 +99,8 @@ pub fn get_suitable_shard_reader(
 
 
 ///////////////////////////////
-/////////////////////////////// Histogram for BC counting
+/////////////////////////////// Histogram for cell barcode counting
 ///////////////////////////////
-
-
-
-pub struct BarcodeHistogram {
-    histogram: HashMap<CellID, u64>
-}
 
 
 
@@ -115,8 +111,9 @@ struct HistogramCsvRow {
 }
 
 
-
-
+pub struct BarcodeHistogram {
+    histogram: HashMap<CellID, u64>
+}
 impl BarcodeHistogram {
 
     pub fn new() -> BarcodeHistogram {
@@ -128,6 +125,11 @@ impl BarcodeHistogram {
     pub fn inc(&mut self, cellid: &CellID){        
         let counter = self.histogram.entry(cellid.clone()).or_insert(0);
         *counter += 1;
+    }
+
+    pub fn inc_by(&mut self, cellid: &CellID, cnt: &u64){        
+        let counter = self.histogram.entry(cellid.clone()).or_insert(0);
+        *counter += cnt;
     }
 
     pub fn add_histogram(&mut self, other: &BarcodeHistogram) {
