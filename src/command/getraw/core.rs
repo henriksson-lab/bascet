@@ -16,12 +16,31 @@ use std::io::{BufWriter, Write, Read};
 use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
 
-use super::{io, barcode, params};
+use super::io;
 
+use crate::barcode;
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
+
+
+
+pub struct GetRawParams {
+    pub path_tmp: std::path::PathBuf,
+
+    pub path_forward: std::path::PathBuf,
+    pub path_reverse: std::path::PathBuf,
+    pub path_output_complete: std::path::PathBuf,
+    pub path_output_incomplete: std::path::PathBuf,
+
+    pub barcode_file: Option<std::path::PathBuf>,
+    pub sort: bool,
+
+    pub threads_work: usize,   
+
+}
+
 
 
 
@@ -158,7 +177,7 @@ pub struct GetRaw {}
 
 impl GetRaw {
     pub fn getraw<'a>(
-        params_io: Arc<params::IO>
+        params_io: Arc<GetRawParams>
     ) -> anyhow::Result<()> {
 
         info!("Running command: getraw");

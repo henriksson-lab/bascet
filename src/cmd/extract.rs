@@ -10,7 +10,7 @@ use log::debug;
 
 
 #[derive(Args)]
-pub struct Extract {
+pub struct ExtractCMD {
     #[arg(short = 'i', value_parser)]  /// Zip-file name. Note that this command takes a shard, not a full bascet (can support later!) -- this is for speed
     pub path_in: PathBuf,
 
@@ -27,7 +27,7 @@ pub struct Extract {
 //    pub remaining_args: Vec<String>,
 }
 
-impl Extract {
+impl ExtractCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
         //Just unzip list of files from zip. This way we can be sure to support fancier compression methods and be sure to be compatible with R

@@ -19,9 +19,9 @@ enum Commands {
     Featurise(command::Featurise),
     Partition(command::Partition),
     Query(command::Query),
-    Getraw(command::GetRaw),
-    Mapcell(command::MapCell),
-    Extract(command::Extract),
+    Getraw(command::GetRawCMD),
+    Mapcell(command::MapCellCMD),
+    Extract(command::ExtractCMD),
 }
 
 fn main() -> ExitCode {

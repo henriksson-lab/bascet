@@ -10,10 +10,12 @@ use std::{
 pub const GETRAW_DEFAULT_PATH_TEMP: &str = "temp";
 
 
-use super::core::{core::GetRaw, params};
+use crate::command::getraw::GetRaw;
+use crate::command::getraw::GetRawParams;
+
 
 #[derive(Args)]
-pub struct Command {
+pub struct GetRawCMD {
     // FASTQ for r1
     #[arg(long = "i1", value_parser)]
     pub path_forward: PathBuf,
@@ -48,7 +50,7 @@ pub struct Command {
     threads_work: Option<usize>,
 }
 
-impl Command {
+impl GetRawCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
         verify_input_fq_file(&self.path_forward)?;
@@ -56,7 +58,7 @@ impl Command {
 
         let threads_work = self.resolve_thread_config()?;
 
-        let params_io = params::IO {
+        let params_io = GetRawParams {
 
             path_tmp: self.path_tmp.clone(),            
             path_forward: self.path_forward.clone(),            
