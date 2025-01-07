@@ -11,7 +11,7 @@ pub const MAPCELL_DEFAULT_THREADS_WORK: usize = 1;
 
 
 #[derive(Args)]
-pub struct MapCell {
+pub struct MapCellCMD {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: Option<PathBuf>,
@@ -64,7 +64,7 @@ pub struct MapCell {
 
 
 
-impl MapCell {
+impl MapCellCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
 
