@@ -50,6 +50,7 @@ impl Shardify {
 
 
         if false {
+//            crate::utils::check_bgzip().expect("bgzip not found");  ////////////// can we use this with tabix? https://docs.rs/noodles-bgzf/latest/noodles_bgzf/multithreaded_writer/struct.MultithreadedWriter.html
             crate::utils::check_tabix().expect("tabix not found");
             println!("Required software is in place");
         }
@@ -188,9 +189,29 @@ fn create_writer_thread(
         println!("Creating pre-TIRP output file: {}",outfile.display());
         debug!("starting write loop");
 
+
+
+
+
+
+
+
+
+
+//        https://docs.rs/noodles-bgzf/latest/noodles_bgzf/multithreaded_writer/struct.MultithreadedWriter.html
+
+
+
+
+
+
         let mut hist = shard::BarcodeHistogram::new();
         let file_output = File::create(&outfile).unwrap();   
-        let mut writer=BufWriter::new(file_output);
+        let writer=BufWriter::new(file_output);
+
+        let mut writer = noodles_bgzf::MultithreadedWriter::new(writer);
+        //1.0.0 · Source
+        //fn write_all(&mut self, buf: &[u8]) -> Result<(), Error>  is implemented
 
         // Write reads
         let mut n_written=0;
@@ -202,7 +223,7 @@ fn create_writer_thread(
             let mut tot_reads_for_cell:u64 = 0;
             for list_pairs in list_of_list_pairs {
                 for rp in list_pairs.iter() {
-                    tirp::write_records_pair_to_tirp::<File>(
+                    tirp::write_records_pair_to_tirp( //::<File>
                         &mut writer, 
                         &cellid, 
                         &rp
