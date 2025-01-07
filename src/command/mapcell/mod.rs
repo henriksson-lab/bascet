@@ -29,7 +29,7 @@ use crate::fileformat::shard::DetectedFileformat;
 
 
 #[derive(Clone,Debug)]
-pub struct IO {
+pub struct MapCellParams {
     pub path_in: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_out: std::path::PathBuf,
@@ -57,35 +57,35 @@ pub struct MapCell {}
 impl MapCell {
 
     pub fn run(
-        params_io: IO
+        params: MapCellParams
     ) -> anyhow::Result<()> {
 
-        let mut params_io = params_io.clone();
+        let mut params = params.clone();
 
         //Create thread pool. note that worker threads here refer to script threads (script manages it)
-        let thread_pool = threadpool::ThreadPool::new(params_io.threads_read + params_io.threads_write);
+        let thread_pool = threadpool::ThreadPool::new(params.threads_read + params.threads_write);
 
         //Need to create temp dir
-        if params_io.path_tmp.exists() {
+        if params.path_tmp.exists() {
             //todo delete temp dir after run
-            bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params_io.path_tmp.display());
+            bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            let _ = fs::create_dir(&params_io.path_tmp);  
+            let _ = fs::create_dir(&params.path_tmp);  
         }
 
 
 
         //Check if using a new script or a preset. user scripts start with _
-        if params_io.path_script.to_str().expect("argument conversion error").starts_with("_") {
-            println!("using preset {:?}", params_io.path_script);
+        if params.path_script.to_str().expect("argument conversion error").starts_with("_") {
+            println!("using preset {:?}", params.path_script);
 
             let map_presets = get_preset_scripts();
-            let preset_name=params_io.path_script.to_str().expect("failed to get string from script path");
+            let preset_name=params.path_script.to_str().expect("failed to get string from script path");
             let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
 
             if let Some(&ref preset_script_code) = map_presets.get(preset_name) {
                 //If using a preset, create the file
-                let path_script = params_io.path_tmp.join("preset_script.sh");
+                let path_script = params.path_tmp.join("preset_script.sh");
                 {
                     let script_file = File::create(&path_script).unwrap();
                     let mut buf_writer = BufWriter::new(script_file);
@@ -98,7 +98,7 @@ impl MapCell {
                     .output()?;
                 //Use this script
                 println!("Extracted preset script to {:?}", &path_script);
-                params_io.path_script = path_script;
+                params.path_script = path_script;
             } else {
                 bail!("Preset {} does not exist", preset_name);
             }
@@ -106,22 +106,22 @@ impl MapCell {
             println!("Using user provided script");
         }
 
-        let params_io = Arc::new(params_io);
+        let params = Arc::new(params);
 
 
         //Initialize script
-        let mapcell_script = Arc::new(MapCellScript::new(&params_io.path_script)?);
+        let mapcell_script = Arc::new(MapCellScript::new(&params.path_script)?);
         println!("Script API version: {}", mapcell_script.api_version);
         println!("Script expects files: {:?}", mapcell_script.expect_files);
         println!("Script file missing mode: {}", mapcell_script.missing_file_mode);
 
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
-        println!("Input file: {:?}",params_io.path_in);
-        let input_shard_type = detect_shard_format(&params_io.path_in);
-        let mut shard_reader = get_suitable_shard_reader(&params_io.path_in, &input_shard_type);
+        println!("Input file: {:?}",params.path_in);
+        let input_shard_type = detect_shard_format(&params.path_in);
+        let mut shard_reader = get_suitable_shard_reader(&params.path_in, &input_shard_type);
         let list_cells = shard_reader.get_cell_ids().expect("Could not read list of cells"); 
         //files_for_cell(cell_id)files_for_cell.keys().collect::<Vec<&String>>();
-        let queue_limit = params_io.threads_write*2;
+        let queue_limit = params.threads_write*2;
 
 
 
@@ -137,13 +137,13 @@ impl MapCell {
 
         //Create all readers. Detect what we need from the file extension
         // note from julian: readers alter the file? at least make separate readers. start with just 1
-        let reader_thread_group = ThreadGroup::new(params_io.threads_read);
+        let reader_thread_group = ThreadGroup::new(params.threads_read);
 
         if input_shard_type == DetectedFileformat::Gascet {
             println!("Detected input as gascet");
-            for _tidx in 0..params_io.threads_read {
+            for _tidx in 0..params.threads_read {
                 _ = create_shard_reader::<TirpBascetShardReader>(
-                    &params_io,
+                    &params,
                     &thread_pool,
                     &mapcell_script,
                     &rx_cell_to_read,
@@ -153,9 +153,9 @@ impl MapCell {
             }
         } else if input_shard_type == DetectedFileformat::Bascet {
             println!("Detected input as bascet");
-            for _tidx in 0..params_io.threads_read {
+            for _tidx in 0..params.threads_read {
                 _ = create_shard_reader::<ZipBascetShardReader>(
-                    &params_io,
+                    &params,
                     &thread_pool,
                     &mapcell_script,
                     &rx_cell_to_read,
@@ -171,10 +171,10 @@ impl MapCell {
 
         //Create all writers
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
-        for tidx in 0..params_io.threads_write {
-            let file_zip = params_io.path_tmp.join(format!("out-{}.zip", tidx));
+        for tidx in 0..params.threads_write {
+            let file_zip = params.path_tmp.join(format!("out-{}.zip", tidx));
             _ = create_writer(
-                &params_io,
+                &params,
                 &file_zip,
                 &mapcell_script,
                 &thread_pool,
@@ -188,7 +188,7 @@ impl MapCell {
         for cell_id in list_cells {
             _ = tx_cell_to_read.send(Some(cell_id.clone()));
         }
-        for i in 0..params_io.threads_read {
+        for i in 0..params.threads_read {
             debug!("Sending termination signal to reader {i}");
             _ = tx_cell_to_read.send(None).unwrap();
         }
@@ -197,7 +197,7 @@ impl MapCell {
         reader_thread_group.join();
 
         //Terminate all writers. Then wait for all threads to finish
-        for i in 0..params_io.threads_write {
+        for i in 0..params.threads_write {
             debug!("Sending termination signal to writer {i}");
             _ = tx_loaded_cell.send(None).unwrap();
         }
@@ -205,11 +205,11 @@ impl MapCell {
         
         // Merge temp zip archives into one new zip archive 
         println!("Merging zip from writers");
-        utils::merge_archives_and_delete(&params_io.path_out, &list_out_zipfiles).unwrap();
+        utils::merge_archives_and_delete(&params.path_out, &list_out_zipfiles).unwrap();
 
         //Finally remove the temp directory
-        if !params_io.keep_files {
-            let _ = fs::remove_dir_all(&params_io.path_tmp);
+        if !params.keep_files {
+            let _ = fs::remove_dir_all(&params.path_tmp);
         }
 
         Ok(())
@@ -220,7 +220,7 @@ impl MapCell {
 
 //////////////////////////////////// Reader for shard files (bascet and gascet)
 fn create_shard_reader<R>(
-    params_io: &Arc<IO>,
+    params_io: &Arc<MapCellParams>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<MapCellScript>,
     rx: &Arc<Receiver<Option<String>>>,
@@ -278,7 +278,7 @@ fn create_shard_reader<R>(
 
 ///////////////////////////// Worker thread that integrates the writing
 fn create_writer(
-    params_io: &Arc<IO>,
+    params_io: &Arc<MapCellParams>,
     zip_file: &PathBuf,
     mapcell_script: &Arc<MapCellScript>,
     thread_pool: &threadpool::ThreadPool,

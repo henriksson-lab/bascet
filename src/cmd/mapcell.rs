@@ -74,7 +74,7 @@ impl MapCell {
             return Ok(());
         }
 
-        let params_io = mapcell::IO {
+        let params = mapcell::MapCellParams {
             path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.as_ref().expect("Output file was not provided").clone(),
@@ -88,7 +88,7 @@ impl MapCell {
             keep_files: self.keep_files            
         };
 
-        let _ = mapcell::MapCell::run(params_io).expect("mapcell failed");
+        let _ = mapcell::MapCell::run(params).expect("mapcell failed");
 
         println!("Mapcell has finished!");
         Ok(())
