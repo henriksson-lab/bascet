@@ -19,8 +19,8 @@ use crate::utils;
 use crate::fileformat::mapcell_script;
 use crate::fileformat::mapcell_script::MapCellScript;
 use crate::fileformat::mapcell_script::MissingFileMode;
-use crate::fileformat::bascet::BascetShardReader;
-use crate::fileformat::gascet::GascetShardReader;
+use crate::fileformat::zip::ZipBascetShardReader;
+use crate::fileformat::tirp::TirpBascetShardReader;
 use crate::fileformat::shard::ShardReader;
 use crate::fileformat::shard::detect_shard_format;
 use crate::fileformat::shard::get_suitable_shard_reader;
@@ -121,7 +121,7 @@ impl MapCell {
         if input_shard_type == DetectedFileformat::Gascet {
             println!("Detected input as gascet");
             for _tidx in 0..params_io.threads_read {
-                _ = create_shard_reader::<GascetShardReader>(
+                _ = create_shard_reader::<TirpBascetShardReader>(
                     &params_io,
                     &thread_pool,
                     &mapcell_script,
@@ -133,7 +133,7 @@ impl MapCell {
         } else if input_shard_type == DetectedFileformat::Bascet {
             println!("Detected input as bascet");
             for _tidx in 0..params_io.threads_read {
-                _ = create_shard_reader::<BascetShardReader>(
+                _ = create_shard_reader::<ZipBascetShardReader>(
                     &params_io,
                     &thread_pool,
                     &mapcell_script,

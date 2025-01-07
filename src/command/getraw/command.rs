@@ -7,10 +7,10 @@ use std::{
     thread,
 };
 
-use super::{
-    constants::GETRAW_DEFAULT_PATH_TEMP,
-    core::{core::GetRaw, params},
-};
+pub const GETRAW_DEFAULT_PATH_TEMP: &str = "temp";
+
+
+use super::core::{core::GetRaw, params};
 
 #[derive(Args)]
 pub struct Command {

@@ -17,9 +17,11 @@ use seq_io::fastq::Record as FastqRecord;
 
 use super::{io, barcode, params};
 
+use crate::fileformat::tirp;
+use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
-use crate::fileformat::gascet::write_records_pair_to_gascet;
+
 
 
 #[derive(Debug,Clone)]
@@ -34,24 +36,30 @@ type ListRecordPair = Arc<Vec<RecordPair>>;
 
 
 
+
+
+
 ///// loop in writer thread, to send to a writer
-fn loop_writer<W>(  //<W>
+fn loop_writer<W>(  
     rx: &Arc<Receiver<Option<ListReadWithBarcode>>>,
-    writer: W //mut BufWriter<W>
-) where W:Write { //
+    hist: &mut shard::BarcodeHistogram,
+    writer: W 
+) where W:Write {
 
     let mut writer= BufWriter::new(writer);
 
     // Write reads
     let mut n_written=0;
     while let Ok(Some(list_pairs)) = rx.recv() {
-        for (bam_cell, hits_names) in list_pairs.iter() {
+        for (bam_cell, cell_id) in list_pairs.iter() {
 
-            write_records_pair_to_gascet::<W>(
+            tirp::write_records_pair_to_gascet::<W>(
                 &mut writer, 
-                &hits_names, 
+                &cell_id, 
                 &bam_cell
             );
+
+            hist.inc(&cell_id);
 
             if n_written%100000 == 0 {
                 println!("#reads written to outfile: {:?}", n_written);
@@ -67,24 +75,32 @@ fn loop_writer<W>(  //<W>
 
 
 
-//////////////// Writer to gascet format
+//////////////// Writer to TIRP format
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     sort: bool
-) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
+) -> anyhow::Result< (
+    Arc<Sender<Option<ListReadWithBarcode>>>, Arc<Receiver<Arc<shard::BarcodeHistogram>>> )> {
 
     let outfile = outfile.clone();
 
+    //Create input read queue
     //Limit how many chunks can be in pipe
     let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
-    thread_pool.execute(move || {
-        // Open gascet output file
-        println!("Creating pre-gascet output file: {}",outfile.display());
+    //Create output histogram queue
+    let (tx_hist, rx_hist) = crossbeam::channel::bounded::<Arc<shard::BarcodeHistogram>>(1000);   //TODO get unbounded
+    let (tx_hist, rx_hist) = (Arc::new(tx_hist), Arc::new(rx_hist));
 
-        let file_output = File::create(outfile).unwrap();   //"temp_sorted.pregascet"
+    thread_pool.execute(move || {
+        // Open output file
+        println!("Creating pre-TIRP output file: {}",outfile.display());
+
+        let file_output = File::create(outfile).unwrap();   
+
+        let mut hist = shard::BarcodeHistogram::new();
 
         if sort {
 
@@ -100,7 +116,7 @@ fn create_writer_thread(
             let mut stdin = process.stdin.as_mut().unwrap();
 
             debug!("sorter process ready");
-            loop_writer(&rx, &mut stdin);
+            loop_writer(&rx, &mut hist, &mut stdin);
 
             //Wait for process to finish
             debug!("Waiting for sorter process to exit");
@@ -113,13 +129,16 @@ fn create_writer_thread(
             debug!("starting non-sorted write loop");
 
             let mut writer=BufWriter::new(file_output);
-            loop_writer(&rx, &mut writer);
+            loop_writer(&rx, &mut hist, &mut writer);
             _ = writer.flush();
 
         }
 
+        //Keep histogram for final summary
+        _ = tx_hist.send(Arc::new(hist));
+
     });
-    Ok(tx)
+    Ok((tx, rx_hist))
 }
 
 
@@ -147,8 +166,6 @@ impl GetRaw {
 
         // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
         let mut barcodes: barcode::CombinatorialBarcoding = barcode::read_barcodes(&params_io.barcode_file);
-        //let pools = barcode::get_pools(&barcodes); // get unique pool names
-        //let n_pools=barcodes.num_pools();
 
         // Open fastq files
         let mut forward_file = io::open_fastq(&params_io.path_forward);
@@ -158,21 +175,17 @@ impl GetRaw {
         barcodes.find_probable_barcode_boundaries(reverse_file, 1000).expect("Failed to detect barcode setup from reads");
         let mut reverse_file = io::open_fastq(&params_io.path_reverse); // reopen the file to read from beginning
 
-
-        //TODO set UMI options, and trimming options
-
-
         // Start writer threads
         let path_temp_complete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_complete.bed"));
         let path_temp_incomplete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_incomplete.bed"));
 
         let thread_pool_write = threadpool::ThreadPool::new(2);
-        let tx_writer_complete = create_writer_thread(
+        let (tx_writer_complete, rx_histograms_complete) = create_writer_thread(
             &path_temp_complete_sorted, 
             &thread_pool_write, 
             true).
             expect("Failed to get writer threads");
-        let tx_writer_incomplete = create_writer_thread(
+        let (tx_writer_incomplete,rx_histograms_incomplete) = create_writer_thread(
             &path_temp_incomplete_sorted, 
             &thread_pool_write,
              false).
@@ -213,27 +226,6 @@ impl GetRaw {
                         } else {
                             pairs_incomplete.push((readpair, cellid));
                         }
-
-                            
-                        /* 
-                        let hits_names = barcodes.detect_barcode(&bam_cell.reverse_record.seq());
-
-                        let umi:Vec<u8>=Vec::new();
-                        let readpair = ReadPair { 
-                            r1: bam_cell.forward_record.seq().to_vec(), 
-                            r2: bam_cell.reverse_record.seq().to_vec(), 
-                            q1: bam_cell.forward_record.qual().to_vec(), 
-                            q2: bam_cell.reverse_record.qual().to_vec(), 
-                            umi: umi
-                        };
-
-                        if hits_names.len()==n_pools {
-                            pairs_complete.push((readpair, hits_names.clone()));
-                        } else {
-                            pairs_incomplete.push((readpair, hits_names.clone()));
-                        }
-                        */
-
                     }
 
                 let _ = tx_writer_complete.send(Some(Arc::new(pairs_complete)));
@@ -281,14 +273,63 @@ impl GetRaw {
             false
         );
 
+        //// Index the final file with tabix  
+        println!("Indexing final output file");
+        tirp::index_tirp(&path_temp_complete_sorted).expect("Failed to index file");
 
-        /// TODO remove temp files
+
+        //// Store histogram
+        println!("Storing histogram for final output file");
+        debug!("Collecting histograms");
+        sum_and_store_histogram(
+            params_io.threads_work,
+            &rx_histograms_complete,
+            &get_histogram_path_for_tirp(&path_temp_complete_sorted)
+        );
+        sum_and_store_histogram(
+            params_io.threads_work,
+            &rx_histograms_incomplete,
+            &get_histogram_path_for_tirp(&path_temp_incomplete_sorted)
+        );
+
+        //// Remove temp files
+        debug!("Removing temp files");
+        _ = fs::remove_dir_all(&params_io.path_tmp);
 
         info!("done!");
 
         Ok(())
     }
 }
+
+
+
+pub fn sum_and_store_histogram(
+    num_hist: usize,
+    rx: &Arc<Receiver<Arc<shard::BarcodeHistogram>>>,
+    path: &PathBuf
+) {
+    debug!("Collecting histograms");
+    let mut totalhist = shard::BarcodeHistogram::new();
+    for _ in 0..num_hist {
+        let one_hist = rx.recv().expect("Could not get one histrogram");
+        totalhist.add_histogram(&one_hist);
+    }
+    totalhist.write(&path).expect("Failed to write histogram");
+}
+
+
+
+
+pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
+    let p = p.as_os_str().as_encoded_bytes();
+    let mut histpath = p.to_vec();
+    let mut ext = ".hist".as_bytes().to_vec();
+    histpath.append(&mut ext);
+    let histpath = String::from_utf8(histpath).expect("unable to form histogram path");
+    PathBuf::from(histpath)    
+}
+
 
 
 
