@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufReader;
 use std::path::PathBuf;
 
 use super::zip::ZipBascetShardReader;
@@ -162,12 +162,10 @@ impl BarcodeHistogram {
     ) -> anyhow::Result<()> {
 
             //Open file
-            let file = File::open(fname)?;
-            let writer= BufWriter::new(file);
-        
             let mut writer = csv::WriterBuilder::new()
                 .delimiter(b'\t')
-                .from_writer(writer);
+                .from_path(fname)
+                .expect("Could not open histogram file for writing");
 
             for (bc, cnt) in self.histogram.iter() {
                 let _ = writer.serialize(HistogramCsvRow {
