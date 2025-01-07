@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use crate::command::mapcell::core::core;
+use crate::command::mapcell;
 
 pub const MAPCELL_DEFAULT_PATH_TEMP: &str = "temp";
 pub const MAPCELL_DEFAULT_THREADS_READ: usize = 1;
@@ -69,12 +69,12 @@ impl MapCell {
 
 
         if self.show_presets {
-            let names = core::get_preset_script_names();
+            let names = mapcell::get_preset_script_names();
             println!("Available preset scripts: {:?}", names);
             return Ok(());
         }
 
-        let params_io = core::IO {
+        let params_io = mapcell::IO {
             path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.as_ref().expect("Output file was not provided").clone(),
@@ -88,7 +88,7 @@ impl MapCell {
             keep_files: self.keep_files            
         };
 
-        let _ = core::MapCell::run(params_io).expect("mapcell failed");
+        let _ = mapcell::MapCell::run(params_io).expect("mapcell failed");
 
         println!("Mapcell has finished!");
         Ok(())
