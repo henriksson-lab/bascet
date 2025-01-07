@@ -2,20 +2,22 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use super::constants;
-use super::core::params;
-use super::core::core::MapCell;
+use crate::command::mapcell::core::core;
 
+pub const MAPCELL_DEFAULT_PATH_TEMP: &str = "temp";
+pub const MAPCELL_DEFAULT_THREADS_READ: usize = 1;
+pub const MAPCELL_DEFAULT_THREADS_WRITE: usize = 10;
+pub const MAPCELL_DEFAULT_THREADS_WORK: usize = 1;
 
 
 #[derive(Args)]
-pub struct Command {
+pub struct MapCell {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: Option<PathBuf>,
 
     // Temp file directory
-    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = constants::MAPCELL_DEFAULT_PATH_TEMP)]
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = MAPCELL_DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
 
     // Output bascet
@@ -50,29 +52,29 @@ pub struct Command {
 
 
     //Thread settings
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_READ)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MAPCELL_DEFAULT_THREADS_READ)]
     threads_read: usize,
 
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_WRITE)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MAPCELL_DEFAULT_THREADS_WRITE)]
     threads_write: usize,
     
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = constants::MAPCELL_DEFAULT_THREADS_WORK)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MAPCELL_DEFAULT_THREADS_WORK)]
     threads_work: usize,
 }
 
 
 
-impl Command {
+impl MapCell {
     pub fn try_execute(&mut self) -> Result<()> {
 
 
         if self.show_presets {
-            let names = super::core::core::get_preset_script_names();
+            let names = core::get_preset_script_names();
             println!("Available preset scripts: {:?}", names);
             return Ok(());
         }
 
-        let params_io = params::IO {
+        let params_io = core::IO {
             path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.as_ref().expect("Output file was not provided").clone(),
@@ -86,7 +88,7 @@ impl Command {
             keep_files: self.keep_files            
         };
 
-        let _ = MapCell::run(params_io).expect("mapcell failed");
+        let _ = core::MapCell::run(params_io).expect("mapcell failed");
 
         println!("Mapcell has finished!");
         Ok(())

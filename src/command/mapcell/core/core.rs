@@ -27,7 +27,28 @@ use crate::fileformat::shard::get_suitable_shard_reader;
 use crate::fileformat::shard::DetectedFileformat;
 
 
-use super::params;
+
+#[derive(Clone,Debug)]
+pub struct IO {
+    pub path_in: std::path::PathBuf,
+    pub path_tmp: std::path::PathBuf,
+    pub path_out: std::path::PathBuf,
+    pub path_script: std::path::PathBuf,
+
+    //How many threads are reading the input zip file?
+    pub threads_read: usize,
+
+    //How many runners are there? each runner writes it's own zip file output, to be merged later
+    pub threads_write: usize,
+
+    //How many threads should the invoked script use? Passed on as a parameter. Not all commands will support this
+    pub threads_work: usize,
+
+    pub show_script_output: bool,
+    
+    pub keep_files: bool
+}
+
 
 
 
@@ -36,7 +57,7 @@ pub struct MapCell {}
 impl MapCell {
 
     pub fn run(
-        params_io: params::IO
+        params_io: IO
     ) -> anyhow::Result<()> {
 
         let mut params_io = params_io.clone();
@@ -199,7 +220,7 @@ impl MapCell {
 
 //////////////////////////////////// Reader for shard files (bascet and gascet)
 fn create_shard_reader<R>(
-    params_io: &Arc<params::IO>,
+    params_io: &Arc<IO>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<MapCellScript>,
     rx: &Arc<Receiver<Option<String>>>,
@@ -257,7 +278,7 @@ fn create_shard_reader<R>(
 
 ///////////////////////////// Worker thread that integrates the writing
 fn create_writer(
-    params_io: &Arc<params::IO>,
+    params_io: &Arc<IO>,
     zip_file: &PathBuf,
     mapcell_script: &Arc<MapCellScript>,
     thread_pool: &threadpool::ThreadPool,
