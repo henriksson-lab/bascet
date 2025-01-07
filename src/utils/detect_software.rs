@@ -4,7 +4,6 @@ use std::process::Command;
 //use anyhow::Result;
 use anyhow::bail;
 
-#[allow(dead_code)]
 pub fn check_tabix() -> anyhow::Result<()> {
     debug!("Checking for tabix");
     if let Ok(_output)  = Command::new("tabix").output() {
@@ -17,7 +16,6 @@ pub fn check_tabix() -> anyhow::Result<()> {
 
 
 
-#[allow(dead_code)]
 pub fn check_bgzip() -> anyhow::Result<()> {
     debug!("Checking for bgzip");
     if let Ok(_output)  = Command::new("bgzip").output() {

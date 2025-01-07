@@ -59,7 +59,7 @@ impl ShardReader for TirpBascetShardReader {
     }
 
     fn get_files_for_cell(&mut self, _cell_id: &CellID) -> anyhow::Result<Vec<String>>{
-        println!("get files for cell in gascet not implemented");
+        println!("get files for cell in TIRP not implemented");
         Ok(Vec::new())
     }
 
