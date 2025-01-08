@@ -17,11 +17,11 @@ use crate::command::getraw::GetRawParams;
 #[derive(Args)]
 pub struct GetRawCMD {
     // FASTQ for r1
-    #[arg(long = "i1", value_parser)]
+    #[arg(long = "r1", value_parser)]
     pub path_forward: PathBuf,
 
     // FASTQ for r2
-    #[arg(long = "i2", value_parser)]
+    #[arg(long = "r2", value_parser)]
     pub path_reverse: PathBuf,
 
     // Output filename for complete reads
@@ -112,7 +112,8 @@ fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
 
     let filename = path_in.file_name().unwrap().to_str().unwrap();
 
-    if filename.ends_with("fq") | filename.ends_with("fq.gz") | filename.ends_with("fastq.gz") | filename.ends_with("fastq.gz")  {
+    if filename.ends_with("fq") | filename.ends_with("fq.gz") | 
+        filename.ends_with("fastq") | filename.ends_with("fastq.gz")  {
         //ok
     } else {
         anyhow::bail!("Input file must be a fastq file")
