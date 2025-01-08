@@ -1,4 +1,6 @@
 use anyhow::Result;
+use anyhow::bail;
+
 use clap::Args;
 use std::{
     fs::File,
@@ -7,11 +9,16 @@ use std::{
     thread,
 };
 
-pub const GETRAW_DEFAULT_PATH_TEMP: &str = "temp";
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
 
 
 use crate::command::getraw::GetRaw;
 use crate::command::getraw::GetRawParams;
+
+use crate::barcode::AtrandiWGSChemistry;
+use crate::barcode::AtrandiRNAseqChemistry;
+use crate::barcode::GeneralCombinatorialBarcode;
 
 
 #[derive(Args)]
@@ -32,13 +39,17 @@ pub struct GetRawCMD {
     #[arg(long = "out-incomplete", value_parser)]
     pub path_output_incomplete: PathBuf, 
 
+    // Optional: chemistry with barcodes to use
+    #[arg(long = "chemistry", value_parser, default_value = DEFAULT_CHEMISTRY)]
+    pub chemistry: String, 
+
     // Optional: file with barcodes to use
-    #[arg(long = "bc", value_parser)]
-    pub barcode_file: Option<PathBuf>, 
+    #[arg(long = "barcodes", value_parser)]
+    pub path_barcodes: Option<PathBuf>, 
 
 
     // Temporary file directory. TODO - use system temp directory as default? TEMP variable?
-    #[arg(short = 't', value_parser, default_value = GETRAW_DEFAULT_PATH_TEMP)]
+    #[arg(short = 't', value_parser, default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
 
     //Whether to sort or not
@@ -49,7 +60,6 @@ pub struct GetRawCMD {
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_work: Option<usize>,
 }
-
 impl GetRawCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
@@ -65,16 +75,46 @@ impl GetRawCMD {
             path_reverse: self.path_reverse.clone(),            
             path_output_complete: self.path_output_complete.clone(),            
             path_output_incomplete: self.path_output_incomplete.clone(),            
-            barcode_file: self.barcode_file.clone(),            
+            //barcode_file: self.barcode_file.clone(),            
             sort: !self.no_sort,            
             threads_work: threads_work,
         };
 
         //fs::create_dir_all(&self.path_out).unwrap();
 
-        let _ = GetRaw::getraw(
-            Arc::new(params_io)
-        );
+
+        // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
+
+        if self.chemistry == "atrandi_wgs" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut AtrandiWGSChemistry::new()
+            );
+        } else if self.chemistry == "atrandi_rnaseq" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut AtrandiRNAseqChemistry::new()
+            );
+        } else if self.chemistry == "combinatorial" {
+            if let Some(path_barcodes) = &self.path_barcodes {
+                let _ = GetRaw::getraw(
+                    Arc::new(params_io),
+                    &mut GeneralCombinatorialBarcode::new(&path_barcodes)
+                );
+            } else {
+                bail!("Barcode file not specified");
+            }
+        } else if self.chemistry == "10x" {
+            panic!("not implemented");
+        } else if self.chemistry == "parsebio" {
+            panic!("not implemented");
+
+        } else {
+            bail!("Unidentified chemistry");
+        }
+
+
+        
 
         Ok(())
     }
@@ -98,6 +138,9 @@ impl GetRawCMD {
 
 
 }
+
+
+
 
 
 

@@ -18,11 +18,14 @@ use seq_io::fastq::Record as FastqRecord;
 
 use super::io;
 
-use crate::barcode;
+use crate::barcode::Chemistry;
+
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
+
+
 
 
 
@@ -34,7 +37,6 @@ pub struct GetRawParams {
     pub path_output_complete: std::path::PathBuf,
     pub path_output_incomplete: std::path::PathBuf,
 
-    pub barcode_file: Option<std::path::PathBuf>,
     pub sort: bool,
 
     pub threads_work: usize,   
@@ -102,13 +104,14 @@ fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     list_hist: &Arc<Mutex<Vec<shard::BarcodeHistogram>>>,
-    sort: bool
+    sort: bool,
+    tempdir: &PathBuf
 ) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
 
     let outfile = outfile.clone();
 
     let list_hist = Arc::clone(list_hist);
-
+    let tempdir = tempdir.clone();
     //Create input read queue
     //Limit how many chunks can be in pipe
     let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
@@ -126,7 +129,7 @@ fn create_writer_thread(
 
             //Pipe to sort, then to given file
             let mut cmd = Command::new("sort");
-            //cmd.arg("--temporary-directory=dir");  //TODO
+            cmd.arg(format!("--temporary-directory={}", tempdir.display())); 
 
             let mut process = cmd
                 .stdin(Stdio::piped())
@@ -179,7 +182,8 @@ pub struct GetRaw {}
 
 impl GetRaw {
     pub fn getraw<'a>(
-        params_io: Arc<GetRawParams>
+        params_io: Arc<GetRawParams>,
+        barcodes: &mut (impl Chemistry+Clone+Send+'static)
     ) -> anyhow::Result<()> {
 
         info!("Running command: getraw");
@@ -196,14 +200,15 @@ impl GetRaw {
         _ = fs::create_dir(&params_io.path_tmp);
 
         // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
-        let mut barcodes: barcode::CombinatorialBarcoding = barcode::read_barcodes(&params_io.barcode_file);
+        //let mut barcodes = AtrandiChemistry::new();
 
         // Open fastq files
         let mut forward_file = io::open_fastq(&params_io.path_forward);
-        let reverse_file = io::open_fastq(&params_io.path_reverse);
+        let mut reverse_file = io::open_fastq(&params_io.path_reverse);
 
         // Find probable barcode starts and ends
-        barcodes.find_probable_barcode_boundaries(reverse_file, 1000).expect("Failed to detect barcode setup from reads");
+        barcodes.prepare(&mut forward_file, &mut reverse_file).expect("Failed to detect barcode setup from reads");
+        let mut forward_file = io::open_fastq(&params_io.path_forward); // reopen the file to read from beginning
         let mut reverse_file = io::open_fastq(&params_io.path_reverse); // reopen the file to read from beginning
 
         // Start writer threads
@@ -219,13 +224,15 @@ impl GetRaw {
             &path_temp_complete_sorted, 
             &thread_pool_write, 
             &list_hist_complete,
-            true).
+            true,
+            &params_io.path_tmp).
             expect("Failed to get writer threads");
         let tx_writer_incomplete = create_writer_thread(
             &path_temp_incomplete_sorted, 
             &thread_pool_write,
             &list_hist_incomplete,
-             false).
+             false,
+             &params_io.path_tmp).
              expect("Failed to get writer threads");
 
         // Start worker threads.
