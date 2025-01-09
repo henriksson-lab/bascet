@@ -40,7 +40,7 @@ impl Chemistry for AtrandiRNAseqChemistry {
     ) -> (bool, CellID, ReadPair) {
 
         //Truseq primer: 
-        let top_adapter = "GATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"; //5'phos   GATCGGAAGAGCG
+        let _top_adapter = "GATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"; //5'phos   GATCGGAAGAGCG
 
 
         //Detect barcode, which for atrandi barcode is in R2

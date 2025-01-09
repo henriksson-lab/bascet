@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::fs::read_to_string;
 use anyhow::Result;
 use clap::Args;
 
 use crate::command::shardify::ShardifyParams;
 use crate::command::shardify::Shardify;
+use crate::fileformat::read_cell_list_file;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_THREADS_READ: usize = 1;
@@ -62,12 +62,3 @@ impl ShardifyCMD {
 
 
 
-
-
-fn read_cell_list_file(filename: &PathBuf) -> Vec<String> {
-    read_to_string(filename) 
-        .expect("Failed to read file with list of cells")  
-        .lines() 
-        .map(String::from)  
-        .collect()  
-}

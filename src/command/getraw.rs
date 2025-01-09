@@ -16,8 +16,6 @@ use std::io::{BufWriter, Write, Read};
 use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
 
-use super::io;
-
 use crate::barcode::Chemistry;
 
 use crate::fileformat::tirp;
@@ -203,13 +201,13 @@ impl GetRaw {
         //let mut barcodes = AtrandiChemistry::new();
 
         // Open fastq files
-        let mut forward_file = io::open_fastq(&params_io.path_forward);
-        let mut reverse_file = io::open_fastq(&params_io.path_reverse);
+        let mut forward_file = open_fastq(&params_io.path_forward).unwrap();
+        let mut reverse_file = open_fastq(&params_io.path_reverse).unwrap();
 
         // Find probable barcode starts and ends
         barcodes.prepare(&mut forward_file, &mut reverse_file).expect("Failed to detect barcode setup from reads");
-        let mut forward_file = io::open_fastq(&params_io.path_forward); // reopen the file to read from beginning
-        let mut reverse_file = io::open_fastq(&params_io.path_reverse); // reopen the file to read from beginning
+        let mut forward_file = open_fastq(&params_io.path_forward).unwrap(); // reopen the file to read from beginning
+        let mut reverse_file = open_fastq(&params_io.path_reverse).unwrap(); // reopen the file to read from beginning
 
         // Start writer threads
         let path_temp_complete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_complete.bed"));
@@ -479,6 +477,30 @@ pub fn catsort_files(
 
 
 
+
+
+
+
+pub fn open_fastq(file_handle: &PathBuf) -> anyhow::Result<FastqReader<Box<dyn std::io::Read>>> {
+
+    let opened_handle = File::open(file_handle).
+        expect(format!("Could not open fastq file {}", &file_handle.display()).as_str());
+
+    let (reader,compression) = niffler::get_reader(Box::new(opened_handle)).
+        expect(format!("Could not open fastq file {}", &file_handle.display()).as_str());
+
+    debug!(
+        "Opened file {} with compression {:?}",
+        &file_handle.display(),
+        &compression
+    );
+    Ok(FastqReader::new(reader))
+}
+
+
+
+
+
 #[cfg(test)]
 mod tests {
 /* 
@@ -524,5 +546,4 @@ mod tests {
     }
     */
 }
-
 

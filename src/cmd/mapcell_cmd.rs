@@ -4,10 +4,10 @@ use clap::Args;
 
 use crate::command::mapcell;
 
-pub const MAPCELL_DEFAULT_PATH_TEMP: &str = "temp";
-pub const MAPCELL_DEFAULT_THREADS_READ: usize = 1;
-pub const MAPCELL_DEFAULT_THREADS_WRITE: usize = 10;
-pub const MAPCELL_DEFAULT_THREADS_WORK: usize = 1;
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+pub const DEFAULT_THREADS_READ: usize = 1;
+pub const DEFAULT_THREADS_WRITE: usize = 10;
+pub const DEFAULT_THREADS_WORK: usize = 1;
 
 
 #[derive(Args)]
@@ -17,7 +17,7 @@ pub struct MapCellCMD {
     pub path_in: Option<PathBuf>,
 
     // Temp file directory
-    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = MAPCELL_DEFAULT_PATH_TEMP)]
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
 
     // Output bascet
@@ -52,13 +52,13 @@ pub struct MapCellCMD {
 
 
     //Thread settings
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MAPCELL_DEFAULT_THREADS_READ)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
     threads_read: usize,
 
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MAPCELL_DEFAULT_THREADS_WRITE)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WRITE)]
     threads_write: usize,
     
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = MAPCELL_DEFAULT_THREADS_WORK)]
+    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
     threads_work: usize,
 }
 
@@ -69,7 +69,7 @@ impl MapCellCMD {
 
 
         if self.show_presets {
-            let names = mapcell::get_preset_script_names();
+            let names = crate::mapcell_scripts::get_preset_script_names();
             println!("Available preset scripts: {:?}", names);
             return Ok(());
         }

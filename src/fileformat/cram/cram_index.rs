@@ -14,7 +14,7 @@ use noodles::sam::alignment::record::data::field::Tag;
 use seq_io::fastq::Position;
 use serde::{Deserialize, Serialize};
 
-use super::stats;
+use super::cram_stats;
 
 use noodles::cram;
 
@@ -161,8 +161,8 @@ pub fn index(cram: &PathBuf) {
                 validate_read_pair(pair);
                 let bc_tag = pair[0].tags().get(&Tag::CELL_BARCODE_ID);
                 // TODO match so we discard the reads without barcodes
-                let current_barcode: String = stats::reformat_value_string(
-                    stats::BCValue(bc_tag.unwrap().clone()).to_string(),
+                let current_barcode: String = cram_stats::reformat_value_string(
+                    cram_stats::BCValue(bc_tag.unwrap().clone()).to_string(),
                 );
                 if current_barcode != previous_barcode {
                     trace!("Found a new barcode: {:?}", &current_barcode);

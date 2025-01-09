@@ -24,6 +24,7 @@ enum Commands {
     Mapcell(cmd::MapCellCMD),
     Extract(cmd::ExtractCMD),
     Shardify(cmd::ShardifyCMD),
+    BuildKMERdatabase(cmd::BuildKMERdatabaseCMD)
 }
 
 fn main() -> ExitCode {
@@ -41,6 +42,7 @@ fn main() -> ExitCode {
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
+        Commands::BuildKMERdatabase(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
