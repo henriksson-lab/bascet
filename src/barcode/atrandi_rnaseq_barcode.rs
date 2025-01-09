@@ -44,11 +44,16 @@ impl Chemistry for AtrandiRNAseqChemistry {
 
 
         //Detect barcode, which for atrandi barcode is in R2
-        let (isok, bc) = self.barcode.detect_barcode(r2_seq);
+        let total_score_cutoff = 2; // relaxed comparison
+        let (isok, bc) = self.barcode.detect_barcode(
+            r2_seq, 
+            true,
+             total_score_cutoff
+        ); //parse BC as far as possible
 
         if isok {
 
-            let tso= "AAGCAGTGGTATCAACGCAGAGTA";
+            let tso= "AAGCAGTGGTATCAACGCAGAGTA"; ///////////// TODO search for this sequence early. if not present, can abort!
             let tso_len = tso.len();
             let umi_len = 8;
             let bc_len = 8+4+8+4+8+4+8;

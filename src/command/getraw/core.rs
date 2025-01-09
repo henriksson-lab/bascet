@@ -218,7 +218,6 @@ impl GetRaw {
         let list_hist_complete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
         let list_hist_incomplete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
 
-
         let thread_pool_write = threadpool::ThreadPool::new(2);
         let tx_writer_complete = create_writer_thread(
             &path_temp_complete_sorted, 
@@ -259,10 +258,10 @@ impl GetRaw {
 
 
                         let (is_ok, cellid, readpair) = barcodes.detect_barcode_and_trim(
-                            &bam_cell.reverse_record.seq(),
-                            &bam_cell.reverse_record.qual(),
                             &bam_cell.forward_record.seq(),
-                            &bam_cell.forward_record.qual()
+                            &bam_cell.forward_record.qual(),
+                            &bam_cell.reverse_record.seq(),
+                            &bam_cell.reverse_record.qual()
                         );
 
                         if is_ok {

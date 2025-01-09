@@ -9,6 +9,8 @@ use rand::{
 pub static NOISE_RANGE: LazyLock<Uniform<u32>> =
     LazyLock::new(|| Uniform::from(u32::MIN..=u32::MAX));
 
+
+////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
     let mut table = [0u8; (b'T' - b'A' + 1) as usize];
     table[(b'A' - b'A') as usize] = 0b00;
@@ -18,12 +20,14 @@ const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
     table
 };
 
+
 const fn generate_nt4_value(a: u8, b: u8, c: u8, d: u8) -> u8 {
     (NT1_LOOKUP[(a - b'A') as usize] << 6)
         | (NT1_LOOKUP[(b - b'A') as usize] << 4)
         | (NT1_LOOKUP[(c - b'A') as usize] << 2)
         | NT1_LOOKUP[(d - b'A') as usize]
 }
+
 
 const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
     const DIM: usize = (b'T' - b'A' + 1) as usize;
@@ -32,6 +36,10 @@ const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
         + ((c - b'A') as usize * DIM * DIM)
         + ((d - b'A') as usize * DIM * DIM * DIM)
 }
+
+
+////////////// Lookup table for NNNN where N is any of ATCG.
+////////////// Maps compressed ATCG (usize) to 0..255 ie compresses it to a single byte
 const fn generate_nt4_table() -> [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] {
     const NUCLEOTIDES: [u8; 4] = [b'A', b'T', b'G', b'C'];
     let mut table = [0u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE];
@@ -51,14 +59,20 @@ const fn generate_nt4_table() -> [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * 
     }
     table
 }
-
 const NT4_DIMSIZE: usize = (b'T' - b'A' + 1) as usize;
-const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
+const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =  /////// Map compressed ATCG => single byte
     generate_nt4_table();
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
+
+
+
+
+
 //NOTE: all of this can probably make use of SIMD operations but I do not know how that'd work
+
+//////////// KMER encoder, for a given KMER-size
 #[derive(Clone, Copy)]
 pub struct KMERCodec {
     kmer_size: usize,
@@ -70,6 +84,7 @@ impl KMERCodec {
         }
     }
 
+    //////////// Encode a kmer + count + random value
     #[inline(always)]
     pub unsafe fn encode(&self, bytes: &[u8], count: u32, rng: &mut impl Rng) -> EncodedKMER {
         let chunk_size: usize = 4;
@@ -80,22 +95,19 @@ impl KMERCodec {
         let mut encoded = 0;
         let ptr = bytes.as_ptr();
 
-        // Process chunks of 4 nucleotides
+        // Compress chunks of 4 nucleotides to 1-byte encoding
         for i in 0..full_chunks {
             let chunk_ptr = ptr.add(i * chunk_size);
             let idx = unsafe {
                 (*chunk_ptr.offset(0) - b'A') as usize
                     + ((*chunk_ptr.offset(1) - b'A') as usize * NT4_DIMSIZE)
                     + ((*chunk_ptr.offset(2) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE)
-                    + ((*chunk_ptr.offset(3) - b'A') as usize
-                        * NT4_DIMSIZE
-                        * NT4_DIMSIZE
-                        * NT4_DIMSIZE)
+                    + ((*chunk_ptr.offset(3) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
             };
             encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
 
-        // Handle remaining nucleotides
+        // Compress remaining nucleotides
         let start = full_chunks * chunk_size;
         for i in 0..remainder {
             encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
@@ -107,6 +119,9 @@ impl KMERCodec {
             .with_noise(NOISE_RANGE.sample(rng))
     }
 
+
+
+    //////////// Encode a kmer + count + random value ............... cannot just use as_bytes + above?
     #[inline(always)]
     pub unsafe fn encode_str(&self, kmer: &str, count: u32, rng: &mut impl Rng) -> EncodedKMER {
         let chunk_size: usize = 4;
@@ -125,10 +140,7 @@ impl KMERCodec {
                 (*chunk_ptr.offset(0) - b'A') as usize
                     + ((*chunk_ptr.offset(1) - b'A') as usize * NT4_DIMSIZE)
                     + ((*chunk_ptr.offset(2) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE)
-                    + ((*chunk_ptr.offset(3) - b'A') as usize
-                        * NT4_DIMSIZE
-                        * NT4_DIMSIZE
-                        * NT4_DIMSIZE)
+                    + ((*chunk_ptr.offset(3) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
             };
             encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
@@ -159,6 +171,9 @@ impl KMERCodec {
     }
 }
 
+
+
+/////////// A kmer + count + noise, aligned into a u128
 #[bitfield(u128)]
 pub struct EncodedKMER {
     #[bits(64)]
