@@ -398,7 +398,6 @@ impl CombinatorialBarcodePart {
         //Find the most common value
         let mut histogram = self.histogram_startpos.iter().counts();
         let (&&most_common_pos,&most_common_count) = histogram.iter().max_by_key(|&(_, dist)| dist).expect("no entry in histogram");
-        //let most_common_pos = **most_common_pos;
 
         //Keep any positions within a cutoff from the most common place
         let cutoff = (most_common_count as f64) * 0.8;
