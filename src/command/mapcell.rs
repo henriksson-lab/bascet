@@ -3,14 +3,12 @@ use std::sync::Arc;
 use std::fs::File;
 use std::io::BufWriter;
 use std::process;
-use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::bail;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
-use itertools::Itertools;
 use log::info;
 use log::debug;
 use zip::ZipWriter;
@@ -19,12 +17,13 @@ use crate::utils;
 use crate::fileformat::mapcell_script;
 use crate::fileformat::mapcell_script::MapCellScript;
 use crate::fileformat::mapcell_script::MissingFileMode;
-use crate::fileformat::zip::ZipBascetShardReader;
-use crate::fileformat::tirp::TirpBascetShardReader;
-use crate::fileformat::shard::ShardReader;
-use crate::fileformat::shard::detect_shard_format;
-use crate::fileformat::shard::get_suitable_shard_reader;
-use crate::fileformat::shard::DetectedFileformat;
+
+use crate::fileformat::ZipBascetShardReader;
+use crate::fileformat::TirpBascetShardReader;
+use crate::fileformat::ShardReader;
+use crate::fileformat::detect_shard_format;
+use crate::fileformat::get_suitable_shard_reader;
+use crate::fileformat::DetectedFileformat;
 
 
 
@@ -79,7 +78,7 @@ impl MapCell {
         if params.path_script.to_str().expect("argument conversion error").starts_with("_") {
             println!("using preset {:?}", params.path_script);
 
-            let map_presets = get_preset_scripts();
+            let map_presets = crate::mapcell_scripts::get_preset_scripts();
             let preset_name=params.path_script.to_str().expect("failed to get string from script path");
             let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
 
@@ -406,35 +405,6 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
 
     Ok(buf)
 }
-
-
-
-
-
-
-const PRESET_SCRIPT_TEST: &[u8] = include_bytes!("test_script.sh");
-const PRESET_SCRIPT_QUAST: &[u8] = include_bytes!("quast.sh");
-const PRESET_SCRIPT_SKESA: &[u8] = include_bytes!("skesa.sh");
-const PRESET_SCRIPT_SPADES: &[u8] = include_bytes!("spades.sh");
-
-
-pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
-    let mut map: HashMap<String, Vec<u8>> = HashMap::new();
-    map.insert("testing".to_string(), PRESET_SCRIPT_TEST.to_vec());
-    map.insert("quast".to_string(), PRESET_SCRIPT_QUAST.to_vec());
-    map.insert("skesa".to_string(), PRESET_SCRIPT_SKESA.to_vec());
-    map.insert("spades".to_string(), PRESET_SCRIPT_SPADES.to_vec());
-    map
-}
-
-
-pub fn get_preset_script_names() -> Vec<String> {
-    let map= get_preset_scripts();
-    let names: Vec<String> =map.keys().sorted().cloned().collect();
-    names
-}
-
-
 
 
 

@@ -3,15 +3,16 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-use super::zip::ZipBascetShardReader;
-use super::tirp::TirpBascetShardReader;
-
+use super::ZipBascetShardReader;
+use super::TirpBascetShardReader;
+use super::DetectedFileformat;
 
 ///////////////////////////////
 /////////////////////////////// The type of the cell ID
 ///////////////////////////////
 
 pub type CellID = String;
+pub type CellUMI = Vec<u8>;
 
 
 
@@ -55,44 +56,43 @@ pub trait ShardReader {
 
 
 
-///////////////////////////////
-/////////////////////////////// Detection of file format
-///////////////////////////////
 
 
-#[derive(Debug,Clone,PartialEq,Eq)]
-pub enum DetectedFileformat {
-    TIRP,
-    ZIP,
-    FASTQ,
-    BAM,
-    Other
-}
 
 
-pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
-    let p_string = p.file_name().expect("cannot convert OS string when detecting file format").to_string_lossy();
+//////////////////
+/// Try to figure out what cells are present in an input file.           
+/// If we cannot list the cells for this file then it will have to stream all the content
+pub fn try_get_cells_in_file(p: &PathBuf) -> anyhow::Result<Option<Vec<CellID>>> {
+    match crate::fileformat::detect_shard_format(&p) {
+        DetectedFileformat::TIRP => {
+            let mut f = TirpBascetShardReader::new(&p).expect("Unable to open input TIRP file");
+            Ok(Some(f.get_cell_ids().unwrap()))
+        },
+        DetectedFileformat::ZIP => {
 
-    if p_string.ends_with("tirp.gz") {
-        DetectedFileformat::TIRP
-    } else if p_string.ends_with("zip") { 
-        DetectedFileformat::ZIP
-    } else {
-        DetectedFileformat::Other
+
+
+
+            panic!("TODO")
+        },
+        DetectedFileformat::FASTQ => {
+            Ok(None)
+        },
+        DetectedFileformat::BAM => {
+
+            //// need separate index file
+
+            panic!("TODO")
+        },
+        _ => { anyhow::bail!("File format for {} not supported for this operation", p.display()) }
+
     }
+    
 }
 
 
-pub fn get_suitable_shard_reader(
-    p: &PathBuf, 
-    format: &DetectedFileformat
-) -> Box::<dyn ShardReader> {
-    match format {
-        DetectedFileformat::TIRP => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),
-        DetectedFileformat::ZIP => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create ZIP reader")),
-        _ => panic!("Cannot figure out how to open input file (could not detect shard type)")
-    }
-}
+
 
 
 

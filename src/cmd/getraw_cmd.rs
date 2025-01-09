@@ -3,7 +3,6 @@ use anyhow::bail;
 
 use clap::Args;
 use std::{
-    fs::File,
     path::PathBuf,
     sync::Arc,
     thread,
@@ -63,8 +62,8 @@ pub struct GetRawCMD {
 impl GetRawCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
-        verify_input_fq_file(&self.path_forward)?;
-        verify_input_fq_file(&self.path_reverse)?;
+        crate::fileformat::verify_input_fq_file(&self.path_forward)?;
+        crate::fileformat::verify_input_fq_file(&self.path_reverse)?;
 
         let threads_work = self.resolve_thread_config()?;
 
@@ -135,25 +134,3 @@ impl GetRawCMD {
 
 
 
-
-
-/////// Check that the specified file is a fastq file
-fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
-    if let Ok(file) = File::open(&path_in) {
-        if file.metadata()?.len() == 0 {
-            //anyhow::bail!("Empty input file");
-            print!("Warning: input file is empty");
-        }
-    }
-
-    let filename = path_in.file_name().unwrap().to_str().unwrap();
-
-    if filename.ends_with("fq") | filename.ends_with("fq.gz") | 
-        filename.ends_with("fastq") | filename.ends_with("fastq.gz")  {
-        //ok
-    } else {
-        anyhow::bail!("Input file must be a fastq file")
-    }
-
-    Ok(())
-}

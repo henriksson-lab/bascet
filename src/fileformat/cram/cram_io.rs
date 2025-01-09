@@ -15,9 +15,6 @@ use niffler::get_reader;
 use seq_io::fasta::Reader as FastaReader;
 use seq_io::fastq::{Reader as FastqReader, Record as FastqRecord};
 
-use semver::{Version, VersionReq};
-
-use std::process::Command;
 
 
 pub struct BGZFFastqReader {
@@ -104,6 +101,7 @@ impl BGZFRecord {
 //    println!("unimplemented!");
 // }
 
+// see cleaner version in getraw.rs; to common function?
 pub fn open_fastq(file_handle: &PathBuf) -> FastqReader<Box<dyn std::io::Read>> {
     let opened_handle = match File::open(file_handle) {
         Ok(file) => file,
@@ -220,40 +218,6 @@ pub fn fastq_to_bgz(path: &PathBuf, output: &PathBuf) {
 }
 
 
-
-
-
-
-pub fn check_dep_samtools() {
-    debug!("Checking for the correct samtools");
-    let req_samtools_version = VersionReq::parse(">=1.18").unwrap();
-    let samtools = Command::new("samtools").arg("version").output();
-    match samtools {
-        Ok(samtools) => {
-            let samtools_version = String::from_utf8_lossy(
-                samtools
-                    .stdout
-                    .split(|c| *c == b'\n')
-                    .next()
-                    .unwrap()
-                    .split(|c| *c == b' ')
-                    .last()
-                    .unwrap(),
-            );
-            let samtools_version = samtools_version.parse::<Version>().unwrap();
-            if req_samtools_version.matches(&samtools_version) {
-                debug!("Samtools version is recent enough");
-            } else {
-                error!("babbles extract requires Samtools >= 1.18");
-                process::exit(1)
-            }
-        }
-        Err(_error) => {
-            error!("Samtools is either not installed or not in PATH");
-            process::exit(1)
-        }
-    };
-}
 
 
 
