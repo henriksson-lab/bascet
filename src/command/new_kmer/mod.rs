@@ -1,5 +1,31 @@
 
 
+
+
+
+struct BuildKMERdatabase {
+
+}
+impl BuildKMERdatabase {
+
+
+
+
+
+
+    
+}
+
+
+
+
+
+
+
+
+
+
+
 // kmc has an API: https://github.com/refresh-bio/KMC/blob/master/kmc_dump/kmc_dump.cpp
 // example opens kmer database for listing and print kmers within min_count and max_count
 

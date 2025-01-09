@@ -80,11 +80,7 @@ impl GetRawCMD {
             threads_work: threads_work,
         };
 
-        //fs::create_dir_all(&self.path_out).unwrap();
-
-
-        // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
-
+        // Start the debarcoding for specified chemistry
         if self.chemistry == "atrandi_wgs" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
@@ -112,9 +108,6 @@ impl GetRawCMD {
         } else {
             bail!("Unidentified chemistry");
         }
-
-
-        
 
         Ok(())
     }
