@@ -190,9 +190,12 @@ impl CombinatorialBarcode {
 
 
     ////////// Detect barcode only
+    #[inline(always)]
     pub fn detect_barcode(
         &mut self,
-        seq: &[u8]
+        seq: &[u8],
+        abort_early: bool,
+        total_distance_cutoff: i32
     ) -> (bool, CellID) {
         let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
         let mut total_score = 0;
@@ -202,20 +205,27 @@ impl CombinatorialBarcode {
             if let Some((this_bc, score)) = one_bc {
                 full_bc.push(this_bc);
                 total_score = total_score + score;
-            } else {
+            } else if abort_early {
                 //If we cannot decode a barcode, abort early. This saves a good % of time
                 return (false, bcvec_to_string(&full_bc));
             }
             // early return if mismatch too high. This saves a good % of time
-            if total_score > 1 {
+            if total_score > total_distance_cutoff {
                 return (false, bcvec_to_string(&full_bc));
             }
 
         }
+        if !abort_early && full_bc.len()!= self.pools.len() {
+            //Barcode was incomplete. This can only happen if early abortion not set. 
+            //Adding it as a condition to help compiler remove this test when the function is inlined
+            return (false, bcvec_to_string(&full_bc));
+        }
+
         (true, bcvec_to_string(&full_bc))
     }
 
     ////////// Detect barcode, and trim if ok
+    #[inline(always)]
     pub fn detect_barcode_and_trim(
         &mut self,
         bc_seq: &[u8],
@@ -404,9 +414,7 @@ impl CombinatorialBarcodePart {
         self.quick_testpos = most_common_pos;
         self.all_test_pos.extend(first_pos..last_pos);
 
-        println!("Picked first pos {}",self.quick_testpos);
-        println!("scanning from {} to {} ",first_pos, last_pos);
-        println!("bc length {} ",self.bc_length);
+        println!("scanning from starting positions {} to {}, first testing position {}. The barcode is of length {}",first_pos, last_pos, self.quick_testpos, self.bc_length);
 
         //Histogram no longer needed
         self.histogram_startpos.clear();

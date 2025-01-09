@@ -70,7 +70,14 @@ impl Command {
 
             let params_io = crate::core::params::IO { path_in: path_dump };
 
+
+
+            
             let codec = KMERCodec::new(self.kmer_size);
+
+
+
+
             let params_runtime = crate::core::params::Runtime {
                 kmer_size: self.kmer_size,
                 features_nmin: self.features_nmin,

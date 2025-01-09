@@ -40,8 +40,8 @@ test_getraw:
 
 test_rna_3_1:
 	rm -Rf temp; cargo +nightly run getraw --chemistry=atrandi_rnaseq  \
-		--r1 rnaseq/Bac-Single-Cell_S1_L001_R1_001.fastq.gz \
-		--r2 rnaseq/Bac-Single-Cell_S1_L001_R2_001.fastq.gz \
+		--r1 rnaseq/1/Bac-Single-Cell_S1_L001_R1_001.fastq.gz \
+		--r2 rnaseq/1/Bac-Single-Cell_S1_L001_R2_001.fastq.gz \
 		--out-complete   rnaseq/out_complete.0.tirp.gz \
 		--out-incomplete rnaseq/out_incomplete.0.tirp.gz
 

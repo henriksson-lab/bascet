@@ -47,7 +47,12 @@ impl Chemistry for AtrandiWGSChemistry {
     ) -> (bool, CellID, ReadPair) {
 
         //Detect barcode, which for atrandi barcode is in R2
-        let (isok, bc) = self.barcode.detect_barcode(r2_seq);
+        let total_distance_cutoff = 1; // appears that we can be strict
+        let (isok, bc) = self.barcode.detect_barcode(
+            r2_seq,
+            false,
+            total_distance_cutoff
+        );
 
         if isok {
 
