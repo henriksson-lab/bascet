@@ -79,14 +79,6 @@ impl ZipBascetShardReader {
 
 }
 
-/* 
-impl ConstructFromPath for ZipBascetShardReader {
-
-    fn new_from_path<ConstructFromPath>(fname: &PathBuf) -> anyhow::Result<ZipBascetShardReader> {
-        ZipBascetShardReader::new(fname)
-    }
-
-}*/
 
 
 impl ShardCellDictionary for ZipBascetShardReader {

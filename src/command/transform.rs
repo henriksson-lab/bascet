@@ -160,9 +160,16 @@ impl TransformFile {
 
         // Loop over all cells
         // todo: if cell list provided, need to wait for a reader to have streamed them all
+        let mut num_proc_cell = 0;
+        let num_total_cell = include_cells.len();
         for cell_id in include_cells {
-            println!("Doing cell {}",cell_id);
+            //println!("Doing cell {}",cell_id);
             tx_readcell.send(Some(cell_id)).unwrap();
+            num_proc_cell+=1;
+            if num_proc_cell%1000 == 0 {
+                println!("Processed {} / {} cells", num_proc_cell, num_total_cell);
+                //println!("Doing cell {}",cell_id);
+            }
         }
 
         //Tell all readers to shut down

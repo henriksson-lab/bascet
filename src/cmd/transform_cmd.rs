@@ -24,6 +24,13 @@ pub struct TransformCmd {
 impl TransformCmd {
     pub fn try_execute(&mut self) -> Result<()> {
 
+        if self.path_in.is_empty() {
+            anyhow::bail!("No input files were specified");
+        }
+        if self.path_out.is_empty() {
+            anyhow::bail!("No output files were specified");
+        }
+
         //Read optional list of cells
         let include_cells = if let Some(p) = &self.include_cells {
             let name_of_cells = read_cell_list_file(&p);
@@ -43,7 +50,7 @@ impl TransformCmd {
         
         let _ = TransformFile::run(&Arc::new(params)).expect("tofastq failed");
 
-        println!("ToFastq has finished!");
+        println!("Transform has finished!");
         Ok(())
     }
 }
