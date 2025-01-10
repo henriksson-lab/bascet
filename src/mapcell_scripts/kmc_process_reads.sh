@@ -75,8 +75,8 @@ echo "USE_THREADS  = ${USE_THREADS}"
 KMC_TEMP=.
 INPUT_FILE_NAME_1=${INPUT_DIR}/r1.fq
 INPUT_FILE_NAME_2=${INPUT_DIR}/r2.fq
-OUTPUT_DB=kmc
-OUTPUT_DUMP=kmc_dump.txt
+#OUTPUT_DB=kmc
+#OUTPUT_DUMP=kmc_dump.txt
 
 
 ## TODO support other parameters
@@ -85,8 +85,8 @@ OUTPUT_DUMP=kmc_dump.txt
 echo $INPUT_FILE_NAME_1 >  inlist.txt
 echo $INPUT_FILE_NAME_2 >> inlist.txt
 
-#Run KMC on FASTQ input
-kmc -cs2000000000  -k31 -ci=1 -fq  @inlist.txt  $OUTPUT_FILE_NAME $KMC_TEMP
+#Run KMC on FASTQ input. Note that KMC cannot handle $vars as arguments for some reason!!
+kmc -cs2000000000  -k31 -ci=1 -fq  @inlist.txt  kmc .
 
 #Remove list of files
 rm inlist.txt
@@ -98,7 +98,8 @@ rm inlist.txt
 #-ci<value>        - exclude k-mers occurring less than <value> times (default: 2)
 
 ### To enable reading from the database, dump as txt  (in the future, possible to )
-kmc_tools transform $OUTPUT_DB dump $OUTPUT_DUMP
+#kmc_tools transform $OUTPUT_DB dump $OUTPUT_DUMP
+kmc_tools transform kmc dump kmc_dump.txt
 
 
 ### The last line must be "MAPCELL-OK".
