@@ -7,6 +7,9 @@ const PRESET_SCRIPT_QUAST: &[u8] = include_bytes!("quast.sh");
 const PRESET_SCRIPT_SKESA: &[u8] = include_bytes!("skesa.sh");
 const PRESET_SCRIPT_SPADES: &[u8] = include_bytes!("spades.sh");
 
+const PRESET_SCRIPT_KMC_PROCESS_READS: &[u8] = include_bytes!("kmc_process_reads.sh");
+const PRESET_SCRIPT_KMC_PROCESS_CONTIGS: &[u8] = include_bytes!("kmc_process_contigs.sh");
+
 
 pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
     let mut map: HashMap<String, Vec<u8>> = HashMap::new();
@@ -14,6 +17,10 @@ pub fn get_preset_scripts() -> HashMap<String,Vec<u8>> {
     map.insert("quast".to_string(), PRESET_SCRIPT_QUAST.to_vec());
     map.insert("skesa".to_string(), PRESET_SCRIPT_SKESA.to_vec());
     map.insert("spades".to_string(), PRESET_SCRIPT_SPADES.to_vec());
+
+    map.insert("kmc_process_reads".to_string(), PRESET_SCRIPT_KMC_PROCESS_READS.to_vec());
+    map.insert("kmc_process_contigs".to_string(), PRESET_SCRIPT_KMC_PROCESS_CONTIGS.to_vec());
+
     map
 }
 

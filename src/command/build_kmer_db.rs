@@ -30,8 +30,12 @@ impl BuildKMERdatabase {
         _params: &Arc<BuildKMERdatabaseParams>
     ) -> anyhow::Result<()> {
 
+        //Possible to stream reads on stdin??
 
 
+        //mapcell can not take care of running KMC3
+
+        
 
 
 

@@ -195,9 +195,11 @@ impl MapCell {
 
         //Go through all cells, then terminate all readers
         if let Some(list_cells) = list_cells {
+            let num_total_cell = list_cells.len();
             for cell_id in list_cells {
                 _ = tx_cell_to_read.send(Some(cell_id.clone()));
             }
+            println!("Processed a final of {} cells", num_total_cell);
         } else {
             panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
         }
