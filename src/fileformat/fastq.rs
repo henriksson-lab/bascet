@@ -44,14 +44,6 @@ impl BascetFastqWriter {
 
 }
 
-/* 
-impl ConstructFromPath for BascetFastqWriter {
-
-    fn new_from_path(path: &PathBuf) -> anyhow::Result<BascetFastqWriter>{
-        BascetFastqWriter::new(path)
-    }
-}*/
-
 
 impl ReadPairWriter for BascetFastqWriter {
 
@@ -99,10 +91,13 @@ fn write_fastq_read<W: std::io::Write>(
     seq:&Vec<u8>,
     qual:&Vec<u8>
 ) -> Result<(), BGZFError> {
+    writer.write_all(b">")?;
     writer.write_all(head.as_slice())?;
+    writer.write_all(b"\n")?;
     writer.write_all(seq.as_slice())?;
-    writer.write_all(b"+\n")?;
+    writer.write_all(b"\n+\n")?;
     writer.write_all(&qual.as_slice())?;
+    writer.write_all(b"\n")?;
     Ok(())
 }
 
