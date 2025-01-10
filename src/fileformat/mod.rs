@@ -1,16 +1,28 @@
+
+////// File formats
 pub mod zip;
 pub mod tirp;
 pub mod mapcell_script;
 pub mod shard;
+pub mod cram;
+pub mod fastq;
+
+
+////// Utility
 pub mod cell_readpair_reader;
 pub mod cell_list_file;
-pub mod cram;
 mod detect_fileformat;
 
+////// Re-exports
 pub use shard::CellID;
 pub use shard::ReadPair;
 pub use shard::CellUMI;
 
+pub use shard::ReadPairWriter;
+pub use shard::ReadPairReader;
+pub use shard::ShardCellDictionary;
+pub use shard::ConstructFromPath;
+pub use shard::ShardFileExtractor;
 pub use shard::try_get_cells_in_file;
 
 pub use cell_list_file::read_cell_list_file;
@@ -22,5 +34,5 @@ pub use detect_fileformat::get_suitable_shard_reader;
 
 pub use zip::ZipBascetShardReader;
 pub use tirp::TirpBascetShardReader;
-pub use shard::ShardReader;
+pub use fastq::BascetFastqWriter;
 

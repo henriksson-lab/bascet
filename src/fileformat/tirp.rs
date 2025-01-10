@@ -2,14 +2,20 @@ use log::debug;
 use std::collections::HashSet;
 use std::io::BufWriter;
 use std::io::Write;
-use std::path::PathBuf;
 use std::fs::File;
+use std::sync::Arc;
+use std::path::PathBuf;
 use std::process::Command;
 use anyhow::bail;
 
-use super::shard::ShardReader;
+use super::shard::ConstructFromPath;
+use super::shard::ShardFileExtractor;
 use super::shard::ReadPair;
 use super::shard::CellID;
+
+use crate::fileformat::ReadPairReader;
+//use crate::fileformat::ReadPairWriter;
+use crate::fileformat::ShardCellDictionary;
 
 use rust_htslib::tbx::Reader as TabixReader;
 use rust_htslib::tbx::Read;
@@ -19,26 +25,29 @@ use noodles::fastq::record::Definition;
 use noodles::fastq::Record as FastqRecord;
 
 
-
-
-
+#[derive(Debug,Clone)]
+pub struct TirpBascetShardReaderFactory {
+}
+impl TirpBascetShardReaderFactory {
+    pub fn new() -> TirpBascetShardReaderFactory {
+        TirpBascetShardReaderFactory {}
+    } 
+}
+impl ConstructFromPath<TirpBascetShardReader> for TirpBascetShardReaderFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {  ///////// maybe anyhow prevents spec of reader?
+        TirpBascetShardReader::new(fname)
+    }
+}
 
 
 //#[derive(Debug)]  //// not sure about all of these
 pub struct TirpBascetShardReader {
     tabix_reader: TabixReader     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
 }
+impl TirpBascetShardReader {
 
 
-
-
-
-impl ShardReader for TirpBascetShardReader {
-
-
-
-
-    fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {
+    pub fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {  ///////// maybe anyhow prevents spec of reader?
 
         //TODO : check that the index .tbi-file is present; give better error message
         let hist_path = get_histogram_path_for_tirp(&fname);
@@ -50,15 +59,65 @@ impl ShardReader for TirpBascetShardReader {
         let tbx_reader = TabixReader::from_path(&fname)
             .expect(&format!("Could not open {:?}", fname));
 
-        Ok(TirpBascetShardReader {
+        let dat = TirpBascetShardReader {
             tabix_reader: tbx_reader
-        })
+        };
+        Ok(dat)
+    }
+
+}
+
+
+
+impl ReadPairReader for TirpBascetShardReader {
+
+
+    fn get_reads_for_cell(
+        &mut self, 
+        cell_id: &String, 
+    ) -> anyhow::Result<Arc<Vec<ReadPair>>>{
+
+        //Get tabix id for the cell
+        let tid = self.tabix_reader.tid(&cell_id).expect("Could not tabix ID for cell");
+
+        // Seek to the reads (all of them)
+        self.tabix_reader
+            .fetch(tid, 0, 100) //hopefully ok!
+            .expect("could not find reads");
+
+        //Get all reads
+        let mut reads:Vec<ReadPair> = Vec::new();
+        for line in self.tabix_reader.records() {
+            let line = line.expect("Failed to get one TIRP line");
+            let rp = parse_tirp_readpair(&line);
+            reads.push(rp);
+        }
+        Ok(Arc::new(reads))
     }
 
 
+}
+
+
+
+impl ShardCellDictionary for TirpBascetShardReader {
+    
     fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
         Ok(self.tabix_reader.seqnames())
     }
+
+
+    fn has_cell(&mut self, cellid: &CellID) -> bool {
+        self.tabix_reader.seqnames().contains(&cellid)
+    }
+
+}
+
+
+
+
+impl ShardFileExtractor for TirpBascetShardReader {
+
 
     fn get_files_for_cell(&mut self, _cell_id: &CellID) -> anyhow::Result<Vec<String>>{
         println!("request files for cell in TIRP, but this is not implemented");
@@ -135,39 +194,6 @@ impl ShardReader for TirpBascetShardReader {
 
 }
 
-
-
-impl TirpBascetShardReader {
-
-    pub fn has_cell(&mut self, cellid: &CellID) -> bool {
-        self.tabix_reader.seqnames().contains(&cellid)
-    }
-
-    pub fn get_reads_for_cell(
-        &mut self, 
-        cell_id: &String, 
-    ) -> anyhow::Result<Vec<ReadPair>>{
-
-        //Get tabix id for the cell
-        let tid = self.tabix_reader.tid(&cell_id).expect("Could not tabix ID for cell");
-
-        // Seek to the reads (all of them)
-        self.tabix_reader
-            .fetch(tid, 0, 100) //hopefully ok!
-            .expect("could not find reads");
-
-        //Get all reads
-        let mut reads:Vec<ReadPair> = Vec::new();
-        for line in self.tabix_reader.records() {
-            let line = line.expect("Failed to get one TIRP line");
-            let rp = parse_tirp_readpair(&line);
-            reads.push(rp);
-        }
-        Ok(reads)
-    }
-
-
-}
 
 
 

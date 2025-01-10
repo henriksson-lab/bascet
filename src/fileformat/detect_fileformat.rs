@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 
 
-use super::ShardReader;
+use super::ShardFileExtractor;
 use super::TirpBascetShardReader;
 use super::ZipBascetShardReader;
 
@@ -41,7 +41,7 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
 pub fn get_suitable_shard_reader(
     p: &PathBuf, 
     format: &DetectedFileformat
-) -> Box::<dyn ShardReader> {
+) -> Box::<dyn ShardFileExtractor> {
     match format {
         DetectedFileformat::TIRP => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),
         DetectedFileformat::ZIP => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create ZIP reader")),

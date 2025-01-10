@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use super::ZipBascetShardReader;
+//use super::ZipBascetShardReader;
 use super::TirpBascetShardReader;
 use super::DetectedFileformat;
 
@@ -32,12 +33,66 @@ pub struct ReadPair {
 
 
 
+
+
+
 ///////////////////////////////
-/////////////////////////////// Common shard reader trait
+/////////////////////////////// 
 ///////////////////////////////
 
 
-pub trait ShardReader {
+pub trait ConstructFromPath<R> where Self: Clone {
+
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<R> where Self: Sized;
+
+}
+
+
+///////////////////////////////
+/////////////////////////////// Common shard writer and reader traits, to handle readpairs only
+///////////////////////////////
+
+pub trait ReadPairWriter {
+
+    //fn new(path: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
+    
+    fn write_reads_for_cell(
+        &mut self, 
+        cell_id:&CellID, 
+        list_reads: &Arc<Vec<ReadPair>>
+    );
+
+}
+
+
+pub trait ReadPairReader { //where Self: ConstructFromPath
+
+    fn get_reads_for_cell(
+        &mut self, 
+        cell_id:&CellID
+    ) -> anyhow::Result<Arc<Vec<ReadPair>>>;
+
+}
+
+
+///////////////////////////////
+/////////////////////////////// Common shard trait to get what files are in it
+///////////////////////////////
+
+
+pub trait ShardCellDictionary {
+
+    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>>;
+    fn has_cell(&mut self, cellid: &CellID) -> bool;
+
+}
+
+///////////////////////////////
+/////////////////////////////// Common shard reader trait 
+///////////////////////////////
+
+
+pub trait ShardFileExtractor  { //where Self: ShardCellDictionary+ConstructFromPath
 
     fn extract_to_outdir (
         &mut self, 
@@ -47,14 +102,12 @@ pub trait ShardReader {
         out_directory: &PathBuf
     ) -> anyhow::Result<bool>;
 
-    fn new(fname: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
+   // fn new(fname: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
 
     fn get_files_for_cell(&mut self, cell_id: &CellID) -> anyhow::Result<Vec<String>>;
 
-    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>>;
+//    fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>>;
 }
-
-
 
 
 
@@ -66,8 +119,10 @@ pub trait ShardReader {
 pub fn try_get_cells_in_file(p: &PathBuf) -> anyhow::Result<Option<Vec<CellID>>> {
     match crate::fileformat::detect_shard_format(&p) {
         DetectedFileformat::TIRP => {
-            let mut f = TirpBascetShardReader::new(&p).expect("Unable to open input TIRP file");
-            Ok(Some(f.get_cell_ids().unwrap()))
+            let ids = Some(TirpBascetShardReader::new(&p).
+                expect("Unable to open input TIRP file").
+                get_cell_ids().unwrap());
+            Ok(ids)
         },
         DetectedFileformat::ZIP => {
 
@@ -85,11 +140,34 @@ pub fn try_get_cells_in_file(p: &PathBuf) -> anyhow::Result<Option<Vec<CellID>>>
 
             panic!("TODO")
         },
-        _ => { anyhow::bail!("File format for {} not supported for this operation", p.display()) }
-
+        _ => { 
+            anyhow::bail!("File format for {} not supported for this operation", p.display()) 
+        }
     }
-    
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
