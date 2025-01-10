@@ -272,16 +272,21 @@ fn create_reader_thread<R>(
 
     thread_pool.execute(move || {
         // Open input file
-
         println!("Starting reader for {}", infile.display());
         let mut reader = constructor.new_from_path(&infile).expect(format!("Failed to open input file {}", infile.display()).as_str());
 
+        //A single call to get the list of cells is likely the most efficient way
+        let list_cells = reader.get_cell_ids().expect("Could not get list of cells for input file");
+
+        //Handle all cell requests
         while let Ok(Some(cell_id)) = rx_readcell.recv() {
 
-            let list_reads = reader.get_reads_for_cell(&cell_id).expect("Failed to get reads from input file");
-            let tosend = (cell_id, Arc::clone(&list_reads));
-
-            tx_data.send(Some(Arc::new(tosend))).unwrap();
+            //Only take requests if the cell is present
+            if list_cells.contains(&cell_id) {
+                let list_reads = reader.get_reads_for_cell(&cell_id).expect("Failed to get reads from input file");
+                let tosend = (cell_id, Arc::clone(&list_reads));    
+                tx_data.send(Some(Arc::new(tosend))).unwrap();
+            }
         }
         println!("Shutting down reader for {}", infile.display());
 
