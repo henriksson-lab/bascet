@@ -10,13 +10,16 @@ use crossbeam::channel::Sender;
 use crossbeam::channel::Receiver;
 
 
-use crate::fileformat::shard::CellID;
-use crate::fileformat::shard::ShardReader;
-use crate::fileformat::tirp::TirpBascetShardReader;
+use crate::fileformat::CellID;
+use crate::fileformat::ReadPair;
+
+//use crate::fileformat::ShardFileExtractor;
+use crate::fileformat::TirpBascetShardReader;
+use crate::fileformat::ShardCellDictionary;
+use crate::fileformat::ReadPairReader;
 
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
-use crate::fileformat::shard::ReadPair;
 
 use std::fs::File;
 
@@ -280,9 +283,9 @@ fn create_reader_thread(
             let reads = if reader.has_cell(&cell_id) {
                 reader.get_reads_for_cell(&cell_id).expect("Failed to read from input file")
             } else {
-                Vec::new()
+                Arc::new(Vec::new())
             };
-            _ = tx_send_reads.send(Arc::new(reads));
+            _ = tx_send_reads.send(Arc::clone(&reads));
         }
         debug!("stopping read loop");
     });

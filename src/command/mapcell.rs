@@ -13,16 +13,19 @@ use log::info;
 use log::debug;
 use zip::ZipWriter;
 
+use crate::fileformat::tirp::TirpBascetShardReaderFactory;
+use crate::fileformat::zip::ZipBascetShardReaderFactory;
 use crate::utils;
 use crate::fileformat::mapcell_script;
 use crate::fileformat::mapcell_script::MapCellScript;
 use crate::fileformat::mapcell_script::MissingFileMode;
 
-use crate::fileformat::ZipBascetShardReader;
-use crate::fileformat::TirpBascetShardReader;
-use crate::fileformat::ShardReader;
+use crate::fileformat;
+//use crate::fileformat::ZipBascetShardReader;
+//use crate::fileformat::TirpBascetShardReader;
+use crate::fileformat::ShardFileExtractor;
+use crate::fileformat::ConstructFromPath;
 use crate::fileformat::detect_shard_format;
-use crate::fileformat::get_suitable_shard_reader;
 use crate::fileformat::DetectedFileformat;
 
 
@@ -116,9 +119,13 @@ impl MapCell {
 
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
         println!("Input file: {:?}",params.path_in);
+        /* 
         let input_shard_type = detect_shard_format(&params.path_in);
-        let mut shard_reader = get_suitable_shard_reader(&params.path_in, &input_shard_type);
-        let list_cells = shard_reader.get_cell_ids().expect("Could not read list of cells"); 
+        let mut shard_reader = get_suitable_shard_reader(
+            &params.path_in, 
+            &input_shard_type);
+        let list_cells = shard_reader.get_cell_ids().expect("Could not read list of cells"); */
+        let list_cells = fileformat::try_get_cells_in_file(&params.path_in).expect("Could not get list of cells from input file");
         //files_for_cell(cell_id)files_for_cell.keys().collect::<Vec<&String>>();
         let queue_limit = params.threads_write*2;
 
@@ -138,28 +145,31 @@ impl MapCell {
         // note from julian: readers alter the file? at least make separate readers. start with just 1
         let reader_thread_group = ThreadGroup::new(params.threads_read);
 
+        let input_shard_type = detect_shard_format(&params.path_in);
         if input_shard_type == DetectedFileformat::TIRP {
             println!("Detected input as gascet");
             for _tidx in 0..params.threads_read {
-                _ = create_shard_reader::<TirpBascetShardReader>(
+                _ = create_shard_reader(//)::<TirpBascetShardReader>(
                     &params,
                     &thread_pool,
                     &mapcell_script,
                     &rx_cell_to_read,
                     &tx_loaded_cell,
-                    &reader_thread_group
+                    &reader_thread_group,
+                    &Arc::new(TirpBascetShardReaderFactory::new())
                 );
             }
         } else if input_shard_type == DetectedFileformat::ZIP {
             println!("Detected input as bascet");
             for _tidx in 0..params.threads_read {
-                _ = create_shard_reader::<ZipBascetShardReader>(
+                _ = create_shard_reader(//)::<ZipBascetShardReader>(
                     &params,
                     &thread_pool,
                     &mapcell_script,
                     &rx_cell_to_read,
                     &tx_loaded_cell,
-                    &reader_thread_group
+                    &reader_thread_group,
+                    &Arc::new(ZipBascetShardReaderFactory::new())
                 );
             }
         } else {
@@ -184,9 +194,15 @@ impl MapCell {
         }
 
         //Go through all cells, then terminate all readers
-        for cell_id in list_cells {
-            _ = tx_cell_to_read.send(Some(cell_id.clone()));
+        if let Some(list_cells) = list_cells {
+            for cell_id in list_cells {
+                _ = tx_cell_to_read.send(Some(cell_id.clone()));
+            }
+        } else {
+            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
         }
+
+
         for i in 0..params.threads_read {
             debug!("Sending termination signal to reader {i}");
             _ = tx_cell_to_read.send(None).unwrap();
@@ -224,8 +240,9 @@ fn create_shard_reader<R>(
     mapcell_script: &Arc<MapCellScript>,
     rx: &Arc<Receiver<Option<String>>>,
     tx: &Arc<Sender<Option<String>>>,
-    thread_group: &Arc<ThreadGroup>
-) -> anyhow::Result<()> where R:ShardReader {
+    thread_group: &Arc<ThreadGroup>,
+    constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
+) -> anyhow::Result<()> where R:ShardFileExtractor {
 
     let rx = Arc::clone(rx);
     let tx = Arc::clone(tx);
@@ -234,11 +251,12 @@ fn create_shard_reader<R>(
     let mapcell_script = Arc::clone(mapcell_script);
 
     let thread_group = Arc::clone(thread_group);
+    let constructor = Arc::clone(constructor);
 
     thread_pool.execute(move || {
         debug!("Worker started");
 
-        let mut shard = R::new(&params_io.path_in).expect("Failed to create bascet reader");
+        let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
 
         while let Ok(Some(cell_id)) = rx.recv() {
             info!("request to read {}",cell_id);
@@ -275,7 +293,7 @@ fn create_shard_reader<R>(
 
 
 
-///////////////////////////// Worker thread that integrates the writing
+///////////////////////////// Worker thread that integrates the writing  ........................ TODO file writer trait, instead of ZIP directly?
 fn create_writer(
     params_io: &Arc<MapCellParams>,
     zip_file: &PathBuf,

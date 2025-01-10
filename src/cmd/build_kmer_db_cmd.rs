@@ -1,12 +1,10 @@
 use anyhow::Result;
-use anyhow::bail;
+//use anyhow::bail;
 
 use clap::Args;
 use std::{
-    fs::File,
     path::PathBuf,
     sync::Arc,
-    thread,
 };
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";

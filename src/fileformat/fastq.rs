@@ -1,94 +1,126 @@
+use std::fs::File;
+use std::sync::Arc;
+use std::path::PathBuf;
+use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
+
+
+use crate::fileformat::{shard::{CellID, ReadPair}, CellUMI};
+//use crate::fileformat::DetectedFileformat;
+use crate::fileformat::ReadPairWriter;
+
+use super::ConstructFromPath;
+//use crate::fileformat::ReadPairReader;
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* 
-
-use rust_htslib::bam::record::Aux;
-
-pub fn create_new_bam(
-    fname: &Path
-// num_threads
-// compression level
-) -> anyhow::Result<bam::Writer> {
-
-    let file_format = detect_bam_file_format(fname)?;
-
-    let mut header = bam::Header::new();
-    header.push_comment("Debarcoded by Bascet".as_bytes());
-
-    let mut writer = bam::Writer::from_path(fname, &header, file_format).unwrap();
-
-    _ = writer.set_threads(5);  //  need we also give a pool? https://docs.rs/rust-htslib/latest/rust_htslib/bam/struct.Writer.html#method.set_threads
-    _ = writer.set_compression_level(bam::CompressionLevel::Fastest);  //or no compression, do later ; for user to specify
-
-    Ok(writer)
+#[derive(Debug,Clone)]
+pub struct BascetFastqWriterFactory {
+}
+impl BascetFastqWriterFactory {
+    pub fn new() -> BascetFastqWriterFactory {
+        BascetFastqWriterFactory {}
+    } 
+}
+impl ConstructFromPath<BascetFastqWriter> for BascetFastqWriterFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<BascetFastqWriter> {  ///////// maybe anyhow prevents spec of reader?
+        BascetFastqWriter::new(fname)
+    }
 }
 
-*/
 
+pub struct BascetFastqWriter {
+    pub writer: BGZFMultiThreadWriter<File>
+}
+impl BascetFastqWriter {
 
+    fn new(path: &PathBuf) -> anyhow::Result<BascetFastqWriter>{
+        let out_buffer = File::create(&path).expect("Failed to create fastq.gz output file");
+        let writer = BGZFMultiThreadWriter::new(out_buffer, Compression::default());
+    
+        Ok(BascetFastqWriter {
+            writer: writer
+        })
+    }
+
+}
 
 /* 
+impl ConstructFromPath for BascetFastqWriter {
 
-/////////////////////////////////// Writer to tagged BAM file
-fn create_writer_thread(
-    outfile: &PathBuf,
-    thread_pool: &threadpool::ThreadPool
-) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
+    fn new_from_path(path: &PathBuf) -> anyhow::Result<BascetFastqWriter>{
+        BascetFastqWriter::new(path)
+    }
+}*/
 
-    let outfile = outfile.clone();
 
-    //Limit how many chunks can be in pipe
-    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
-    let (tx, rx) = (Arc::new(tx), Arc::new(rx));
+impl ReadPairWriter for BascetFastqWriter {
 
-    thread_pool.execute(move || {
-        // Open cram output file
-        println!("Creating output file: {}",outfile.display());
-        let mut writer = create_new_bam(&outfile).expect("failed to create bam-like file");
 
-        // Write reads
-        let mut n_written=0;
-        while let Ok(Some(list_pairs)) = rx.recv() {
-            for (bam_cell, hits_names) in list_pairs.iter() {
-                let reverse_record=&bam_cell.reverse_record;
-                let forward_record=&bam_cell.forward_record;
+    fn write_reads_for_cell(&mut self, cell_id:&CellID, list_reads: &Arc<Vec<ReadPair>>) {
+        let mut read_num = 0;
+        for rp in list_reads.iter() {
 
-                write_records_pair_to_bamlike(
-                    &mut writer,
-                    forward_record,
-                    reverse_record,
-                    &hits_names
-                );
+            write_fastq_read(
+                &mut self.writer,
+                &make_fastq_readname(read_num, &cell_id, &rp.umi, 1),
+                &rp.r1,
+                &rp.q1
+            ).unwrap();
 
-                if n_written%100000 == 0 {
-                    println!("written to {:?} -- {:?}",outfile, n_written);
-                }
-                n_written = n_written + 1;
-            }
+            write_fastq_read(
+                &mut self.writer,
+                &make_fastq_readname(read_num, &cell_id, &rp.umi, 2),
+                &rp.r2,
+                &rp.q2
+            ).unwrap();
 
-            
+            read_num+=1;
         }
-    });
-    Ok(tx)
+    }
+   
 }
 
-*/
+
+
+
+
+
+
+
+
+
+
+
+
+////////// Write one FASTQ read
+fn write_fastq_read<W: std::io::Write>(
+    writer: &mut W,
+    head: &Vec<u8>,
+    seq:&Vec<u8>,
+    qual:&Vec<u8>
+) -> Result<(), BGZFError> {
+    writer.write_all(head.as_slice())?;
+    writer.write_all(seq.as_slice())?;
+    writer.write_all(b"+\n")?;
+    writer.write_all(&qual.as_slice())?;
+    Ok(())
+}
+
+
+//// Format FASTQ read names
+fn make_fastq_readname(
+    read_num: u32, 
+    cell_id: &CellID, 
+    cell_umi: &CellUMI, 
+    illumna_read_index: u32
+) -> Vec<u8> {
+    // typical readname from a random illumina library from miseq, @M03699:250:000000000-DT36J:1:1102:5914:5953 1:N:0:GACGAGATTA+ACATTATCCT
+    let name=format!("BASCET_{}:{}:{} {}", 
+        cell_id, 
+        String::from_utf8(cell_umi.clone()).unwrap(), 
+        read_num, 
+        illumna_read_index);
+    name.as_bytes().to_vec()  //TODO best if we can avoid making a String
+}
 
 

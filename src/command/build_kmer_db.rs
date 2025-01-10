@@ -1,4 +1,4 @@
-use crate::fileformat::shard::{CellID, ReadPair};
+//use crate::fileformat::shard::{CellID, ReadPair};
 
 use std::sync::Arc;
 
@@ -27,21 +27,8 @@ impl BuildKMERdatabase {
 
 
     pub fn run(
-        params_io: &Arc<BuildKMERdatabaseParams>
+        _params: &Arc<BuildKMERdatabaseParams>
     ) -> anyhow::Result<()> {
-   //     let (tx, rx) = crossbeam::channel::bounded::<Option<PathBuf>>(64);
-//        let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-
- //       thread_pool: &threadpool::ThreadPool,
- 
-
-
-
-
-
-        //// General threaded reader system; for each cell, call one funct
-        //// should call a function 
-
 
 
 

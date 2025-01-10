@@ -19,7 +19,7 @@ pub mod getraw;
 pub mod mapcell;
 pub mod shardify;
 pub mod build_kmer_db;
-pub mod convert;
+pub mod transform;
 
 
 
@@ -38,5 +38,5 @@ pub use shardify::Shardify;
 pub use shardify::ShardifyParams;
 
 
-pub use convert::ConvertFile;
-pub use convert::ConvertFileParams;
+pub use transform::TransformFile;
+pub use transform::TransformFileParams;
