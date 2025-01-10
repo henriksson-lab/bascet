@@ -72,12 +72,18 @@ echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
 
+
 KMC_TEMP=.
 INPUT_FILE_NAME=${INPUT_DIR}/contigs.fa
-OUTPUT_DB=kmc.db
-OUTPUT_DUMP=kmc_dump.txt
+#OUTPUT_DB=kmc.db
+#OUTPUT_DUMP=kmc_dump.txt
 
-kmc -cs2000000000  -k31 -ci=1 -fa  $INPUT_FILE_NAME  $OUTPUT_DB $KMC_TEMP
+
+#Need to provide list of input files, as a file
+echo $INPUT_FILE_NAME >  inlist.txt
+
+#Run KMC on FASTA input. Note that KMC cannot handle $vars as arguments for some reason!!
+kmc -cs2000000000  -k31 -ci=1 -fa  @inlist.txt  kmc  .
 
 #kmc [options] <input_file_name> <output_file_name> <working_directory>
 #-f<a/q/m/bam/kmc> - input in FASTA format (-fa), FASTQ format (-fq), multi FASTA (-fm) or BAM (-fbam) or KMC(-fkmc); default: FASTQ
@@ -87,7 +93,8 @@ kmc -cs2000000000  -k31 -ci=1 -fa  $INPUT_FILE_NAME  $OUTPUT_DB $KMC_TEMP
 
 
 ### To enable reading from the database, dump as txt  (in the future, possible to read KMC database from zip directly)
-kmc_tools transform $OUTPUT_DB dump $OUTPUT_DUMP
+#kmc_tools transform $OUTPUT_DB dump $OUTPUT_DUMP  cannot do $arg for some reason
+kmc_tools transform kmc dump kmc_dump.txt
 
 ### The last line must be "MAPCELL-OK".
 echo "MAPCELL-OK"
