@@ -171,6 +171,7 @@ impl TransformFile {
                 //println!("Doing cell {}",cell_id);
             }
         }
+        println!("Processed a final of {} cells", num_total_cell);
 
         //Tell all readers to shut down
         for _ in 0..n_input {

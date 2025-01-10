@@ -12,7 +12,7 @@ for i in "$@"; do
   exit 0
   ;;
   --expect-files)
-  echo "*" # Tell which files should extracted from the input file. Can enable * to give them all. or "foo.txt,bar.txt"
+  echo "r1.fq,r2.fq" # Tell which files should extracted from the input file. Can enable * to give them all. or "foo.txt,bar.txt"
   exit 0
   ;;
   --missing-file-mode)
@@ -64,44 +64,42 @@ echo "output directory is unset";
 exit 1;
 fi
 
-echo "Building a KMC3 database from contigs"
+echo "Building a KMC3 database from reads"
 
 echo "INPUT_DIR   = ${INPUT_DIR}"
 echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-#quast.py -o ./ -t ${USE_THREADS} ${INPUT_DIR}/contigs.fa
-#head ${INPUT_DIR}/contig.fa > firstpart.txt
-
-
-
-                    let kmc = std::process::Command::new("kmc")
-                        .arg(format!("-cs{}", u32::MAX - 1))
-                        .arg(format!("-k{}", &params_runtime.kmer_size))
-                        .arg("-ci=1")
-                        .arg("-fa")
-                        .arg(&path_contigs)
-                        .arg(&path_kmc_db)
-                        .arg(&path_temp)
-                        .output()
-                        .map_err(|e| eprintln!("Failed to execute KMC command: {}", e))
-                        .expect("KMC command failed");
-
-
 
 KMC_TEMP=.
-INPUT_FILE_NAME=${INPUT_DIR}/contigs.fa
-OUTPUT_FILE_NAME=kmc.db
+INPUT_FILE_NAME_1=${INPUT_DIR}/r1.fq
+INPUT_FILE_NAME_2=${INPUT_DIR}/r2.fq
+OUTPUT_DB=kmc
+OUTPUT_DUMP=kmc_dump.txt
+
+
+## TODO support other parameters
+
+#Need to provide list of input files, as a file
+echo $INPUT_FILE_NAME_1 >  inlist.txt
+echo $INPUT_FILE_NAME_2 >> inlist.txt
+
+#Run KMC on FASTQ input
+kmc -cs2000000000  -k31 -ci=1 -fq  @inlist.txt  $OUTPUT_FILE_NAME $KMC_TEMP
+
+#Remove list of files
+rm inlist.txt
 
 #kmc [options] <input_file_name> <output_file_name> <working_directory>
-
-kmc -cs2000000000  -k31 -ci=1 -fa  $INPUT_FILE_NAME  $OUTPUT_FILE_NAME $KMC_TEMP
-
 #-f<a/q/m/bam/kmc> - input in FASTA format (-fa), FASTQ format (-fq), multi FASTA (-fm) or BAM (-fbam) or KMC(-fkmc); default: FASTQ
-#-k<len> - k-mer length (k from 1 to 256; default: 25)
-#-cs<value> - maximal value of a counter (default: 255)                               u32::MAX-1 = 4_294_967_294   has been used
-#-ci<value> - exclude k-mers occurring less than <value> times (default: 2)
+#-k<len>           - k-mer length (k from 1 to 256; default: 25)
+#-cs<value>        - maximal value of a counter (default: 255)                               u32::MAX-1 = 4_294_967_294   has been used
+#-ci<value>        - exclude k-mers occurring less than <value> times (default: 2)
+
+### To enable reading from the database, dump as txt  (in the future, possible to )
+kmc_tools transform $OUTPUT_DB dump $OUTPUT_DUMP
+
 
 ### The last line must be "MAPCELL-OK".
 echo "MAPCELL-OK"

@@ -2,7 +2,6 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use robert::command;
 use robert::cmd;
 
 
@@ -15,11 +14,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Assemble(command::Assemble),
-    Count(command::Count),
-    Featurise(command::Featurise),
-    Query(command::Query),
-
     Getraw(cmd::GetRawCMD),
     Mapcell(cmd::MapCellCMD),
     Extract(cmd::ExtractCMD),
@@ -35,10 +29,6 @@ fn main() -> ExitCode {
     env_logger::init();
 
     let result = match cli.command {
-        Commands::Assemble(mut cmd) => cmd.try_execute(),
-        Commands::Count(mut cmd) => cmd.try_execute(),
-        Commands::Featurise(mut cmd) => cmd.try_execute(),
-        Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Getraw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),

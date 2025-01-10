@@ -143,7 +143,7 @@ fn create_writer_thread(
             debug!("Waiting for sorter process to exit");
             let _result = process.wait().unwrap();
 
-            //todo how to terminate pipe?? seems to happen now
+            //TODO how to terminate pipe?? seems to happen now anyway
 
         } else {
 
