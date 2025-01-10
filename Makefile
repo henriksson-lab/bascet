@@ -13,6 +13,11 @@ loc:
 #########
 #########
 
+
+test_transform_tirp_fast:
+	rm -Rf temp; cargo +nightly run transform -i testdata/out_complete.0.tirp.gz  -o testdata/newout.fq.gz
+
+
 test_mapcell:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/shard/shard.0.zip  -o testdata/out.zip   -s _test
 
