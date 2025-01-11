@@ -398,7 +398,7 @@ fn read_all_reads(
             } else {
                 break;
             }
-            curit = curit + 1;
+            curit += 1;
         }
 
         if !list_recpair.is_empty() {

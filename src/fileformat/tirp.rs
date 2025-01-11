@@ -8,14 +8,13 @@ use std::path::PathBuf;
 use std::process::Command;
 use anyhow::bail;
 
-use super::shard::ConstructFromPath;
-use super::shard::ShardFileExtractor;
-use super::shard::ReadPair;
-use super::shard::CellID;
-
-use crate::fileformat::ReadPairReader;
+use super::ConstructFromPath;
+use super::ShardFileExtractor;
+use super::ReadPair;
+use super::CellID;
+use super::ReadPairReader;
+use super::ShardCellDictionary;
 //use crate::fileformat::ReadPairWriter;
-use crate::fileformat::ShardCellDictionary;
 
 use rust_htslib::tbx::Reader as TabixReader;
 use rust_htslib::tbx::Read;
@@ -123,6 +122,21 @@ impl ShardFileExtractor for TirpBascetShardReader {
         println!("request files for cell in TIRP, but this is not implemented");
         Ok(Vec::new())
     }
+
+
+    fn extract_as(
+        &mut self, 
+        _cell_id: &String, 
+        _file_name: &String,
+        _path_outfile: &PathBuf
+    ) -> anyhow::Result<()>{
+
+        panic!("extract_as not yet implemented");
+
+        //Ok(())
+    }
+
+
 
 
     fn extract_to_outdir (

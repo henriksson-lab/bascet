@@ -6,6 +6,7 @@ use anyhow::bail;
 use super::ShardFileExtractor;
 use super::TirpBascetShardReader;
 use super::ZipBascetShardReader;
+//use super::ListFastqReader;
 
 
 
@@ -15,6 +16,7 @@ pub enum DetectedFileformat {
     ZIP,
     FASTQ,
     BAM,
+    ListFASTQ,
     Other
 }
 
@@ -28,6 +30,8 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
         DetectedFileformat::TIRP
     } else if p_string.ends_with(".zip") { 
         DetectedFileformat::ZIP
+    } else if p_string.ends_with(".listfastq"){ 
+        DetectedFileformat::ListFASTQ
     } else if p_string.ends_with(".bam") | p_string.ends_with(".cram"){ 
         DetectedFileformat::BAM
     } else if p_string.ends_with(".fq.gz") | p_string.ends_with(".fastq.gz")  | p_string.ends_with(".fq")  | p_string.ends_with(".fastq") { 
@@ -38,14 +42,23 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
 }
 
 
-pub fn get_suitable_shard_reader(
+pub fn get_suitable_file_extractor(
     p: &PathBuf, 
     format: &DetectedFileformat
 ) -> Box::<dyn ShardFileExtractor> {
     match format {
-        DetectedFileformat::TIRP => Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),
-        DetectedFileformat::ZIP => Box::new(ZipBascetShardReader::new(&p).expect("Failed to create ZIP reader")),
-        _ => panic!("Cannot figure out how to open input file (could not detect shard type)")
+        DetectedFileformat::TIRP => 
+            Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),
+        DetectedFileformat::ZIP => 
+            Box::new(ZipBascetShardReader::new(&p).expect("Failed to create ZIP reader")),
+        DetectedFileformat::FASTQ => 
+            panic!("FASTQ cannot be used for file extraction currently"),
+        DetectedFileformat::BAM => 
+            panic!("BAM-like formats cannot be used for file extraction currently"),
+        DetectedFileformat::ListFASTQ => 
+            panic!("ListFASTQ cannot be used for file extraction currently"),
+        DetectedFileformat::Other => 
+            panic!("Cannot figure out how to open input file for file extraction")
     }
 }
 
@@ -54,23 +67,19 @@ pub fn get_suitable_shard_reader(
 
 
 
-/////// Check that the specified file is a fastq file
+/////// Check that the specified file is a FASTQ file
 pub fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
-    if let Ok(file) = File::open(&path_in) {
-        if file.metadata()?.len() == 0 {
-            //anyhow::bail!("Empty input file");
-            print!("Warning: input file is empty");
+    if detect_shard_format(path_in)==DetectedFileformat::FASTQ {
+        if let Ok(file) = File::open(&path_in) {
+            if file.metadata()?.len() == 0 {
+                //anyhow::bail!("Empty input file");
+                print!("Warning: input file is empty");
+            }
+            Ok(())
+        } else {
+            bail!("Cannot open input file");
         }
-    }
-
-    let filename = path_in.file_name().unwrap().to_str().unwrap();
-
-    if filename.ends_with("fq") | filename.ends_with("fq.gz") | 
-        filename.ends_with("fastq") | filename.ends_with("fastq.gz")  {
-        //ok
     } else {
         bail!("Input file must be a fastq file")
     }
-
-    Ok(())
 }
