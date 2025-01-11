@@ -19,7 +19,7 @@ enum Commands {
     Extract(cmd::ExtractCMD),
     Shardify(cmd::ShardifyCMD),
     Transform(cmd::TransformCmd),
-    BuildKMERdatabase(cmd::FeaturiseCMD),
+    Featurise(cmd::FeaturiseCMD),
 }
 
 fn main() -> ExitCode {
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
-        Commands::BuildKMERdatabase(mut cmd) => cmd.try_execute(),
+        Commands::Featurise(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {

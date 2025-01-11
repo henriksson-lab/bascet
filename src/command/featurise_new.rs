@@ -102,7 +102,7 @@ impl Featurise {
         ).unwrap();
 
         // Generate a total summary file, text format
-        let path_dump = params.path_tmp.join("dump.txt");  /////// or to path out??
+        let path_dump = params.path_output;  //params.path_tmp.join("dump.txt");  /////// or to path out??   should be features.0.txt  ..
         dump_kmc_db(
             &path_kmc_union_db,
             &path_dump
