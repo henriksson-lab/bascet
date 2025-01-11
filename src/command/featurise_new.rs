@@ -26,7 +26,6 @@ pub struct FeaturiseParams {
 
 
 pub struct Featurise {
-
 }
 impl Featurise {
 
@@ -58,7 +57,6 @@ impl Featurise {
 
         let list_cells = file_input.get_cell_ids().expect("Failed to get content listing for input file");
 
-
         // Unzip all cell-specific kmer databases
         let mut cur_file_id = 0;
         let mut dbs_to_merge: Vec<(PathBuf, String)> = Vec::new();
@@ -88,26 +86,28 @@ impl Featurise {
 
         // Generate the union script
         let path_kmc_union_script = params.path_tmp.join("kmc_union.op");
-        let path_kmc_union_db = params.path_tmp.join("kmc_union");
+        //let path_kmc_union_db = params.path_tmp.join("kmc_union");
+        let path_kmc_union_db = &params.path_output;  //.join("kmc_union");
         write_union_script(
             &path_kmc_union_script,
             &path_kmc_union_db,
             dbs_to_merge
         ).unwrap();
 
-        // Run KMC tools on union script
+        // Run KMC tools on union script --- output is the KMC database
         run_kmc_tools(
             &path_kmc_union_script,
             params.threads_work
         ).unwrap();
 
+        /* 
         // Generate a total summary file, text format
         //let path_dump = params.path_output;  //params.path_tmp.join("dump.txt");  /////// or to path out??   should be features.0.txt  ..
         dump_kmc_db(
             &path_kmc_union_db,
             &params.path_output
         ).unwrap();
-
+*/
 
         //Delete temp folder
         fs::remove_dir_all(&params.path_tmp).unwrap();
@@ -145,7 +145,7 @@ fn run_kmc_tools(
 }
 
 
-fn dump_kmc_db(
+pub fn dump_kmc_db(
     path_db: &PathBuf,
     path_dump: &PathBuf
 ) -> anyhow::Result<()> {
@@ -167,6 +167,19 @@ fn dump_kmc_db(
 
     Ok(())
 }
+
+
+
+
+/*
+
+
+after running this command, we still need to pick kmers!
+
+kmc_tools transform kmc. -cx10
+
+
+*/
 
 
 

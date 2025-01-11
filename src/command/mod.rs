@@ -1,4 +1,4 @@
-pub mod constants;
+//pub mod constants;
 
 
 // above is yet to be refactored
@@ -11,9 +11,13 @@ pub mod mapcell;
 pub mod shardify;
 pub mod transform;
 pub mod featurise_new;
+pub mod query_new;
+pub mod count_matrix;
 
 
 
+pub use query_new::Query;
+pub use query_new::QueryParams;
 
 pub use featurise_new::Featurise;
 pub use featurise_new::FeaturiseParams;
@@ -30,3 +34,4 @@ pub use shardify::ShardifyParams;
 
 pub use transform::TransformFile;
 pub use transform::TransformFileParams;
+

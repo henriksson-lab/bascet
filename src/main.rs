@@ -18,7 +18,7 @@ enum Commands {
     Mapcell(cmd::MapCellCMD),
     Extract(cmd::ExtractCMD),
     Shardify(cmd::ShardifyCMD),
-    Transform(cmd::TransformCmd),
+    Transform(cmd::TransformCMD),
     Featurise(cmd::FeaturiseCMD),
 }
 
