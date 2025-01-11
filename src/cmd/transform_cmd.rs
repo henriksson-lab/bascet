@@ -9,7 +9,7 @@ use crate::fileformat::read_cell_list_file;
 
 
 #[derive(Args)]
-pub struct TransformCmd {
+pub struct TransformCMD {
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
     pub path_in: Vec<PathBuf>,
 
@@ -21,7 +21,7 @@ pub struct TransformCmd {
     pub include_cells: Option<PathBuf>,
     
 }
-impl TransformCmd {
+impl TransformCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
         if self.path_in.is_empty() {
