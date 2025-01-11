@@ -6,6 +6,19 @@ use anyhow::bail;
 use semver::{Version, VersionReq};
 
 
+
+
+
+pub fn check_kmc_tools() -> anyhow::Result<()> {
+    debug!("Checking for kmc_tools");
+    if let Ok(_output)  = Command::new("kmc_tools").output() {
+        info!("Found kmc_tools");
+        Ok(())
+    } else {
+        bail!("kmc_tools is either not installed or not in PATH")
+    }
+}
+
 pub fn check_tabix() -> anyhow::Result<()> {
     debug!("Checking for tabix");
     if let Ok(_output)  = Command::new("tabix").output() {

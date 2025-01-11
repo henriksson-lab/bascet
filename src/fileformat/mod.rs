@@ -6,7 +6,7 @@ pub mod mapcell_script;
 pub mod shard;
 pub mod cram;
 pub mod fastq;
-
+pub mod list_fastq;
 
 ////// Utility
 pub mod cell_readpair_reader;
@@ -30,9 +30,17 @@ pub use cell_list_file::read_cell_list_file;
 pub use detect_fileformat::DetectedFileformat;
 pub use detect_fileformat::verify_input_fq_file;
 pub use detect_fileformat::detect_shard_format;
-pub use detect_fileformat::get_suitable_shard_reader;
+pub use detect_fileformat::get_suitable_file_extractor;
 
+//Readers
 pub use zip::ZipBascetShardReader;
 pub use tirp::TirpBascetShardReader;
 pub use fastq::BascetFastqWriter;
+pub use list_fastq::ListFastqReader;
 
+
+//Factories
+pub use zip::ZipBascetShardReaderFactory;
+pub use tirp::TirpBascetShardReaderFactory;
+pub use fastq::BascetFastqWriterFactory;
+pub use list_fastq::ListFastqReaderFactory;

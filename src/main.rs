@@ -18,8 +18,8 @@ enum Commands {
     Mapcell(cmd::MapCellCMD),
     Extract(cmd::ExtractCMD),
     Shardify(cmd::ShardifyCMD),
-    BuildKMERdatabase(cmd::BuildKMERdatabaseCMD),
-    Transform(cmd::TransformCmd)
+    Transform(cmd::TransformCmd),
+    BuildKMERdatabase(cmd::FeaturiseCMD),
 }
 
 fn main() -> ExitCode {

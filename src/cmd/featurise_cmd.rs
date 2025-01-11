@@ -13,14 +13,14 @@ pub const DEFAULT_THREADS_WRITE: usize = 10;
 pub const DEFAULT_THREADS_WORK: usize = 1;
 
 
-use crate::command::BuildKMERdatabase;
-use crate::command::BuildKMERdatabaseParams;
+use crate::command::Featurise;
+use crate::command::FeaturiseParams;
 
 
 
 
 #[derive(Args)]
-pub struct BuildKMERdatabaseCMD {
+pub struct FeaturiseCMD {
 
 
     // Input bascet or gascet
@@ -49,13 +49,13 @@ pub struct BuildKMERdatabaseCMD {
 
     
 }
-impl BuildKMERdatabaseCMD {
+impl FeaturiseCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
 
         
 
-        let params_io = BuildKMERdatabaseParams {
+        let params = FeaturiseParams {
 
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
@@ -63,10 +63,11 @@ impl BuildKMERdatabaseCMD {
             threads_work: self.threads_work,
         };
 
-        let _ = BuildKMERdatabase::run(
-            &Arc::new(params_io)
+        let _ = Featurise::run(
+            &Arc::new(params)
         );
 
+        println!("Featurise has finished succesfully");
         Ok(())
     }
 

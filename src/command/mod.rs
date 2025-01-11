@@ -9,15 +9,14 @@ pub mod constants;
 pub mod getraw;
 pub mod mapcell;
 pub mod shardify;
-pub mod build_kmer_db;
 pub mod transform;
+pub mod featurise_new;
 
 
 
 
-
-pub use build_kmer_db::BuildKMERdatabase;
-pub use build_kmer_db::BuildKMERdatabaseParams;
+pub use featurise_new::Featurise;
+pub use featurise_new::FeaturiseParams;
 
 pub use mapcell::MapCell;
 pub use mapcell::MapCellParams;

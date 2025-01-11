@@ -109,6 +109,30 @@ impl ShardFileExtractor for ZipBascetShardReader {
     }
 
 
+    fn extract_as(
+        &mut self, 
+        cell_id: &String, 
+        file_name: &String,
+        path_outfile: &PathBuf
+    ) -> anyhow::Result<()>{
+
+        let zip_fname = format!("{cell_id}/{file_name}");
+        let mut entry = self.zip_shard.by_name(&zip_fname).expect("File is missing in zip");
+
+        if entry.is_dir() {
+            panic!("The specified file to unzip is a directory. This is currently not supported")
+        } else if entry.is_file() {
+            debug!("extracting");
+            let file_out = File::create(&path_outfile).unwrap();
+            let mut bufwriter_out = BufWriter::new(&file_out);
+            let mut bufreader_found = BufReader::new(&mut entry);
+            std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
+        }
+
+        Ok(())
+    }
+
+
     fn extract_to_outdir (
         &mut self, 
         cell_id: &String, 
