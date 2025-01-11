@@ -17,6 +17,12 @@ test_script:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/kmc.0.zip -s ./script.sh --show-script-output --keep-files 
 
 
+test_featurise:
+	#this makes a joint DB. call it something else!
+	rm -Rf temp; cargo +nightly run featurise -i testdata/kmc.0.zip -o testdata/features.0.txt
+
+
+
 test_kmc_reads:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/kmc.0.zip -s _kmc_process_reads --show-script-output
 	#rm -Rf temp; cargo +nightly run mapcell -i testdata/out_complete.0.tirp.gz -o testdata/kmc.0.zip -s _kmc_process_contigs --show-script-output
