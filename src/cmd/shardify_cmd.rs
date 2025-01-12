@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use clap::Args;
 
-use crate::command::shardify::ShardifyParams;
-use crate::command::shardify::Shardify;
+use crate::command::ShardifyParams;
+use crate::command::Shardify;
 use crate::fileformat::read_cell_list_file;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";

@@ -32,7 +32,6 @@ pub struct ShardifyParams {
     pub path_tmp: std::path::PathBuf,
     pub path_out: Vec<std::path::PathBuf>,
 
-    //
     pub include_cells: Option<Vec<CellID>>,
 
 }

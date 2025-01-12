@@ -20,27 +20,14 @@ pub struct QueryParams {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
-    pub path_features: std::path::PathBuf,  /// called reference for julian
+    pub path_features: std::path::PathBuf, 
 
 
     pub threads_work: usize,  
-//    pub threads_work: usize,  
-
 }
 
 
 
-/* 
-
-example dump.txt -- if we read one line, we can tell the kmer size
-
-mahogny@beagle:~/github/bascet$ head testdata/features.0.txt  
-AAAAAAAAAA AAAAACCCCA CCAGATTAAT C	1
-AAAAAAAAAAAAAACCCCACCAGATTAATCT	1
-AAAAAAAAAAAAACAACCCCCCAGATTAATC	1
-AAAAAAAAAAAAACCCCACCAGATTAATCTC	1
-AAAAAAAAAAAAACCCCCCCCCAGATTAATT	1
-*/
 
 /**
  * 
@@ -185,97 +172,6 @@ pub fn count_from_dump(
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-/* 
-
-
-pub struct MatrixMM {
-
-    p: PathBuf,
-    count_lines_written: i32,
-    bufwriter_feature_matrix: BufWriter<File>,
-    
-
-    //TODO also 10x format output?
-
-}
-impl MatrixMM {
-
-    pub fn new(p: &PathBuf) -> Self {
-        //Keep the path for later
-        self.p=p.clone();
-
-        /////// Matrix writing and counting are performed at the same time!!
-        let file_feature_matrix = File::create(&p).unwrap();
-        let mut bufwriter_feature_matrix: BufWriter<&File> = BufWriter::new(&file_feature_matrix);
-        let header = "%%MatrixMarket matrix coordinate integer general";
-        writeln!(bufwriter_feature_matrix, "{}", header).unwrap();
-        writeln!(bufwriter_feature_matrix, "0 0 0").unwrap();
-        
-        Self {
-            p: p.clone(),
-            count_lines_written: 0,
-            bufwriter_feature_matrix: bufwriter_feature_matrix
-        }
-    }
-
-    pub fn add(
-        &mut self, 
-        cell_index: u32,
-        feature_index: u32, 
-        count: u128
-    ) {
-
-        writeln!(
-            bufwriter_feature_matrix,
-            "\t{} {} {}",
-            cell_index, feature_index, count
-        )
-        .unwrap();
-        self.count_lines_written += 1;
-    }
-
-    pub fn finish(&mut self){
-
-        let _ = self.bufwriter_feature_matrix.flush();
-
-
-        //// Go back to the header and fill in the number of features written
-        let mut file = OpenOptions::new().write(true).open(&self.path_out).unwrap();
-        file.seek(SeekFrom::Start(header.len() as u64 + 1)).unwrap(); // +1 for newline char
-
-        writeln!(
-            file,
-            "{} {} {}",
-            self.features_nmin + self.features_nmax - 1,
-            (&queries).iter().map(|(i, _)| i).max().unwrap() - 1,
-            count_lines_written - 1
-        )
-        .unwrap();
-
-
-    }
-}
-
-
-
-
-
-
-
-
-*/
 
 
 
