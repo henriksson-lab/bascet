@@ -20,6 +20,7 @@ enum Commands {
     Shardify(cmd::ShardifyCMD),
     Transform(cmd::TransformCMD),
     Featurise(cmd::FeaturiseCMD),
+    Query(cmd::QueryCMD),
 }
 
 fn main() -> ExitCode {
@@ -35,6 +36,7 @@ fn main() -> ExitCode {
         Commands::Shardify(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
+        Commands::Query(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {

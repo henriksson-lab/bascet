@@ -1,15 +1,12 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use std::fs;
 use std::fs::File;
+use std::path::PathBuf;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::io::Write;
-use std::io::BufWriter;
-use itertools::Itertools;
 use std::collections::HashMap;
 
 
-use crate::fileformat::CellID;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
@@ -75,6 +72,23 @@ impl Query {
         params: &Arc<QueryParams>
     ) -> anyhow::Result<()> {
 
+
+
+        //Prepare matrix that we will store into
+        let mut mm = SparseCountMatrix::new();
+
+        /* 
+        mm.add_feature(&"foo".to_string());
+        mm.add_cell(&"cell1".to_string());
+        mm.add_value(1, 2, 100);
+        mm.add_value(1, 2, 101);
+        mm.add_value(1, 2, 102);
+
+        mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
+
+
+*/
+
         check_kmc_tools().unwrap();
 
         //Need to create temp dir
@@ -87,24 +101,22 @@ impl Query {
 
         // TODO: below, should we require instead a plain list of KMERs??
 
-        //Prepare matrix that we will store into
-        let mut mm = SparseCountMatrix::new();
 
         //Below reads list of features to include. Set up a map: KMER => column in matrix.    NOTE: input is the dump.txt from kmc after merging
         //Also figure out what kmer size to use
-        let mut features_reference: HashMap<String, usize> = HashMap::new();
+        let mut features_reference: HashMap<String, u32> = HashMap::new();
         let file_features_ref = File::open(&params.path_features).unwrap();
         let bufreader_features_ref = BufReader::new(&file_features_ref);
         let mut kmer_size = 0;
-        for (feature_index, rline) in bufreader_features_ref.lines().enumerate() {  //////////// use CSV parser instead?
-            if let Ok(line) = rline { ////// whwn is this false??
 
-                let feature = line.split("\t").next().expect("Could not parse KMER sequence");
-
-                features_reference.insert(feature.to_string(), feature_index + 1); //+1, because matrixmarket counts from 1
-                kmer_size = feature.len();
-
+        for (feature_index, rline) in bufreader_features_ref.lines().enumerate() {  //////////// should be a plain list of features
+            if let Ok(feature) = rline { ////// when is this false??
+                //let feature = line.split("\t").next().expect("Could not parse KMER sequence");
+                features_reference.insert(feature.to_string(), feature_index as u32); //matrixmarket counts from 1; for MM writer to add +1 if needed
                 mm.add_feature(&feature.to_string());
+
+                //Detect kmer size. should be the same for all entries, not checked
+                kmer_size = feature.len();
             }
         }
 
@@ -141,20 +153,38 @@ impl Query {
                 cur_file_id+=1;
 
 
-
-
                 //Extract counts from KMC database already here
+                //TODO maybe for now get the dump.txt file and scan it directly... later, C++ api for kmc should be the fastest option!!!
+
+                let cell_index= *features_reference.get(&cell_id).unwrap();
+
+                let file_features_ref = File::open(&path_f1).unwrap();
+                let reader = BufReader::new(&file_features_ref);
+                for (_feature_index, rline) in reader.lines().enumerate() {  //////////// use CSV parser instead?
+                    if let Ok(line) = rline { ////// when is this false??
+        
+                        let feature = line.split("\t").next().expect("Could not parse KMER sequence from cell db");
+        
+                        if let Some(feature_index) = features_reference.get(feature) {
+                            mm.add_value(cell_index, *feature_index, 100);  //// TODO also get the count
+                        }
+        
+                        mm.add_feature(&feature.to_string());
+                    }
+                }
 
 
 
-                //TODO for the right place
-                mm.add_value(1, 2, 100);
+//                kmc_tools simple  cell_db  feature_db
+
+
 
 
 
             } 
         }
 
+        mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
 
         //Write last part of matrix
 //        mm.finish();

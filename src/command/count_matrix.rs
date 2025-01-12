@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 //#[cfg(feature = "blosc")]
 //use hdf5::filters::blosc_set_nthreads;  blosc currently disabled (for some reason)
-use hdf5::{File, H5Type, Result};
-use ndarray::{arr2, s};
+use hdf5::{File, H5Type};
 
 
 /// how to use: https://docs.rs/crate/hdf5/latest
@@ -26,7 +25,7 @@ pub struct SparseCountMatrix {
 
     pub cells: Vec<String>,
     pub features: Vec<String>,
-    pub entries: Vec<(u32,u32,u32)>
+    pub entries: Vec<(u32,u32,u32)>   //row, col, count
 
 }
 impl SparseCountMatrix {
@@ -43,74 +42,82 @@ impl SparseCountMatrix {
         self.features.push(feature.clone());
     }
 
+    pub fn add_cell(&mut self, cell: &String){
+        self.cells.push(cell.clone());
+    }
+
     pub fn add_value(&mut self, cell: u32, feature: u32, value: u32) {
         self.entries.push((cell, feature, value));
     }
 
 
-    pub fn save_to_hd5(&self, p: &PathBuf) -> anyhow::Result<()> {
+    pub fn save_to_anndata(&self, p: &PathBuf) -> anyhow::Result<()> {
         
         let file = File::create(p)?; // open for writing
 
+        //Current 
+        // V         = [ 10 20 30 40 50 60 70 80 ]
+        // COL_INDEX = [  0  1  1  3  2  3  4  5 ]   ///except it is 1-based?? or 0??
+        // ROW_INDEX = [  0  2  4  7  8 ]
 
-        //Sparswe matrix here
+        // shape is [size of indptr i.e. number of rows   ;   columns ]
+
+        //Extract separate vectors
+        let csr_data: Vec<u32> = self.entries.iter().map(|(_row,_col,data)| *data).collect();
+        let csr_cols: Vec<u32> = self.entries.iter().map(|(_row,col,_data)| *col).collect();
+        let csr_rows: Vec<u32> = self.entries.iter().map(|(row,_col,_data)| *row).collect(); //must be compressed
+
+        //Figure out where rows start in this list        ////////// This assumes that we added counts, cell by cell. otherwise sort the array before!!
+        let mut ind_ptr:Vec<u32> = Vec::new(); 
+        ind_ptr.push(0);
+        for i in 1..(csr_rows.len()) {
+            if csr_rows[i] != csr_rows[i-1] {
+                ind_ptr.push(i as u32);
+            }
+        }
+
+        //Store the sparse matrix here
         let group = file.create_group("X")?; 
         let builder = group.new_dataset_builder();
-        let ds = builder.with_data(&[1,2,3]).create("indptr")?;
- //       let ds = builder.with_data(&arr2([1,2,3])).create("indices")?;
-//        let ds = builder.with_data(&arr2([1,2,3])).create("data")?;
-
-
-
-/* 
-        let attr = group.new_attr::<String>().shape([1]).create("encoding-type")?; //allocates the space
-        attr.write(&["csr_matrix"])?;
-
-        let attr = group.new_attr::<String>().shape([1]).create("encoding-version")?; //allocates the space
-        attr.write(&["0.1.0"])?;
-*/
-
-        create_str_attr(&ds, "another_unicode_attribute", "‽🚐")?;
-
-
-/* 
-
-
-
-        //these are attributes
-        builder.with_data("csr_matrix").create("encoding-type");
-        builder.with_data("csr_matrix").create("encoding-version");
-        builder.with_data(&arr2(&[5,3])).create("shape");  //size of matrix
-
-//        builder.cr
-
-
+        let _ = builder.with_data(&csr_data.as_slice()).create("data")?;    //Data
+        let builder = group.new_dataset_builder();
+        let _ = builder.with_data(&csr_cols.as_slice()).create("indices")?; // Columns
+        let builder = group.new_dataset_builder();
+        let _ = builder.with_data(&ind_ptr.as_slice()).create("indptr")?;  // Rows
+        
+        //Store the matrix size
+        let n_rows = self.cells.len();
+        let n_cols = self.features.len();
         let attr = group.new_attr::<u32>().shape([2]).create("shape")?; //allocates the space
-        attr.write(&[5,3])?;
-*/
+        attr.write(&[n_rows,n_cols])?;
 
+        //Store the format of the matrix
+        /* 
+        let attr = group.new_attr::<hdf5::types::VarLenUnicode>().create("encoding-type")?;
+        let value: hdf5::types::VarLenUnicode = "csr_matrix".parse().unwrap();
+        attr.write_scalar(&value);*/
 
-        /* 
-        #[cfg(feature = "blosc")]
-        blosc_set_nthreads(2); // set number of blosc threads
-        #[cfg(feature = "blosc")]
-        let builder = builder.blosc_zstd(9, true); // zstd + shuffle
-        let ds = builder
-            .with_data(&arr2(&[
-                // write a 2-D array of data
-                [Pixel::new(1, 2, R), Pixel::new(2, 3, B)],
-                [Pixel::new(3, 4, G), Pixel::new(4, 5, R)],
-                [Pixel::new(5, 6, B), Pixel::new(6, 7, G)],
-            ]))
-            // finalize and write the dataset
-            .create("pixels")?;
-    */
-        /* 
-        // create an attr with fixed shape but don't write the data
-        let attr = ds.new_attr::<Color>().shape([3]).create("colors")?;
-        // write the attr data
-        attr.write(&[R, G, B])?;
-        */
+        create_str_attr_unicode_to_group(&group, "encoding-type", "csr_matrix")?;
+        create_str_attr_unicode_to_group(&group, "encoding-version", "0.1.0")?;
+    
+
+        //Store the names of the cells
+        let list_cell_names = vec_to_h5_string(self.cells.as_slice());
+        let group = file.create_group("obs")?; 
+        let builder = group.new_dataset_builder();
+        let _ = builder.
+            with_data(list_cell_names.as_slice()).
+            create("_index")?;
+
+        //Store the names of the features
+        let list_features = vec_to_h5_string(self.features.as_slice());
+        let group = file.create_group("var")?; 
+        let builder = group.new_dataset_builder();
+        let _ = builder.
+            with_data(list_features.as_slice()).
+            create("_index")?;
+        
+
         Ok(())
 
     }
@@ -120,7 +127,20 @@ impl SparseCountMatrix {
 }
 
 
-fn create_str_attr<T>(location: &T, name: &str, value: &str) -> hdf5::Result<()>
+fn vec_to_h5_string(list: &[String]) -> Vec<hdf5::types::VarLenUnicode> {
+    list.iter().map(|f| f.parse().unwrap()).collect()
+}
+
+
+fn create_str_attr_unicode_to_group (group: &hdf5::Group, name: &str, value: &str) -> hdf5::Result<()> {
+    let attr = group.new_attr::<hdf5::types::VarLenUnicode>().create(name)?;
+    let value: hdf5::types::VarLenUnicode = value.parse().unwrap();
+    attr.write_scalar(&value)
+}
+
+
+/* 
+fn create_str_attr_unicode<T>(location: &T, name: &str, value: &str) -> hdf5::Result<()>
 where
     T: std::ops::Deref<Target = hdf5::Container>,
 {
@@ -128,7 +148,7 @@ where
     let value: hdf5::types::VarLenUnicode = value.parse().unwrap();
     attr.write_scalar(&value)
 }
-
+*/
 
 
 
