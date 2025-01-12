@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 //#[cfg(feature = "blosc")]
 //use hdf5::filters::blosc_set_nthreads;  blosc currently disabled (for some reason)
-use hdf5::{File, H5Type};
+use hdf5::File;
 
 
 /// how to use: https://docs.rs/crate/hdf5/latest
@@ -11,14 +11,14 @@ use hdf5::{File, H5Type};
 // hdf5-metno
 
 
+/*  
 #[derive(H5Type, Clone, PartialEq, Debug)] // register with HDF5
 #[repr(C)]
-pub struct MatrixShape {
+struct MatrixShape {
     xy: (i64, i64),
-
 }
 
-
+*/
 
 
 pub struct SparseCountMatrix {
@@ -62,6 +62,11 @@ impl SparseCountMatrix {
 
     pub fn save_to_anndata(&self, p: &PathBuf) -> anyhow::Result<()> {
         
+        //Delete output file if it exists already; HDF5 library complains otherwise
+        if p.exists() {
+            std::fs::remove_file(&p).expect("Failed to delete previous output file");
+        }
+        
         let file = File::create(p)?; // open for writing
 
         //Current 
@@ -84,6 +89,10 @@ impl SparseCountMatrix {
                 ind_ptr.push(i as u32);
             }
         }
+        ///For some reason, also need an entry representing the length of data
+        ind_ptr.push((csr_data.len()) as u32);
+
+
 
         //Store the sparse matrix here
         let group = file.create_group("X")?; 
@@ -94,11 +103,19 @@ impl SparseCountMatrix {
         let builder = group.new_dataset_builder();
         let _ = builder.with_data(&ind_ptr.as_slice()).create("indptr")?;  // Rows
         
+
+
         //Store the matrix size
         let n_rows = self.cells.len();
         let n_cols = self.features.len();
-        let attr = group.new_attr::<u32>().shape([2]).create("shape")?; //allocates the space
+        //let shape = vec![n_rows,n_cols];
+        let builder = group.new_dataset_builder();
+        let _ = builder.with_data(&[n_rows,n_cols].as_slice()).create("shape")?; 
+
+        /* 
+        let attr = group.new_attr::<u32>().shape([2]).create("shape")?; //anndata spec says it should be an attribute; but seems hard to read out with hdf5r, and read_10x in seurat cannot handle it
         attr.write(&[n_rows,n_cols])?;
+        */
 
         //Store the format of the matrix
         /* 
