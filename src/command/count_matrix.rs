@@ -38,16 +38,25 @@ impl SparseCountMatrix {
         }
     }
 
-    pub fn add_feature(&mut self, feature: &String){
+    pub fn add_feature(&mut self, feature: &String) -> usize {
+        let id = self.features.len();
         self.features.push(feature.clone());
+        id as usize
     }
 
-    pub fn add_cell(&mut self, cell: &String){
+    pub fn add_cell(&mut self, cell: &String) -> usize {
+        let id = self.cells.len();
         self.cells.push(cell.clone());
+        id as usize
     }
 
-    pub fn add_value(&mut self, cell: u32, feature: u32, value: u32) {
-        self.entries.push((cell, feature, value));
+    pub fn add_value(
+        &mut self, 
+        cell: usize, 
+        feature: usize, 
+        value: u32
+    ) {
+        self.entries.push((cell as u32, feature as u32, value));
     }
 
 
