@@ -34,7 +34,8 @@ pub struct QueryCMD {
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
     pub path_out: PathBuf,
 
-    #[arg(long, value_parser)]  
+    // Input feature file (text file, one kmer per line)
+    #[arg(short = 'f', value_parser = clap::value_parser!(PathBuf))]  
     pub path_features: PathBuf,
 
     //Thread settings

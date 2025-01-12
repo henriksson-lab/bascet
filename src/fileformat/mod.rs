@@ -7,6 +7,7 @@ pub mod shard;
 pub mod cram;
 pub mod fastq;
 pub mod list_fastq;
+pub mod count_matrix;
 
 ////// Utility
 pub mod cell_readpair_reader;
@@ -31,6 +32,9 @@ pub use detect_fileformat::DetectedFileformat;
 pub use detect_fileformat::verify_input_fq_file;
 pub use detect_fileformat::detect_shard_format;
 pub use detect_fileformat::get_suitable_file_extractor;
+
+
+pub use count_matrix::SparseCountMatrix;
 
 //Readers
 pub use zip::ZipBascetShardReader;

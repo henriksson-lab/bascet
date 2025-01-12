@@ -16,7 +16,7 @@ loc:
 #########
 
 test_query:
-	rm -Rf temp; cargo +nightly run query -i testdata/kmc.0.zip -o testdata/counts.h5ad --path-features testdata/chosen_features.txt
+	rm -Rf temp; cargo +nightly run query -i testdata/kmc.0.zip -o testdata/counts.h5ad -f testdata/chosen_features.txt
 
 test_script:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/kmc.0.zip -s ./script.sh --show-script-output --keep-files 
@@ -24,7 +24,8 @@ test_script:
 
 test_featurise:
 	#this makes a joint DB. call it something else!
-	rm -Rf temp; cargo +nightly run featurise -i testdata/kmc.0.zip -o testdata/features.0.txt
+	rm -Rf temp; cargo +nightly run featurise -i testdata/kmc.0.zip -o testdata/all_kmc
+
 
 
 

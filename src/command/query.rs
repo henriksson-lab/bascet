@@ -10,10 +10,8 @@ use std::collections::HashMap;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
+use crate::fileformat::SparseCountMatrix;
 
-use crate::utils::check_kmc_tools;
-
-use super::count_matrix::SparseCountMatrix;
 
 
 
@@ -65,19 +63,7 @@ impl Query {
         //Prepare matrix that we will store into
         let mut mm = SparseCountMatrix::new();
 
-        /* 
-        mm.add_feature(&"foo".to_string());
-        mm.add_cell(&"cell1".to_string());
-        mm.add_value(1, 2, 100);
-        mm.add_value(1, 2, 101);
-        mm.add_value(1, 2, 102);
-
-        mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
-
-
-*/
-
-        check_kmc_tools().unwrap();
+        //crate::utils::check_kmc_tools().unwrap();
 
         //Need to create temp dir
         if params.path_tmp.exists() {
@@ -86,6 +72,7 @@ impl Query {
         } else {
             let _ = fs::create_dir(&params.path_tmp);  
         }
+
 
 
         //Below reads list of features to include. Set up a map: KMER => column in matrix.
@@ -126,20 +113,21 @@ impl Query {
         // Unzip all cell-specific kmer databases (dump.txt format).   NOTE: this can end up a lot of files! so best to stream!!
         for cell_id in list_cells {
 
-            println!("doing cell");
+            println!("doing cell {}", cell_id);
 
             //Add cell ID to matrix and get its matrix position
             let cell_index = mm.add_cell(&cell_id);
 
             //Check if a KMC database is present for this cell, otherwise exclude it
             let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
-            let f1="dump.txt".to_string();
+
+            let f1="kmc_dump.txt".to_string();
             if list_files.contains(&f1) {
 
-                println!("has dump");
+                //println!("has dump");
 
                 //Extract the files
-                let path_f1 = params.path_tmp.join(format!("cell_{}.dump.txt", cell_id).to_string());
+                let path_f1 = params.path_tmp.join(format!("cell_{}.kmc_dump.txt", cell_id).to_string());
                 file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
 
                 //Extract counts from KMC database already here
@@ -153,7 +141,10 @@ impl Query {
                     &mut mm,
                     &mut reader
                 );
-            } 
+            } else {
+                println!("No kmc_dump.txt present; File list: {:?}", list_files);
+
+            }
         }
 
         //Save the final count matrix
@@ -176,7 +167,7 @@ pub fn count_from_dump(
 ){
     for (_feature_index, rline) in reader.lines().enumerate() {
         if let Ok(line) = rline { ////// when is this false??
-            println!("line ok");
+            //println!("line ok");
 
             let mut splitter = line.split("\t");
             let feature = splitter.next().expect("Could not parse KMER sequence from cell db");

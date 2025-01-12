@@ -68,6 +68,8 @@ impl Featurise {
             let f2="kmc.kmc_pre".to_string();
             if list_files.contains(&f1) && list_files.contains(&f2) {
 
+                println!("Extracting cell {}", cell_id);
+
                 let db_file_path = params.path_tmp.join(format!("cell_{}", cur_file_id).to_string());
                 let path_f1 = params.path_tmp.join(format!("cell_{}.kmc_suf", cur_file_id).to_string());
                 let path_f2 = params.path_tmp.join(format!("cell_{}.kmc_pre", cur_file_id).to_string());
@@ -84,7 +86,9 @@ impl Featurise {
 
         }
 
+
         // Generate the union script
+        println!("Making KMC union script");
         let path_kmc_union_script = params.path_tmp.join("kmc_union.op");
         //let path_kmc_union_db = params.path_tmp.join("kmc_union");
         let path_kmc_union_db = &params.path_output;  //.join("kmc_union");
@@ -95,6 +99,7 @@ impl Featurise {
         ).unwrap();
 
         // Run KMC tools on union script --- output is the KMC database
+        println!("Running KMC union script");
         run_kmc_tools(
             &path_kmc_union_script,
             params.threads_work
@@ -167,20 +172,6 @@ pub fn dump_kmc_db(
 
     Ok(())
 }
-
-
-
-
-/*
-
-
-after running this command, we still need to pick kmers!
-
-kmc_tools transform kmc. -cx10
-
-
-*/
-
 
 
 /**
