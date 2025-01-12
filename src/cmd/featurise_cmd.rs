@@ -16,6 +16,8 @@ pub const DEFAULT_THREADS_WORK: usize = 1;
 use crate::command::Featurise;
 use crate::command::FeaturiseParams;
 
+use crate::fileformat::read_cell_list_file;
+
 
 
 
@@ -36,6 +38,9 @@ pub struct FeaturiseCMD {
     pub path_out: PathBuf,
 
 
+    // File with a list of cells to include
+    #[arg(long = "cells")]
+    pub include_cells: Option<PathBuf>,
 
     //Thread settings
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
@@ -54,12 +59,21 @@ impl FeaturiseCMD {
 
 
         
+        //Read optional list of cells
+        let include_cells = if let Some(p) = &self.include_cells {
+            let name_of_cells = read_cell_list_file(&p);
+            Some(name_of_cells)
+        } else {
+            None
+        };
+        
 
         let params = FeaturiseParams {
 
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
-            path_output: self.path_out.clone(),            
+            path_output: self.path_out.clone(),  
+            include_cells: include_cells.clone(),          
             threads_work: self.threads_work,
         };
 

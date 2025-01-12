@@ -16,6 +16,8 @@ pub const DEFAULT_THREADS_WORK: usize = 1;
 use crate::command::Query;
 use crate::command::QueryParams;
 
+//use crate::fileformat::read_cell_list_file;
+
 
 
 #[derive(Args)]
@@ -38,6 +40,8 @@ pub struct QueryCMD {
     #[arg(short = 'f', value_parser = clap::value_parser!(PathBuf))]  
     pub path_features: PathBuf,
 
+
+        
     //Thread settings
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
     threads_read: usize,
@@ -51,7 +55,6 @@ impl QueryCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
 
-        
 
         let params = QueryParams {
 

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use hdf5::File;
 
 
-/// how to use: https://docs.rs/crate/hdf5/latest
+// how to use: https://docs.rs/crate/hdf5/latest
 
 // most active fork: https://github.com/metno/hdf5-rust
 // hdf5-metno
@@ -89,7 +89,7 @@ impl SparseCountMatrix {
                 ind_ptr.push(i as u32);
             }
         }
-        ///For some reason, also need an entry representing the length of data
+        //For some reason, also need an entry representing the length of data
         ind_ptr.push((csr_data.len()) as u32);
 
 

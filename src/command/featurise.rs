@@ -19,6 +19,8 @@ pub struct FeaturiseParams {
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
 
+    pub include_cells: Option<Vec<CellID>>,
+
     pub threads_work: usize,  
 
 }
@@ -53,9 +55,12 @@ impl Featurise {
         //TODO need to support multiple shard files as input!!
         //or be prepared to always do one final merge if needed --
 
-        //TODO: option to only include subset of cells
-
-        let list_cells = file_input.get_cell_ids().expect("Failed to get content listing for input file");
+        //Pick cells to work on
+        let list_cells = if let Some(p) = &params.include_cells {
+            p.clone()
+        } else {
+            file_input.get_cell_ids().expect("Failed to get content listing for input file")
+        };
 
         // Unzip all cell-specific kmer databases
         let mut cur_file_id = 0;
