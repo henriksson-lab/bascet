@@ -110,7 +110,7 @@ impl SparseCountMatrix {
         let n_cols = self.features.len();
         //let shape = vec![n_rows,n_cols];
         let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&[n_rows,n_cols].as_slice()).create("shape")?; 
+        let _ = builder.with_data(&[n_rows,n_cols].as_slice()).create("shape")?;   //////////// this got stored as  1001 120129936  !!
 
         /* 
         let attr = group.new_attr::<u32>().shape([2]).create("shape")?; //anndata spec says it should be an attribute; but seems hard to read out with hdf5r, and read_10x in seurat cannot handle it
