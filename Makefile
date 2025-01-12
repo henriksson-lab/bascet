@@ -1,6 +1,8 @@
 all:
 	cargo +nightly build
 
+fix:
+	cargo +nightly fix --lib -p robert --allow-dirty
 
 install_rust:
 	rustup toolchain install nightly
@@ -12,6 +14,9 @@ loc:
 #########
 #########
 #########
+
+test_query:
+	rm -Rf temp; cargo +nightly run query -i testdata/filtered.0.tirp.gz -o testdata/counts.h5ad --path-features testdata/chosen_features.txt
 
 test_script:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/kmc.0.zip -s ./script.sh --show-script-output --keep-files 
