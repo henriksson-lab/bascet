@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::fs;
 use std::fs::File;
-use std::path::PathBuf;
+use std::io::Read;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::collections::HashMap;
@@ -14,18 +14,6 @@ use crate::fileformat::shard::ShardCellDictionary;
 use crate::utils::check_kmc_tools;
 
 use super::count_matrix::SparseCountMatrix;
-
-
-
-//use std::sync::Mutex;
-
-//use rand::rngs::SmallRng;
-//use rand::SeedableRng;
-
-//use crate::utils::BoundedMaxHeap;
-//use crate::utils::BoundedMinHeap;
-
-
 
 
 
@@ -99,29 +87,30 @@ impl Query {
             let _ = fs::create_dir(&params.path_tmp);  
         }
 
-        // TODO: below, should we require instead a plain list of KMERs??
 
-
-        //Below reads list of features to include. Set up a map: KMER => column in matrix.    NOTE: input is the dump.txt from kmc after merging
+        //Below reads list of features to include. Set up a map: KMER => column in matrix.
         //Also figure out what kmer size to use
-        let mut features_reference: HashMap<String, u32> = HashMap::new();
+        let mut features_reference: HashMap<String, usize> = HashMap::new();
         let file_features_ref = File::open(&params.path_features).unwrap();
         let bufreader_features_ref = BufReader::new(&file_features_ref);
         let mut kmer_size = 0;
 
         for (feature_index, rline) in bufreader_features_ref.lines().enumerate() {  //////////// should be a plain list of features
             if let Ok(feature) = rline { ////// when is this false??
-                //let feature = line.split("\t").next().expect("Could not parse KMER sequence");
-                features_reference.insert(feature.to_string(), feature_index as u32); //matrixmarket counts from 1; for MM writer to add +1 if needed
+                features_reference.insert(feature.to_string(), feature_index);
                 mm.add_feature(&feature.to_string());
 
                 //Detect kmer size. should be the same for all entries, not checked
                 kmer_size = feature.len();
+            } else {
+                println!("one feature line nope");
             }
         }
 
         if kmer_size==0 {
             anyhow::bail!("Feature file has no features");
+        } else {
+            println!("Read {} features. Detected kmer-length of {}", features_reference.len(), kmer_size);
         }
 
 
@@ -131,70 +120,80 @@ impl Query {
         let list_cells = file_input.get_cell_ids().expect("Failed to get content listing for input file");
 
 
+
+/////////////// ABSTRACTION: could enable the kmer counting over FASTQ and contigs as well. instead of looking up kmers, it would be counted de novo
+
         // Unzip all cell-specific kmer databases (dump.txt format).   NOTE: this can end up a lot of files! so best to stream!!
-        let mut cur_file_id = 0;
-      //  let mut dbs_to_merge: Vec<(PathBuf, String)> = Vec::new();
         for cell_id in list_cells {
+
+            println!("doing cell");
+
+            //Add cell ID to matrix and get its matrix position
+            let cell_index = mm.add_cell(&cell_id);
 
             //Check if a KMC database is present for this cell, otherwise exclude it
             let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
             let f1="dump.txt".to_string();
             if list_files.contains(&f1) {
 
-          //      let db_file_path = params.path_tmp.join(format!("cell_{}", cur_file_id).to_string());
-                let path_f1 = params.path_tmp.join(format!("cell_{}.dump.txt", cur_file_id).to_string());
+                println!("has dump");
 
                 //Extract the files
+                let path_f1 = params.path_tmp.join(format!("cell_{}.dump.txt", cell_id).to_string());
                 file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
-
-                //Add this db to the list of all db's to merge later
-                // NOTE: '-' is a unary operator in kmc complex scripts. cannot be part of name
-                //dbs_to_merge.push((db_file_path, cell_id));   //// is there any reason to keep cell_id at all?
-                cur_file_id+=1;
-
 
                 //Extract counts from KMC database already here
                 //TODO maybe for now get the dump.txt file and scan it directly... later, C++ api for kmc should be the fastest option!!!
 
-                let cell_index= *features_reference.get(&cell_id).unwrap();
-
                 let file_features_ref = File::open(&path_f1).unwrap();
-                let reader = BufReader::new(&file_features_ref);
-                for (_feature_index, rline) in reader.lines().enumerate() {  //////////// use CSV parser instead?
-                    if let Ok(line) = rline { ////// when is this false??
-        
-                        let feature = line.split("\t").next().expect("Could not parse KMER sequence from cell db");
-        
-                        if let Some(feature_index) = features_reference.get(feature) {
-                            mm.add_value(cell_index, *feature_index, 100);  //// TODO also get the count
-                        }
-        
-                        mm.add_feature(&feature.to_string());
-                    }
-                }
-
-
-
-//                kmc_tools simple  cell_db  feature_db
-
-
-
-
-
+                let mut reader = BufReader::new(&file_features_ref);
+                count_from_dump(
+                    cell_index,
+                    &features_reference,
+                    &mut mm,
+                    &mut reader
+                );
             } 
         }
 
+        //Save the final count matrix
         mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
 
-        //Write last part of matrix
-//        mm.finish();
-
+        //TODO delete temp files
+        //fs::remove_dir_all(&params.path_tmp).unwrap();
 
         Ok(())
     }
 }
 
 
+
+pub fn count_from_dump(
+    cell_index: usize,
+    features_reference: &HashMap<String, usize>,
+    mm: &mut SparseCountMatrix,
+    reader: &mut BufReader<impl Read>
+){
+    for (_feature_index, rline) in reader.lines().enumerate() {
+        if let Ok(line) = rline { ////// when is this false??
+            println!("line ok");
+
+            let mut splitter = line.split("\t");
+            let feature = splitter.next().expect("Could not parse KMER sequence from cell db");
+
+            if let Some(feature_index) = features_reference.get(feature) {
+                let cnt = splitter.next().expect("Could not parse KMER count from cell db").
+                    parse::<u32>().expect("Count for kmer is not a u32");
+
+                mm.add_value(cell_index, *feature_index, cnt);  
+            }
+
+            mm.add_feature(&feature.to_string());
+        } else {
+            println!("line failed");
+        }
+    }
+}
 
 
 

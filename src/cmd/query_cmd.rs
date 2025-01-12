@@ -18,10 +18,6 @@ use crate::command::QueryParams;
 
 
 
-//pub static DEFAULT_SEED_RANDOM: std::sync::LazyLock<u64> =
-//    std::sync::LazyLock::new(|| rand::random::<u64>());
-
-
 #[derive(Args)]
 pub struct QueryCMD {
 
@@ -40,16 +36,6 @@ pub struct QueryCMD {
 
     #[arg(long, value_parser)]  
     pub path_features: PathBuf,
-
-    /* 
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_MIN)]
-    pub features_nmin: usize,
-    #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = QUERY_DEFAULT_FEATURES_MAX)]
-    pub features_nmax: usize,
-
-    #[arg(long, value_parser = clap::value_parser!(u64), default_value_t = *DEFAULT_SEED_RANDOM)]
-    pub seed: u64,
-*/
 
     //Thread settings
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
