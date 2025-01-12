@@ -130,14 +130,15 @@ impl Query {
                 );
             } else {
                 println!("No kmc_dump.txt present; File list: {:?}", list_files);
-
             }
         }
 
         //Save the final count matrix
+        println!("Storing count table to {}", params.path_output.display());
         mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
 
         //TODO delete temp files
+        println!("Cleaning up temp files");
         //fs::remove_dir_all(&params.path_tmp).unwrap();
 
         Ok(())
@@ -165,8 +166,6 @@ pub fn count_from_dump(
 
                 mm.add_value(cell_index, *feature_index, cnt);  
             }
-
-            mm.add_feature(&feature.to_string());
         } else {
             println!("line failed");
         }
