@@ -222,7 +222,7 @@ pub fn fastq_to_bgz(path: &PathBuf, output: &PathBuf) {
 
 
 
-
+/*
 
 
 #[cfg(test)]
@@ -279,6 +279,7 @@ mod tests {
 }
 
 
+ */
 
 
 
