@@ -13,6 +13,7 @@ pub mod count_matrix;
 pub mod cell_readpair_reader;
 pub mod cell_list_file;
 mod detect_fileformat;
+pub mod uuencode;
 
 ////// Re-exports
 pub use shard::CellID;
@@ -48,3 +49,4 @@ pub use zip::ZipBascetShardReaderFactory;
 pub use tirp::TirpBascetShardReaderFactory;
 pub use fastq::BascetFastqWriterFactory;
 pub use list_fastq::ListFastqReaderFactory;
+

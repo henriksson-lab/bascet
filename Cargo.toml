@@ -43,3 +43,4 @@ zip = "1.1.1"  #crucial that we use old version. 2.x does not work
 path-clean = "1.0.1"
 priority-queue = "2.1.1"
 ndarray = "0.16.1"
+lazy_static = "1.5.0"
