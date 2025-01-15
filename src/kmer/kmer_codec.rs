@@ -1,14 +1,4 @@
-use std::sync::LazyLock;
-
-use bitfield_struct::bitfield;
-use rand::{
-    distributions::{Distribution, Uniform},
-    Rng,
-};
-
-pub static NOISE_RANGE: LazyLock<Uniform<u32>> =
-    LazyLock::new(|| Uniform::from(u32::MIN..=u32::MAX));
-
+use std::cmp::Ordering;
 
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
@@ -86,7 +76,7 @@ impl KMERCodec {
 
     //////////// Encode a kmer + count + random value
     #[inline(always)]
-    pub unsafe fn encode(&self, bytes: &[u8], count: u32, rng: &mut impl Rng) -> EncodedKMER {
+    pub unsafe fn encode(&self, bytes: &[u8], count: u32) -> KMERandCount {
         let chunk_size: usize = 4;
         let kmer_size = self.kmer_size as usize;
         let full_chunks = kmer_size / chunk_size;
@@ -113,17 +103,14 @@ impl KMERCodec {
             encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
         }
 
-        EncodedKMER::new()
-            .with_kmer(encoded)
-            .with_count(count)
-            .with_noise(NOISE_RANGE.sample(rng))
+        KMERandCount::new(encoded, count)
     }
 
 
 
     //////////// Encode a kmer + count + random value ............... cannot just use as_bytes + above?
     #[inline(always)]
-    pub unsafe fn encode_str(&self, kmer: &str, count: u32, rng: &mut impl Rng) -> EncodedKMER {
+    pub unsafe fn encode_str(&self, kmer: &str, count: u32) -> KMERandCount {
         let chunk_size: usize = 4;
         let kmer_size = self.kmer_size as usize;
         let full_chunks = kmer_size / chunk_size;
@@ -151,16 +138,13 @@ impl KMERCodec {
             encoded = (encoded << 2) | u64::from(NT1_LOOKUP[(bytes[start + i] - b'A') as usize]);
         }
 
-        EncodedKMER::new()
-            .with_kmer(encoded)
-            .with_count(count)
-            .with_noise(NOISE_RANGE.sample(rng))
+        KMERandCount::new(encoded, count)
     }
 
     #[inline(always)]
-    pub unsafe fn decode(&self, encoded: u128) -> String {
+    pub unsafe fn decode(&self, encoded: KMERandCount) -> String {
         let mut sequence = Vec::with_capacity(self.kmer_size);
-        let mut temp = EncodedKMER::from_bits(encoded).kmer();
+        let mut temp = encoded.kmer; //EncodedKMER::from_bits(encoded).kmer();
         for _ in 0..self.kmer_size {
             let nuc = (temp & 0b11) as usize;
             sequence.push(NT_REVERSE[nuc]);
@@ -173,15 +157,50 @@ impl KMERCodec {
 
 
 
-/////////// A kmer + count + noise, aligned into a u128
-#[bitfield(u128)]
-pub struct EncodedKMER {
-    #[bits(64)]
+fn hash_for_kmer(kmer: u64) -> u32 {
+    let hash = kmer ^ (kmer>>32);  // This mixes up bits to some degree at least. 64/2 = 32 bp kmers will impact hash value
+    hash as u32
+}
+
+
+
+
+
+#[derive(Clone, Copy)]
+pub struct KMERandCount {
     pub kmer: u64,
-
-    #[bits(32)]
-    pub noise: u32,
-
-    #[bits(32)]
+    pub hash: u32,
     pub count: u32,
 }
+impl KMERandCount {
+    pub fn new(
+        kmer: u64,
+        count: u32
+   ) -> KMERandCount {
+       Self {
+           kmer: kmer,
+           hash: hash_for_kmer(kmer), 
+           count: count
+       }
+   }
+}
+
+impl PartialOrd for KMERandCount {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.hash.cmp(&other.hash))
+    }
+}
+
+impl Ord for KMERandCount {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hash.cmp(&other.hash)
+    }
+}
+
+impl PartialEq for KMERandCount {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for KMERandCount { }
