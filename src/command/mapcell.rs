@@ -16,17 +16,17 @@ use zip::ZipWriter;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::zip::ZipBascetShardReaderFactory;
 use crate::utils;
-use crate::fileformat::mapcell_script;
-use crate::fileformat::mapcell_script::MapCellScript;
-use crate::fileformat::mapcell_script::MissingFileMode;
 
 use crate::fileformat;
-//use crate::fileformat::ZipBascetShardReader;
-//use crate::fileformat::TirpBascetShardReader;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ConstructFromPath;
 use crate::fileformat::detect_shard_format;
 use crate::fileformat::DetectedFileformat;
+
+use crate::mapcell::CompressionMode;
+use crate::mapcell::MissingFileMode;
+use crate::mapcell::MapCellScript;
+use crate::mapcell::MapCellImpl;
 
 
 
@@ -113,20 +113,11 @@ impl MapCell {
 
         //Initialize script
         let mapcell_script = Arc::new(MapCellScript::new(&params.path_script)?);
-        println!("Script API version: {}", mapcell_script.api_version);
-        println!("Script expects files: {:?}", mapcell_script.expect_files);
-        println!("Script file missing mode: {}", mapcell_script.missing_file_mode);
+        println!("{}", &mapcell_script);
 
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
         println!("Input file: {:?}",params.path_in);
-        /* 
-        let input_shard_type = detect_shard_format(&params.path_in);
-        let mut shard_reader = get_suitable_shard_reader(
-            &params.path_in, 
-            &input_shard_type);
-        let list_cells = shard_reader.get_cell_ids().expect("Could not read list of cells"); */
         let list_cells = fileformat::try_get_cells_in_file(&params.path_in).expect("Could not get list of cells from input file");
-        //files_for_cell(cell_id)files_for_cell.keys().collect::<Vec<&String>>();
         let queue_limit = params.threads_write*2;
 
 
@@ -147,9 +138,9 @@ impl MapCell {
 
         let input_shard_type = detect_shard_format(&params.path_in);
         if input_shard_type == DetectedFileformat::TIRP {
-            println!("Detected input as gascet");
+            println!("Detected input as TIRP");
             for _tidx in 0..params.threads_read {
-                _ = create_shard_reader(//)::<TirpBascetShardReader>(
+                _ = create_shard_reader(
                     &params,
                     &thread_pool,
                     &mapcell_script,
@@ -267,10 +258,10 @@ fn create_shard_reader<R>(
             let _ = fs::create_dir(&path_cell_dir);  
 
 
-            let fail_if_missing = mapcell_script.missing_file_mode != MissingFileMode::Ignore;
+            let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
             let success = shard.extract_to_outdir(
                 &cell_id, 
-                &mapcell_script.expect_files,
+                &mapcell_script.get_expect_files(),
                 fail_if_missing,
                 &path_cell_dir
             ).expect("error during extraction");
@@ -279,10 +270,12 @@ fn create_shard_reader<R>(
                 //Inform writer that the cell is ready for processing
                 _ = tx.send(Some(cell_id));
             } else {
-                if mapcell_script.missing_file_mode==MissingFileMode::Fail {
+                let missing_file_mode = mapcell_script.get_missing_file_mode();
+
+                if missing_file_mode==MissingFileMode::Fail {
                     panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
                 } 
-                if mapcell_script.missing_file_mode==MissingFileMode::Ignore {
+                if missing_file_mode==MissingFileMode::Ignore {
                     println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell(&cell_id));
                 } 
             }
@@ -335,8 +328,10 @@ fn create_writer(
             ).expect("Failed to invoke script");
             debug!("Writer for '{}', done running script", cell_id);
 
-            if !success && mapcell_script.missing_file_mode==MissingFileMode::Fail {
-                panic!("Failed to process a cell, and this script is set to fail in such a scenario");
+            if !success {
+                if mapcell_script.get_missing_file_mode()==MissingFileMode::Fail {
+                    panic!("Failed to process a cell, and this script is set to fail in such a scenario");
+                }
             }
 
             //Show script output in terminal if requested
@@ -373,10 +368,10 @@ fn create_writer(
                 let mut file_input = File::open(&file_path).unwrap();
 
                 //Set up zip file
-                let compression_mode = match mapcell_script.compression_mode {
-                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::Zstd,  //R unzip does not support natively
+                let compression_mode = match mapcell_script.get_compression_mode(file_name) {
+                    CompressionMode::Default => zip::CompressionMethod::Zstd,  //R unzip does not support natively
 //                    mapcell_script::CompressionMode::Default => zip::CompressionMethod::DEFLATE,  //not as fast; for testing only. it really is ridiculously slow on zip 1.x
-                    mapcell_script::CompressionMode::Uncompressed => zip::CompressionMethod::Stored,
+                    CompressionMode::Uncompressed => zip::CompressionMethod::Stored,
                 };
                 let opts_zipwriter: zip::write::FileOptions<()> = zip::write::FileOptions::default().compression_method(compression_mode);
 

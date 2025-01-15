@@ -2,7 +2,6 @@
 ////// File formats
 pub mod zip;
 pub mod tirp;
-pub mod mapcell_script;
 pub mod shard;
 pub mod cram;
 pub mod fastq;
@@ -49,4 +48,3 @@ pub use zip::ZipBascetShardReaderFactory;
 pub use tirp::TirpBascetShardReaderFactory;
 pub use fastq::BascetFastqWriterFactory;
 pub use list_fastq::ListFastqReaderFactory;
-

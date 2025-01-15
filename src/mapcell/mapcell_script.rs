@@ -1,75 +1,31 @@
 use anyhow::bail;
-use core::fmt;
 use std::process;
 use std::path::Path;
 use std::path::PathBuf;
 use std::io;
+use std::fmt;
+//use std::io::Write;
 
 use path_clean::PathClean;
 
+use super::MapCellImpl;
+use super::MissingFileMode;
+use super::CompressionMode;
 
-#[derive(Clone,Debug,Eq,PartialEq)]
-pub enum MissingFileMode {
-    Ignore,
-    Skip,
-    Fail
-}
-impl fmt::Display for MissingFileMode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-
-
-
-#[derive(Clone,Debug,Eq,PartialEq)]
-pub enum CompressionMode {
-    Default,
-    Uncompressed
-}
-impl fmt::Display for CompressionMode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-
-
-
-fn parse_compression_mode(s: &str) -> anyhow::Result<CompressionMode> {
-    match s {
-        "default" => Ok(CompressionMode::Default),
-        "uncompressed" => Ok(CompressionMode::Uncompressed),
-        _ => bail!("Cannot parse compression mode")
-    }
-}
-
-fn parse_missing_file_mode(s: &str) -> anyhow::Result<MissingFileMode> {
-    match s {
-        "ignore" => Ok(MissingFileMode::Ignore),
-        "skip" => Ok(MissingFileMode::Skip),
-        "fail" => Ok(MissingFileMode::Fail),
-        _ => bail!("Cannot parse missing file mode")
-    }
-}
-
-
-
-
+use super::parse_missing_file_mode;
+use super::parse_compression_mode;
 
 //#[derive(Clone,Debug,Eq,PartialEq)]  //// not sure about all of these
 pub struct MapCellScript {
     pub path_script: PathBuf,
-    pub api_version: String,
-    pub expect_files: Vec<String>,
-    pub missing_file_mode: MissingFileMode,
-    pub compression_mode: CompressionMode
+    api_version: String,
+    expect_files: Vec<String>,
+    missing_file_mode: MissingFileMode,
+    compression_mode: CompressionMode
 }
-
 impl MapCellScript {
 
-    pub fn new(path_script: &PathBuf) -> anyhow::Result<MapCellScript>{
+    pub fn new(path_script: &PathBuf) -> anyhow::Result<MapCellScript> {
 
         let api_version = get_script_api_version(path_script)?;
         let expect_files = get_script_expect_files(path_script)?;
@@ -87,7 +43,26 @@ impl MapCellScript {
 
 
 
-    pub fn invoke(
+}
+
+
+impl fmt::Display for MapCellScript {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Script API version: {}",self.api_version).unwrap();
+        writeln!(f,"Script expects files: {:?}", self.expect_files).unwrap();
+        writeln!(f,"Script file missing mode: {}", self.missing_file_mode).unwrap();
+        Ok(())
+    }
+}
+
+
+
+
+
+impl MapCellImpl for MapCellScript {
+
+
+    fn invoke(
         &self,
         input_dir: &PathBuf,
         output_dir: &PathBuf,
@@ -118,7 +93,28 @@ impl MapCellScript {
         Ok((success, String::from(run_output_string)))
     }  
 
+
+    fn get_missing_file_mode(&self) -> MissingFileMode {
+        self.missing_file_mode
+    }
+
+    fn get_compression_mode(&self, _fname: &str) -> CompressionMode {
+        self.compression_mode
+    }
+
+
+    fn get_expect_files(&self) -> Vec<String> {
+        self.expect_files.clone()
+    }
+
+
+
 }
+
+
+
+
+
 
 
 
@@ -157,6 +153,8 @@ fn get_compression_mode(path_script: &PathBuf) -> anyhow::Result<CompressionMode
 
     parse_compression_mode(run_output_string)
 }
+
+
 
 //// Get API version. This is the first call so a lot of checks to help user debug
 fn get_script_api_version(path_script: &PathBuf) -> anyhow::Result<String> {
