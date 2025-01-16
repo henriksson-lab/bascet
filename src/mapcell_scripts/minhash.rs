@@ -9,7 +9,7 @@ use crate::kmer::kmc_counter::KmerCounterParams;
 use crate::kmer::kmc_counter::KmerCounter;
 
 
-
+#[derive(Clone, Debug)] 
 pub struct MapCellKmcMinHash {
 }
 impl MapCellFunction for MapCellKmcMinHash {

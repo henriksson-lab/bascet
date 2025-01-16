@@ -57,7 +57,6 @@ impl QueryCMD {
 
 
         let params = QueryParams {
-
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),   
