@@ -1,6 +1,4 @@
 use anyhow::bail;
-use tempfile::NamedTempFile;
-use tempfile::Builder;
 use std::process;
 use std::path::Path;
 use std::path::PathBuf;
@@ -8,7 +6,7 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::fmt;
-use std::sync::Arc;
+use rand::Rng;
 
 use path_clean::PathClean;
 
@@ -28,7 +26,7 @@ use super::parse_compression_mode;
 
 #[derive(Clone, Debug)]  
 pub struct MapCellFunctionShellScript {
-    script_file: Arc<NamedTempFile>,
+    script_file: PathBuf,
     api_version: String,
     expect_files: Vec<String>,
     missing_file_mode: MissingFileMode,
@@ -39,24 +37,24 @@ impl MapCellFunctionShellScript {
 
     pub fn new_from_reader(preset_script_code: &mut impl Read) -> anyhow::Result<MapCellFunctionShellScript> {
 
+
+        let mut rng = rand::thread_rng();
+        let n2: u16 = rng.gen();
+
         //Copy the reader content to a new temp file. This file will be deleted upon exit
-        let mut script_file = tempfile::Builder::new().suffix(".sh").tempfile_in("./").expect("Failed to create temp file"); 
+        let path_script = PathBuf::from(format!("./_temp_script.{}.sh", n2));
+        let mut script_file = File::create_new(&path_script).expect("Failed to create temp script file");
         let _ = std::io::copy(preset_script_code, &mut script_file).expect("Failed to copy script to temp file");   
-        let path_script = script_file.path();
         
         //Make the script executable
+        let path_script_s = &path_script.clone().into_os_string().into_string().unwrap();
         process::Command::new("chmod")
             .arg("u+x")
-            .arg(path_script.to_str().expect("failed to convert string"))
+            .arg(&path_script_s)
             .output().expect("Failed to get output from chmod");
-    /* 
-        let mut foo = File::open(script_file.path()).expect("grhh");
-        let mut cont=String::new();
-        foo.read_to_string(&mut cont).unwrap();
-        println!("{}",cont);
-*/
+
         //Return script
-        println!("Extracted preset script to {:?} and set chmod", &path_script);
+        println!("Extracted preset script to {:?} and set chmod", &path_script_s);
 
         //Figure out script metadata
         let api_version = get_script_api_version(&path_script)?;
@@ -65,7 +63,7 @@ impl MapCellFunctionShellScript {
         let compression_mode = get_compression_mode(&path_script)?;
 
         Ok(MapCellFunctionShellScript {
-            script_file: Arc::new(script_file),
+            script_file: path_script,
             api_version: api_version,
             expect_files: expect_files,
             missing_file_mode: missing_file_mode,
@@ -81,6 +79,12 @@ impl MapCellFunctionShellScript {
     }
 
 
+}
+
+impl Drop for MapCellFunctionShellScript{
+    fn drop(&mut self) {
+        _ = std::fs::remove_file(&self.script_file);
+    }
 }
 
 impl fmt::Display for MapCellFunctionShellScript {
@@ -105,7 +109,7 @@ impl MapCellFunction for MapCellFunctionShellScript {
         //Run script in output folder to make life easier for end user
         let input_dir = to_absolute_path(&input_dir).expect("Could not get absolute directory for input");
         let output_dir = to_absolute_path(&output_dir).expect("Could not get absolute directory for output"); 
-        let path_script = to_absolute_path(&self.script_file.path()).expect("Could not get absolute directory for script"); 
+        let path_script = to_absolute_path(&self.script_file).expect("Could not get absolute directory for script"); 
         
         //Invoke command
         let run_output = process::Command::new(&path_script)
