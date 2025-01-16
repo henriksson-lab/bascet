@@ -26,17 +26,24 @@ impl MapCellFunction for MapCellKmcMinHash {
 
         let kmer_size = KmerCounter::detect_kmcdump_kmer_size(&input_file);
 
+
+        let num_min_hash = 1000;  ///////////// TODO: provide as parameter
+
         if let Ok(kmer_size) = kmer_size {
+
+            println!("Detected KMER size: {}", kmer_size);
+
             let params = KmerCounterParams {
                 path_kmcdump: input_file,
                 kmer_size: kmer_size,
-                features_nmin: 1000
+                features_nmin: num_min_hash
             };
     
             let min_hash = KmerCounter::extract_kmcdump_parallel(&params, num_threads);
     
             if let Ok(min_hash) = min_hash {
                 KmerCounter::store_minhash(
+                    kmer_size,
                     &min_hash,
                     &output_file
                 );                

@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, hash::{DefaultHasher, Hasher}};
 
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
@@ -142,9 +142,9 @@ impl KMERCodec {
     }
 
     #[inline(always)]
-    pub unsafe fn decode(&self, encoded: KMERandCount) -> String {
+    pub unsafe fn decode(&self, encoded: &KMERandCount) -> String {
         let mut sequence = Vec::with_capacity(self.kmer_size);
-        let mut temp = encoded.kmer; //EncodedKMER::from_bits(encoded).kmer();
+        let mut temp = encoded.kmer; 
         for _ in 0..self.kmer_size {
             let nuc = (temp & 0b11) as usize;
             sequence.push(NT_REVERSE[nuc]);
@@ -156,9 +156,14 @@ impl KMERCodec {
 }
 
 
-
+#[inline(always)]
 fn hash_for_kmer(kmer: u64) -> u32 {
-    let hash = kmer ^ (kmer>>32);  // This mixes up bits to some degree at least. 64/2 = 32 bp kmers will impact hash value
+    //Use a fast hash function https://docs.rs/fasthash/latest/fasthash/sea/index.html
+    let mut hasher=fasthash::sea::Hasher64::new();
+    hasher.write_u64(kmer);
+    let f= hasher.finish();
+
+    let hash = f ^ (f>>32); //fit hash in u32
     hash as u32
 }
 

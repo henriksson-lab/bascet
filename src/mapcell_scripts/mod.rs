@@ -1,4 +1,4 @@
-pub mod kmc_minhash;
+pub mod minhash;
 
 
 use std::{collections::HashMap, io::Cursor};
@@ -21,40 +21,40 @@ const PRESET_SCRIPT_KMC_PROCESS_CONTIGS: &[u8] = include_bytes!("kmc_process_con
 
 
 
-
-
-
-
-
-
-pub fn get_preset_scripts() -> HashMap<String,Arc<Box<dyn MapCellFunction>>> {
-
-    let mut map: HashMap<String, Arc<Box<dyn MapCellFunction>>> = HashMap::new(); 
-
-    //Add all BASH scripts
-    for (name, content) in get_preset_scripts_bash() {
-        let mut read_content = Cursor::new(content.as_slice());
-        let script = MapCellFunctionShellScript::new_from_reader(&mut read_content).unwrap();
-        map.insert(name, Arc::new(Box::new(script)));
+enum MapCellFunctionConstuctor {
+    ShellScriptConstructor(Vec<u8>),
+    OtherConstructor(Arc<Box<dyn MapCellFunction>>)
+}
+impl MapCellFunctionConstuctor {
+    fn construct(&self) -> Arc<Box<dyn MapCellFunction>> {
+        match self {
+            MapCellFunctionConstuctor::ShellScriptConstructor(content) => {
+                let mut read_content = Cursor::new(content.as_slice());
+                let script = MapCellFunctionShellScript::new_from_reader(&mut read_content).unwrap();
+                Arc::new(Box::new(script))
+            },
+            MapCellFunctionConstuctor::OtherConstructor(dat) => Arc::clone(dat)
+        }
     }
-
-    //Add all Rust scripts
-    map.insert("kmc_minhash".to_string(), Arc::new(Box::new(kmc_minhash::MapCellKmcMinHash{})));
-
-    map
 }
 
 
+fn get_preset_scripts() -> HashMap<String,MapCellFunctionConstuctor> {
 
-fn get_preset_scripts_bash() -> HashMap<String,Vec<u8>> {
-    let mut map: HashMap<String, Vec<u8>> = HashMap::new();
-    map.insert("testing".to_string(), PRESET_SCRIPT_TEST.to_vec());
-    map.insert("quast".to_string(), PRESET_SCRIPT_QUAST.to_vec());
-    map.insert("skesa".to_string(), PRESET_SCRIPT_SKESA.to_vec());
-    map.insert("spades".to_string(), PRESET_SCRIPT_SPADES.to_vec());
+    let mut map: HashMap<String, MapCellFunctionConstuctor> = HashMap::new(); 
 
-    map.insert("kmc_process_reads".to_string(), PRESET_SCRIPT_KMC_PROCESS_READS.to_vec());
-    map.insert("kmc_process_contigs".to_string(), PRESET_SCRIPT_KMC_PROCESS_CONTIGS.to_vec());
+    //Add all BASH scripts
+    map.insert("testing".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_TEST.to_vec()));
+    map.insert("quast".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_QUAST.to_vec()));
+    map.insert("skesa".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_SKESA.to_vec()));
+    map.insert("spades".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_SPADES.to_vec()));
+
+    map.insert("kmc_process_reads".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_KMC_PROCESS_READS.to_vec()));
+    map.insert("kmc_process_contigs".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_KMC_PROCESS_CONTIGS.to_vec()));
+
+
+    //Add all Rust scripts
+    map.insert("minhash".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(minhash::MapCellKmcMinHash{}))));
 
     map
 }
@@ -63,7 +63,14 @@ fn get_preset_scripts_bash() -> HashMap<String,Vec<u8>> {
 
 pub fn get_preset_script(preset_name: impl Into<String>) -> Option<Arc<Box<dyn MapCellFunction>>> {
     let map_scripts = get_preset_scripts();
-    map_scripts.get(&preset_name.into()).cloned()
+    let script = map_scripts.get(&preset_name.into());
+    if let Some(script) = script {
+        Some(script.construct())//.cloned()
+    }else {
+        None
+    }
+    
+
 }
 
 pub fn get_preset_script_names() -> Vec<String> {

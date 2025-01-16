@@ -131,7 +131,7 @@ impl KmerCounter {
         let mut reader = BufReader::new(f);
         let mut buf = Vec::new();
         reader.read_until(b'\t', &mut buf).expect("Could not parse first KMER from KMC dump file"); ////// Hopefully ok!
-        Ok(buf.len())
+        Ok(buf.len()-1)  // Subtract -1 because \t is included in the string
     }
 
 
@@ -191,8 +191,10 @@ impl KmerCounter {
 
 
 
-    
+
     pub fn store_minhash(
+        kmer_size: usize, 
+//        codec: &KMERCodec,
         minhash: &BoundedMinHeap<KMERandCount>,
         p: &PathBuf
     ){
@@ -200,9 +202,14 @@ impl KmerCounter {
         let f=File::create(p).expect("Could not open file for writing");
         let mut bw=BufWriter::new(f);
 
+
         //Write kmer & count. Hopefully this iterates from min to max
+        let codec = KMERCodec::new(kmer_size);
         for h in minhash.iter() {
-            writeln!(bw, "{}\t{}", &h.kmer, &h.count).unwrap();
+            unsafe {
+                let kmer_string = codec.decode(h);
+                writeln!(bw, "{}\t{}", &kmer_string, &h.count).unwrap();    
+            }
         }
     }
 
