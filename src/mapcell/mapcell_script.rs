@@ -1,5 +1,6 @@
 use anyhow::bail;
 use tempfile::NamedTempFile;
+use tempfile::Builder;
 use std::process;
 use std::path::Path;
 use std::path::PathBuf;
@@ -39,7 +40,7 @@ impl MapCellFunctionShellScript {
     pub fn new_from_reader(preset_script_code: &mut impl Read) -> anyhow::Result<MapCellFunctionShellScript> {
 
         //Copy the reader content to a new temp file. This file will be deleted upon exit
-        let mut script_file = tempfile::NamedTempFile::with_suffix(".sh").expect("Failed to create temp file"); 
+        let mut script_file = tempfile::Builder::new().suffix(".sh").tempfile_in("./").expect("Failed to create temp file"); 
         let _ = std::io::copy(preset_script_code, &mut script_file).expect("Failed to copy script to temp file");   
         let path_script = script_file.path();
         
