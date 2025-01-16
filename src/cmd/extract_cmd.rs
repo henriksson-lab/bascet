@@ -22,9 +22,6 @@ pub struct ExtractCMD {
 
     #[arg(short = 'f', value_parser)]  /// Name of file
     pub fname: String,
-
-//    #[arg(trailing_var_arg = true)]  //, allow_hyphen_values = true, hide = true
-//    pub remaining_args: Vec<String>,
 }
 
 impl ExtractCMD {
@@ -54,7 +51,7 @@ impl ExtractCMD {
         //Example call in Zorn
         //        unzip(name_of_zip, files=extract_files, exdir=tname.dir) ### 666 cannot operate on our rust files. 
 
-        println!("Extract has finished succesfully");
+        log::info!("Extract has finished succesfully");
         Ok(())
     }
 }

@@ -138,52 +138,29 @@ impl KmerCounter {
 
 
     pub fn extract_kmcdump_single_thread (
-        params: &Arc<KmerCounterParams>
+        params: &KmerCounterParams
     ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
 
-        let features_nmin = params.features_nmin;
-        let n_workers = 1;
-        let ovlp_size = params.kmer_size + KMC_COUNTER_MAX_DIGITS;
-        let kmer_size = params.kmer_size;
-
-        //Create all thread states
-        let threads_buffer_size = (HUGE_PAGE_SIZE / n_workers) - (params.kmer_size + KMC_COUNTER_MAX_DIGITS);
+        let mut min_heap = BoundedMinHeap::with_capacity(params.features_nmin);
 
         //Decide on KMER encoding
         let codec = KMERCodec::new(params.kmer_size);
 
-        //Set up memory-mapped reading of file
+        //Set up regular reading of file
         let file = File::open(&params.path_kmcdump).unwrap();
-        let lock = file.lock_exclusive();
-        let mmap = Arc::new(unsafe { MmapOptions::new().map(&file) }.unwrap());
+        let reader = BufReader::new(file);
 
-        let mut min_heap = BoundedMinHeap::with_capacity(features_nmin);
+        for line in reader.lines() {
+            let line=line.unwrap();
+            let mut splitter = line.split('\t');
+            let kmer = splitter.next().unwrap();
+            let count: u32 = splitter.next().unwrap().parse().unwrap();
 
-        //In main thread, instruct workers where to read
-        let overlap_window_size = params.kmer_size + KMC_COUNTER_MAX_DIGITS;
-        let n_chunks = (mmap.len() + threads_buffer_size - 1) / threads_buffer_size;
-        for i in 0..n_chunks {
-            let raw_start = i * threads_buffer_size;
-            let raw_end = min(
-                raw_start + threads_buffer_size + overlap_window_size,
-                mmap.len(),
-            );
-            let valid_start = find_chunk_start(&mmap[raw_start..], raw_start, overlap_window_size);
-            let valid_end = find_chunk_end(&mmap[..raw_end], raw_end, overlap_window_size);
-
-            let chunk = &mmap[valid_start..valid_end];
-            process_chunk_to_minheap(
-                &chunk,
-                &mut min_heap,
-                codec,
-                kmer_size,
-                ovlp_size,
-            );
+            let encoded = unsafe {
+                codec.encode(kmer.as_bytes(), count)
+            };    
+            let _ = min_heap.push(encoded);
         }
-
-
-        //Explicitly dropping file lock because i am paranoid it will not unlock otherwise
-        drop(lock);
 
         Ok(min_heap)
     }
@@ -194,8 +171,7 @@ impl KmerCounter {
 
     pub fn store_minhash(
         kmer_size: usize, 
-//        codec: &KMERCodec,
-        minhash: &BoundedMinHeap<KMERandCount>,
+        minhash: &mut BoundedMinHeap<KMERandCount>,
         p: &PathBuf
     ){
         //Open file for writing
@@ -205,10 +181,11 @@ impl KmerCounter {
 
         //Write kmer & count. Hopefully this iterates from min to max
         let codec = KMERCodec::new(kmer_size);
-        for h in minhash.iter() {
+
+        while let Some(h) = minhash.pop_min() {
             unsafe {
-                let kmer_string = codec.decode(h);
-                writeln!(bw, "{}\t{}", &kmer_string, &h.count).unwrap();    
+                let kmer_string = codec.decode(&h);
+                writeln!(bw, "{}\t{}\t  {}\t{}\t", &kmer_string, &h.count,   &h.kmer, &h.hash).unwrap();    
             }
         }
     }

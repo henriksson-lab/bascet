@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, hash::{DefaultHasher, Hasher}};
+use std::{cmp::Ordering, hash::Hasher};
 
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {

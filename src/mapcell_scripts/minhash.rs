@@ -31,7 +31,7 @@ impl MapCellFunction for MapCellKmcMinHash {
 
         if let Ok(kmer_size) = kmer_size {
 
-            println!("Detected KMER size: {}", kmer_size);
+            log::debug!("Detected KMER size: {}", kmer_size);
 
             let params = KmerCounterParams {
                 path_kmcdump: input_file,
@@ -39,17 +39,13 @@ impl MapCellFunction for MapCellKmcMinHash {
                 features_nmin: num_min_hash
             };
     
-            let min_hash = KmerCounter::extract_kmcdump_parallel(&params, num_threads);
-    
-            if let Ok(min_hash) = min_hash {
-                KmerCounter::store_minhash(
-                    kmer_size,
-                    &min_hash,
-                    &output_file
-                );                
-            } else {
-                println!("Failed to get minhash");
-            }
+            let mut min_hash = KmerCounter::extract_kmcdump_parallel(&params, num_threads).expect("Could not get minhash");
+            KmerCounter::store_minhash(
+                kmer_size,
+                &mut min_hash,
+                &output_file
+            );          
+            
         }
         Ok((true, String::from("")))
     }  

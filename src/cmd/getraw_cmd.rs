@@ -108,7 +108,7 @@ impl GetRawCMD {
             bail!("Unidentified chemistry");
         }
 
-        println!("GetRaw has finished succesfully");
+        log::info!("GetRaw has finished succesfully");
         Ok(())
     }
 
