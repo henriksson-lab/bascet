@@ -9,6 +9,9 @@ use zip::ZipArchive;
 use log::debug;
 
 
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+
+
 #[derive(Args)]
 pub struct ExtractCMD {
     #[arg(short = 'i', value_parser)]  /// Zip-file name. Note that this command takes a shard, not a full bascet (can support later!) -- this is for speed
@@ -17,6 +20,10 @@ pub struct ExtractCMD {
     #[arg(short = 'o', value_parser)]  /// Full path to file to store in
     pub path_out: PathBuf,
 
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)] //Not used, but kept here for consistency with other commands
+    pub path_tmp: PathBuf,
+    
     #[arg(short = 'b', value_parser)]  /// Cell barcode
     pub cell_id: String,
 

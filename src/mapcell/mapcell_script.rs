@@ -25,7 +25,7 @@ use super::parse_compression_mode;
 
 
 
-#[derive(Clone)]  //// not sure about all of these ,Debug,Eq,PartialEq
+#[derive(Clone, Debug)]  
 pub struct MapCellFunctionShellScript {
     script_file: Arc<NamedTempFile>,
     api_version: String,
@@ -44,14 +44,14 @@ impl MapCellFunctionShellScript {
         let path_script = script_file.path();
         
         //Make the script executable
-        let _ = process::Command::new("chmod")
+        process::Command::new("chmod")
             .arg("u+x")
             .arg(path_script.to_str().expect("failed to convert string"))
-            .output()?;
+            .output().expect("Failed to get output from chmod");
     
     
         //Return script
-        println!("Extracted preset script to {:?}", &path_script);
+        println!("Extracted preset script to {:?} and set chmod", &path_script);
 
         //Figure out script metadata
         let api_version = get_script_api_version(&path_script)?;

@@ -130,7 +130,7 @@ impl KmerCounter {
         let f = File::open(p).expect("Could not open file");
         let mut reader = BufReader::new(f);
         let mut buf = Vec::new();
-        reader.read_until(b'\t', &mut buf).expect("Could not parse first KMER from KMC dump file"); ////// Hopefully ok!
+        reader.read_until(b'\t', &mut buf).expect("Could not parse first KMER from KMC dump file"); 
         Ok(buf.len()-1)  // Subtract -1 because \t is included in the string
     }
 
@@ -191,17 +191,6 @@ impl KmerCounter {
     }
 
 }
-
-
-
-
-
-
-
-
-
-
-
 
 
 

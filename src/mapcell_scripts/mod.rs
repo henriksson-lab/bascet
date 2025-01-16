@@ -9,18 +9,7 @@ use crate::mapcell::{MapCellFunction, MapCellFunctionShellScript};
 
 
 
-const PRESET_SCRIPT_TEST: &[u8] = include_bytes!("test_script.sh");
-const PRESET_SCRIPT_QUAST: &[u8] = include_bytes!("quast.sh");
-const PRESET_SCRIPT_SKESA: &[u8] = include_bytes!("skesa.sh");
-const PRESET_SCRIPT_SPADES: &[u8] = include_bytes!("spades.sh");
-
-const PRESET_SCRIPT_KMC_PROCESS_READS: &[u8] = include_bytes!("kmc_process_reads.sh");
-const PRESET_SCRIPT_KMC_PROCESS_CONTIGS: &[u8] = include_bytes!("kmc_process_contigs.sh");
-
-
-
-
-
+#[derive(Clone, Debug)] 
 enum MapCellFunctionConstuctor {
     ShellScriptConstructor(Vec<u8>),
     OtherConstructor(Arc<Box<dyn MapCellFunction>>)
@@ -44,13 +33,13 @@ fn get_preset_scripts() -> HashMap<String,MapCellFunctionConstuctor> {
     let mut map: HashMap<String, MapCellFunctionConstuctor> = HashMap::new(); 
 
     //Add all BASH scripts
-    map.insert("testing".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_TEST.to_vec()));
-    map.insert("quast".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_QUAST.to_vec()));
-    map.insert("skesa".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_SKESA.to_vec()));
-    map.insert("spades".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_SPADES.to_vec()));
+//    map.insert("testing".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_TEST.to_vec()));
+    map.insert("quast".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("quast.sh").to_vec()));
+    map.insert("skesa".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("skesa.sh").to_vec()));
+    map.insert("spades".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("spades.sh").to_vec()));
 
-    map.insert("kmc_process_reads".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_KMC_PROCESS_READS.to_vec()));
-    map.insert("kmc_process_contigs".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_KMC_PROCESS_CONTIGS.to_vec()));
+    map.insert("kmc_process_reads".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("kmc_process_reads.sh").to_vec()));
+    map.insert("kmc_process_contigs".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("kmc_process_contigs.sh").to_vec()));
 
 
     //Add all Rust scripts

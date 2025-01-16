@@ -77,14 +77,16 @@ impl MapCellCMD {
         //let path_script = self.path_script;
         let preset_name = self.path_script.to_str().expect("argument conversion error");
         let script: Arc<Box<dyn MapCellFunction>> = if preset_name.starts_with("_") {
-            println!("using preset {:?}", self.path_script);
+            println!("Using preset script: {:?}", self.path_script);
             let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
             crate::mapcell_scripts::get_preset_script(preset_name).expect("Unable to load preset script")            
         } else {
-            println!("Using user provided script");
+            println!("Using user provided script: {:?}", self.path_script);
             let s = MapCellFunctionShellScript::new_from_file(&self.path_script).expect("Failed to load user defined script");
             Arc::new(Box::new(s))
         };
+
+        println!("Script info: {:?}", script);
 
 
         let params = mapcell::MapCellParams {
