@@ -15,6 +15,13 @@ loc:
 #########
 #########
 
+
+# unzip -l testdata/kmc.0.zip
+
+test_minhash:
+	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s _minhash --show-script-output --keep-files 
+
+
 test_query:
 	rm -Rf temp; cargo +nightly run query -i testdata/kmc.0.zip -o testdata/counts.h5ad -f testdata/chosen_features.txt
 
