@@ -30,7 +30,7 @@ impl fmt::Display for CompressionMode {
 
 
 
-pub trait MapCellImpl {
+pub trait MapCellFunction where Self: Sync+Send { 
 
     fn invoke(
         &self,
@@ -46,8 +46,6 @@ pub trait MapCellImpl {
     fn get_expect_files(&self) -> Vec<String>;
 
 }
-
-
 
 
 

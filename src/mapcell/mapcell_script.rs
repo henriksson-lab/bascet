@@ -1,52 +1,84 @@
 use anyhow::bail;
+use tempfile::NamedTempFile;
 use std::process;
 use std::path::Path;
 use std::path::PathBuf;
+use std::fs::File;
 use std::io;
+use std::io::Read;
 use std::fmt;
-//use std::io::Write;
+use std::sync::Arc;
 
 use path_clean::PathClean;
 
-use super::MapCellImpl;
+use super::MapCellFunction;
 use super::MissingFileMode;
 use super::CompressionMode;
 
 use super::parse_missing_file_mode;
 use super::parse_compression_mode;
 
-//#[derive(Clone,Debug,Eq,PartialEq)]  //// not sure about all of these
-pub struct MapCellScript {
-    pub path_script: PathBuf,
+
+
+
+
+
+
+
+#[derive(Clone)]  //// not sure about all of these ,Debug,Eq,PartialEq
+pub struct MapCellFunctionShellScript {
+    script_file: Arc<NamedTempFile>,
     api_version: String,
     expect_files: Vec<String>,
     missing_file_mode: MissingFileMode,
     compression_mode: CompressionMode
 }
-impl MapCellScript {
+impl MapCellFunctionShellScript {
 
-    pub fn new(path_script: &PathBuf) -> anyhow::Result<MapCellScript> {
 
-        let api_version = get_script_api_version(path_script)?;
-        let expect_files = get_script_expect_files(path_script)?;
-        let missing_file_mode = get_missing_file_mode(path_script)?; 
-        let compression_mode = get_compression_mode(path_script)?;
+    pub fn new_from_reader(preset_script_code: &mut impl Read) -> anyhow::Result<MapCellFunctionShellScript> {
 
-        Ok(MapCellScript {
-            path_script: path_script.clone(),
+        //Copy the reader content to a new temp file. This file will be deleted upon exit
+        let mut script_file = tempfile::NamedTempFile::with_suffix(".sh")?; 
+        let _ = std::io::copy(preset_script_code, &mut script_file).unwrap();   
+        let path_script = script_file.path();
+        
+        //Make the script executable
+        let _ = process::Command::new("chmod")
+            .arg("u+x")
+            .arg(path_script.to_str().expect("failed to convert string"))
+            .output()?;
+    
+    
+        //Return script
+        println!("Extracted preset script to {:?}", &path_script);
+
+        //Figure out script metadata
+        let api_version = get_script_api_version(&path_script)?;
+        let expect_files = get_script_expect_files(&path_script)?;
+        let missing_file_mode = get_missing_file_mode(&path_script)?; 
+        let compression_mode = get_compression_mode(&path_script)?;
+
+        Ok(MapCellFunctionShellScript {
+            script_file: Arc::new(script_file),//path_script: path_script.clone(),
             api_version: api_version,
             expect_files: expect_files,
             missing_file_mode: missing_file_mode,
             compression_mode: compression_mode
-        })      
-    }
+        })     
 
+    }
+    
+
+    pub fn new_from_file(f: &PathBuf) -> anyhow::Result<MapCellFunctionShellScript> {
+        let mut f = File::open(f).expect("Failed to open script file for reading");
+        Self::new_from_reader(&mut f)
+    }
 
 
 }
 
-
-impl fmt::Display for MapCellScript {
+impl fmt::Display for MapCellFunctionShellScript {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Script API version: {}",self.api_version).unwrap();
         writeln!(f,"Script expects files: {:?}", self.expect_files).unwrap();
@@ -55,11 +87,7 @@ impl fmt::Display for MapCellScript {
     }
 }
 
-
-
-
-
-impl MapCellImpl for MapCellScript {
+impl MapCellFunction for MapCellFunctionShellScript {
 
 
     fn invoke(
@@ -72,7 +100,7 @@ impl MapCellImpl for MapCellScript {
         //Run script in output folder to make life easier for end user
         let input_dir = to_absolute_path(&input_dir).expect("Could not get absolute directory for input");
         let output_dir = to_absolute_path(&output_dir).expect("Could not get absolute directory for output"); 
-        let path_script = to_absolute_path(&self.path_script).expect("Could not get absolute directory for script"); 
+        let path_script = to_absolute_path(&self.script_file.path()).expect("Could not get absolute directory for script"); 
         
         //Invoke command
         let run_output = process::Command::new(&path_script)
@@ -102,12 +130,9 @@ impl MapCellImpl for MapCellScript {
         self.compression_mode
     }
 
-
     fn get_expect_files(&self) -> Vec<String> {
         self.expect_files.clone()
     }
-
-
 
 }
 
@@ -118,8 +143,8 @@ impl MapCellImpl for MapCellScript {
 
 
 
-pub fn get_script_expect_files(path_script: &PathBuf) -> anyhow::Result<Vec<String>> {
-    let run_output = process::Command::new(path_script)
+pub fn get_script_expect_files(path_script: &impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
+    let run_output = process::Command::new(path_script.as_ref())
         .arg("--expect-files")
         .output()?;
     let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
@@ -132,8 +157,8 @@ pub fn get_script_expect_files(path_script: &PathBuf) -> anyhow::Result<Vec<Stri
 
 
 
-fn get_missing_file_mode(path_script: &PathBuf) -> anyhow::Result<MissingFileMode> {
-    let run_output = process::Command::new(path_script)
+fn get_missing_file_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<MissingFileMode> {
+    let run_output = process::Command::new(path_script.as_ref())
         .arg("--missing-file-mode")
         .output()?;
     let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
@@ -144,8 +169,8 @@ fn get_missing_file_mode(path_script: &PathBuf) -> anyhow::Result<MissingFileMod
 
 
 
-fn get_compression_mode(path_script: &PathBuf) -> anyhow::Result<CompressionMode> {
-    let run_output = process::Command::new(path_script)
+fn get_compression_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<CompressionMode> {
+    let run_output = process::Command::new(path_script.as_ref())
         .arg("--compression-mode")
         .output()?;
     let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
@@ -157,8 +182,8 @@ fn get_compression_mode(path_script: &PathBuf) -> anyhow::Result<CompressionMode
 
 
 //// Get API version. This is the first call so a lot of checks to help user debug
-fn get_script_api_version(path_script: &PathBuf) -> anyhow::Result<String> {
-    let run_output = process::Command::new(path_script)
+fn get_script_api_version(path_script: &impl AsRef<Path>) -> anyhow::Result<String> {
+    let run_output = process::Command::new(path_script.as_ref())
         .arg("--bascet-api")
         .output();
 
@@ -178,7 +203,7 @@ fn get_script_api_version(path_script: &PathBuf) -> anyhow::Result<String> {
             bail!("Failed to parse --bascet-api output of script. Are you sure this is a valid script?");
         }
     } else {
-        bail!("Failed to run script {:?}. Try chmod +x script.sh to make it executable", path_script);
+        bail!("Failed to run script {:?}. Try chmod +x script.sh to make it executable", path_script.as_ref());
     }
 }
 

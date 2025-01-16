@@ -1,5 +1,7 @@
 use fs2::FileExt;
 use memmap2::MmapOptions;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::PathBuf;
 use std::{
     cmp::min,
     fs::File,
@@ -32,10 +34,12 @@ pub struct KmerCounter {}
 impl KmerCounter {
 
     pub fn extract_kmcdump_parallel(
-        params: &Arc<KmerCounterParams>,
+        params: &KmerCounterParams,
         n_workers: usize
     ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
         //Spinning up workers for every new file can be pricey... could put this in params or something, to hide it. future work
+
+        let params= Arc::new(params);
 
 
         //Create all thread states
@@ -122,6 +126,15 @@ impl KmerCounter {
 
 
 
+    pub fn detect_kmcdump_kmer_size(p: &PathBuf) -> anyhow::Result<usize> {
+        let f = File::open(p).expect("Could not open file");
+        let mut reader = BufReader::new(f);
+        let mut buf = Vec::new();
+        reader.read_until(b'\t', &mut buf).expect("Could not parse first KMER from KMC dump file"); ////// Hopefully ok!
+        Ok(buf.len())
+    }
+
+
 
 
     pub fn extract_kmcdump_single_thread (
@@ -175,7 +188,36 @@ impl KmerCounter {
         Ok(min_heap)
     }
 
+
+
+
+    
+    pub fn store_minhash(
+        minhash: &BoundedMinHeap<KMERandCount>,
+        p: &PathBuf
+    ){
+        //Open file for writing
+        let f=File::create(p).expect("Could not open file for writing");
+        let mut bw=BufWriter::new(f);
+
+        //Write kmer & count. Hopefully this iterates from min to max
+        for h in minhash.iter() {
+            writeln!(bw, "{}\t{}", &h.kmer, &h.count).unwrap();
+        }
+    }
+
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

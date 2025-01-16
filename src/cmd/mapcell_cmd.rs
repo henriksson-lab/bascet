@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
+use std::sync::Arc;
 
-use crate::command::mapcell;
+use crate::{command::mapcell, mapcell::MapCellFunctionShellScript};
+use crate::mapcell::MapCellFunction;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_THREADS_READ: usize = 1;
@@ -12,7 +14,7 @@ pub const DEFAULT_THREADS_WORK: usize = 1;
 
 #[derive(Args)]
 pub struct MapCellCMD {
-    // Input bascet or gascet
+    // Input bascet, TIRP etc
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: Option<PathBuf>,
 
@@ -27,7 +29,7 @@ pub struct MapCellCMD {
 
     //The script to run
     #[arg(short = 's', value_parser = clap::value_parser!(PathBuf))]
-    pub path_script: Option<PathBuf>,
+    pub path_script: PathBuf,
 
     //If we should show script output in terminal
     #[arg(long = "show-script-output")]
@@ -42,14 +44,10 @@ pub struct MapCellCMD {
     #[arg(long = "keep-files")]
     pub keep_files: bool,
 
-
-
     //TODO: allow a pre-filter script
     //TODO: allow a post-filter script
 
     //TODO: call script to check if needed commands are present
-
-
 
     //Thread settings
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
@@ -74,11 +72,27 @@ impl MapCellCMD {
             return Ok(());
         }
 
+        //Figure out what script to use.
+        //Check if using a new script or a preset. user scripts start with _
+        //let path_script = self.path_script;
+        let preset_name = self.path_script.to_str().expect("argument conversion error");
+        let script: Arc<Box<dyn MapCellFunction>> = if preset_name.starts_with("_") {
+            println!("using preset {:?}", self.path_script);
+            let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
+            crate::mapcell_scripts::get_preset_script(preset_name).expect("Unable to load preset script")            
+        } else {
+            println!("Using user provided script");
+            let s = MapCellFunctionShellScript::new_from_file(&self.path_script).expect("Failed to load user defined script");
+            Arc::new(Box::new(s))
+        };
+
+
         let params = mapcell::MapCellParams {
+            
             path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.as_ref().expect("Output file was not provided").clone(),
-            path_script: self.path_script.as_ref().expect("Script file was not provided").clone(),
+            script: script,
 
             threads_read: self.threads_read,
             threads_write: self.threads_write,

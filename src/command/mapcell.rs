@@ -2,7 +2,6 @@ use std::fs;
 use std::sync::Arc;
 use std::fs::File;
 use std::io::BufWriter;
-use std::process;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -25,17 +24,16 @@ use crate::fileformat::DetectedFileformat;
 
 use crate::mapcell::CompressionMode;
 use crate::mapcell::MissingFileMode;
-use crate::mapcell::MapCellScript;
-use crate::mapcell::MapCellImpl;
+use crate::mapcell::MapCellFunction;
 
 
-
-#[derive(Clone,Debug)]
+#[derive(Clone)]
 pub struct MapCellParams {
     pub path_in: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_out: std::path::PathBuf,
-    pub path_script: std::path::PathBuf,
+    
+    pub script: Arc<Box<dyn MapCellFunction>>, 
 
     //How many threads are reading the input zip file?
     pub threads_read: usize,
@@ -62,7 +60,7 @@ impl MapCell {
         params: MapCellParams
     ) -> anyhow::Result<()> {
 
-        let mut params = params.clone();
+        //let mut params = params.clone();
 
         //Create thread pool. note that worker threads here refer to script threads (script manages it)
         let thread_pool = threadpool::ThreadPool::new(params.threads_read + params.threads_write);
@@ -75,45 +73,7 @@ impl MapCell {
             let _ = fs::create_dir(&params.path_tmp);  
         }
 
-
-
-        //Check if using a new script or a preset. user scripts start with _
-        if params.path_script.to_str().expect("argument conversion error").starts_with("_") {
-            println!("using preset {:?}", params.path_script);
-
-            let map_presets = crate::mapcell_scripts::get_preset_scripts();
-            let preset_name=params.path_script.to_str().expect("failed to get string from script path");
-            let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
-
-            if let Some(&ref preset_script_code) = map_presets.get(preset_name) {
-                //If using a preset, create the file
-                let path_script = params.path_tmp.join("preset_script.sh");
-                {
-                    let script_file = File::create(&path_script).unwrap();
-                    let mut buf_writer = BufWriter::new(script_file);
-                    let _ = std::io::copy(&mut preset_script_code.as_slice(), &mut buf_writer).unwrap();   
-                }
-                //Make the script executable
-                let _ = process::Command::new("chmod")
-                    .arg("u+x")
-                    .arg(path_script.to_str().expect("failed to convert string"))
-                    .output()?;
-                //Use this script
-                println!("Extracted preset script to {:?}", &path_script);
-                params.path_script = path_script;
-            } else {
-                bail!("Preset {} does not exist", preset_name);
-            }
-        } else {
-            println!("Using user provided script");
-        }
-
         let params = Arc::new(params);
-
-
-        //Initialize script
-        let mapcell_script = Arc::new(MapCellScript::new(&params.path_script)?);
-        println!("{}", &mapcell_script);
 
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
         println!("Input file: {:?}",params.path_in);
@@ -143,7 +103,7 @@ impl MapCell {
                 _ = create_shard_reader(
                     &params,
                     &thread_pool,
-                    &mapcell_script,
+                    &Arc::clone(&params.script),
                     &rx_cell_to_read,
                     &tx_loaded_cell,
                     &reader_thread_group,
@@ -156,7 +116,7 @@ impl MapCell {
                 _ = create_shard_reader(//)::<ZipBascetShardReader>(
                     &params,
                     &thread_pool,
-                    &mapcell_script,
+                    &Arc::clone(&params.script),
                     &rx_cell_to_read,
                     &tx_loaded_cell,
                     &reader_thread_group,
@@ -176,7 +136,7 @@ impl MapCell {
             _ = create_writer(
                 &params,
                 &file_zip,
-                &mapcell_script,
+                &Arc::clone(&params.script),
                 &thread_pool,
                 &rx_loaded_cell
             );
@@ -230,7 +190,7 @@ impl MapCell {
 fn create_shard_reader<R>(
     params_io: &Arc<MapCellParams>,
     thread_pool: &threadpool::ThreadPool,
-    mapcell_script: &Arc<MapCellScript>,
+    mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     rx: &Arc<Receiver<Option<String>>>,
     tx: &Arc<Sender<Option<String>>>,
     thread_group: &Arc<ThreadGroup>,
@@ -292,7 +252,7 @@ fn create_shard_reader<R>(
 fn create_writer(
     params_io: &Arc<MapCellParams>,
     zip_file: &PathBuf,
-    mapcell_script: &Arc<MapCellScript>,
+    mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     thread_pool: &threadpool::ThreadPool,
     rx: &Arc<Receiver<Option<String>>>
 ) -> anyhow::Result<()> {
