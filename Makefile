@@ -8,7 +8,7 @@ install_rust:
 	rustup toolchain install nightly
 
 loc:
-	wc -l src/*.rs src/*/*.rs src/*/*/*.rs src/*/*/*/*.rs  src/*/*.sh
+	wc -l src/*.rs src/*/*.rs src/*/*/*.rs  src/*/*.sh
 
 
 #########
