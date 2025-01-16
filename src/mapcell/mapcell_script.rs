@@ -39,8 +39,8 @@ impl MapCellFunctionShellScript {
     pub fn new_from_reader(preset_script_code: &mut impl Read) -> anyhow::Result<MapCellFunctionShellScript> {
 
         //Copy the reader content to a new temp file. This file will be deleted upon exit
-        let mut script_file = tempfile::NamedTempFile::with_suffix(".sh")?; 
-        let _ = std::io::copy(preset_script_code, &mut script_file).unwrap();   
+        let mut script_file = tempfile::NamedTempFile::with_suffix(".sh").expect("Failed to create temp file"); 
+        let _ = std::io::copy(preset_script_code, &mut script_file).expect("Failed to copy script to temp file");   
         let path_script = script_file.path();
         
         //Make the script executable
@@ -48,8 +48,12 @@ impl MapCellFunctionShellScript {
             .arg("u+x")
             .arg(path_script.to_str().expect("failed to convert string"))
             .output().expect("Failed to get output from chmod");
-    
-    
+    /* 
+        let mut foo = File::open(script_file.path()).expect("grhh");
+        let mut cont=String::new();
+        foo.read_to_string(&mut cont).unwrap();
+        println!("{}",cont);
+*/
         //Return script
         println!("Extracted preset script to {:?} and set chmod", &path_script);
 
@@ -60,7 +64,7 @@ impl MapCellFunctionShellScript {
         let compression_mode = get_compression_mode(&path_script)?;
 
         Ok(MapCellFunctionShellScript {
-            script_file: Arc::new(script_file),//path_script: path_script.clone(),
+            script_file: Arc::new(script_file),
             api_version: api_version,
             expect_files: expect_files,
             missing_file_mode: missing_file_mode,

@@ -19,7 +19,7 @@ impl MapCellFunctionConstuctor {
         match self {
             MapCellFunctionConstuctor::ShellScriptConstructor(content) => {
                 let mut read_content = Cursor::new(content.as_slice());
-                let script = MapCellFunctionShellScript::new_from_reader(&mut read_content).unwrap();
+                let script = MapCellFunctionShellScript::new_from_reader(&mut read_content).expect("Failed to instanciate script");
                 Arc::new(Box::new(script))
             },
             MapCellFunctionConstuctor::OtherConstructor(dat) => Arc::clone(dat)
