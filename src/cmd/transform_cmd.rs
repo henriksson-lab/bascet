@@ -50,7 +50,7 @@ impl TransformCMD {
         
         let _ = TransformFile::run(&Arc::new(params)).expect("tofastq failed");
 
-        println!("Transform has finished succesfully");
+        log::info!("Transform has finished succesfully");
         Ok(())
     }
 }

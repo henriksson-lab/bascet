@@ -55,7 +55,7 @@ impl ShardifyCMD {
         
         let _ = Shardify::run(Arc::new(params)).expect("shardify failed");
 
-        println!("Shardify has finished succesfully");
+        log::info!("Shardify has finished succesfully");
         Ok(())
     }
 }

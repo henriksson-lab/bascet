@@ -70,7 +70,7 @@ impl QueryCMD {
             &Arc::new(params)
         );
 
-        println!("Query has finished succesfully");
+        log::info!("Query has finished succesfully");
         Ok(())
     }
 

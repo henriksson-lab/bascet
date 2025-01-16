@@ -81,7 +81,7 @@ impl FeaturiseCMD {
             &Arc::new(params)
         );
 
-        println!("Featurise has finished succesfully");
+        log::info!("Featurise has finished succesfully");
         Ok(())
     }
 

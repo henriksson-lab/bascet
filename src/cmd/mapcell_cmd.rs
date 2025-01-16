@@ -104,7 +104,7 @@ impl MapCellCMD {
 
         let _ = mapcell::MapCell::run(params).expect("mapcell failed");
 
-        println!("Mapcell has finished!");
+        log::info!("Mapcell has finished!");
         Ok(())
     }
 }
