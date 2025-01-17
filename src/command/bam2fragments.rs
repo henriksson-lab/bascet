@@ -1,5 +1,7 @@
 use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
+use std::process::Command;
 
 use bgzip::Compression;
 
@@ -34,19 +36,13 @@ impl Bam2Fragments {
         params: &Bam2FragmentsParams
     ) -> anyhow::Result<()> {
 
-
-        
-
         //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads
         let mut bam = rust_htslib::bam::Reader::from_path(&params.path_input)?;
-
 
         //Save a "Fragments.tsv", bgzip-format. Writer is multithreaded
         let mut outfile = File::create(&params.path_output).expect("Could not open output file");
         let mut writer = bgzip::write::BGZFMultiThreadWriter::new(&mut outfile, Compression::default());
         writer.write_all(b"#CHR\tFROM\tTO\tCELLID\tCNT\tUMI\n")?; // UMI is optional; what works with Signac?
-
-
 
         //Transfer all records
         let mut record = BamRecord::new();
@@ -98,18 +94,25 @@ impl Bam2Fragments {
         }
         writer.close()?;
 
-
-
-
-
-
         //Tabix-index the output file to prepare it for loading
-        
-
-
+        println!("Indexing final output file");
+        index_fragments(&params.path_output).expect("Failed to tabix index output file");
 
         Ok(())
     }
 }
 
 
+
+
+pub fn index_fragments(p: &PathBuf) -> anyhow::Result<()> {
+    let p = p.to_str().expect("could not form path").to_string();
+    let mut process = Command::new("tabix");
+    let process = process.
+        arg("-p").
+        arg("bed").
+        arg(p);
+
+    let _ = process.output().expect("Failed to run tabix");
+    Ok(())
+}
