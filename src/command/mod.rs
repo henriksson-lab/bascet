@@ -5,6 +5,7 @@ pub mod shardify;
 pub mod transform;
 pub mod featurise;
 pub mod query;
+pub mod bam2fragments;
 
 
 
@@ -27,3 +28,6 @@ pub use shardify::ShardifyParams;
 pub use transform::TransformFile;
 pub use transform::TransformFileParams;
 
+
+pub use bam2fragments::Bam2Fragments;
+pub use bam2fragments::Bam2FragmentsParams;

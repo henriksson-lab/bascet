@@ -18,6 +18,9 @@ loc:
 
 # unzip -l testdata/kmc.0.zip
 
+test_bam2fragments:
+	rm -Rf temp; cargo +nightly run bam2fragments -i testdata/sorted_aligned.1.bam -o testdata/fragments.1.tsv.gz
+
 test_minhash:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s _minhash --show-script-output --keep-files 
 

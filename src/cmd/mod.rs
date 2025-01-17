@@ -5,6 +5,7 @@ pub mod shardify_cmd;
 pub mod featurise_cmd;
 pub mod transform_cmd;
 pub mod query_cmd;
+pub mod bam2fragments_cmd;
 
 
 pub use extract_cmd::ExtractCMD;
@@ -14,6 +15,6 @@ pub use shardify_cmd::ShardifyCMD;
 pub use featurise_cmd::FeaturiseCMD;
 pub use transform_cmd::TransformCMD;
 pub use query_cmd::QueryCMD;
-
+pub use bam2fragments_cmd::Bam2FragmentsCMD;
 
 
