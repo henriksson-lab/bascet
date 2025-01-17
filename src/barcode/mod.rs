@@ -4,6 +4,7 @@ pub mod atrandi_wgs_barcode;
 pub mod atrandi_rnaseq_barcode;
 pub mod general_barcode;
 pub mod tenx;
+pub mod trim_pairwise;
 
 
 pub use combinatorial_barcode::CombinatorialBarcodePart;
