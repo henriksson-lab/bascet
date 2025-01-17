@@ -41,11 +41,14 @@ impl MapCellFunctionShellScript {
         let mut rng = rand::thread_rng();
         let n2: u16 = rng.gen();
 
-        //Copy the reader content to a new temp file. This file will be deleted upon exit
-        let path_script = PathBuf::from(format!("./_temp_script.{}.sh", n2));
-        let mut script_file = File::create_new(&path_script).expect("Failed to create temp script file");
-        let _ = std::io::copy(preset_script_code, &mut script_file).expect("Failed to copy script to temp file");   
-        
+        //Copy the reader content to a new temp file. This file will be deleted upon exit. Wrapping in {} to force operation to be done at the end
+        let path_script = PathBuf::from(format!("./_temp_script.{}.sh", n2));//canonicalize().expect("Failed to get full temp script path");
+        {
+            let mut script_file = File::create_new(&path_script).expect("Failed to create temp script file");
+            let _ = std::io::copy(preset_script_code, &mut script_file).expect("Failed to copy script to temp file");   
+        }
+        let path_script=path_script.canonicalize().expect("Failed to get full temp script path");
+
         //Make the script executable
         let path_script_s = &path_script.clone().into_os_string().into_string().unwrap();
         process::Command::new("chmod")
