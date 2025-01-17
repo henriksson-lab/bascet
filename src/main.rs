@@ -21,6 +21,7 @@ enum Commands {
     Transform(cmd::TransformCMD),
     Featurise(cmd::FeaturiseCMD),
     Query(cmd::QueryCMD),
+    Bam2fragments(cmd::Bam2FragmentsCMD),
 }
 
 fn main() -> ExitCode {
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
         Commands::Transform(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
+        Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
