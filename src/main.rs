@@ -22,6 +22,7 @@ enum Commands {
     Featurise(cmd::FeaturiseCMD),
     Query(cmd::QueryCMD),
     Bam2fragments(cmd::Bam2FragmentsCMD),
+    Kraken(cmd::KrakenCMD),
 }
 
 fn main() -> ExitCode {
@@ -39,6 +40,7 @@ fn main() -> ExitCode {
         Commands::Featurise(mut cmd) => cmd.try_execute(),
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
+        Commands::Kraken(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {
