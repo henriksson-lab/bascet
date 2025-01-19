@@ -18,6 +18,9 @@ loc:
 
 # unzip -l testdata/kmc.0.zip
 
+test_kraken:
+	rm -Rf temp; cargo +nightly run kraken -i testdata/kraken_out.1.kraken_out -o testdata/kraken_count.hdf5
+
 test_bam2fragments:
 	rm -Rf temp; cargo +nightly run bam2fragments -i testdata/sorted_aligned.1.bam -o testdata/fragments.1.tsv.gz
 

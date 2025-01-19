@@ -6,7 +6,7 @@ pub mod transform;
 pub mod featurise;
 pub mod query;
 pub mod bam2fragments;
-
+pub mod kraken;
 
 
 pub use query::Query;
@@ -31,3 +31,8 @@ pub use transform::TransformFileParams;
 
 pub use bam2fragments::Bam2Fragments;
 pub use bam2fragments::Bam2FragmentsParams;
+
+
+
+pub use kraken::Kraken;
+pub use kraken::KrakenParams;
