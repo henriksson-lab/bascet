@@ -10,14 +10,12 @@ const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
     table
 };
 
-
 const fn generate_nt4_value(a: u8, b: u8, c: u8, d: u8) -> u8 {
     (NT1_LOOKUP[(a - b'A') as usize] << 6)
         | (NT1_LOOKUP[(b - b'A') as usize] << 4)
         | (NT1_LOOKUP[(c - b'A') as usize] << 2)
         | NT1_LOOKUP[(d - b'A') as usize]
 }
-
 
 const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
     const DIM: usize = (b'T' - b'A' + 1) as usize;
@@ -26,7 +24,6 @@ const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
         + ((c - b'A') as usize * DIM * DIM)
         + ((d - b'A') as usize * DIM * DIM * DIM)
 }
-
 
 ////////////// Lookup table for NNNN where N is any of ATCG.
 ////////////// Maps compressed ATCG (usize) to 0..255 ie compresses it to a single byte
@@ -50,15 +47,11 @@ const fn generate_nt4_table() -> [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * 
     table
 }
 const NT4_DIMSIZE: usize = (b'T' - b'A' + 1) as usize;
-const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =  /////// Map compressed ATCG => single byte
+const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
+    /////// Map compressed ATCG => single byte
     generate_nt4_table();
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
-
-
-
-
-
 
 //NOTE: all of this can probably make use of SIMD operations but I do not know how that'd work
 
@@ -92,7 +85,10 @@ impl KMERCodec {
                 (*chunk_ptr.offset(0) - b'A') as usize
                     + ((*chunk_ptr.offset(1) - b'A') as usize * NT4_DIMSIZE)
                     + ((*chunk_ptr.offset(2) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE)
-                    + ((*chunk_ptr.offset(3) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
+                    + ((*chunk_ptr.offset(3) - b'A') as usize
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE)
             };
             encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
@@ -105,8 +101,6 @@ impl KMERCodec {
 
         KMERandCount::new(encoded, count)
     }
-
-
 
     //////////// Encode a kmer + count + random value ............... cannot just use as_bytes + above?
     #[inline(always)]
@@ -127,7 +121,10 @@ impl KMERCodec {
                 (*chunk_ptr.offset(0) - b'A') as usize
                     + ((*chunk_ptr.offset(1) - b'A') as usize * NT4_DIMSIZE)
                     + ((*chunk_ptr.offset(2) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE)
-                    + ((*chunk_ptr.offset(3) - b'A') as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
+                    + ((*chunk_ptr.offset(3) - b'A') as usize
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE)
             };
             encoded = (encoded << 8) | u64::from(NT4_LOOKUP[idx]);
         }
@@ -144,7 +141,7 @@ impl KMERCodec {
     #[inline(always)]
     pub unsafe fn decode(&self, encoded: &KMERandCount) -> String {
         let mut sequence = Vec::with_capacity(self.kmer_size);
-        let mut temp = encoded.kmer; 
+        let mut temp = encoded.kmer;
         for _ in 0..self.kmer_size {
             let nuc = (temp & 0b11) as usize;
             sequence.push(NT_REVERSE[nuc]);
@@ -155,21 +152,16 @@ impl KMERCodec {
     }
 }
 
-
 #[inline(always)]
 fn hash_for_kmer(kmer: u64) -> u32 {
     //Use a fast hash function https://docs.rs/fasthash/latest/fasthash/sea/index.html
-    let mut hasher=fasthash::sea::Hasher64::new();
+    let mut hasher = seahash::SeaHasher::new();
     hasher.write_u64(kmer);
-    let f= hasher.finish();
+    let f = hasher.finish();
 
-    let hash = f ^ (f>>32); //fit hash in u32
+    let hash = f ^ (f >> 32); //fit hash in u32
     hash as u32
 }
-
-
-
-
 
 #[derive(Clone, Copy)]
 pub struct KMERandCount {
@@ -178,16 +170,13 @@ pub struct KMERandCount {
     pub count: u32,
 }
 impl KMERandCount {
-    pub fn new(
-        kmer: u64,
-        count: u32
-   ) -> KMERandCount {
-       Self {
-           kmer: kmer,
-           hash: hash_for_kmer(kmer), 
-           count: count
-       }
-   }
+    pub fn new(kmer: u64, count: u32) -> KMERandCount {
+        Self {
+            kmer: kmer,
+            hash: hash_for_kmer(kmer),
+            count: count,
+        }
+    }
 }
 
 impl PartialOrd for KMERandCount {
@@ -208,4 +197,4 @@ impl PartialEq for KMERandCount {
     }
 }
 
-impl Eq for KMERandCount { }
+impl Eq for KMERandCount {}
