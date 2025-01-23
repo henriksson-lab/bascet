@@ -2,8 +2,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use robert::cmd;
-
+use bascet::cmd;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -27,7 +26,6 @@ enum Commands {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    
 
     env_logger::init();
 
