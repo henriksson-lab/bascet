@@ -23,6 +23,7 @@ enum Commands {
     Query(cmd::QueryCMD),
     Bam2fragments(cmd::Bam2FragmentsCMD),
     Kraken(cmd::KrakenCMD),
+    Countchrom(cmd::CountChromCMD),
 }
 
 fn main() -> ExitCode {
@@ -41,6 +42,7 @@ fn main() -> ExitCode {
         Commands::Query(mut cmd) => cmd.try_execute(),
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
         Commands::Kraken(mut cmd) => cmd.try_execute(),
+        Commands::Countchrom(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {

@@ -7,6 +7,8 @@ pub mod featurise;
 pub mod query;
 pub mod bam2fragments;
 pub mod kraken;
+pub mod snpcall;
+pub mod countchrom;
 
 
 pub use query::Query;
@@ -36,3 +38,7 @@ pub use bam2fragments::Bam2FragmentsParams;
 
 pub use kraken::Kraken;
 pub use kraken::KrakenParams;
+
+
+pub use countchrom::CountChrom;
+pub use countchrom::CountGenomeParams;

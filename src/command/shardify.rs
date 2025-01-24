@@ -205,7 +205,8 @@ fn create_writer_thread(
         //fn write_all(&mut self, buf: &[u8]) -> Result<(), Error>  is implemented
 
         // Write reads
-        let mut n_written=0;
+        let mut n_read_written=0;
+        let mut n_cell_written=0;
         while let Ok(Some(entry)) = rx.recv() {
 
             let cellid = &entry.0;
@@ -222,9 +223,13 @@ fn create_writer_thread(
                 }
                 tot_reads_for_cell = tot_reads_for_cell + list_pairs.len() as u64;
             }
-            n_written += tot_reads_for_cell;
+            n_read_written += tot_reads_for_cell;
+            n_cell_written += 1;
             hist.inc_by(&cellid, &tot_reads_for_cell);
-            println!("#reads written to outfile: {:?}", n_written);
+
+            if n_cell_written % 1000 == 0 {
+                println!("#reads written to outfile: {:?}\t#cells written {:?}", n_read_written, n_cell_written);
+            }
         }
     
         //absolutely have to call this before dropping, for bufwriter

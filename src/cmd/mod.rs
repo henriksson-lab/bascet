@@ -7,6 +7,7 @@ pub mod transform_cmd;
 pub mod query_cmd;
 pub mod bam2fragments_cmd;
 pub mod kraken_cmd;
+pub mod countchrom_cmd;
 
 pub use extract_cmd::ExtractCMD;
 pub use mapcell_cmd::MapCellCMD;
@@ -16,6 +17,5 @@ pub use featurise_cmd::FeaturiseCMD;
 pub use transform_cmd::TransformCMD;
 pub use query_cmd::QueryCMD;
 pub use bam2fragments_cmd::Bam2FragmentsCMD;
-
 pub use kraken_cmd::KrakenCMD;
-
+pub use countchrom_cmd::CountChromCMD;

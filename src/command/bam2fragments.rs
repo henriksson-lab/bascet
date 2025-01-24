@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use bgzip::Compression;
-
 use rust_htslib::bam::Read;
-
 use rust_htslib::bam::record::Record as BamRecord;
 
 
@@ -15,6 +13,8 @@ pub struct Bam2FragmentsParams {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
+
+    pub num_threads: usize,
 }
 
 
@@ -38,6 +38,9 @@ impl Bam2Fragments {
 
         //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads
         let mut bam = rust_htslib::bam::Reader::from_path(&params.path_input)?;
+
+        //Activate multithreaded reading
+        bam.set_threads(params.num_threads).unwrap();
 
         //Save a "Fragments.tsv", bgzip-format. Writer is multithreaded
         let mut outfile = File::create(&params.path_output).expect("Could not open output file");

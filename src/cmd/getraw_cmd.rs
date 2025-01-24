@@ -15,6 +15,7 @@ pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
 use crate::command::getraw::GetRaw;
 use crate::command::getraw::GetRawParams;
 
+use crate::barcode::PetriseqChemistry;
 use crate::barcode::AtrandiWGSChemistry;
 use crate::barcode::AtrandiRNAseqChemistry;
 use crate::barcode::GeneralCombinatorialBarcode;
@@ -89,6 +90,11 @@ impl GetRawCMD {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut AtrandiRNAseqChemistry::new()
+            );
+        } else if self.chemistry == "petriseq" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut PetriseqChemistry::new()
             );
         } else if self.chemistry == "combinatorial" {
             if let Some(path_barcodes) = &self.path_barcodes {
