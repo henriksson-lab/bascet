@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use bascet::cmd;
+use bascet::subcommands;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -13,15 +13,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Getraw(cmd::GetRawCMD),
-    Mapcell(cmd::MapCellCMD),
-    Extract(cmd::ExtractCMD),
-    Shardify(cmd::ShardifyCMD),
-    Transform(cmd::TransformCMD),
-    Featurise(cmd::FeaturiseCMD),
-    Query(cmd::QueryCMD),
-    Bam2fragments(cmd::Bam2FragmentsCMD),
-    Kraken(cmd::KrakenCMD),
+    Getraw(subcommands::GetRawCMD),
+    Mapcell(subcommands::MapCellCMD),
+    Extract(subcommands::ExtractCMD),
+    Shardify(subcommands::ShardifyCMD),
+    Transform(subcommands::TransformCMD),
+    Featurise(subcommands::FeaturiseCMD),
+    Query(subcommands::QueryCMD),
+    Bam2fragments(subcommands::Bam2FragmentsCMD),
+    Kraken(subcommands::KrakenCMD),
 }
 
 fn main() -> ExitCode {
