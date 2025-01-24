@@ -1,27 +1,21 @@
-use anyhow::Result;
 use anyhow::bail;
+use anyhow::Result;
 
 use clap::Args;
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    thread,
-};
+use std::{path::PathBuf, sync::Arc, thread};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
 
-
 use crate::command::getraw::GetRaw;
 use crate::command::getraw::GetRawParams;
 
-use crate::barcode::AtrandiWGSChemistry;
 use crate::barcode::AtrandiRNAseqChemistry;
+use crate::barcode::AtrandiWGSChemistry;
 use crate::barcode::GeneralCombinatorialBarcode;
 
-
 #[derive(Args)]
-pub struct GetRawCMD {
+pub struct Prepare {
     // FASTQ for r1
     #[arg(long = "r1", value_parser)]
     pub path_forward: PathBuf,
@@ -31,21 +25,20 @@ pub struct GetRawCMD {
     pub path_reverse: PathBuf,
 
     // Output filename for complete reads
-    #[arg(short = 'o', long="out-complete", value_parser)]
+    #[arg(short = 'o', long = "out-complete", value_parser)]
     pub path_output_complete: PathBuf,
 
     // Output filename for incomplete reads
     #[arg(long = "out-incomplete", value_parser)]
-    pub path_output_incomplete: PathBuf, 
+    pub path_output_incomplete: PathBuf,
 
     // Optional: chemistry with barcodes to use
     #[arg(long = "chemistry", value_parser, default_value = DEFAULT_CHEMISTRY)]
-    pub chemistry: String, 
+    pub chemistry: String,
 
     // Optional: file with barcodes to use
     #[arg(long = "barcodes", value_parser)]
-    pub path_barcodes: Option<PathBuf>, 
-
+    pub path_barcodes: Option<PathBuf>,
 
     // Temporary file directory. TODO - use system temp directory as default? TEMP variable?
     #[arg(short = 't', value_parser, default_value = DEFAULT_PATH_TEMP)]
@@ -53,48 +46,40 @@ pub struct GetRawCMD {
 
     //Whether to sort or not
     #[arg(long = "no-sort")]
-    pub no_sort: bool,  
+    pub no_sort: bool,
 
     // Optional: How many threads to use. Need better way of specifying? TODO
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_work: Option<usize>,
 }
-impl GetRawCMD {
+impl Prepare {
     pub fn try_execute(&mut self) -> Result<()> {
-
         crate::fileformat::verify_input_fq_file(&self.path_forward)?;
         crate::fileformat::verify_input_fq_file(&self.path_reverse)?;
 
         let threads_work = self.resolve_thread_config()?;
 
         let params_io = GetRawParams {
-
-            path_tmp: self.path_tmp.clone(),            
-            path_forward: self.path_forward.clone(),            
-            path_reverse: self.path_reverse.clone(),            
-            path_output_complete: self.path_output_complete.clone(),            
-            path_output_incomplete: self.path_output_incomplete.clone(),            
-            //barcode_file: self.barcode_file.clone(),            
-            sort: !self.no_sort,            
+            path_tmp: self.path_tmp.clone(),
+            path_forward: self.path_forward.clone(),
+            path_reverse: self.path_reverse.clone(),
+            path_output_complete: self.path_output_complete.clone(),
+            path_output_incomplete: self.path_output_incomplete.clone(),
+            //barcode_file: self.barcode_file.clone(),
+            sort: !self.no_sort,
             threads_work: threads_work,
         };
 
         // Start the debarcoding for specified chemistry
         if self.chemistry == "atrandi_wgs" {
-            let _ = GetRaw::getraw(
-                Arc::new(params_io),
-                &mut AtrandiWGSChemistry::new()
-            );
+            let _ = GetRaw::getraw(Arc::new(params_io), &mut AtrandiWGSChemistry::new());
         } else if self.chemistry == "atrandi_rnaseq" {
-            let _ = GetRaw::getraw(
-                Arc::new(params_io),
-                &mut AtrandiRNAseqChemistry::new()
-            );
+            let _ = GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
         } else if self.chemistry == "combinatorial" {
             if let Some(path_barcodes) = &self.path_barcodes {
                 let _ = GetRaw::getraw(
                     Arc::new(params_io),
-                    &mut GeneralCombinatorialBarcode::new(&path_barcodes)
+                    &mut GeneralCombinatorialBarcode::new(&path_barcodes),
                 );
             } else {
                 bail!("Barcode file not specified");
@@ -103,7 +88,6 @@ impl GetRawCMD {
             panic!("not implemented");
         } else if self.chemistry == "parsebio" {
             panic!("not implemented");
-
         } else {
             bail!("Unidentified chemistry");
         }
@@ -111,10 +95,6 @@ impl GetRawCMD {
         log::info!("GetRaw has finished succesfully");
         Ok(())
     }
-
-
-
-
 
     ///////  todo keep this or not?
     fn resolve_thread_config(&self) -> Result<usize> {
@@ -126,12 +106,6 @@ impl GetRawCMD {
             println!("Warning: less than two threads reported to be available");
         }
 
-        Ok(available_threads-1)
+        Ok(available_threads - 1)
     }
-
-
 }
-
-
-
-

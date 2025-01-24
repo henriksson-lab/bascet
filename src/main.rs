@@ -13,7 +13,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Getraw(subcommands::GetRawCMD),
+    Prepare(subcommands::Prepare),
     Mapcell(subcommands::MapCellCMD),
     Extract(subcommands::ExtractCMD),
     Shardify(subcommands::ShardifyCMD),
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
     env_logger::init();
 
     let result = match cli.command {
-        Commands::Getraw(mut cmd) => cmd.try_execute(),
+        Commands::Prepare(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),

@@ -12,7 +12,7 @@ pub use bam2fragments::Bam2FragmentsCMD;
 pub use extract::ExtractCMD;
 pub use featurise::FeaturiseCMD;
 pub use mapcell::MapCellCMD;
-pub use prepare::GetRawCMD;
+pub use prepare::Prepare;
 pub use query::QueryCMD;
 pub use shardify::ShardifyCMD;
 pub use transform::TransformCMD;
