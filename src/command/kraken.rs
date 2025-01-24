@@ -80,7 +80,7 @@ impl Kraken {
                     *values += 1;
                 }
             } else {
-                println!("Failed to read one line of input");
+                anyhow::bail!("Failed to read one line of input");
             }
         }
 
