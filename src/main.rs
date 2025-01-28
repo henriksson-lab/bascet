@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use bascet::subcommands;
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about)] // reads from Cargo.toml
 struct Cli {
     #[command(subcommand)]
     command: Commands,

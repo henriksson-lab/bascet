@@ -15,54 +15,48 @@ use crate::barcode::AtrandiWGSChemistry;
 use crate::barcode::GeneralCombinatorialBarcode;
 
 #[derive(Args)]
+/// Detect and trim barcodes from raw reads, and convert to cram/bed/zip
 pub struct Prepare {
-    // FASTQ for r1
-    #[arg(long = "r1", value_parser)]
-    pub path_forward: PathBuf,
-
-    // FASTQ for r2
-    #[arg(long = "r2", value_parser)]
-    pub path_reverse: PathBuf,
-
-    // Output filename for complete reads
+    /// forward reads
+    #[arg(short, long, value_parser)]
+    pub forward: PathBuf,
+    /// reverse reads
+    #[arg(short, long, value_parser)]
+    pub reverse: PathBuf,
+    /// Output filename for complete reads
     #[arg(short = 'o', long = "out-complete", value_parser)]
     pub path_output_complete: PathBuf,
-
-    // Output filename for incomplete reads
+    /// Output filename for incomplete reads
     #[arg(long = "out-incomplete", value_parser)]
     pub path_output_incomplete: PathBuf,
-
-    // Optional: chemistry with barcodes to use
+    /// Optional: chemistry with barcodes to use
     #[arg(long = "chemistry", value_parser, default_value = DEFAULT_CHEMISTRY)]
     pub chemistry: String,
-
-    // Optional: file with barcodes to use
+    /// Optional: file with barcodes to use
     #[arg(long = "barcodes", value_parser)]
     pub path_barcodes: Option<PathBuf>,
-
-    // Temporary file directory. TODO - use system temp directory as default? TEMP variable?
+    /// Temporary file directory
+    //TODO - use system temp directory as default? TEMP variable?
     #[arg(short = 't', value_parser, default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
-
-    //Whether to sort or not
+    ///Whether to sort or not
     #[arg(long = "no-sort")]
     pub no_sort: bool,
-
-    // Optional: How many threads to use. Need better way of specifying? TODO
+    /// Optional: How many threads to use. Need better way of specifying? TODO
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_work: Option<usize>,
 }
 impl Prepare {
     pub fn try_execute(&mut self) -> Result<()> {
-        crate::fileformat::verify_input_fq_file(&self.path_forward)?;
-        crate::fileformat::verify_input_fq_file(&self.path_reverse)?;
+        crate::fileformat::verify_input_fq_file(&self.forward)?;
+        crate::fileformat::verify_input_fq_file(&self.reverse)?;
 
         let threads_work = self.resolve_thread_config()?;
 
         let params_io = GetRawParams {
             path_tmp: self.path_tmp.clone(),
-            path_forward: self.path_forward.clone(),
-            path_reverse: self.path_reverse.clone(),
+            path_forward: self.forward.clone(),
+            path_reverse: self.reverse.clone(),
             path_output_complete: self.path_output_complete.clone(),
             path_output_incomplete: self.path_output_incomplete.clone(),
             //barcode_file: self.barcode_file.clone(),
