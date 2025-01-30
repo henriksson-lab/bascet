@@ -27,7 +27,7 @@ impl MapCellFunction for MapCellKmcMinHash {
         let kmer_size = KmerCounter::detect_kmcdump_kmer_size(&input_file);
 
 
-        let num_min_hash = 1000;  ///////////// TODO: provide as parameter
+        let num_min_hash = 1000;  ///////////// TODO: provide as parameter; default values?
 
         if let Ok(kmer_size) = kmer_size {
 
@@ -64,7 +64,9 @@ impl MapCellFunction for MapCellKmcMinHash {
         expect
     }
 
-
+    fn preflight_check(&self) -> bool {
+        true
+    }
 }
 
 
