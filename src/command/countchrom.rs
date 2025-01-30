@@ -132,7 +132,13 @@ impl CountChrom {
 
 
 
-
+/**
+ * 
+ * Currently uses 200% CPU.
+ * 
+ * Speed optimization: need to read chunks and count in separate threads. should study how their reader is implemented
+ * 
+ */
 
 
 

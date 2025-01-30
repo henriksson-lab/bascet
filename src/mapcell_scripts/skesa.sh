@@ -41,6 +41,17 @@ for i in "$@"; do
   shift # past argument=value
   shift
   ;;
+
+  --preflight-check)
+  if ! command -v skesa 2>&1 >/dev/null
+  then
+    echo "skesa could not be found"
+    exit 1
+  fi
+  echo "MAPCELL-CHECK"
+  exit 0
+  ;;
+  
   --default)
   DEFAULT=YES
   shift # past argument with no value

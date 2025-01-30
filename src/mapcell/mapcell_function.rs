@@ -45,6 +45,8 @@ pub trait MapCellFunction where Self: Sync+Send+Debug {
 
     fn get_expect_files(&self) -> Vec<String>;
 
+    fn preflight_check(&self) -> bool;
+
 }
 
 
