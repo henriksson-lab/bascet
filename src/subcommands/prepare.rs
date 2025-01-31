@@ -1,33 +1,21 @@
-use anyhow::bail;
-use anyhow::Result;
-use std::sync::Mutex;
-
-use clap::Args;
-use log::{debug, info};
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
-use std::process::Command;
-use std::process::Stdio;
-use std::{fs, sync::Arc, thread};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::{fs, thread};
 
-use crate::barcode::AtrandiRNAseqChemistry;
-use crate::barcode::AtrandiWGSChemistry;
-use crate::barcode::Chemistry;
-use crate::barcode::GeneralCombinatorialBarcode;
-
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
+use anyhow::{bail, Result};
+use clap::Args;
+use crossbeam::channel::{Receiver, Sender};
+use log::{debug, info};
 
 use seq_io::fastq::OwnedRecord;
 use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
 
-use crate::fileformat::fastq::open_fastq;
-use crate::fileformat::shard;
-use crate::fileformat::shard::CellID;
-use crate::fileformat::shard::ReadPair;
-use crate::fileformat::tirp;
+use crate::barcode;
+use crate::fileformat::{fastq, shard, tirp};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
@@ -38,7 +26,7 @@ struct RecordPair {
     forward_record: OwnedRecord,
 }
 
-type ListReadWithBarcode = Arc<Vec<(ReadPair, CellID)>>;
+type ListReadWithBarcode = Arc<Vec<(shard::ReadPair, shard::CellID)>>;
 type ListRecordPair = Arc<Vec<RecordPair>>;
 
 pub struct PrepareParams {
@@ -106,14 +94,20 @@ impl Prepare {
         // Start the debarcoding for specified chemistry
         // TODO call prepare here instead of GetRaw::getraw
         if self.chemistry == "atrandi_wgs" {
-            let _ = self.prepare(Arc::new(params_io), &mut AtrandiWGSChemistry::new());
+            let _ = self.prepare(
+                Arc::new(params_io),
+                &mut barcode::AtrandiWGSChemistry::new(),
+            );
         } else if self.chemistry == "atrandi_rnaseq" {
-            let _ = self.prepare(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
+            let _ = self.prepare(
+                Arc::new(params_io),
+                &mut barcode::AtrandiRNAseqChemistry::new(),
+            );
         } else if self.chemistry == "combinatorial" {
             if let Some(path_barcodes) = &self.path_barcodes {
                 let _ = self.prepare(
                     Arc::new(params_io),
-                    &mut GeneralCombinatorialBarcode::new(&path_barcodes),
+                    &mut barcode::GeneralCombinatorialBarcode::new(&path_barcodes),
                 );
             } else {
                 bail!("Barcode file not specified");
@@ -146,7 +140,7 @@ impl Prepare {
     pub fn prepare<'a>(
         &mut self,
         params_io: Arc<PrepareParams>,
-        barcodes: &mut (impl Chemistry + Clone + Send + 'static),
+        barcodes: &mut (impl barcode::Chemistry + Clone + Send + 'static),
     ) -> anyhow::Result<()> {
         info!("Running command: bascet prepare");
         println!("Will sort: {}", params_io.sort);
@@ -164,15 +158,15 @@ impl Prepare {
         //let mut barcodes = AtrandiChemistry::new();
 
         // Open fastq files
-        let mut forward_file = open_fastq(&params_io.path_forward).unwrap();
-        let mut reverse_file = open_fastq(&params_io.path_reverse).unwrap();
+        let mut forward_file = fastq::open_fastq(&params_io.path_forward).unwrap();
+        let mut reverse_file = fastq::open_fastq(&params_io.path_reverse).unwrap();
 
         // Find probable barcode starts and ends
         barcodes
             .prepare(&mut forward_file, &mut reverse_file)
             .expect("Failed to detect barcode setup from reads");
-        let mut forward_file = open_fastq(&params_io.path_forward).unwrap(); // reopen the file to read from beginning
-        let mut reverse_file = open_fastq(&params_io.path_reverse).unwrap(); // reopen the file to read from beginning
+        let mut forward_file = fastq::open_fastq(&params_io.path_forward).unwrap(); // reopen the file to read from beginning
+        let mut reverse_file = fastq::open_fastq(&params_io.path_reverse).unwrap(); // reopen the file to read from beginning
 
         // Start writer threads
         let path_temp_complete_sorted = params_io
@@ -219,9 +213,9 @@ impl Prepare {
 
             thread_pool_work.execute(move || {
                 while let Ok(Some(list_bam_cell)) = rx.recv() {
-                    let mut pairs_complete: Vec<(ReadPair, CellID)> =
+                    let mut pairs_complete: Vec<(shard::ReadPair, shard::CellID)> =
                         Vec::with_capacity(list_bam_cell.len());
-                    let mut pairs_incomplete: Vec<(ReadPair, CellID)> =
+                    let mut pairs_incomplete: Vec<(shard::ReadPair, shard::CellID)> =
                         Vec::with_capacity(list_bam_cell.len());
 
                     for bam_cell in list_bam_cell.iter() {
