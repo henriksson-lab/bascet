@@ -1,3 +1,5 @@
+// This file is part of bascet which is released under the MIT license.
+// See file LICENSE or go to https://github.com/henriksson-lab/bascet for full license details.
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
