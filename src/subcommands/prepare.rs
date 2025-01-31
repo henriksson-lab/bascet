@@ -31,6 +31,7 @@ struct RecordPair {
 type ListReadWithBarcode = Arc<Vec<(shard::ReadPair, shard::CellID)>>;
 type ListRecordPair = Arc<Vec<RecordPair>>;
 
+// TODO maybe all the Params struct should be in an enum, and implement a validateparam trait?
 pub struct PrepareParams {
     pub path_tmp: std::path::PathBuf,
     pub path_forward: std::path::PathBuf,
@@ -76,6 +77,7 @@ pub struct Prepare {
 impl Prepare {
     pub fn try_execute(&mut self) -> Result<()> {
         // validate inputs
+        // TODO that function should be in fileformat::fastq
         crate::fileformat::verify_input_fq_file(&self.forward)?;
         crate::fileformat::verify_input_fq_file(&self.reverse)?;
 
@@ -122,7 +124,7 @@ impl Prepare {
             bail!("Unidentified chemistry");
         }
 
-        log::info!("GetRaw has finished succesfully");
+        log::info!("bascet prepare has finished succesfully");
         Ok(())
     }
 
@@ -142,6 +144,7 @@ impl Prepare {
     pub fn prepare<'a>(
         &mut self,
         params_io: Arc<PrepareParams>,
+        // TODO barcodes should be validated and part of the params
         barcodes: &mut (impl barcode::Chemistry + Clone + Send + 'static),
     ) -> anyhow::Result<()> {
         info!("Running command: bascet prepare");
@@ -165,6 +168,7 @@ impl Prepare {
 
         // Find probable barcode starts and ends
         barcodes
+            // TODO rename that function
             .prepare(&mut forward_file, &mut reverse_file)
             .expect("Failed to detect barcode setup from reads");
         let mut forward_file = fastq::open_fastq(&params_io.path_forward).unwrap(); // reopen the file to read from beginning
