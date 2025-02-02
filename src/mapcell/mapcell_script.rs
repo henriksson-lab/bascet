@@ -65,13 +65,20 @@ impl MapCellFunctionShellScript {
         let missing_file_mode = get_missing_file_mode(&path_script)?; 
         let compression_mode = get_compression_mode(&path_script)?;
 
-        Ok(MapCellFunctionShellScript {
+        let script = MapCellFunctionShellScript {
             script_file: path_script,
             api_version: api_version,
             expect_files: expect_files,
             missing_file_mode: missing_file_mode,
             compression_mode: compression_mode
-        })     
+        };
+
+
+        if !script.preflight_check() {
+            anyhow::bail!("Script does not pass pre-flight check")
+        } else {
+            anyhow::Ok(script)
+        }
 
     }
     
@@ -144,6 +151,27 @@ impl MapCellFunction for MapCellFunctionShellScript {
 
     fn get_expect_files(&self) -> Vec<String> {
         self.expect_files.clone()
+    }
+
+    fn preflight_check(&self) -> bool {
+        let run_output = process::Command::new(&self.script_file)
+            .arg("--preflight-check")
+            .output();
+
+        if let Ok(run_output) = run_output {
+
+            let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
+            let run_output_string = run_output_string.trim();
+
+            if run_output_string=="MAPCELL-CHECK" {
+                true
+            } else {
+                println!("{}",run_output_string);
+                false
+            }
+        } else {
+            false
+        }
     }
 
 }

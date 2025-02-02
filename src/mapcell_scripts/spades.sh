@@ -41,6 +41,18 @@ for i in "$@"; do
   shift # past argument=value
   shift
   ;;
+
+  --preflight-check)
+  if ! command -v spades.py 2>&1 >/dev/null
+  then
+    echo "spades.py could not be found"
+    exit 1
+  fi
+  echo "MAPCELL-CHECK"
+  exit 0
+  ;;
+  
+
   --default)
   DEFAULT=YES
   shift # past argument with no value
@@ -67,7 +79,7 @@ echo "output directory is unset";
 exit 1;
 fi
 
-echo "Running SKESA"
+echo "Running Spades"
 
 echo "INPUT_DIR   = ${INPUT_DIR}"
 echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
