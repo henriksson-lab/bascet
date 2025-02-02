@@ -1,0 +1,41 @@
+Bootstrap: docker
+From: ubuntu:24.10
+
+
+%environment
+    export LC_ALL=C
+    . /opt/software/conda/bin/activate /opt/software/conda_env
+
+
+%post
+    SINGULARITY_SHELL=/bin/bash
+    apt-get update
+    apt install -y build-essential
+    apt-get install -y libz-dev
+    apt-get install -y wget
+    apt-get install -y make 
+    apt-get install -y curl
+    apt install -y bc
+
+    mkdir -p /opt/software
+
+    cd /opt/software
+    curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+    sh ./Miniconda3-latest-Linux-x86_64.sh -p /opt/software/conda -b
+
+    /opt/software/conda/bin/conda config --add channels defaults
+    /opt/software/conda/bin/conda config --add channels conda-forge
+    /opt/software/conda/bin/conda config --add channels bioconda 
+    /opt/software/conda/bin/conda create -p /opt/software/conda_env -y bedtools fastqc kmc kraken2 quast samtools skesa spades tabix
+    #/opt/software/conda/bin/conda create -p /opt/software/conda_env -y samtools picard art mummer
+    #. /opt/software/conda/bin/activate /opt/software/conda_env
+    #wget https://github.com/IEkAdN/BactSNP/releases/download/v1.1.0/bactsnp-1.1.0.linux64.tgz
+    #tar xf bactsnp-1.1.0.linux64.tgz
+    #rm bactsnp-1.1.0.linux64.tgz
+    #cd bactsnp-1.1.0.linux64
+    #make
+    #mv bactsnp /opt/software/conda_env/bin/
+    #cd /opt/software
+
+%runscript
+    exec "$@"
