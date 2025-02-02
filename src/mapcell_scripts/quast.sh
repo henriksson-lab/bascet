@@ -1,6 +1,6 @@
 #!/bin/bash
 
-## Trivial wrapper that just counts the number of lines in the input fastq
+## Run QUAST for QC
 
 
 #Default settings
@@ -41,6 +41,17 @@ for i in "$@"; do
   shift # past argument=value
   shift
   ;;
+
+  --preflight-check)
+  if ! command -v quast.py 2>&1 >/dev/null
+  then
+    echo "quast.py could not be found"
+    exit 1
+  fi
+  echo "MAPCELL-CHECK"
+  exit 0
+  ;;
+  
   --default)
   DEFAULT=YES
   shift # past argument with no value

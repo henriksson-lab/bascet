@@ -41,6 +41,15 @@ for i in "$@"; do
   shift # past argument=value
   shift
   ;;
+
+  --preflight-check)
+  #return 1 and echo sometine else here if something is wrong
+  echo "MAPCELL-CHECK"
+  exit 0
+  ;;
+  
+
+
   --default)
   DEFAULT=YES
   shift # past argument with no value
