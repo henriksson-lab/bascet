@@ -128,19 +128,6 @@ impl Prepare {
         Ok(())
     }
 
-    ///////  todo keep this or not?
-    fn resolve_thread_config(&self) -> Result<usize> {
-        let available_threads = thread::available_parallelism()
-            .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
-            .get();
-
-        if available_threads < 2 {
-            println!("Warning: less than two threads reported to be available");
-        }
-
-        Ok(available_threads - 1)
-    }
-
     pub fn prepare<'a>(
         &mut self,
         params_io: Arc<PrepareParams>,
@@ -297,6 +284,20 @@ impl Prepare {
         info!("done!");
 
         Ok(())
+    }
+
+    ///////  todo keep this or not?
+    // TODO can we use rayon to declare the number of threads project-wise?
+    fn resolve_thread_config(&self) -> Result<usize> {
+        let available_threads = thread::available_parallelism()
+            .map_err(|e| anyhow::anyhow!("Failed to get available threads: {}", e))?
+            .get();
+
+        if available_threads < 2 {
+            println!("Warning: less than two threads reported to be available");
+        }
+
+        Ok(available_threads - 1)
     }
 }
 
