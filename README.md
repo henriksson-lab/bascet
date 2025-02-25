@@ -10,6 +10,15 @@ Bascet is an advanced command-line tool aimed primarily to be used through the Z
 
 TODO: link to Zorn here
 
+## Installation
+
+_TODO_
+
+## Quick Usage
+
+`bascet` consists of several subcommands:
+
+- `bascet prepare`: demultiplex and trim fastq files and store reads in .cram, .bed, or .zip files
 
 ## Overview -- old --
 
