@@ -2,11 +2,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use robert::cmd;
-
+use bascet::subcommands;
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about)] // reads from Cargo.toml
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -14,25 +13,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Getraw(cmd::GetRawCMD),
-    Mapcell(cmd::MapCellCMD),
-    Extract(cmd::ExtractCMD),
-    Shardify(cmd::ShardifyCMD),
-    Transform(cmd::TransformCMD),
-    Featurise(cmd::FeaturiseCMD),
-    Query(cmd::QueryCMD),
-    Bam2fragments(cmd::Bam2FragmentsCMD),
-    Kraken(cmd::KrakenCMD),
+    Prepare(subcommands::Prepare),
+    Mapcell(subcommands::MapCellCMD),
+    Extract(subcommands::ExtractCMD),
+    Shardify(subcommands::ShardifyCMD),
+    Transform(subcommands::TransformCMD),
+    Featurise(subcommands::FeaturiseCMD),
+    Query(subcommands::QueryCMD),
+    Bam2fragments(subcommands::Bam2FragmentsCMD),
+    Kraken(subcommands::KrakenCMD),
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    
 
     env_logger::init();
 
     let result = match cli.command {
-        Commands::Getraw(mut cmd) => cmd.try_execute(),
+        Commands::Prepare(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),

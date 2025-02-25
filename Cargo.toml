@@ -1,7 +1,9 @@
 [package]
-name = "robert"
-version = "0.4.0"
+name = "bascet"
+version = "0.1.0"
 edition = "2021"
+description = "Bascet: a complete solution for single-cell analysis, with focus on microbial analysis"
+authors = ["Hadrien Gourlé", "Johan Henriksson", "Julian Dicken"]
 
 [dependencies]
 anyhow = "1.0.93"
