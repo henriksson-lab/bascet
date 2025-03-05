@@ -1,5 +1,5 @@
 Bootstrap: localimage
-From: bascet_container.sif
+From: deps.sif
 
 
 %environment
@@ -13,19 +13,6 @@ From: bascet_container.sif
 %post
     SINGULARITY_SHELL=/bin/bash
 
-    apt-get install -y git cmake libhdf5-serial-dev libclang-dev
-
-
-    mkdir -p /src
-    cd /src
-    #curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-    curl https://sh.rustup.rs -sSf | sh -s -- -y
-    #enable rustup
-    . "$HOME/.cargo/env"   
-
-    #install nightly toolchain
-    rustup toolchain install nightly
-
     ### get bascet
     #git clone git@github.com:henriksson-lab/bascet.git
 	#https://github.com/henriksson-lab/bascet
@@ -36,7 +23,9 @@ From: bascet_container.sif
 
     ### link bascet to where it should be    
 
-    ln -s /src/bascet/target/debug/robert /bin/bascet
+    cp /src/bascet/target/debug/robert /bin/bascet
+
+    rm -Rf /src/bascet
 
 %runscript
     exec "$@"

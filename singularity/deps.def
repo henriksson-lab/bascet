@@ -37,5 +37,22 @@ From: ubuntu:24.10
     #mv bactsnp /opt/software/conda_env/bin/
     #cd /opt/software
 
+
+    ########## Bascet dependencies
+
+    apt-get install -y git cmake libhdf5-serial-dev libclang-dev
+
+
+    mkdir -p /src
+    cd /src
+    curl https://sh.rustup.rs -sSf | sh -s -- -y
+
+    #enable rustup
+    . "$HOME/.cargo/env"
+
+    #install nightly toolchain
+    rustup toolchain install nightly
+
+
 %runscript
     exec "$@"
