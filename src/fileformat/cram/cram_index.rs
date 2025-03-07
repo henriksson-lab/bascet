@@ -141,7 +141,7 @@ pub fn index(cram: &PathBuf) {
     let mut previous_barcode: String = String::new();
     let mut previous_position = cram_reader.position().unwrap();
     while let Some(container) = cram_reader
-        .read_data_container()
+        .read_container() //.read_data_container()
         .expect("error reading cram")
     {
         // position is always start of a data container
@@ -269,3 +269,5 @@ fn validate_read_pair(pair: &Vec<CramRecord>) {
         process::exit(1);
     }
 }
+
+    
