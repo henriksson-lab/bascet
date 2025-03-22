@@ -85,7 +85,7 @@ echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-quast.py -o ./ -t ${USE_THREADS} ${INPUT_DIR}/contigs.fa
+quast.py -o ./ -t ${USE_THREADS} ${INPUT_DIR}/contigs.fa --min-contig 1
 #head ${INPUT_DIR}/contig.fa > firstpart.txt
 
 ### The last line must be "MAPCELL-OK".

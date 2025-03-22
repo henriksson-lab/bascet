@@ -301,7 +301,8 @@ impl GetRaw {
         catsort_files(
             &list_inputfiles, 
             &params_io.path_output_complete, 
-            params_io.sort
+            params_io.sort,
+            params_io.threads_work
         );
 
         //// Concatenate also the incomplete reads. Sorting never needed
@@ -310,7 +311,8 @@ impl GetRaw {
         catsort_files(
             &list_inputfiles, 
             &params_io.path_output_incomplete, 
-            false
+            false,
+            params_io.threads_work
         );
 
         //// Index the final file with tabix  
@@ -423,7 +425,8 @@ fn read_all_reads(
 pub fn catsort_files(
     list_inputfiles: &Vec<PathBuf>, 
     path_final: &PathBuf, 
-    sort: bool
+    sort: bool,
+    num_cpu: usize
 ) {
     let use_bgzip = true;
 
@@ -434,7 +437,9 @@ pub fn catsort_files(
     //Compress on the fly with bgzip, pipe output to a file
     let mut process_b = if use_bgzip {
         let mut process_b = Command::new("bgzip");
-        process_b.arg("-c").arg("/dev/stdin");
+        process_b.
+            arg("-c").arg("/dev/stdin").
+            arg("-@").arg(format!("{}",num_cpu));
         process_b
     } else {
         // for testing on osx without bgzip
