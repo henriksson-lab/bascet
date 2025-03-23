@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::fmt;
 
 use super::ZipBascetShardReader;
 use super::TirpBascetShardReader;
@@ -35,6 +36,15 @@ pub struct ReadPair {
     pub umi: Vec<u8>
 }
 
+impl fmt::Display for ReadPair {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Use `self.number` to refer to each positional data point.
+        write!(f, "({}, {})", 
+            String::from_utf8_lossy(self.r1.as_slice()), 
+            String::from_utf8_lossy(self.r2.as_slice()) 
+    )
+    }
+}
 
 
 
