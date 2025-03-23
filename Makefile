@@ -1,6 +1,9 @@
 all:
 	cargo +nightly build
 
+test:
+	cargo +nightly test
+
 fix:
 	cargo +nightly fix --lib -p robert --allow-dirty
 
