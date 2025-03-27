@@ -15,6 +15,19 @@ loc:
 
 
 #########
+######### test of RNAseq
+#########
+
+
+test_raw_rna:
+	rm -Rf temp; cargo +nightly run getraw --chemistry=atrandi_rnaseq  \
+		--r1 testrna/part_raw/part_R1.fastq.gz \
+		--r2 testrna/part_raw/part_R2.fastq.gz \
+		--out-complete   testrna/out_complete.0.tirp.gz \
+		--out-incomplete testrna/out_incomplete.0.tirp.gz
+
+
+#########
 #########
 #########
 

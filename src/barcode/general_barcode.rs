@@ -10,6 +10,7 @@ use crate::fileformat::shard::ReadPair;
 
 
 
+
 #[derive(Clone)]
 pub struct GeneralCombinatorialBarcode {
     barcode: CombinatorialBarcode
@@ -23,6 +24,9 @@ impl Chemistry for GeneralCombinatorialBarcode {
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>
     ) -> anyhow::Result<()> {
+
+        println!("Preparing to debarcode data assuming a general barcode");
+        println!("TODO could scan for adapter position to set trimming");
 
         //Atrandi barcode is in R2
         self.barcode.find_probable_barcode_boundaries(fastq_file_r2, 1000).expect("Failed to detect barcode setup from reads");
