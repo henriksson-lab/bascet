@@ -31,6 +31,7 @@ impl Chemistry for AtrandiWGSChemistry {
 
         //This could optionally be pre-set !!
 
+        println!("Preparing to debarcode Atrandi WGS data");
 
         //Atrandi barcode is in R2
         self.barcode.find_probable_barcode_boundaries(fastq_file_r2, 1000).expect("Failed to detect barcode setup from reads");

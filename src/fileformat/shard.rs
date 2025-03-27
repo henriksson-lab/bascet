@@ -39,9 +39,10 @@ pub struct ReadPair {
 impl fmt::Display for ReadPair {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Use `self.number` to refer to each positional data point.
-        write!(f, "({}, {})", 
+        write!(f, "({}, {}, {})", 
             String::from_utf8_lossy(self.r1.as_slice()), 
-            String::from_utf8_lossy(self.r2.as_slice()) 
+            String::from_utf8_lossy(self.r2.as_slice()) ,
+            String::from_utf8_lossy(self.umi.as_slice()) 
     )
     }
 }
