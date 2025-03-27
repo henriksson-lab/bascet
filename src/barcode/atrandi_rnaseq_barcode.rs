@@ -78,7 +78,8 @@ impl Chemistry for AtrandiRNAseqChemistry {
             let _umi = r2_seq[(bc_len+tso_len-4)..(bc_len+tso_len+umi_len)].to_vec(); //More than needed, but this is to get the T/A indicating if 5' or 3'
 
             //Only continue if the ISPCR is found (TODO: first search where it is expected); TODO2: ensure there is space after it!
-            let pos_end_ispcr = find_subsequence(r2_seq, end_ispcr);
+            //Leave enough bases after ISPCR for UMI and the T/A indicator
+            let pos_end_ispcr = find_subsequence(&r2_seq[0..(r2_seq.len()-umi_len)], end_ispcr);
             if let Some(pos_end_ispcr) = pos_end_ispcr {
                 let pos_end_ispcr = pos_end_ispcr + end_ispcr.len();
 
