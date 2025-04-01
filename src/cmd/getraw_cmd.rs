@@ -47,6 +47,9 @@ pub struct GetRawCMD {
     #[arg(long = "barcodes", value_parser)]
     pub path_barcodes: Option<PathBuf>, 
 
+    // Optional: Prepend library name to barcodes
+    #[arg(long = "barcodes", value_parser)]
+    pub libname: Option<String>,
 
     // Temporary file directory. TODO - use system temp directory as default? TEMP variable?
     #[arg(short = 't', value_parser, default_value = DEFAULT_PATH_TEMP)]
@@ -68,6 +71,14 @@ impl GetRawCMD {
 
         let threads_work = self.resolve_thread_config()?;
 
+        //Set default libname
+        let libname = if let Some(libname)=&self.libname {
+            libname.clone()
+        } else {
+            "".to_string()
+        };
+
+
         let params_io = GetRawParams {
 
             path_tmp: self.path_tmp.clone(),            
@@ -75,6 +86,7 @@ impl GetRawCMD {
             path_reverse: self.path_reverse.clone(),            
             path_output_complete: self.path_output_complete.clone(),            
             path_output_incomplete: self.path_output_incomplete.clone(),            
+            libname: libname,
             //barcode_file: self.barcode_file.clone(),            
             sort: !self.no_sort,            
             threads_work: threads_work,

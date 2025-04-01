@@ -6,11 +6,13 @@ use crossbeam::channel::Sender;
 
 use crate::fileformat::fastq::BascetFastqWriterFactory;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
+use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
 use crate::fileformat::{CellID, ReadPair};
 use crate::fileformat::DetectedFileformat;
 use crate::fileformat::try_get_cells_in_file;
 use crate::fileformat::ReadPairWriter;
 use crate::fileformat::ReadPairReader;
+use crate::fileformat::StreamingReadPairReader;
 
 //use crate::fileformat::BascetFastqWriter;
 //use crate::fileformat::TirpBascetShardReader;
@@ -42,25 +44,8 @@ impl TransformFile {
         params: &Arc<TransformFileParams>
     ) -> anyhow::Result<()> {
 
-        //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
-        let include_cells = if let Some(p) = &params.include_cells {
-            p.clone()
-        } else {
 
-            let mut all_cells: HashSet<CellID> = HashSet::new();
-            for p in &params.path_in {
-                if let Some(cells) = try_get_cells_in_file(&p).expect("Failed to parse input file") {
-                    all_cells.extend(cells);
-                } else {
-                    //TODO
-                    //make this file just stream the content
-                }
-            }
-            let all_cells: Vec<CellID> = all_cells.iter().cloned().collect();
-            all_cells
-        };
-
-        //Set up thread pool
+        //Set up thread pools
         let n_input = params.path_in.len();
         let n_output = params.path_in.len();
         let thread_pool_read = threadpool::ThreadPool::new(n_input); 
@@ -79,51 +64,8 @@ impl TransformFile {
         let (tx_readcell, rx_readcell) = crossbeam::channel::bounded::<Option<CellID>>(n_input);
         let (tx_readcell, rx_readcell) = (Arc::new(tx_readcell), Arc::new(rx_readcell));
 
-        
 
-        // Start reader threads
-        for p in &params.path_in {
-
-            let read_thread = match crate::fileformat::detect_shard_format(&p) {
-                DetectedFileformat::TIRP => {
-                    create_reader_thread( //::<TirpBascetShardReader>
-                        &p,
-                        &thread_pool_read,
-                        &rx_readcell,
-                        &tx_data,
-                        &Arc::new(TirpBascetShardReaderFactory::new())
-                    )
-                },
-/* 
-                DetectedFileformat::ZIP => {
-
-            
-                    panic!("TODO")
-                },
-                DetectedFileformat::FASTQ => {
-                    create_writer_thread::<BascetFastqWriter>(
-                        &p,
-                        &thread_pool_write,
-                        &rx_data
-                    ).unwrap()
-                },
-                DetectedFileformat::BAM => {
-        
-                    //// need separate index file
-        
-                    panic!("TODO")
-                },*/
-                _ => { anyhow::bail!("Output file format for {} not supported for this operation", p.display()) }
-        
-            };
-
-            read_thread.expect("Failed to open input file");       
-
-
- 
-         }
-
-        // Start writer threads
+        /////////////////////////////////////////////// Start writer threads
         for p in &params.path_out {
             //let writer = BascetFastqWriter::new(&p).expect("Could not open output fastq file");
 
@@ -133,7 +75,7 @@ impl TransformFile {
                     let mut f = TirpBascetShardReader::new(&p).expect("Unable to open input TIRP file");
                     Ok(Some(f.get_cell_ids().unwrap()))
                 },
-*/
+                */
                 DetectedFileformat::ZIP => {
                     /////// Possible to create r1.fq etc inside zip
                     panic!("Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option")
@@ -156,30 +98,76 @@ impl TransformFile {
 
         }
 
+        if let Some(_p) = &params.include_cells {
+            /////////////////////////////////////////////// Mode 1: only stream chosen cells
 
+            //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
+            let include_cells = get_list_of_all_cells(&params);
 
-        // Loop over all cells
-        // todo: if cell list provided, need to wait for a reader to have streamed them all
-        let mut num_proc_cell = 0;
-        let num_total_cell = include_cells.len();
-        for cell_id in include_cells {
-            //println!("Doing cell {}",cell_id);
-            tx_readcell.send(Some(cell_id)).unwrap();
-            num_proc_cell+=1;
-            if num_proc_cell%1000 == 0 {
-                println!("Processed {} / {} cells", num_proc_cell, num_total_cell);
-                //println!("Doing cell {}",cell_id);
+            // Start reader threads -- for reading subset of cells
+            for p in &params.path_in {
+
+                let read_thread = match crate::fileformat::detect_shard_format(&p) {
+                    DetectedFileformat::TIRP => {
+                        create_random_reader_thread( //::<TirpBascetShardReader>
+                            &p,
+                            &thread_pool_read,
+                            &rx_readcell,
+                            &tx_data,
+                            &Arc::new(TirpBascetShardReaderFactory::new())
+                        )
+                    },
+                    _ => { anyhow::bail!("Input file format for {} not supported for reading of specific cells", p.display()) }
+            
+                };
+                read_thread.expect("Failed to open input file");       
             }
-        }
-        println!("Processed a final of {} cells", num_total_cell);
 
-        //Tell all readers to shut down
-        for _ in 0..n_input {
-            tx_readcell.send(None).unwrap();
-        }
+            // Loop over all cells
+            // todo: if cell list provided, need to wait for a reader to have streamed them all
+            let mut num_proc_cell = 0;
+            let num_total_cell = include_cells.len();
+            for cell_id in include_cells {
+                tx_readcell.send(Some(cell_id)).unwrap();
+                num_proc_cell+=1;
+                if num_proc_cell%1000 == 0 {
+                    println!("Processed {} / {} cells", num_proc_cell, num_total_cell);
+                }
+            }
+            println!("Processed a final of {} cells", num_total_cell);
 
-        //Wait for reader threads to be done
-        thread_pool_read.join();
+            //Tell all readers to shut down
+            for _ in 0..n_input {
+                tx_readcell.send(None).unwrap();
+            }
+
+            //Wait for reader threads to be done
+            thread_pool_read.join();
+
+        } else {
+            /////////////////////////////////////////////// Mode 2: stream all cells
+
+            // Start reader threads -- for streaming all cells. No separate loop needed to tell them which cells to read out
+            for p in &params.path_in {
+
+                let read_thread = match crate::fileformat::detect_shard_format(&p) {
+                    DetectedFileformat::BAM => {
+                        create_stream_reader_thread( 
+                            &p,
+                            &thread_pool_read,
+                            &tx_data,
+                            &Arc::new(BAMStreamingReadPairReaderFactory::new())
+                        )
+                    },
+                    _ => { anyhow::bail!("Input file format for {} not supported for streaming all content", p.display()) }
+            
+                };
+                read_thread.expect("Failed to open input file");       
+            }
+
+            //Wait for all readers to finish
+            thread_pool_read.join();
+        }
         
         //Tell all writers to shut down 
         for _ in 0..n_output {
@@ -212,10 +200,6 @@ fn create_writer_thread<W>(
     thread_pool: &threadpool::ThreadPool,
     rx_data: &Arc<Receiver<Option<ListReadWithBarcode>>>,
     constructor: &Arc<impl ConstructFromPath<W>+Send+ 'static+Sync>
-//    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>
-//    list_hist: &Arc<Mutex<Vec<shard::BarcodeHistogram>>>, ///////////// possible to keep this if we want!
-//    sort: bool, ////////////// if we wanted to use this system for shardifying, would not be impossible to have this flag
-//    tempdir: &PathBuf //// not needed, but could be reinstated
 ) -> anyhow::Result<()> where W: ReadPairWriter  {
 
     let outfile = outfile.clone();
@@ -246,6 +230,30 @@ fn create_writer_thread<W>(
 
 
 
+////////////////
+/// Get the list of all files to process, given by user or by getting names from the files.
+/// The latter case is only relevant for compatibility with non-streaming APIs (which likely are slower than streaming APIs)
+fn get_list_of_all_cells(
+    params: &Arc<TransformFileParams>
+) -> Vec<CellID> {
+
+    //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
+    if let Some(p) = &params.include_cells {
+        p.clone()
+    } else {
+
+        let mut all_cells: HashSet<CellID> = HashSet::new();
+        for p in &params.path_in {
+            if let Some(cells) = try_get_cells_in_file(&p).expect("Failed to parse input file") {
+                all_cells.extend(cells);
+            } else {
+                panic!("Cannot obtain list of cell names from this input file format. Try streaming the content instead");
+            }
+        }
+        let all_cells: Vec<CellID> = all_cells.iter().cloned().collect();
+        all_cells
+    }
+}
 
 
 
@@ -253,17 +261,14 @@ fn create_writer_thread<W>(
 
 
 
-
-//////////////// Reader from any format
-fn create_reader_thread<R>(
+//////////////// 
+/// Reader from any format that support reading of random cells
+fn create_random_reader_thread<R>(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     rx_readcell: &Arc<Receiver<Option<CellID>>>,
     tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
-//    list_hist: &Arc<Mutex<Vec<shard::BarcodeHistogram>>>, ///////////// possible to keep this if we want!
-//    sort: bool, ////////////// if we wanted to use this system for shardifying, would not be impossible to have this flag
-//    tempdir: &PathBuf //// not needed, but could be reinstated
 ) -> anyhow::Result<()> where R: ReadPairReader+ShardCellDictionary {
 
     let infile = infile.clone();
@@ -273,7 +278,7 @@ fn create_reader_thread<R>(
 
     thread_pool.execute(move || {
         // Open input file
-        println!("Starting reader for {}", infile.display());
+        println!("Starting random reader for {}", infile.display());
         let mut reader = constructor.new_from_path(&infile).expect(format!("Failed to open input file {}", infile.display()).as_str());
 
         //A single call to get the list of cells is likely the most efficient way
@@ -289,9 +294,7 @@ fn create_reader_thread<R>(
                 tx_data.send(Some(Arc::new(tosend))).unwrap();
             }
         }
-        println!("Shutting down reader for {}", infile.display());
-
-
+        println!("Shutting down random reader for {}", infile.display());
     });
     Ok(())
 }
@@ -299,6 +302,49 @@ fn create_reader_thread<R>(
 
 
 
+
+
+
+
+//////////////// 
+/// Reader from any format that supports streaming
+fn create_stream_reader_thread<R>(
+    infile: &PathBuf,
+    thread_pool: &threadpool::ThreadPool,
+    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>,
+    constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
+) -> anyhow::Result<()> where R: StreamingReadPairReader {
+
+    let infile = infile.clone();
+    let tx_data = Arc::clone(tx_data);
+    let constructor = Arc::clone(&constructor);
+    thread_pool.execute(move || {
+        // Open input file
+        println!("Starting streaming reader for {}", infile.display());
+        let mut reader = constructor.new_from_path(&infile).expect(format!("Failed to open input file {}", infile.display()).as_str());
+
+        //Handle all cell requests
+        let mut num_proc_cell = 0;
+        loop {
+            let list_reads = reader.get_reads_for_next_cell().expect("Failed to get reads from input file");
+
+            num_proc_cell+=1;
+            if num_proc_cell%1000 == 0 {
+                println!("Processed {} cells", num_proc_cell);
+            }
+
+            if list_reads.is_none() {
+                //No more data. End!
+                break;
+            } else {
+                tx_data.send(list_reads).unwrap();
+            }
+        }
+        println!("Processed a final of {} cells", num_proc_cell);
+        println!("Shutting down streaming reader for {}", infile.display());
+    });
+    Ok(())
+}
 
 
 
