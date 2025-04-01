@@ -32,6 +32,9 @@ pub struct BascetSingleFastqWriter {
 impl BascetSingleFastqWriter {
 
     fn new(path: &PathBuf) -> anyhow::Result<BascetSingleFastqWriter>{
+
+        println!("starting writer for single FASTQ {:?}", path);
+
         let out_buffer = File::create(&path).expect("Failed to create fastq.gz output file");
         let writer = BGZFMultiThreadWriter::new(out_buffer, Compression::default());
     

@@ -5,8 +5,10 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 
 use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
+use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
+use crate::fileformat::TirpStreamingReadPairReaderFactory;
 use crate::fileformat::{CellID, ReadPair};
 use crate::fileformat::DetectedFileformat;
 use crate::fileformat::try_get_cells_in_file;
@@ -88,6 +90,14 @@ impl TransformFile {
                         &Arc::new(BascetSingleFastqWriterFactory::new())
                     ).unwrap()
                 },
+                DetectedFileformat::PairedFASTQ => {
+                    create_writer_thread(
+                        &p,
+                        &thread_pool_write,
+                        &rx_data,
+                        &Arc::new(BascetPairedFastqWriterFactory::new())
+                    ).unwrap()
+                },
                 DetectedFileformat::BAM => {
                     //// need separate index file
                     panic!("Output to BAM/CRAM yet to be implemented for this operation")
@@ -151,6 +161,14 @@ impl TransformFile {
             for p in &params.path_in {
 
                 let read_thread = match crate::fileformat::detect_shard_format(&p) {
+                    DetectedFileformat::TIRP => {
+                        create_stream_reader_thread( 
+                            &p,
+                            &thread_pool_read,
+                            &tx_data,
+                            &Arc::new(TirpStreamingReadPairReaderFactory::new())
+                        )
+                    },
                     DetectedFileformat::BAM => {
                         create_stream_reader_thread( 
                             &p,
@@ -345,17 +363,4 @@ fn create_stream_reader_thread<R>(
     });
     Ok(())
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 

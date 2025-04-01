@@ -50,6 +50,7 @@ pub use list_fastq::ListFastqReader;
 //Factories
 pub use zip::ZipBascetShardReaderFactory;
 pub use tirp::TirpBascetShardReaderFactory;
+pub use tirp::TirpStreamingReadPairReaderFactory;
 pub use bam::BAMStreamingReadPairReaderFactory;
 pub use single_fastq::BascetSingleFastqWriterFactory;
 pub use list_fastq::ListFastqReaderFactory;

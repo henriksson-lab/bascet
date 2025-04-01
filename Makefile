@@ -75,6 +75,9 @@ test_kmc_reads:
 test_transform_tirp_fastq:
 	rm -Rf temp; cargo +nightly run transform -i testdata/out_complete.0.tirp.gz  -o testdata/newout.fq.gz
 
+test_transform_tirp_2fastq:
+	rm -Rf temp; cargo +nightly run transform -i testdata/out_complete.0.tirp.gz  -o testdata/newout.R1.fq.gz
+
 
 test_mapcell:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/shard/shard.0.zip  -o testdata/out.zip   -s _test

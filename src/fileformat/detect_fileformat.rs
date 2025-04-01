@@ -36,9 +36,9 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
     } else if p_string.ends_with(".bam") | p_string.ends_with(".cram"){ 
         DetectedFileformat::BAM
     } else if p_string.ends_with(".R1.fq.gz") | p_string.ends_with(".R1.fastq.gz")  | p_string.ends_with(".R1.fq")  | p_string.ends_with(".R1.fastq") { 
-        DetectedFileformat::SingleFASTQ
-    } else if p_string.ends_with(".fq.gz") | p_string.ends_with(".fastq.gz")  | p_string.ends_with(".fq")  | p_string.ends_with(".fastq") { 
         DetectedFileformat::PairedFASTQ
+    } else if p_string.ends_with(".fq.gz") | p_string.ends_with(".fastq.gz")  | p_string.ends_with(".fq")  | p_string.ends_with(".fastq") { 
+        DetectedFileformat::SingleFASTQ
     } else {
         DetectedFileformat::Other
     }
