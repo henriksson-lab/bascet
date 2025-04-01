@@ -34,6 +34,7 @@ pub struct GetRawParams {
     pub path_reverse: std::path::PathBuf,
     pub path_output_complete: std::path::PathBuf,
     pub path_output_incomplete: std::path::PathBuf,
+    pub libname: String, 
 
     pub sort: bool,
 
@@ -245,6 +246,7 @@ impl GetRaw {
             println!("Starting worker thread {}",tidx);
 
             let mut barcodes = barcodes.clone(); //This is needed to keep mutating the pattern in this structure
+            let libname= params_io.libname.clone();
 
             thread_pool_work.execute(move || {
 
@@ -254,7 +256,7 @@ impl GetRaw {
 
                     for bam_cell in list_bam_cell.iter() {
 
-
+                        //Debarcode!
                         let (is_ok, cellid, readpair) = barcodes.detect_barcode_and_trim(
                             &bam_cell.forward_record.seq(),
                             &bam_cell.forward_record.qual(),
@@ -262,6 +264,10 @@ impl GetRaw {
                             &bam_cell.reverse_record.qual()
                         );
 
+                        //Add library name to cellID
+                        let cellid = format!("{}_{}",libname, cellid);
+
+                        //Send readpair to writer
                         if is_ok {
                             pairs_complete.push((readpair, cellid));
                         } else {

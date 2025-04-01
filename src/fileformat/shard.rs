@@ -74,6 +74,9 @@ impl<R> ConstructFromPath<R> for ConstructFromPath<Box<dyn R>> where R: Clone+Co
 /////////////////////////////// Common shard writer and reader traits, to handle readpairs only
 ///////////////////////////////
 
+type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
+
+
 pub trait ReadPairWriter {
 
     //fn new(path: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
@@ -93,6 +96,16 @@ pub trait ReadPairReader { //where Self: ConstructFromPath
         &mut self, 
         cell_id:&CellID
     ) -> anyhow::Result<Arc<Vec<ReadPair>>>;
+
+}
+
+
+
+pub trait StreamingReadPairReader { //where Self: ConstructFromPath
+
+    fn get_reads_for_next_cell(
+        &mut self
+    ) -> anyhow::Result<Option<ListReadWithBarcode>>;
 
 }
 

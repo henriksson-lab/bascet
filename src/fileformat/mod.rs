@@ -7,6 +7,7 @@ pub mod cram;
 pub mod fastq;
 pub mod list_fastq;
 pub mod count_matrix;
+pub mod bam;
 
 ////// Utility
 pub mod cell_readpair_reader;
@@ -19,6 +20,8 @@ pub use shard::CellID;
 pub use shard::ReadPair;
 pub use shard::CellUMI;
 
+
+pub use shard::StreamingReadPairReader;
 pub use shard::ReadPairWriter;
 pub use shard::ReadPairReader;
 pub use shard::ShardCellDictionary;
@@ -46,5 +49,6 @@ pub use list_fastq::ListFastqReader;
 //Factories
 pub use zip::ZipBascetShardReaderFactory;
 pub use tirp::TirpBascetShardReaderFactory;
+pub use bam::BAMStreamingReadPairReaderFactory;
 pub use fastq::BascetFastqWriterFactory;
 pub use list_fastq::ListFastqReaderFactory;
