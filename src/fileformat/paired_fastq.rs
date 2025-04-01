@@ -34,6 +34,8 @@ impl BascetPairedFastqWriter {
 
     fn new(path: &PathBuf) -> anyhow::Result<BascetPairedFastqWriter>{
 
+        println!("starting writer for paired FASTQ {:?}", path);
+
         //See if this is R1 of a pair of FASTQ
         let spath = path.to_string_lossy();
         let last_pos = spath.rfind("R1");

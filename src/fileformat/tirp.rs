@@ -1,5 +1,7 @@
 use log::debug;
 use std::collections::HashSet;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::fs::File;
@@ -14,7 +16,7 @@ use super::ReadPair;
 use super::CellID;
 use super::ReadPairReader;
 use super::ShardCellDictionary;
-//use crate::fileformat::ReadPairWriter;
+use super::shard::StreamingReadPairReader;
 
 use rust_htslib::tbx::Reader as TabixReader;
 use rust_htslib::tbx::Read;
@@ -272,6 +274,32 @@ pub fn parse_tirp_readpair(
 
 
 
+pub fn parse_tirp_readpair_with_cellid(
+    line: &[u8], //Vec<u8>,   
+) -> (Vec<u8>, ReadPair) {
+
+    //Structure of each line:
+    //cell_id  1   1   r1  r2  q1  q2 umi
+
+    let tab = b'\t';
+    let parts = split_delimited(line, &tab);
+    let cellid = parts[0].to_vec();
+
+    (
+        cellid,
+        ReadPair {
+            r1: parts[3].to_vec(),
+            r2: parts[4].to_vec(),
+            q1: parts[5].to_vec(),
+            q2: parts[6].to_vec(),
+            umi: parts[7].to_vec()
+        }
+    )
+}
+
+
+
+
 
 fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
     where T: PartialEq<T> {
@@ -311,5 +339,169 @@ pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
     histpath.append(&mut ext);
     let histpath = String::from_utf8(histpath).expect("unable to form histogram path");
     PathBuf::from(histpath)    
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+///////////////////
+/////////////////// Below is code for streaming of data from TIRPs
+///////////////////
+
+
+
+
+#[derive(Debug)]
+pub struct TirpStreamingReadPairReader {
+    reader: BufReader<rust_htslib::bgzf::Reader>, //TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    last_rp: Option<(Vec<u8>,ReadPair)>,
+}
+impl TirpStreamingReadPairReader {
+    pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingReadPairReader> {
+
+        let reader= rust_htslib::bgzf::Reader::from_path(&fname)
+            .expect(&format!("Could not open {:?}", fname));
+
+        let mut reader = BufReader::new(reader);
+
+        //Read the first read right away
+        let mut record = String::new();
+        let read_size = reader.read_line(&mut record).unwrap();
+
+        if read_size>0 {
+
+            //Remove newline and everything after
+            let trimmed_line = &record.as_bytes()[0..(read_size-1)];
+            let last_rp = parse_tirp_readpair_with_cellid(trimmed_line);
+
+            Ok(TirpStreamingReadPairReader {
+                reader: reader,
+                last_rp: Some(last_rp)
+            })
+        } else {
+            //The BAM file is empty!
+            println!("Warning: empty input BAM");
+
+            Ok(TirpStreamingReadPairReader {
+                reader: reader,
+                last_rp: None
+            })
+    
+        }
+
+
+    }
+}
+
+
+
+
+type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
+
+
+
+impl StreamingReadPairReader for TirpStreamingReadPairReader {
+
+
+    fn get_reads_for_next_cell(
+        &mut self
+    ) -> anyhow::Result<Option<ListReadWithBarcode>> {
+
+        //Check if we arrived at the end already
+        if let Some((current_cell, last_rp)) = self.last_rp.clone()  {
+
+            //First push the last read pair we had
+            let mut reads:Vec<ReadPair> = Vec::new();
+            reads.push(last_rp);
+            self.last_rp = None;
+
+            //Keep reading lines until we reach the next cell or the end
+            let mut record = String::new();
+            loop {
+
+                let size= self.reader.read_line(&mut record).unwrap();
+                if size==0 {
+                    break;
+                }
+
+                //Remove newline and everything after
+                let trimmed_line = &record.as_bytes()[0..(size-1)];
+
+                let (cell_id, rp) = parse_tirp_readpair_with_cellid(trimmed_line);
+                //println!("reading line {} {:?} {:?}", size, String::from_utf8_lossy(cell_id.as_slice()), String::from_utf8_lossy(current_cell.as_slice()));
+                //println!("{}",&record[0..size]);
+                //println!("{}", rp);
+                if cell_id == current_cell {
+                    //This read belongs to this cell, so add to the list and continue
+                    //println!("one more read");
+                    reads.push(rp);
+                } else {
+                    //This read belongs to the next cell, so stop reading for now
+                    println!("next cell");
+                    self.last_rp = Some((
+                        cell_id.to_vec(),
+                        rp
+                    ));
+                    break;
+                }
+                //print!("");
+            }
+
+            //Package and return data
+            let reads = Arc::new(reads);
+            let cellid_reads = (
+                String::from_utf8(current_cell).unwrap(), 
+                reads
+            );
+
+            Ok(Some(Arc::new(cellid_reads)))
+        } else {
+            //There is nothing more to read
+            println!("Reached end of input TIRP file");
+            Ok(None)
+        }
+    }
+   
+}
+
+
+
+
+
+
+
+
+
+
+
+
+#[derive(Debug,Clone)]
+pub struct TirpStreamingReadPairReaderFactory {
+}
+impl TirpStreamingReadPairReaderFactory {
+    pub fn new() -> TirpStreamingReadPairReaderFactory {
+        TirpStreamingReadPairReaderFactory {}
+    } 
+}
+impl ConstructFromPath<TirpStreamingReadPairReader> for TirpStreamingReadPairReaderFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<TirpStreamingReadPairReader> {  ///////// maybe anyhow prevents spec of reader?
+        TirpStreamingReadPairReader::new(fname)
+    }
 }
 
