@@ -14,7 +14,8 @@ use super::ZipBascetShardReader;
 pub enum DetectedFileformat {
     TIRP,
     ZIP,
-    FASTQ,
+    SingleFASTQ,
+    PairedFASTQ,
     BAM,
     ListFASTQ,
     Other
@@ -34,8 +35,10 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
         DetectedFileformat::ListFASTQ
     } else if p_string.ends_with(".bam") | p_string.ends_with(".cram"){ 
         DetectedFileformat::BAM
+    } else if p_string.ends_with(".R1.fq.gz") | p_string.ends_with(".R1.fastq.gz")  | p_string.ends_with(".R1.fq")  | p_string.ends_with(".R1.fastq") { 
+        DetectedFileformat::SingleFASTQ
     } else if p_string.ends_with(".fq.gz") | p_string.ends_with(".fastq.gz")  | p_string.ends_with(".fq")  | p_string.ends_with(".fastq") { 
-        DetectedFileformat::FASTQ
+        DetectedFileformat::PairedFASTQ
     } else {
         DetectedFileformat::Other
     }
@@ -51,7 +54,9 @@ pub fn get_suitable_file_extractor(
             Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),
         DetectedFileformat::ZIP => 
             Box::new(ZipBascetShardReader::new(&p).expect("Failed to create ZIP reader")),
-        DetectedFileformat::FASTQ => 
+        DetectedFileformat::SingleFASTQ => 
+            panic!("FASTQ cannot be used for file extraction currently"),
+        DetectedFileformat::PairedFASTQ => 
             panic!("FASTQ cannot be used for file extraction currently"),
         DetectedFileformat::BAM => 
             panic!("BAM-like formats cannot be used for file extraction currently"),
@@ -69,7 +74,8 @@ pub fn get_suitable_file_extractor(
 
 /////// Check that the specified file is a FASTQ file
 pub fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
-    if detect_shard_format(path_in)==DetectedFileformat::FASTQ {
+    let file_format = detect_shard_format(path_in);
+    if file_format==DetectedFileformat::SingleFASTQ || file_format==DetectedFileformat::PairedFASTQ {
         if let Ok(file) = File::open(&path_in) {
             if file.metadata()?.len() == 0 {
                 //anyhow::bail!("Empty input file");

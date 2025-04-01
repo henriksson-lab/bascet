@@ -48,7 +48,7 @@ pub struct GetRawCMD {
     pub path_barcodes: Option<PathBuf>, 
 
     // Optional: Prepend library name to barcodes
-    #[arg(long = "barcodes", value_parser)]
+    #[arg(long = "libname", value_parser)]
     pub libname: Option<String>,
 
     // Temporary file directory. TODO - use system temp directory as default? TEMP variable?

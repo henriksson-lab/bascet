@@ -4,7 +4,8 @@ pub mod zip;
 pub mod tirp;
 pub mod shard;
 pub mod cram;
-pub mod fastq;
+pub mod single_fastq;
+pub mod paired_fastq;
 pub mod list_fastq;
 pub mod count_matrix;
 pub mod bam;
@@ -42,7 +43,7 @@ pub use count_matrix::SparseCountMatrix;
 //Readers
 pub use zip::ZipBascetShardReader;
 pub use tirp::TirpBascetShardReader;
-pub use fastq::BascetFastqWriter;
+pub use single_fastq::BascetSingleFastqWriter;
 pub use list_fastq::ListFastqReader;
 
 
@@ -50,5 +51,5 @@ pub use list_fastq::ListFastqReader;
 pub use zip::ZipBascetShardReaderFactory;
 pub use tirp::TirpBascetShardReaderFactory;
 pub use bam::BAMStreamingReadPairReaderFactory;
-pub use fastq::BascetFastqWriterFactory;
+pub use single_fastq::BascetSingleFastqWriterFactory;
 pub use list_fastq::ListFastqReaderFactory;
