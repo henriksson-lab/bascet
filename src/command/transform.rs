@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 
-use crate::fileformat::fastq::BascetFastqWriterFactory;
+use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
 use crate::fileformat::{CellID, ReadPair};
@@ -80,12 +80,12 @@ impl TransformFile {
                     /////// Possible to create r1.fq etc inside zip
                     panic!("Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option")
                 },
-                DetectedFileformat::FASTQ => {
-                    create_writer_thread(//::<BascetFastqWriter>(
+                DetectedFileformat::SingleFASTQ => {
+                    create_writer_thread(
                         &p,
                         &thread_pool_write,
                         &rx_data,
-                        &Arc::new(BascetFastqWriterFactory::new())
+                        &Arc::new(BascetSingleFastqWriterFactory::new())
                     ).unwrap()
                 },
                 DetectedFileformat::BAM => {
@@ -109,7 +109,7 @@ impl TransformFile {
 
                 let read_thread = match crate::fileformat::detect_shard_format(&p) {
                     DetectedFileformat::TIRP => {
-                        create_random_reader_thread( //::<TirpBascetShardReader>
+                        create_random_reader_thread( 
                             &p,
                             &thread_pool_read,
                             &rx_readcell,

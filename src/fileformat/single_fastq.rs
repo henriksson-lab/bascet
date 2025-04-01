@@ -5,39 +5,37 @@ use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
 
 
 use crate::fileformat::{shard::{CellID, ReadPair}, CellUMI};
-//use crate::fileformat::DetectedFileformat;
 use crate::fileformat::ReadPairWriter;
 
 use super::ConstructFromPath;
-//use crate::fileformat::ReadPairReader;
 
 
 
 #[derive(Debug,Clone)]
-pub struct BascetFastqWriterFactory {
+pub struct BascetSingleFastqWriterFactory {
 }
-impl BascetFastqWriterFactory {
-    pub fn new() -> BascetFastqWriterFactory {
-        BascetFastqWriterFactory {}
+impl BascetSingleFastqWriterFactory {
+    pub fn new() -> BascetSingleFastqWriterFactory {
+        BascetSingleFastqWriterFactory {}
     } 
 }
-impl ConstructFromPath<BascetFastqWriter> for BascetFastqWriterFactory {
-    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<BascetFastqWriter> {  ///////// maybe anyhow prevents spec of reader?
-        BascetFastqWriter::new(fname)
+impl ConstructFromPath<BascetSingleFastqWriter> for BascetSingleFastqWriterFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<BascetSingleFastqWriter> {  ///////// maybe anyhow prevents spec of reader?
+        BascetSingleFastqWriter::new(fname)
     }
 }
 
 
-pub struct BascetFastqWriter {
+pub struct BascetSingleFastqWriter {
     pub writer: BGZFMultiThreadWriter<File>
 }
-impl BascetFastqWriter {
+impl BascetSingleFastqWriter {
 
-    fn new(path: &PathBuf) -> anyhow::Result<BascetFastqWriter>{
+    fn new(path: &PathBuf) -> anyhow::Result<BascetSingleFastqWriter>{
         let out_buffer = File::create(&path).expect("Failed to create fastq.gz output file");
         let writer = BGZFMultiThreadWriter::new(out_buffer, Compression::default());
     
-        Ok(BascetFastqWriter {
+        Ok(BascetSingleFastqWriter {
             writer: writer
         })
     }
@@ -45,21 +43,21 @@ impl BascetFastqWriter {
 }
 
 
-impl ReadPairWriter for BascetFastqWriter {
+impl ReadPairWriter for BascetSingleFastqWriter {
 
 
     fn write_reads_for_cell(&mut self, cell_id:&CellID, list_reads: &Arc<Vec<ReadPair>>) {
         let mut read_num = 0;
         for rp in list_reads.iter() {
 
-            write_fastq_read(
+            write_single_fastq_read(
                 &mut self.writer,
                 &make_fastq_readname(read_num, &cell_id, &rp.umi, 1),
                 &rp.r1,
                 &rp.q1
             ).unwrap();
 
-            write_fastq_read(
+            write_single_fastq_read(
                 &mut self.writer,
                 &make_fastq_readname(read_num, &cell_id, &rp.umi, 2),
                 &rp.r2,
@@ -85,7 +83,7 @@ impl ReadPairWriter for BascetFastqWriter {
 
 
 ////////// Write one FASTQ read
-fn write_fastq_read<W: std::io::Write>(
+fn write_single_fastq_read<W: std::io::Write>(
     writer: &mut W,
     head: &Vec<u8>,
     seq:&Vec<u8>,
