@@ -435,6 +435,8 @@ impl StreamingReadPairReader for TirpStreamingReadPairReader {
             let mut record = String::new();
             loop {
 
+                //Read a line. Note that read_line appends to the buffer
+                record.clear();
                 let size= self.reader.read_line(&mut record).unwrap();
                 if size==0 {
                     break;
@@ -453,7 +455,6 @@ impl StreamingReadPairReader for TirpStreamingReadPairReader {
                     reads.push(rp);
                 } else {
                     //This read belongs to the next cell, so stop reading for now
-                    println!("next cell");
                     self.last_rp = Some((
                         cell_id.to_vec(),
                         rp
