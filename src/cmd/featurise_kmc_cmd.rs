@@ -13,8 +13,8 @@ pub const DEFAULT_THREADS_WRITE: usize = 10;
 pub const DEFAULT_THREADS_WORK: usize = 1;
 
 
-use crate::command::Featurise;
-use crate::command::FeaturiseParams;
+use crate::command::FeaturiseKMC;
+use crate::command::FeaturiseParamsKMC;
 
 use crate::fileformat::read_cell_list_file;
 
@@ -22,7 +22,7 @@ use crate::fileformat::read_cell_list_file;
 
 
 #[derive(Args)]
-pub struct FeaturiseCMD {
+pub struct FeaturiseKmcCMD {
 
 
     // Input bascet or gascet
@@ -54,7 +54,7 @@ pub struct FeaturiseCMD {
 
     
 }
-impl FeaturiseCMD {
+impl FeaturiseKmcCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
 
@@ -68,7 +68,7 @@ impl FeaturiseCMD {
         };
         
 
-        let params = FeaturiseParams {
+        let params = FeaturiseParamsKMC {
 
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
@@ -77,7 +77,7 @@ impl FeaturiseCMD {
             threads_work: self.threads_work,
         };
 
-        let _ = Featurise::run(
+        let _ = FeaturiseKMC::run(
             &Arc::new(params)
         );
 

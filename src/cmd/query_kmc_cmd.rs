@@ -13,15 +13,15 @@ pub const DEFAULT_THREADS_WRITE: usize = 10;
 pub const DEFAULT_THREADS_WORK: usize = 1;
 
 
-use crate::command::Query;
-use crate::command::QueryParams;
+use crate::command::QueryKmc;
+use crate::command::QueryKmcParams;
 
 //use crate::fileformat::read_cell_list_file;
 
 
 
 #[derive(Args)]
-pub struct QueryCMD {
+pub struct QueryKmcCMD {
 
 
     // Input bascet or gascet
@@ -51,12 +51,12 @@ pub struct QueryCMD {
 
     
 }
-impl QueryCMD {
+impl QueryKmcCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
 
 
-        let params = QueryParams {
+        let params = QueryKmcParams {
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),   
@@ -65,7 +65,7 @@ impl QueryCMD {
             threads_work: self.threads_work,
         };
 
-        let _ = Query::run(
+        let _ = QueryKmc::run(
             &Arc::new(params)
         );
 

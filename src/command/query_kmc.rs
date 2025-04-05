@@ -15,7 +15,7 @@ use crate::fileformat::SparseCountMatrix;
 
 
 
-pub struct QueryParams {
+pub struct QueryKmcParams {
 
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
@@ -28,21 +28,13 @@ pub struct QueryParams {
 
 
 
-
-/**
- * 
- * as input, take total count matrix, pick features that are within a certain percentile. randomize and subset these further to get a good list!
- * 
- * 
- */
-
-pub struct Query {
+pub struct QueryKmc {
 }
-impl Query {
+impl QueryKmc {
 
 
     pub fn run(
-        params: &Arc<QueryParams>
+        params: &Arc<QueryKmcParams>
     ) -> anyhow::Result<()> {
 
 

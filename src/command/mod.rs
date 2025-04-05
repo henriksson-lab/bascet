@@ -3,19 +3,27 @@ pub mod getraw;
 pub mod mapcell;
 pub mod shardify;
 pub mod transform;
-pub mod featurise;
-pub mod query;
+pub mod featurise_kmc;
+pub mod query_kmc;
+pub mod query_fq;
 pub mod bam2fragments;
 pub mod kraken;
 pub mod snpcall;
 pub mod countchrom;
 
+pub mod minhash_hist;
 
-pub use query::Query;
-pub use query::QueryParams;
+pub use query_kmc::QueryKmc;
+pub use query_kmc::QueryKmcParams;
 
-pub use featurise::Featurise;
-pub use featurise::FeaturiseParams;
+pub use query_fq::QueryFq;
+pub use query_fq::QueryFqParams;
+
+pub use featurise_kmc::FeaturiseKMC;
+pub use featurise_kmc::FeaturiseParamsKMC;
+
+pub use minhash_hist::MinhashHist;
+pub use minhash_hist::MinhashHistParams;
 
 pub use mapcell::MapCell;
 pub use mapcell::MapCellParams;
