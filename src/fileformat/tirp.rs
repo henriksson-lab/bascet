@@ -50,10 +50,10 @@ impl TirpBascetShardReader {
 
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {  ///////// maybe anyhow prevents spec of reader?
 
-        //TODO : check that the index .tbi-file is present; give better error message
-        let hist_path = get_histogram_path_for_tirp(&fname);
-        if !hist_path.exists() {
-            bail!("Cannot find tabix index for {}; is this really a TIRP file?", fname.display());
+        //Check that the index .tbi-file is present; give better error message
+        let index_path = get_tbi_path_for_tirp(&fname);
+        if !index_path.exists() {
+            bail!("Cannot find tabix .tbi-file for {}; is this really a TIRP file?", fname.display());
         }
 
         // Create a tabix reader for reading a tabix-indexed BED file.
@@ -355,6 +355,16 @@ pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
 }
 
 
+
+
+pub fn get_tbi_path_for_tirp(p: &PathBuf) -> PathBuf {
+    let p = p.as_os_str().as_encoded_bytes();
+    let mut index_path = p.to_vec();
+    let mut ext = ".tbi".as_bytes().to_vec();
+    index_path.append(&mut ext);
+    let histpath = String::from_utf8(index_path).expect("unable to form tbi path");
+    PathBuf::from(histpath)    
+}
 
 
 
