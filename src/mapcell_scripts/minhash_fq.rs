@@ -40,7 +40,7 @@ impl MapCellFunction for MapCellKmcMinHashFQ {
             num_min_hash
         ).expect("Could not get minhash");
 
-        KmerCounter::store_minhash(
+        KmerCounter::store_minhash_seq(
             kmer_size,
             &mut min_hash,
             &output_file

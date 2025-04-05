@@ -222,10 +222,7 @@ impl KmerCounter {
     }
 
 
-
-
-
-    pub fn store_minhash(
+    pub fn store_minhash_seq(
         kmer_size: usize, 
         minhash: &mut BoundedMinHeap<KMERandCount>,
         p: &PathBuf
@@ -241,7 +238,30 @@ impl KmerCounter {
         while let Some(h) = minhash.pop_min() {
             unsafe {
                 let kmer_string = codec.decode(&h);
-                writeln!(bw, "{}\t{}\t  {}\t{}\t", &kmer_string, &h.count,   &h.kmer, &h.hash).unwrap();    
+                writeln!(bw, "{}", &kmer_string).unwrap();    
+            }
+        }
+    }
+
+
+
+    pub fn store_minhash_all(
+        kmer_size: usize, 
+        minhash: &mut BoundedMinHeap<KMERandCount>,
+        p: &PathBuf
+    ){
+        //Open file for writing
+        let f=File::create(p).expect("Could not open file for writing");
+        let mut bw=BufWriter::new(f);
+
+
+        //Write kmer & count. Hopefully this iterates from min to max
+        let codec = KMERCodec::new(kmer_size);
+
+        while let Some(h) = minhash.pop_min() {
+            unsafe {
+                let kmer_string = codec.decode(&h);
+                writeln!(bw, "{}\t{}\t{}\t{}", &kmer_string, &h.count,   &h.kmer, &h.hash).unwrap();    
             }
         }
     }
