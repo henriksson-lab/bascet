@@ -150,56 +150,69 @@ impl ShardFileExtractor for TirpBascetShardReader {
     ) -> anyhow::Result<bool>{
 
         let mut valid_files_to_request: HashSet<&str> = HashSet::new();
-        valid_files_to_request.extend(["r1.fq","r2.fq"].iter());
+        valid_files_to_request.extend(["r1.fq","r2.fq"].iter());  /////////////////////// TODO support fasta as well
+
+
+        let mut get_fastq = false ;
 
         //Figure out which files to get
         //let mut list_toget: Vec<&String> = Vec::new();
         for f in needed_files {
             if f=="*" {
-                //panic!("asking * from a gascet is not supported");
+                panic!("asking for file * from a TIRP is not supported");
             } else if !valid_files_to_request.contains(f.as_str()) {
                 panic!("Unable to request file {}", f);
+            } else {
+                if f=="r1.fq" || f=="r2.fq" {
+                    get_fastq=true;
+                }
             }
         }
 
         //Get tabix id for the cell
         let tid = self.tabix_reader.tid(&cell_id).expect("Could not tabix ID for cell");
 
-        ///// Prepare r1 fastq
-        let path_outfile = out_directory.join(PathBuf::from("r1.fq"));
-        let file_out = File::create(&path_outfile).unwrap();
-        let bufwriter_out = BufWriter::new(file_out);
-        let mut fqwriter_r1 = FastqWriter::new(bufwriter_out);
+        if get_fastq {
+            ///// Prepare r1 fastq
+            let path_outfile = out_directory.join(PathBuf::from("r1.fq"));
+            let file_out = File::create(&path_outfile).unwrap();
+            let bufwriter_out = BufWriter::new(file_out);
+            let mut fqwriter_r1 = FastqWriter::new(bufwriter_out);
 
 
-        ///// Prepare r2 fastq
-        let path_outfile = out_directory.join(PathBuf::from("r2.fq"));
-        let file_out = File::create(&path_outfile).unwrap();
-        let bufwriter_out = BufWriter::new(file_out);
-        let mut fqwriter_r2 = FastqWriter::new(bufwriter_out);
-        
-        // Seek to the reads (all of them)
-        self.tabix_reader
-            .fetch(tid, 0, 100) //hopefully ok!
-            .expect("could not find reads");
+            ///// Prepare r2 fastq
+            let path_outfile = out_directory.join(PathBuf::from("r2.fq"));
+            let file_out = File::create(&path_outfile).unwrap();
+            let bufwriter_out = BufWriter::new(file_out);
+            let mut fqwriter_r2 = FastqWriter::new(bufwriter_out);
+            
+            // Seek to the reads (all of them)
+            self.tabix_reader
+                .fetch(tid, 0, 100) //hopefully ok!
+                .expect("could not find reads");
 
-        //For now, keep it simple and just provide r1.fq and r2.fq.
-        //Read through all records in region.
-        let mut num_read = 0;
-        for line in self.tabix_reader.records() {
+            //For now, keep it simple and just provide r1.fq and r2.fq.
+            //Read through all records in region.
+            let mut num_read = 0;
+            for line in self.tabix_reader.records() {
 
-            let line = line.expect("Failed to get one TIRP line");
-            let rp = parse_tirp_readpair(&line);
+                let line = line.expect("Failed to get one TIRP line");
+                let rp = parse_tirp_readpair(&line);
 
-            let rec_r1 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r1, rp.q1);
-            let rec_r2 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r2, rp.q2);
+                let rec_r1 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r1, rp.q1);
+                let rec_r2 = FastqRecord::new(Definition::new(format!("r{}", num_read), ""), rp.r2, rp.q2);
 
-            let _ = fqwriter_r1.write_record(&rec_r1);
-            let _ = fqwriter_r2.write_record(&rec_r2);
+                let _ = fqwriter_r1.write_record(&rec_r1);
+                let _ = fqwriter_r2.write_record(&rec_r2);
 
-            num_read = num_read + 1;                
+                num_read = num_read + 1;                
+            }
+            debug!("wrote {} reads to fastq", num_read);
         }
-        debug!("wrote {} reads to fastq", num_read);
+
+
+
+
 
         //Flushing is essential for buffered writer ---  will this flush all the way down? possible bug here!! if so, just use bufferedwriter directly
         //fqwriter_r1.flush();

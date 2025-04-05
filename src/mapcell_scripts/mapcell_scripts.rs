@@ -40,7 +40,8 @@ fn get_preset_scripts() -> HashMap<String,MapCellFunctionConstuctor> {
 
 
     //Add all Rust scripts
-    map.insert("minhash".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash::MapCellKmcMinHash{}))));
+    map.insert("minhash_kmc".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_kmc::MapCellKmcMinHashKMC{}))));
+    map.insert("minhash_fq".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_fq::MapCellKmcMinHashFQ{}))));
 
     map
 }

@@ -46,8 +46,11 @@ test_kraken:
 test_bam2fragments:
 	rm -Rf temp; cargo +nightly run bam2fragments -i testdata/sorted_aligned.1.bam -o testdata/fragments.1.tsv.gz
 
-test_minhash:
-	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s _minhash --show-script-output --keep-files 
+test_minhash_kmc:
+	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s _minhash_kmc --show-script-output --keep-files 
+
+test_minhash_fq:
+	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/minhash.0.zip -s _minhash_fq --show-script-output --keep-files 
 
 test_quast_custom:	
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s testdata/badscript.sh --show-script-output --keep-files 
