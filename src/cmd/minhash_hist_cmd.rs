@@ -28,8 +28,9 @@ pub struct MinhashHistCMD {
     //    TODO support multiple input files
 
     // Input bascet or gascet
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
-    pub path_in: PathBuf,
+//    #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]  //
+    pub path_in: Vec<PathBuf>,
 
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
