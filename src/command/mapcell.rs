@@ -144,6 +144,9 @@ impl MapCell {
             list_out_zipfiles.push(file_zip);
         }
 
+        //////////////////// TODO support streaming of input content as well
+
+
         //Go through all cells, then terminate all readers
         if let Some(list_cells) = list_cells {
             let num_total_cell = list_cells.len();

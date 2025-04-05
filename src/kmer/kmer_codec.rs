@@ -65,7 +65,7 @@ const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 //////////// KMER encoder, for a given KMER-size
 #[derive(Clone, Copy)]
 pub struct KMERCodec {
-    kmer_size: usize,
+    pub kmer_size: usize,
 }
 impl KMERCodec {
     pub const fn new(kmer_size: usize) -> Self {

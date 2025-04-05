@@ -33,6 +33,64 @@ pub struct KmerCounterParams {
 pub struct KmerCounter {}
 impl KmerCounter {
 
+    pub fn extract_fq(
+        path_read_r1: std::path::PathBuf,
+        path_read_r2: std::path::PathBuf,
+        kmer_size: usize,
+        features_nmin: usize
+    ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
+
+        let mut min_heap = BoundedMinHeap::with_capacity(features_nmin);
+
+        //Decide on KMER encoding
+        let codec = KMERCodec::new(kmer_size);
+
+        //Process both R1 and R2
+        KmerCounter::extract_fq_one(path_read_r1, &mut min_heap, &codec)?;
+        KmerCounter::extract_fq_one(path_read_r2, &mut min_heap, &codec)?;
+
+        Ok(min_heap)
+    }
+
+    pub fn extract_fq_one(
+        path_read: std::path::PathBuf,
+        min_heap: &mut BoundedMinHeap<KMERandCount>,
+        codec: &KMERCodec
+    ) -> anyhow::Result<()> {
+
+        //Set up regular reading of file
+        let file = File::open(&path_read).unwrap();
+        let reader = BufReader::new(file);
+
+        let mut readit = reader.lines();
+        loop {
+            if let Some(_line1) = readit.next() {
+                let seq= readit.next().unwrap()?;
+                let _line3= readit.next().unwrap()?;
+                let _line4= readit.next().unwrap()?;
+
+                println!("-{:?}-", seq); //think newline is here. must remove
+
+                for kmer in seq.as_bytes().windows(codec.kmer_size) {
+                    let encoded = unsafe {
+                        codec.encode(kmer, 1)
+                    };    
+                    let _ = min_heap.push(encoded);
+                }
+
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+
+
+
+
+
     pub fn extract_kmcdump_parallel(
         params: &KmerCounterParams,
         n_workers: usize
