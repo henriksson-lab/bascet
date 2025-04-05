@@ -69,8 +69,6 @@ impl KmerCounter {
                 let _line3= readit.next().unwrap()?;
                 let _line4= readit.next().unwrap()?;
 
-                println!("-{:?}-", seq); //think newline is here. must remove
-
                 for kmer in seq.as_bytes().windows(codec.kmer_size) {
                     let encoded = unsafe {
                         codec.encode(kmer, 1)
