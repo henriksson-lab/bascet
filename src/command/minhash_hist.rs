@@ -14,7 +14,7 @@ use crate::fileformat::shard::ShardCellDictionary;
 
 pub struct MinhashHistParams {
 
-    pub path_input: std::path::PathBuf,
+    pub path_input: Vec<std::path::PathBuf>,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
 
@@ -35,9 +35,6 @@ impl MinhashHist {
         params: &Arc<MinhashHistParams>
     ) -> anyhow::Result<()> {
 
-        let mut file_input = ZipBascetShardReader::new(&params.path_input).expect("Failed to open input file");
-
-
         //Need to create temp dir
         if params.path_tmp.exists() {
             //todo delete temp dir after run
@@ -46,61 +43,68 @@ impl MinhashHist {
             let _ = fs::create_dir(&params.path_tmp);  
         }
 
-        //TODO need to support multiple shard files as input!!
-        //or be prepared to always do one final merge if needed --
-
-        //Pick cells to work on
+        //Detect which cells to gather
         let list_cells = if let Some(p) = &params.include_cells {
             p.clone()
         } else {
-            file_input.get_cell_ids().expect("Failed to get content listing for input file")
+            let mut list_cells: Vec<String> = Vec::new();
+            for path_input in &params.path_input {
+                let mut file_input = ZipBascetShardReader::new(&path_input).expect("Failed to open input file");
+                let mut cells_for_file= file_input.get_cell_ids().expect("Failed to get content listing for input file");
+                list_cells.append(&mut cells_for_file);
+            }
+            list_cells            
         };
         println!("Preparing to process {} cells", list_cells.len());
 
-        //Allocate a big array for kmers
+        //Allocate a big array for all kmers; some guess at capacity
         let mut all_kmer: Vec<String> = Vec::with_capacity(list_cells.len()*500);
 
-        // Unzip all cell-specific min-hash specific databases
-        let mut cur_file_id = 0;
-        for cell_id in &list_cells {
+        //Process each input file
+        for path_input in &params.path_input {
+            // Unzip all cell-specific min-hash specific databases
+            let mut cur_file_id = 0;
+            for cell_id in &list_cells {
+                let mut file_input = ZipBascetShardReader::new(&path_input).expect("Failed to open input file");
 
-            if cur_file_id%1000 == 0 {
-                println!("Processing cell {}", cur_file_id);
-            }
-
-            //Check if a minhash is present for this cell, otherwise exclude it
-            let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
-            let f1="minhash.txt".to_string();
-            if list_files.contains(&f1) {
-
-                let path_f1 = params.path_tmp.join(format!("cell_{}.minhash.txt", cur_file_id).to_string());
-                file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
-
-                //Get the content and add to list
-                let file = File::open(&path_f1)?;
-                let lines = std::io::BufReader::new(file).lines();
-                for line in lines {
-                    let line = line.unwrap();
-                    
-                    //Only get the kmer; there can be more columns as well
-                    let mut splitter = line.split("\t");
-                    let kmer_string = splitter.next().expect("Could not parse KMER sequence from cell db");
-
-                    all_kmer.push(kmer_string.to_string());
+                if cur_file_id%1000 == 0 {
+                    println!("Processing cell {}", cur_file_id);
                 }
 
-                //Delete file when done with it
-                std::fs::remove_file(&path_f1)?;
-            } 
-            cur_file_id = cur_file_id + 1;
+                //Check if a minhash is present for this cell, otherwise exclude it.
+                //If processing multiple input files, there is a good chance the cell will not be there.
+                //Support streaming of sorts? subset to cells in this file?
+                let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
+                let f1="minhash.txt".to_string();
+                if list_files.contains(&f1) {
+
+                    let path_f1 = params.path_tmp.join(format!("cell_{}.minhash.txt", cur_file_id).to_string());
+                    file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
+
+                    //Get the content and add to list
+                    let file = File::open(&path_f1)?;
+                    let lines = std::io::BufReader::new(file).lines();
+                    for line in lines {
+                        let line = line.unwrap();
+                        
+                        //Only get the kmer; there can be more columns as well
+                        let mut splitter = line.split("\t");
+                        let kmer_string = splitter.next().expect("Could not parse KMER sequence from minhash.txt in Bascet");
+
+                        all_kmer.push(kmer_string.to_string());
+                    }
+
+                    //Delete file when done with it
+                    std::fs::remove_file(&path_f1)?;
+                } 
+                cur_file_id = cur_file_id + 1;
+            }
         }
         println!("Obtained minhashes from {} cells", list_cells.len());
 
         //Sort the KMERs; we assume that they are few enough that we can do it in memory for speed
         println!("Counting minhashes");
         let hist = count_element_function(all_kmer);
-
-        //TODO support for multiple input files
 
         //Write out histogram
         println!("Storing histogram");
