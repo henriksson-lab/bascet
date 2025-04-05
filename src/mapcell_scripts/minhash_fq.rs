@@ -60,7 +60,7 @@ impl MapCellFunction for MapCellKmcMinHashFQ {
     fn get_expect_files(&self) -> Vec<String> {
         let mut expect = Vec::new();
         expect.push("r1.fq".to_string()); 
-        expect.push("f2.fq".to_string()); 
+        expect.push("r2.fq".to_string()); 
         expect
     }
 
