@@ -13,7 +13,7 @@ use crate::fileformat::shard::ShardCellDictionary;
 use crate::utils::check_kmc_tools;
 
 
-pub struct FeaturiseParams {
+pub struct FeaturiseParamsKMC {
 
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
@@ -27,13 +27,13 @@ pub struct FeaturiseParams {
 
 
 
-pub struct Featurise {
+pub struct FeaturiseKMC {
 }
-impl Featurise {
+impl FeaturiseKMC {
 
 
     pub fn run(
-        params: &Arc<FeaturiseParams>
+        params: &Arc<FeaturiseParamsKMC>
     ) -> anyhow::Result<()> {
 
         check_kmc_tools().unwrap();

@@ -58,10 +58,9 @@ impl KmerCounter {
         codec: &KMERCodec
     ) -> anyhow::Result<()> {
 
-        //Set up regular reading of file
+        //Read FASTQ file
         let file = File::open(&path_read).unwrap();
         let reader = BufReader::new(file);
-
         let mut readit = reader.lines();
         loop {
             if let Some(_line1) = readit.next() {
@@ -232,15 +231,23 @@ impl KmerCounter {
         let mut bw=BufWriter::new(f);
 
 
-        //Write kmer & count. Hopefully this iterates from min to max
+        //Write just kmer sequences. First get them and presort them.
+        //By sorting them, compression will be more efficient, and merging them across cells will be much faster
         let codec = KMERCodec::new(kmer_size);
-
+        let mut list_string:Vec<String> = Vec::with_capacity(minhash.len());
         while let Some(h) = minhash.pop_min() {
             unsafe {
                 let kmer_string = codec.decode(&h);
-                writeln!(bw, "{}", &kmer_string).unwrap();    
+                list_string.push(kmer_string);
             }
         }
+
+        //Sort and write them out
+        list_string.sort();
+        for kmer_string in list_string {
+            writeln!(bw, "{}", &kmer_string).unwrap();    
+        }
+
     }
 
 

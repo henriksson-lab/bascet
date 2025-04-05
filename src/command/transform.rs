@@ -47,10 +47,8 @@ impl TransformFile {
     ) -> anyhow::Result<()> {
 
 
-        //Set up thread pools
-        let n_input = params.path_in.len();
+        //Set up writer thread pools
         let n_output = params.path_in.len();
-        let thread_pool_read = threadpool::ThreadPool::new(n_input); 
         let thread_pool_write = threadpool::ThreadPool::new(n_output); 
 
         /////////////////////////////// Should probably actually rather use normal threads the way we use them! 
@@ -62,24 +60,13 @@ impl TransformFile {
         let (tx_data, rx_data) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(n_output*2);
         let (tx_data, rx_data) = (Arc::new(tx_data), Arc::new(rx_data));
  
-        // Set up channel for telling readers which cells to select
-        let (tx_readcell, rx_readcell) = crossbeam::channel::bounded::<Option<CellID>>(n_input);
-        let (tx_readcell, rx_readcell) = (Arc::new(tx_readcell), Arc::new(rx_readcell));
-
 
         /////////////////////////////////////////////// Start writer threads
         for p in &params.path_out {
             //let writer = BascetFastqWriter::new(&p).expect("Could not open output fastq file");
 
             match crate::fileformat::detect_shard_format(&p) {
-                /* 
-                DetectedFileformat::TIRP => {
-                    let mut f = TirpBascetShardReader::new(&p).expect("Unable to open input TIRP file");
-                    Ok(Some(f.get_cell_ids().unwrap()))
-                },
-                */
                 DetectedFileformat::ZIP => {
-                    /////// Possible to create r1.fq etc inside zip
                     panic!("Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option")
                 },
                 DetectedFileformat::SingleFASTQ => {
@@ -108,83 +95,21 @@ impl TransformFile {
 
         }
 
+
+        //Depending on a list of cells is given or not, use random or streaming I/O.
+        //Streaming I/O supports more formats and is likely to be faster
         if let Some(_p) = &params.include_cells {
-            /////////////////////////////////////////////// Mode 1: only stream chosen cells
-
-            //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
-            let include_cells = get_list_of_all_cells(&params);
-
-            // Start reader threads -- for reading subset of cells
-            for p in &params.path_in {
-
-                let read_thread = match crate::fileformat::detect_shard_format(&p) {
-                    DetectedFileformat::TIRP => {
-                        create_random_reader_thread( 
-                            &p,
-                            &thread_pool_read,
-                            &rx_readcell,
-                            &tx_data,
-                            &Arc::new(TirpBascetShardReaderFactory::new())
-                        )
-                    },
-                    _ => { anyhow::bail!("Input file format for {} not supported for reading of specific cells", p.display()) }
-            
-                };
-                read_thread.expect("Failed to open input file");       
-            }
-
-            // Loop over all cells
-            // todo: if cell list provided, need to wait for a reader to have streamed them all
-            let mut num_proc_cell = 0;
-            let num_total_cell = include_cells.len();
-            for cell_id in include_cells {
-                tx_readcell.send(Some(cell_id)).unwrap();
-                num_proc_cell+=1;
-                if num_proc_cell%1000 == 0 {
-                    println!("Processed {} / {} cells", num_proc_cell, num_total_cell);
-                }
-            }
-            println!("Processed a final of {} cells", num_total_cell);
-
-            //Tell all readers to shut down
-            for _ in 0..n_input {
-                tx_readcell.send(None).unwrap();
-            }
-
-            //Wait for reader threads to be done
-            thread_pool_read.join();
+            create_random_readers(
+                &params,
+                &params.path_in, 
+                &tx_data
+            )?;
 
         } else {
-            /////////////////////////////////////////////// Mode 2: stream all cells
-
-            // Start reader threads -- for streaming all cells. No separate loop needed to tell them which cells to read out
-            for p in &params.path_in {
-
-                let read_thread = match crate::fileformat::detect_shard_format(&p) {
-                    DetectedFileformat::TIRP => {
-                        create_stream_reader_thread( 
-                            &p,
-                            &thread_pool_read,
-                            &tx_data,
-                            &Arc::new(TirpStreamingReadPairReaderFactory::new())
-                        )
-                    },
-                    DetectedFileformat::BAM => {
-                        create_stream_reader_thread( 
-                            &p,
-                            &thread_pool_read,
-                            &tx_data,
-                            &Arc::new(BAMStreamingReadPairReaderFactory::new())
-                        )
-                    },
-                    _ => { anyhow::bail!("Input file format for {} not supported for streaming all content", p.display()) }
-            
-                };
-                read_thread.expect("Failed to open input file");       
-            }
-
-            //Wait for all readers to finish
-            thread_pool_read.join();
+            create_stream_readers(
+                &params.path_in, 
+                &tx_data
+            )?;
         }
         
         //Tell all writers to shut down 
@@ -198,12 +123,119 @@ impl TransformFile {
 
         Ok(())
     }
-
-
-
     
 }
 
+
+
+
+
+pub fn create_random_readers(
+    params: &Arc<TransformFileParams>,
+    path_in: &Vec<std::path::PathBuf>,
+    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>
+) -> anyhow::Result<()>{
+
+
+    //Set up thread pools
+    let n_input = path_in.len();
+    let thread_pool_read = threadpool::ThreadPool::new(n_input); 
+
+    // Set up channel for telling readers which cells to select
+    let (tx_readcell, rx_readcell) = crossbeam::channel::bounded::<Option<CellID>>(n_input);
+    let (tx_readcell, rx_readcell) = (Arc::new(tx_readcell), Arc::new(rx_readcell));
+
+    //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
+    let include_cells = get_list_of_all_cells(&params);
+
+    // Start reader threads -- for reading subset of cells
+    for p in &params.path_in {
+
+        let read_thread = match crate::fileformat::detect_shard_format(&p) {
+            DetectedFileformat::TIRP => {
+                create_random_reader_thread( 
+                    &p,
+                    &thread_pool_read,
+                    &rx_readcell,
+                    &tx_data,
+                    &Arc::new(TirpBascetShardReaderFactory::new())
+                )
+            },
+            _ => { anyhow::bail!("Input file format for {} not supported for reading of specific cells", p.display()) }
+    
+        };
+        read_thread.expect("Failed to open input file");       
+    }
+
+    // Loop over all cells
+    // todo: if cell list provided, need to wait for a reader to have streamed them all
+    let mut num_proc_cell = 0;
+    let num_total_cell = include_cells.len();
+    for cell_id in include_cells {
+        tx_readcell.send(Some(cell_id)).unwrap();
+        num_proc_cell+=1;
+        if num_proc_cell%1000 == 0 {
+            println!("Processed {} / {} cells", num_proc_cell, num_total_cell);
+        }
+    }
+    println!("Processed a final of {} cells", num_total_cell);
+
+    //Tell all readers to shut down
+    for _ in 0..n_input {
+        tx_readcell.send(None).unwrap();
+    }
+
+    //Wait for reader threads to be done
+    thread_pool_read.join();
+
+    Ok(())
+
+}
+
+
+
+
+
+pub fn create_stream_readers(
+    path_in: &Vec<std::path::PathBuf>,
+    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>
+) -> anyhow::Result<()>{
+
+    //Set up thread pools
+    let n_input = path_in.len();
+    let thread_pool_read = threadpool::ThreadPool::new(n_input); 
+    
+    // Start reader threads -- for streaming all cells. No separate loop needed to tell them which cells to read out
+    for p in path_in {
+
+        let read_thread = match crate::fileformat::detect_shard_format(&p) {
+            DetectedFileformat::TIRP => {
+                create_stream_reader_thread( 
+                    &p,
+                    &thread_pool_read,
+                    &tx_data,
+                    &Arc::new(TirpStreamingReadPairReaderFactory::new())
+                )
+            },
+            DetectedFileformat::BAM => {
+                create_stream_reader_thread( 
+                    &p,
+                    &thread_pool_read,
+                    &tx_data,
+                    &Arc::new(BAMStreamingReadPairReaderFactory::new())
+                )
+            },
+            _ => { anyhow::bail!("Input file format for {} not supported for streaming all content", p.display()) }
+    
+        };
+        read_thread.expect("Failed to open input file");       
+    }
+
+    //Wait for all readers to finish
+    thread_pool_read.join();
+
+    Ok(())
+}
 
 
 
@@ -326,7 +358,7 @@ fn create_random_reader_thread<R>(
 
 //////////////// 
 /// Reader from any format that supports streaming
-fn create_stream_reader_thread<R>(
+pub fn create_stream_reader_thread<R>(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>,
