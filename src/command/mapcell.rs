@@ -70,7 +70,8 @@ impl MapCell {
             //todo delete temp dir after run
             bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            let _ = fs::create_dir(&params.path_tmp);  
+            fs::create_dir(&params.path_tmp).unwrap();  //or create_dir_all
+            println!("Using tempdir {}", params.path_tmp.display());
         }
 
         let params = Arc::new(params);
@@ -87,6 +88,7 @@ impl MapCell {
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
         for tidx in 0..params.threads_write {
             let file_zip = params.path_tmp.join(format!("out-{}.zip", tidx));
+            println!("Temporary zip file {}", file_zip.display());
             _ = create_writer(
                 &params,
                 &file_zip,
@@ -247,7 +249,7 @@ fn create_random_shard_reader<R>(
             info!("request to read {}",cell_id);
 
             let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
-            let _ = fs::create_dir(&path_cell_dir);  
+            fs::create_dir(&path_cell_dir).unwrap();
 
 
             let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
@@ -368,7 +370,7 @@ fn create_writer(
 
         //Open zip file for writing
         debug!("Writer started");
-        let zip_file = File::create(zip_file).unwrap();
+        let zip_file = File::create(zip_file).unwrap();  //////// called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
         let buf_writer = BufWriter::new(zip_file);
         let mut zip_writer = ZipWriter::new(buf_writer);
         

@@ -1,4 +1,4 @@
-use std::process::ExitCode;
+use std::{panic, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
@@ -33,6 +33,13 @@ fn main() -> ExitCode {
     
 
     env_logger::init();
+
+    //Ensure that a panic in a thread results in the entire program terminating
+    let orig_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        orig_hook(panic_info);
+        std::process::exit(1);
+    }));
 
     let result = match cli.command {
         Commands::Getraw(mut cmd) => cmd.try_execute(),
