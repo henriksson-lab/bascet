@@ -181,12 +181,12 @@ pub struct GetRaw {}
 
 impl GetRaw {
     pub fn getraw<'a>(
-        params_io: Arc<GetRawParams>,
+        params: Arc<GetRawParams>,
         barcodes: &mut (impl Chemistry+Clone+Send+'static)
     ) -> anyhow::Result<()> {
 
         info!("Running command: getraw");
-        println!("Will sort: {}", params_io.sort);
+        println!("Will sort: {}", params.sort);
 
         if false {
             crate::utils::check_bgzip().expect("bgzip not found");
@@ -195,24 +195,32 @@ impl GetRaw {
         }
 
 
-        //Make temp dir
-        _ = fs::create_dir(&params_io.path_tmp);
+        //Need to create temp dir
+        if params.path_tmp.exists() {
+            //todo delete temp dir after run
+            anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
+        } else {
+            println!("Using tempdir {}", params.path_tmp.display());
+            if fs::create_dir_all(&params.path_tmp).is_err() {
+                panic!("Failed to create temporary directory");
+            };  
+        }
 
         // Dispatch barcodes (presets + barcodes -> Vec<Barcode>)
         //let mut barcodes = AtrandiChemistry::new();
 
         // Open fastq files
-        let mut forward_file = open_fastq(&params_io.path_forward).unwrap();
-        let mut reverse_file = open_fastq(&params_io.path_reverse).unwrap();
+        let mut forward_file = open_fastq(&params.path_forward).unwrap();
+        let mut reverse_file = open_fastq(&params.path_reverse).unwrap();
 
         // Find probable barcode starts and ends
         barcodes.prepare(&mut forward_file, &mut reverse_file).expect("Failed to detect barcode setup from reads");
-        let mut forward_file = open_fastq(&params_io.path_forward).unwrap(); // reopen the file to read from beginning
-        let mut reverse_file = open_fastq(&params_io.path_reverse).unwrap(); // reopen the file to read from beginning
+        let mut forward_file = open_fastq(&params.path_forward).unwrap(); // reopen the file to read from beginning
+        let mut reverse_file = open_fastq(&params.path_reverse).unwrap(); // reopen the file to read from beginning
 
         // Start writer threads
-        let path_temp_complete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_complete.bed"));
-        let path_temp_incomplete_sorted = params_io.path_tmp.join(PathBuf::from("tmp_sorted_incomplete.bed"));
+        let path_temp_complete_sorted = params.path_tmp.join(PathBuf::from("tmp_sorted_complete.bed"));
+        let path_temp_incomplete_sorted = params.path_tmp.join(PathBuf::from("tmp_sorted_incomplete.bed"));
 
         let list_hist_complete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
         let list_hist_incomplete = Arc::new(Mutex::new(Vec::<shard::BarcodeHistogram>::new()));
@@ -223,22 +231,22 @@ impl GetRaw {
             &thread_pool_write, 
             &list_hist_complete,
             true,
-            &params_io.path_tmp).
+            &params.path_tmp).
             expect("Failed to get writer threads");
         let tx_writer_incomplete = create_writer_thread(
             &path_temp_incomplete_sorted, 
             &thread_pool_write,
             &list_hist_incomplete,
              false,
-             &params_io.path_tmp).
+             &params.path_tmp).
              expect("Failed to get writer threads");
 
         // Start worker threads.
         // Limit how many chunks can be in the air at the same time, as writers must be able to keep up with the reader
-        let thread_pool_work = threadpool::ThreadPool::new(params_io.threads_work);
+        let thread_pool_work = threadpool::ThreadPool::new(params.threads_work);
         let (tx, rx) = crossbeam::channel::bounded::<Option<ListRecordPair>>(100);   
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
-        for tidx in 0..params_io.threads_work {
+        for tidx in 0..params.threads_work {
             let rx = Arc::clone(&rx);
             let tx_writer_complete=Arc::clone(&tx_writer_complete);
             let tx_writer_incomplete=Arc::clone(&tx_writer_incomplete);
@@ -246,7 +254,7 @@ impl GetRaw {
             println!("Starting worker thread {}",tidx);
 
             let mut barcodes = barcodes.clone(); //This is needed to keep mutating the pattern in this structure
-            let libname= params_io.libname.clone();
+            let libname= params.libname.clone();
 
             thread_pool_work.execute(move || {
 
@@ -290,7 +298,7 @@ impl GetRaw {
         );
 
         // Send termination signals to workers, then wait for them to complete
-        for _ in 0..params_io.threads_work {
+        for _ in 0..params.threads_work {
             let _ = tx.send(None);
         }
         thread_pool_work.join();
@@ -306,9 +314,9 @@ impl GetRaw {
         list_inputfiles.push(path_temp_complete_sorted.clone());
         catsort_files(
             &list_inputfiles, 
-            &params_io.path_output_complete, 
-            params_io.sort,
-            params_io.threads_work
+            &params.path_output_complete, 
+            params.sort,
+            params.threads_work
         );
 
         //// Concatenate also the incomplete reads. Sorting never needed
@@ -316,30 +324,30 @@ impl GetRaw {
         list_inputfiles.push(path_temp_incomplete_sorted.clone());
         catsort_files(
             &list_inputfiles, 
-            &params_io.path_output_incomplete, 
+            &params.path_output_incomplete, 
             false,
-            params_io.threads_work
+            params.threads_work
         );
 
         //// Index the final file with tabix  
         println!("Indexing final output file");
-        tirp::index_tirp(&params_io.path_output_complete).expect("Failed to index file");
+        tirp::index_tirp(&params.path_output_complete).expect("Failed to index file");
 
         //// Store histogram
         println!("Storing histogram for final output file");
         debug!("Collecting histograms");
         sum_and_store_histogram(
             &list_hist_complete,
-            &tirp::get_histogram_path_for_tirp(&params_io.path_output_complete)
+            &tirp::get_histogram_path_for_tirp(&params.path_output_complete)
         );
         sum_and_store_histogram(
             &list_hist_incomplete,
-            &tirp::get_histogram_path_for_tirp(&params_io.path_output_incomplete)
+            &tirp::get_histogram_path_for_tirp(&params.path_output_incomplete)
         );
 
         //// Remove temp files
         debug!("Removing temp files");
-        _ = fs::remove_dir_all(&params_io.path_tmp);
+        _ = fs::remove_dir_all(&params.path_tmp);
 
         info!("done!");
 

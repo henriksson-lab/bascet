@@ -73,7 +73,7 @@ impl MapCell {
             println!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
-            };  //or create_dir_all
+            };  
         }
 
         let params = Arc::new(params);
