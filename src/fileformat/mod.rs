@@ -43,8 +43,12 @@ pub use count_matrix::SparseCountMatrix;
 
 //Readers
 pub use zip::ZipBascetShardReader;
+
 pub use tirp::TirpBascetShardReader;
+pub use tirp::TirpStreamingShardReaderFactory;
+
 pub use single_fastq::BascetSingleFastqWriter;
+
 pub use list_fastq::ListFastqReader;
 
 

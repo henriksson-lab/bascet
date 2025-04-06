@@ -166,18 +166,11 @@ pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to 
         fail_if_missing: bool,
         out_directory: &PathBuf
     ) -> anyhow::Result<bool>;
-/* 
+
     fn get_files_for_cell(
-        &mut self, 
-        cell_id: &CellID
+        &mut self
     ) -> anyhow::Result<Vec<String>>;
 
-    fn extract_as(
-        &mut self, 
-        file_name: &String,
-        path_outfile: &PathBuf
-    ) -> anyhow::Result<()>;
-*/
 }
 
 

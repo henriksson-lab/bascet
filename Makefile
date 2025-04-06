@@ -50,7 +50,8 @@ test_minhash_kmc:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s _minhash_kmc --show-script-output --keep-files 
 
 test_minhash_fq:
-	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/minhash.0.zip -s _minhash_fq --show-script-output --keep-files 
+	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/minhash.0.zip -s _minhash_fq # --show-script-output --keep-files 
+	#rm -Rf temp; cargo +nightly run mapcell -i miseqdata/filtered.1.tirp.gz -o miseqdata/minhash.1.zip -s _minhash_fq # --show-script-output --keep-files 
 
 test_query_fq:
 	rm -Rf temp; cargo +nightly run query-fq -i miseqdata/filtered.1.tirp.gz   -o miseqdata/counts.h5ad -f miseqdata/chosen_features.txt
