@@ -10,9 +10,8 @@ deps:
 bascet:
 	sudo singularity build bascet.sif bascet.def
 
-#bascet:
-#	sudo singularity build all.sif with_bascet.def
-
+upload:
+	cp bascet.sif /corgi/public_http/public/bascet/
 
 #get:
 #	singularity pull --name bascet_container.sif shub://todo/bascet-singularity
@@ -20,7 +19,8 @@ bascet:
 example_run:
 	singularity exec bascet.sif metaquast contigs.fa
 
-
+hpc2n:
+	scp bascet.sif hpc2n:~/mystore/
 
 
 test:
