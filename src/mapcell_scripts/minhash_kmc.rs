@@ -10,9 +10,9 @@ use crate::kmer::kmc_counter::KmerCounter;
 
 
 #[derive(Clone, Debug)] 
-pub struct MapCellKmcMinHashKMC {
+pub struct MapCellMinHashKMC {
 }
-impl MapCellFunction for MapCellKmcMinHashKMC {
+impl MapCellFunction for MapCellMinHashKMC {
 
     fn invoke(
         &self,

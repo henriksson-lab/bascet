@@ -70,8 +70,10 @@ impl MapCell {
             //todo delete temp dir after run
             bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            fs::create_dir(&params.path_tmp).unwrap();  //or create_dir_all
             println!("Using tempdir {}", params.path_tmp.display());
+            if fs::create_dir_all(&params.path_tmp).is_err() {
+                panic!("Failed to create temporary directory");
+            };  //or create_dir_all
         }
 
         let params = Arc::new(params);
