@@ -3,8 +3,9 @@ From: deps.sif
 
 
 %environment
-    export LC_ALL=C
-    . /opt/software/conda/bin/activate /opt/software/conda_env
+    #export LC_ALL=C
+    #. /opt/software/conda/bin/activate /opt/software/conda_env  #in deps. need do twice??
+    . "$HOME/.cargo/env"
 
 %files
     ../src /src/bascet/src
@@ -18,6 +19,7 @@ From: deps.sif
 	#https://github.com/henriksson-lab/bascet
 
     ### build bascet    
+    . "$HOME/.cargo/env"
     cd /src/bascet
     cargo +nightly build
 
@@ -25,7 +27,7 @@ From: deps.sif
 
     cp /src/bascet/target/debug/robert /bin/bascet
 
-    rm -Rf /src/bascet
+    #rm -Rf /src/bascet
 
 %runscript
     exec "$@"
