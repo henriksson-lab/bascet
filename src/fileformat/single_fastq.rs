@@ -26,6 +26,8 @@ impl ConstructFromPath<BascetSingleFastqWriter> for BascetSingleFastqWriterFacto
 }
 
 
+
+
 pub struct BascetSingleFastqWriter {
     pub writer: BGZFMultiThreadWriter<File>
 }

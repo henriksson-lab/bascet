@@ -10,8 +10,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use anyhow::bail;
 
+
 use super::ConstructFromPath;
-use super::ShardFileExtractor;
+use super::ShardRandomFileExtractor;
+use super::ShardStreamingFileExtractor;
 use super::ReadPair;
 use super::CellID;
 use super::ReadPairReader;
@@ -24,6 +26,9 @@ use rust_htslib::tbx::Read;
 use noodles::fastq::Writer as FastqWriter;
 use noodles::fastq::record::Definition;
 use noodles::fastq::Record as FastqRecord;
+
+
+type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
 #[derive(Debug,Clone)]
@@ -117,7 +122,7 @@ impl ShardCellDictionary for TirpBascetShardReader {
 
 
 
-impl ShardFileExtractor for TirpBascetShardReader {
+impl ShardRandomFileExtractor for TirpBascetShardReader {
 
 
     fn get_files_for_cell(&mut self, _cell_id: &CellID) -> anyhow::Result<Vec<String>>{
@@ -384,7 +389,7 @@ pub fn get_tbi_path_for_tirp(p: &PathBuf) -> PathBuf {
 
 
 ///////////////////
-/////////////////// Below is code for streaming of data from TIRPs
+/////////////////// Below is code for streaming of data from TIRPs -- readpair system
 ///////////////////
 
 
@@ -427,15 +432,9 @@ impl TirpStreamingReadPairReader {
             })
     
         }
-
-
     }
 }
 
-
-
-
-type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
 
@@ -529,3 +528,120 @@ impl ConstructFromPath<TirpStreamingReadPairReader> for TirpStreamingReadPairRea
     }
 }
 
+
+
+
+
+
+///////////////////
+/////////////////// Below is code for streaming of data from TIRPs -- shard system ........... can be put on top of any streaming pair reader; generalize later
+///////////////////
+
+
+pub struct TirpStreamingShardExtractor {
+    reader: TirpStreamingReadPairReader,
+    last_read: Option<ListReadWithBarcode>
+}
+impl TirpStreamingShardExtractor{
+    pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingShardExtractor> {
+        Ok(TirpStreamingShardExtractor {
+            reader: TirpStreamingReadPairReader::new(fname)?,
+            last_read: None
+        })
+    }
+}
+
+impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make it for any readpairstreamer. TODO generalize this
+
+    fn next_cell (
+        &mut self, 
+    ) -> anyhow::Result<Option<CellID>> {
+
+        //Get new set of reads
+        let dat = self.reader.get_reads_for_next_cell()?;
+
+        //Check if we still have cells
+        let cellid = if let Some(d) = &dat {
+            Ok(Some(d.0.clone()))
+        } else {
+            Ok(None)
+        };
+        
+        self.last_read=dat;
+        cellid
+    }
+
+
+    fn extract_to_outdir (
+        &mut self, 
+        needed_files: &Vec<String>,
+        fail_if_missing: bool,
+        out_directory: &PathBuf
+    ) -> anyhow::Result<bool> {
+
+        for f in needed_files {
+            if f=="r1.fq" {
+                if let Some(rp) = &self.last_read {
+                    for one_read in rp.1.iter() {
+                        
+                        let p = out_directory.join("r1.fq");
+                        let f=File::create(p).expect("Could not open r1.fq file for writing");
+                        let mut writer=BufWriter::new(f);
+                        
+                        writer.write_all(b">x")?;
+                        //writer.write_all(head.as_slice())?;  //no name of read needed
+                        writer.write_all(b"\n")?;
+                        writer.write_all(one_read.r1.as_slice())?;
+                        writer.write_all(b"\n+\n")?;
+                        writer.write_all(&one_read.q1.as_slice())?;
+                        writer.write_all(b"\n")?;
+                    }
+                }
+            } else if f=="r2.fq" {
+                if let Some(rp) = &self.last_read {
+                    for one_read in rp.1.iter() {
+                        
+                        let p = out_directory.join("r2.fq");
+                        let f=File::create(p).expect("Could not open r2.fq file for writing");
+                        let mut writer=BufWriter::new(f);
+                        
+                        writer.write_all(b">x")?;
+                        //writer.write_all(head.as_slice())?;  //no name of read needed
+                        writer.write_all(b"\n")?;
+                        writer.write_all(one_read.r2.as_slice())?;
+                        writer.write_all(b"\n+\n")?;
+                        writer.write_all(&one_read.q2.as_slice())?;
+                        writer.write_all(b"\n")?;
+                    }
+                }
+            } else {
+                if fail_if_missing {
+                    return Ok(false)
+                }
+            }
+        }
+        Ok(true)
+    }
+
+}
+
+
+
+
+
+
+
+
+#[derive(Debug,Clone)]
+pub struct TirpStreamingShardReaderFactory {
+}
+impl TirpStreamingShardReaderFactory {
+    pub fn new() -> TirpStreamingShardReaderFactory {
+        TirpStreamingShardReaderFactory {}
+    } 
+}
+impl ConstructFromPath<TirpStreamingShardExtractor> for TirpStreamingShardReaderFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<TirpStreamingShardExtractor> {
+        TirpStreamingShardExtractor::new(fname)
+    }
+}
