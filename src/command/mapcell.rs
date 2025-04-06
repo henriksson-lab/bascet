@@ -17,7 +17,7 @@ use crate::fileformat::zip::ZipBascetShardReaderFactory;
 use crate::utils;
 
 use crate::fileformat;
-use crate::fileformat::ShardFileExtractor;
+use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ConstructFromPath;
 use crate::fileformat::detect_shard_format;
 use crate::fileformat::DetectedFileformat;
@@ -113,7 +113,7 @@ impl MapCell {
         } else if input_shard_type == DetectedFileformat::ZIP {
             println!("Detected input as bascet");
             for _tidx in 0..params.threads_read {
-                _ = create_shard_reader(//)::<ZipBascetShardReader>(
+                _ = create_shard_reader(
                     &params,
                     &thread_pool,
                     &Arc::clone(&params.script),
@@ -189,7 +189,7 @@ impl MapCell {
 
 
 
-//////////////////////////////////// Reader for shard files (bascet and gascet)
+//////////////////////////////////// Reader for random I/O shard files
 fn create_shard_reader<R>(
     params_io: &Arc<MapCellParams>,
     thread_pool: &threadpool::ThreadPool,
@@ -198,7 +198,7 @@ fn create_shard_reader<R>(
     tx: &Arc<Sender<Option<String>>>,
     thread_group: &Arc<ThreadGroup>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
-) -> anyhow::Result<()> where R:ShardFileExtractor {
+) -> anyhow::Result<()> where R:ShardRandomFileExtractor {
 
     let rx = Arc::clone(rx);
     let tx = Arc::clone(tx);
@@ -251,7 +251,7 @@ fn create_shard_reader<R>(
 
 
 
-///////////////////////////// Worker thread that integrates the writing  ........................ TODO file writer trait, instead of ZIP directly?
+///////////////////////////// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
 fn create_writer(
     params_io: &Arc<MapCellParams>,
     zip_file: &PathBuf,
@@ -271,7 +271,7 @@ fn create_writer(
         let buf_writer = BufWriter::new(zip_file);
         let mut zip_writer = ZipWriter::new(buf_writer);
         
-        //Handle all extracted cells
+        //Handle each cell, for which files have now been extracted
         while let Ok(Some(cell_id)) = rx.recv() {
 
             println!("Processing extracted {}",cell_id);
@@ -311,7 +311,7 @@ fn create_writer(
                 let _ = std::io::copy(&mut script_output.as_bytes(), &mut buf_writer).unwrap();   
             }
 
-            //Check what files we got out
+            //Check what files we got out from executing the script
             let list_output_files = recurse_files(&path_output_dir).expect("failed to list output files");
 
             //////// Add all files in output to the zip file

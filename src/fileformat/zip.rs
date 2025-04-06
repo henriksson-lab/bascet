@@ -8,7 +8,7 @@ use log::debug;
 use anyhow::bail;
 
 
-use super::shard::ShardFileExtractor;
+use super::shard::ShardRandomFileExtractor;
 use super::shard::CellID;
 use super::ConstructFromPath;
 use super::ShardCellDictionary;
@@ -95,7 +95,7 @@ impl ShardCellDictionary for ZipBascetShardReader {
 
 }
 
-impl ShardFileExtractor for ZipBascetShardReader {
+impl ShardRandomFileExtractor for ZipBascetShardReader {
 
     fn get_files_for_cell(
         &mut self, 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 
 
-use super::ShardFileExtractor;
+use super::ShardRandomFileExtractor;
 use super::TirpBascetShardReader;
 use super::ZipBascetShardReader;
 //use super::ListFastqReader;
@@ -48,7 +48,7 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
 pub fn get_suitable_file_extractor(
     p: &PathBuf, 
     format: &DetectedFileformat
-) -> Box::<dyn ShardFileExtractor> {
+) -> Box::<dyn ShardRandomFileExtractor> {
     match format {
         DetectedFileformat::TIRP => 
             Box::new(TirpBascetShardReader::new(&p).expect("Failed to create TIRP reader")),

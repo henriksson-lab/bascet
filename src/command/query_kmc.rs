@@ -7,7 +7,7 @@ use std::io::BufReader;
 use std::collections::HashMap;
 
 
-use crate::fileformat::ShardFileExtractor;
+use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::SparseCountMatrix;

@@ -57,9 +57,7 @@ impl fmt::Display for ReadPair {
 
 
 pub trait ConstructFromPath<R> where Self: Clone { ///+Sized added later
-
     fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<R> where Self: Sized;
-
 }
 
 /* 
@@ -79,8 +77,6 @@ type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 pub trait ReadPairWriter {
 
-    //fn new(path: &PathBuf) -> anyhow::Result<Self> where Self: Sized;
-    
     fn write_reads_for_cell(
         &mut self, 
         cell_id:&CellID, 
@@ -123,11 +119,11 @@ pub trait ShardCellDictionary {
 }
 
 ///////////////////////////////
-/////////////////////////////// Common shard reader trait 
+/////////////////////////////// Common shard reader trait  -- random I/O
 ///////////////////////////////
 
 
-pub trait ShardFileExtractor  { 
+pub trait ShardRandomFileExtractor  { 
 
     fn extract_to_outdir (
         &mut self, 
@@ -150,6 +146,41 @@ pub trait ShardFileExtractor  {
     ) -> anyhow::Result<()>;
 
 }
+
+
+///////////////////////////////
+/////////////////////////////// Common shard reader trait   -- streaming I/O
+///////////////////////////////
+
+
+pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to above
+
+    fn next_cell (
+        &mut self, 
+    ) -> anyhow::Result<Option<CellID>>;
+
+
+    fn extract_to_outdir (
+        &mut self, 
+        needed_files: &Vec<String>,
+        fail_if_missing: bool,
+        out_directory: &PathBuf
+    ) -> anyhow::Result<bool>;
+/* 
+    fn get_files_for_cell(
+        &mut self, 
+        cell_id: &CellID
+    ) -> anyhow::Result<Vec<String>>;
+
+    fn extract_as(
+        &mut self, 
+        file_name: &String,
+        path_outfile: &PathBuf
+    ) -> anyhow::Result<()>;
+*/
+}
+
+
 
 
 
@@ -219,7 +250,7 @@ impl ShardCellDictionary for DynShardReader {
 }
 
 
-impl ShardFileExtractor for DynShardReader {
+impl ShardRandomFileExtractor for DynShardReader {
 
     fn extract_to_outdir (
         &mut self, 

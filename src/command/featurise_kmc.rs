@@ -6,7 +6,7 @@ use std::io::Write;
 use itertools::Itertools;
 
 use crate::fileformat::CellID;
-use crate::fileformat::ShardFileExtractor;
+use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
 
