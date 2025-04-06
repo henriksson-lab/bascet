@@ -623,6 +623,19 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
         Ok(true)
     }
 
+
+
+    fn get_files_for_cell(
+        &mut self
+    ) -> anyhow::Result<Vec<String>> {
+        let mut list_files: Vec<String> = Vec::new();
+        if let Some(_rp) = &self.last_read {
+            list_files.push("r1.fq".to_string());
+            list_files.push("r2.fq".to_string());
+        }         
+        Ok(list_files)
+    }
+
 }
 
 

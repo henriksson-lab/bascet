@@ -14,10 +14,12 @@ use zip::ZipWriter;
 
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::zip::ZipBascetShardReaderFactory;
+use crate::fileformat::TirpStreamingShardReaderFactory;
 use crate::utils;
 
 use crate::fileformat;
 use crate::fileformat::ShardRandomFileExtractor;
+use crate::fileformat::ShardStreamingFileExtractor;
 use crate::fileformat::ConstructFromPath;
 use crate::fileformat::detect_shard_format;
 use crate::fileformat::DetectedFileformat;
@@ -60,8 +62,6 @@ impl MapCell {
         params: MapCellParams
     ) -> anyhow::Result<()> {
 
-        //let mut params = params.clone();
-
         //Create thread pool. note that worker threads here refer to script threads (script manages it)
         let thread_pool = threadpool::ThreadPool::new(params.threads_read + params.threads_write);
 
@@ -76,58 +76,12 @@ impl MapCell {
         let params = Arc::new(params);
 
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
-        println!("Input file: {:?}",params.path_in);
-        let list_cells = fileformat::try_get_cells_in_file(&params.path_in).expect("Could not get list of cells from input file");
-        let queue_limit = params.threads_write*2;
+        let read_queue_size = params.threads_write*2;
 
 
-
-
-        //Queue of cells to be extracted
-        let (tx_cell_to_read, rx_cell_to_read) = crossbeam::channel::bounded::<Option<String>>(queue_limit);
-        let (tx_cell_to_read, rx_cell_to_read) = (Arc::new(tx_cell_to_read), Arc::new(rx_cell_to_read));
-    
         //Queue of cells that have been extracted
-        let (tx_loaded_cell, rx_loaded_cell) = crossbeam::channel::bounded::<Option<String>>(queue_limit);
+        let (tx_loaded_cell, rx_loaded_cell) = crossbeam::channel::bounded::<Option<String>>(read_queue_size);
         let (tx_loaded_cell, rx_loaded_cell) = (Arc::new(tx_loaded_cell), Arc::new(rx_loaded_cell));
-
-
-        //Create all readers. Detect what we need from the file extension
-        // note from julian: readers alter the file? at least make separate readers. start with just 1
-        let reader_thread_group = ThreadGroup::new(params.threads_read);
-
-        let input_shard_type = detect_shard_format(&params.path_in);
-        if input_shard_type == DetectedFileformat::TIRP {
-            println!("Detected input as TIRP");
-            for _tidx in 0..params.threads_read {
-                _ = create_shard_reader(
-                    &params,
-                    &thread_pool,
-                    &Arc::clone(&params.script),
-                    &rx_cell_to_read,
-                    &tx_loaded_cell,
-                    &reader_thread_group,
-                    &Arc::new(TirpBascetShardReaderFactory::new())
-                );
-            }
-        } else if input_shard_type == DetectedFileformat::ZIP {
-            println!("Detected input as bascet");
-            for _tidx in 0..params.threads_read {
-                _ = create_shard_reader(
-                    &params,
-                    &thread_pool,
-                    &Arc::clone(&params.script),
-                    &rx_cell_to_read,
-                    &tx_loaded_cell,
-                    &reader_thread_group,
-                    &Arc::new(ZipBascetShardReaderFactory::new())
-                );
-            }
-        } else {
-            bail!("Cannot tell the type of the input format");
-        }
-
-
 
         //Create all writers
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
@@ -144,28 +98,103 @@ impl MapCell {
             list_out_zipfiles.push(file_zip);
         }
 
-        //////////////////// TODO support streaming of input content as well
+        //Figure out how to read the data
+        let input_shard_type = detect_shard_format(&params.path_in);
 
+        println!("Input file: {:?}",params.path_in);
 
-        //Go through all cells, then terminate all readers
-        if let Some(list_cells) = list_cells {
-            let num_total_cell = list_cells.len();
-            for cell_id in list_cells {
-                _ = tx_cell_to_read.send(Some(cell_id.clone()));
+        let perform_streaming=input_shard_type == DetectedFileformat::TIRP;
+
+        if perform_streaming {
+            ////////////////////////////////// Streaming reading of input
+            println!("Reading will be streamed");
+
+            //Create all streaming readers. Detect what we need from the file extension.
+            //The readers will start immediately
+            let reader_thread_group = ThreadGroup::new(params.threads_read);
+            if input_shard_type == DetectedFileformat::TIRP {
+                println!("Detected input as TIRP");
+                for _tidx in 0..params.threads_read {
+                    _ = create_streaming_shard_reader(
+                        &params,
+                        &thread_pool,
+                        &Arc::clone(&params.script),
+                        &tx_loaded_cell,
+                        &reader_thread_group,
+                        &Arc::new(TirpStreamingShardReaderFactory::new())
+                    );
+                }
+            } else {
+                bail!("Cannot tell the type of the input format");
             }
-            println!("Processed a final of {} cells", num_total_cell);
+
+            //Wait for all reader threads to complete
+            reader_thread_group.join();
+
+
         } else {
-            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
+            ////////////////////////////////// Random reading of input
+            println!("Reading will be random (this can be slow depending on file format)");
+
+            //Queue of cells to be extracted
+            let (tx_cell_to_read, rx_cell_to_read) = crossbeam::channel::unbounded::<Option<String>>();
+            let (tx_cell_to_read, rx_cell_to_read) = (Arc::new(tx_cell_to_read), Arc::new(rx_cell_to_read));        
+
+            //Create all random readers. Detect what we need from the file extension
+            let reader_thread_group = ThreadGroup::new(params.threads_read);
+            let input_shard_type = detect_shard_format(&params.path_in);
+            if input_shard_type == DetectedFileformat::TIRP {
+                println!("Detected input as TIRP");
+                for _tidx in 0..params.threads_read {
+                    _ = create_random_shard_reader(
+                        &params,
+                        &thread_pool,
+                        &Arc::clone(&params.script),
+                        &rx_cell_to_read,
+                        &tx_loaded_cell,
+                        &reader_thread_group,
+                        &Arc::new(TirpBascetShardReaderFactory::new())
+                    );
+                }
+            } else if input_shard_type == DetectedFileformat::ZIP {
+                println!("Detected input as ZIP");
+                // note from julian: readers alter the ZIP file? at least make separate readers. start with just 1
+                for _tidx in 0..params.threads_read {
+                    _ = create_random_shard_reader(
+                        &params,
+                        &thread_pool,
+                        &Arc::clone(&params.script),
+                        &rx_cell_to_read,
+                        &tx_loaded_cell,
+                        &reader_thread_group,
+                        &Arc::new(ZipBascetShardReaderFactory::new())
+                    );
+                }
+            } else {
+                bail!("Cannot tell the type of the input format");
+            }
+
+            //Tell readers to go through all cells, then terminate all readers
+            let list_cells = fileformat::try_get_cells_in_file(&params.path_in).expect("Could not get list of cells from input file");
+            if let Some(list_cells) = list_cells {
+                let num_total_cell = list_cells.len();
+                for cell_id in list_cells {
+                    _ = tx_cell_to_read.send(Some(cell_id.clone()));
+                }
+                println!("Processed a final of {} cells", num_total_cell);
+            } else {
+                panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
+            }
+            for i in 0..params.threads_read {
+                debug!("Sending termination signal to reader {i}");
+                _ = tx_cell_to_read.send(None).unwrap();
+            }
+
+            //Wait for all reader threads to complete
+            reader_thread_group.join();
+
         }
 
-
-        for i in 0..params.threads_read {
-            debug!("Sending termination signal to reader {i}");
-            _ = tx_cell_to_read.send(None).unwrap();
-        }
-
-        //Wait for all reader threads to complete. Readers tell writers to finish
-        reader_thread_group.join();
 
         //Terminate all writers. Then wait for all threads to finish
         for i in 0..params.threads_write {
@@ -190,7 +219,7 @@ impl MapCell {
 
 
 //////////////////////////////////// Reader for random I/O shard files
-fn create_shard_reader<R>(
+fn create_random_shard_reader<R>(
     params_io: &Arc<MapCellParams>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
@@ -251,6 +280,78 @@ fn create_shard_reader<R>(
 
 
 
+
+
+
+//////////////////////////////////// Reader for streaming I/O shard files
+fn create_streaming_shard_reader<R>(
+    params_io: &Arc<MapCellParams>,
+    thread_pool: &threadpool::ThreadPool,
+    mapcell_script: &Arc<Box<dyn MapCellFunction>>,
+    tx: &Arc<Sender<Option<String>>>,
+    thread_group: &Arc<ThreadGroup>,
+    constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
+) -> anyhow::Result<()> where R:ShardStreamingFileExtractor {
+
+    let tx = Arc::clone(tx);
+
+    let params_io = Arc::clone(&params_io);
+    let mapcell_script = Arc::clone(mapcell_script);
+
+    let thread_group = Arc::clone(thread_group);
+    let constructor = Arc::clone(constructor);
+
+    thread_pool.execute(move || {
+        debug!("Worker started");
+
+        let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
+
+        let mut num_cells_processed = 0;
+        while let Ok(Some(cell_id)) = shard.next_cell() {
+            if num_cells_processed%10 ==0 {
+                println!("processed {} cells, now at {}",num_cells_processed, cell_id);
+            }
+
+            let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
+            let _ = fs::create_dir(&path_cell_dir);  
+
+
+            let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
+            let success = shard.extract_to_outdir(
+                &mapcell_script.get_expect_files(),
+                fail_if_missing,
+                &path_cell_dir
+            ).expect("error during extraction");
+
+            if success {
+                //Inform writer that the cell is ready for processing
+                _ = tx.send(Some(cell_id));
+            } else {
+                let missing_file_mode = mapcell_script.get_missing_file_mode();
+
+                if missing_file_mode==MissingFileMode::Fail {
+                    panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
+                } 
+                if missing_file_mode==MissingFileMode::Ignore {
+                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell());
+                } 
+            }
+            num_cells_processed+=1;
+        }
+        thread_group.is_done();
+    });
+    Ok(())
+}
+
+
+
+
+
+
+
+
+
+
 ///////////////////////////// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
 fn create_writer(
     params_io: &Arc<MapCellParams>,
@@ -274,7 +375,7 @@ fn create_writer(
         //Handle each cell, for which files have now been extracted
         while let Ok(Some(cell_id)) = rx.recv() {
 
-            println!("Processing extracted {}",cell_id);
+            //println!("Processing extracted {}",cell_id);
 
             //////// Run the script on the input, creating files in output
             let path_input_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
