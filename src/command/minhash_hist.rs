@@ -74,33 +74,36 @@ impl MinhashHist {
                     println!("Processing cell {}", cur_file_id);
                 }
 
-                //Check if a minhash is present for this cell, otherwise exclude it.
-                //If processing multiple input files, there is a good chance the cell will not be there.
-                //Support streaming of sorts? subset to cells in this file?
-                let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
-                let f1="minhash.txt".to_string();
-                if list_files.contains(&f1) {
+                //Need to check if cell is present, as if multiple input files, the cell might not be in this particular file
+                if file_input.has_cell(&cell_id) {
+                    //Check if a minhash is present for this cell, otherwise exclude it.
+                    //If processing multiple input files, there is a good chance the cell will not be there.
+                    //Support streaming of sorts? subset to cells in this file?
+                    let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell"); //////////// TODO may fail if we scan all files in each input file
+                    let f1="minhash.txt".to_string();
+                    if list_files.contains(&f1) {
 
-                    let path_f1 = params.path_tmp.join(format!("cell_{}.minhash.txt", cur_file_id).to_string());
-                    file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
+                        let path_f1 = params.path_tmp.join(format!("cell_{}.minhash.txt", cur_file_id).to_string());
+                        file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
 
-                    //Get the content and add to list
-                    let file = File::open(&path_f1)?;
-                    let lines = std::io::BufReader::new(file).lines();
-                    for line in lines {
-                        let line = line.unwrap();
-                        
-                        //Only get the kmer; there can be more columns as well
-                        let mut splitter = line.split("\t");
-                        let kmer_string = splitter.next().expect("Could not parse KMER sequence from minhash.txt in Bascet");
+                        //Get the content and add to list
+                        let file = File::open(&path_f1)?;
+                        let lines = std::io::BufReader::new(file).lines();
+                        for line in lines {
+                            let line = line.unwrap();
+                            
+                            //Only get the kmer; there can be more columns as well
+                            let mut splitter = line.split("\t");
+                            let kmer_string = splitter.next().expect("Could not parse KMER sequence from minhash.txt in Bascet");
 
-                        all_kmer.push(kmer_string.to_string());
-                    }
+                            all_kmer.push(kmer_string.to_string());
+                        }
 
-                    //Delete file when done with it
-                    std::fs::remove_file(&path_f1)?;
-                } 
-                cur_file_id = cur_file_id + 1;
+                        //Delete file when done with it
+                        std::fs::remove_file(&path_f1)?;
+                    } 
+                    cur_file_id = cur_file_id + 1;
+                }
             }
         }
         println!("Obtained minhashes from {} cells", list_cells.len());
