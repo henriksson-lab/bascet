@@ -127,7 +127,7 @@ impl MapCellFunction for MapCellFunctionShellScript {
             .arg("--num-threads").arg(num_threads.to_string())
             .arg("--input-dir").arg(&input_dir)
             .arg("--output-dir").arg(&output_dir)
-            .output()?;
+            .output().expect(format!("Could not spawn process in mapcell script {:?}", &path_script).as_str());
         let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
         let run_output_string = run_output_string.trim();
 

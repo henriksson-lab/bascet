@@ -393,7 +393,7 @@ fn create_writer(
                 &path_input_dir,
                 &path_output_dir,
             params_io.threads_work
-            ).expect("Failed to invoke script");
+            ).expect("Failed to invoke script"); ////////////////// thread '<unnamed>' panicked at src/command/mapcell.rs:396:15:  Failed to invoke script: No such file or directory (os error 2)
             debug!("Writer for '{}', done running script", cell_id);
 
             if !success {
