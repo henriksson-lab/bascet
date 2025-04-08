@@ -28,6 +28,11 @@ test_raw_rna:
 		--libname mylib
 
 
+test_pipe_sam_add_tags:
+	head -n 100 miseqdata/some_sam.sam | cargo +nightly run pipe-sam-add-tags
+
+
+
 #########
 #########
 #########

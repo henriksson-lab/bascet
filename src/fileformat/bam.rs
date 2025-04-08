@@ -55,17 +55,30 @@ impl BAMStreamingReadPairReader {
 }
 
 
+
+pub fn readname_to_cell_umi(
+    read_name: &[u8]
+) -> (&[u8], &[u8]) {
+    let mut splitter = read_name.split(|b| *b == b':'); 
+    let cell_id = splitter.next().expect("Could not parse cellID from read name");
+    let umi = splitter.next().expect("Could not parse UMI from read name");
+    (cell_id, umi)
+}
+
+
 ////////////////////////
 /// Parse one BAM entry to a readpair
 fn read_to_readpair(
     record: &BamRecord
 ) -> (Vec<u8>, ReadPair) {
 
+    /* 
     let read_name = record.qname();
     let mut splitter = read_name.split(|b| *b == b':'); 
     let cell_id = splitter.next().expect("Could not parse cellID from read name");
-
     let umi = splitter.next().expect("Could not parse UMI from read name");
+*/
+    let (cell_id, umi) = readname_to_cell_umi(record.qname());
 
     let rp = ReadPair {
         r1: record.seq().as_bytes(),
