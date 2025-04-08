@@ -5,6 +5,7 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::io::BufRead;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::fileformat::CellID;
 use crate::fileformat::ShardRandomFileExtractor;
@@ -63,15 +64,30 @@ impl MinhashHist {
         //Allocate a big array for all kmers; some guess at capacity
         let mut all_kmer: Vec<String> = Vec::with_capacity(list_cells.len()*500);
 
+        //Keep cells as a hash for quick lookup
+        let mut hash_list_cells:HashSet<String> = HashSet::new();
+        for cellid in list_cells {
+            hash_list_cells.insert(cellid.clone());
+        }
+
         //Process each input file
+        let mut cur_file_id = 0;
         for path_input in &params.path_input {
+            let mut file_input = ZipBascetShardReader::new(&path_input).
+                expect("Failed to open input file");
+
+            //In this particular file, which cells to extract?
+            let cells_for_file= file_input.get_cell_ids().
+                expect("Failed to get content listing for input file");
+            let cells_for_file = cells_for_file.iter().
+                filter(|&s| hash_list_cells.contains(s)).
+                collect::<Vec<&String>>();
+
             // Unzip all cell-specific min-hash specific databases
-            let mut cur_file_id = 0;
-            for cell_id in &list_cells {
-                let mut file_input = ZipBascetShardReader::new(&path_input).expect("Failed to open input file");
+            for cell_id in cells_for_file {
 
                 if cur_file_id%1000 == 0 {
-                    println!("Processing cell {}", cur_file_id);
+                    println!("Processing file {}, cell {}", path_input.display(), cur_file_id);
                 }
 
                 //Need to check if cell is present, as if multiple input files, the cell might not be in this particular file
@@ -106,7 +122,7 @@ impl MinhashHist {
                 }
             }
         }
-        println!("Obtained minhashes from {} cells", list_cells.len());
+        println!("Obtained minhashes from {} cells", cur_file_id);
 
         //Sort the KMERs; we assume that they are few enough that we can do it in memory for speed
         println!("Counting minhashes");
