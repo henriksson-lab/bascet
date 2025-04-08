@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io;
 use std::io::Read;
+use std::io::Write;
 use std::fmt;
 use rand::Rng;
 
@@ -17,6 +18,7 @@ use super::CompressionMode;
 use super::parse_missing_file_mode;
 use super::parse_compression_mode;
 
+use std::{thread, time};
 
 
 
@@ -54,7 +56,12 @@ impl MapCellFunctionShellScript {
         process::Command::new("chmod")
             .arg("u+x")
             .arg(&path_script_s)
-            .output().expect("Failed to get output from chmod");
+            .output()
+            .expect("Failed to get output from chmod");
+
+        //Ugly hack: To avoid running the script before ready. another way is to keep trying to run it until OK
+        thread::sleep(time::Duration::from_millis(1000));
+        
 
         //Return script
         println!("Extracted preset script to {:?} and set chmod", &path_script_s);
@@ -127,9 +134,15 @@ impl MapCellFunction for MapCellFunctionShellScript {
             .arg("--num-threads").arg(num_threads.to_string())
             .arg("--input-dir").arg(&input_dir)
             .arg("--output-dir").arg(&output_dir)
-            .output().expect(format!("Could not spawn process in mapcell script {:?}", &path_script).as_str());
+            .output()
+            .expect(format!("Could not spawn process in mapcell script {:?}", &path_script).as_str());
         let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
         let run_output_string = run_output_string.trim();
+
+        //Store output in a logfile
+        let path_script_out = output_dir.join("_mapcell.log");
+        let mut f = File::create(path_script_out).expect("Unable to create file _mapcell.log");
+        f.write_all(run_output_string.as_bytes()).expect("Unable to write data");
 
         //Check if script ran fine
         let last_line = run_output_string.split("\n").last(); //can this ever fail?
