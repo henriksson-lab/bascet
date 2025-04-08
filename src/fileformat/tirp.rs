@@ -588,7 +588,7 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
                         let f=File::create(p).expect("Could not open r1.fq file for writing");
                         let mut writer=BufWriter::new(f);
                         
-                        writer.write_all(b">x")?;
+                        writer.write_all(b"@x")?;
                         //writer.write_all(head.as_slice())?;  //no name of read needed
                         writer.write_all(b"\n")?;
                         writer.write_all(one_read.r1.as_slice())?;
@@ -605,7 +605,7 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
                         let f=File::create(p).expect("Could not open r2.fq file for writing");
                         let mut writer=BufWriter::new(f);
                         
-                        writer.write_all(b">x")?;
+                        writer.write_all(b"@x")?;
                         //writer.write_all(head.as_slice())?;  //no name of read needed
                         writer.write_all(b"\n")?;
                         writer.write_all(one_read.r2.as_slice())?;

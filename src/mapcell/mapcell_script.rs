@@ -138,11 +138,7 @@ impl MapCellFunction for MapCellFunctionShellScript {
             .expect(format!("Could not spawn process in mapcell script {:?}", &path_script).as_str());
         let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
         let run_output_string = run_output_string.trim();
-
-        //Store output in a logfile
-        let path_script_out = output_dir.join("_mapcell.log");
-        let mut f = File::create(path_script_out).expect("Unable to create file _mapcell.log");
-        f.write_all(run_output_string.as_bytes()).expect("Unable to write data");
+        let run_stderr_string = String::from_utf8(run_output.stderr).expect("utf8 error");
 
         //Check if script ran fine
         let last_line = run_output_string.split("\n").last(); //can this ever fail?
@@ -150,7 +146,7 @@ impl MapCellFunction for MapCellFunctionShellScript {
 
         //debug!("last scrip init line {:?}", last_line);
 
-        Ok((success, String::from(run_output_string)))
+        Ok((success, format!("{}\n{}", run_output_string, run_stderr_string)))
     }  
 
 
