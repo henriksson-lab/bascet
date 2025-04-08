@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io;
 use std::io::Read;
-use std::io::Write;
 use std::fmt;
 use rand::Rng;
 
@@ -144,6 +143,8 @@ impl MapCellFunction for MapCellFunctionShellScript {
         let last_line = run_output_string.split("\n").last(); //can this ever fail?
         let success = if let Some(last_line) = last_line { last_line=="MAPCELL-OK" } else { false };
 
+        println!("last line");
+        println!("{:?}",last_line);
         //debug!("last scrip init line {:?}", last_line);
 
         Ok((success, format!("{}\n{}", run_output_string, run_stderr_string)))
