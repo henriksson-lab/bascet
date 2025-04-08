@@ -85,9 +85,8 @@ echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-skesa --reads ${INPUT_DIR}/r1.fq,${INPUT_DIR}/r2.fq --cores ${USE_THREADS}  > contigs.fa
-#cp ${INPUT_DIR}/r1.fq r1.fq  #testing
-#cp ${INPUT_DIR}/r2.fq r2.fq  #testing
+skesa --reads ${INPUT_DIR}/r1.fq,${INPUT_DIR}/r2.fq --cores ${USE_THREADS}  \
+  --min_contig 50 --min_count 1 --fraction 0.01 > contigs.fa
 
 #TODO what if input dir got whitespace? does it happen?
 
