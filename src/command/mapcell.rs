@@ -410,7 +410,7 @@ fn create_writer(
             //Store script output as log file
             debug!("Writer for '{}', adding log file to zip", cell_id);
             {
-                let path_logfile = path_output_dir.join("mapcell.log");
+                let path_logfile = path_output_dir.join("_mapcell.log");
                 let log_file = File::create(&path_logfile).unwrap();
                 let mut buf_writer = BufWriter::new(log_file);
                 let _ = std::io::copy(&mut script_output.as_bytes(), &mut buf_writer).unwrap();   
