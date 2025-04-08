@@ -15,7 +15,7 @@ for i in "$@"; do
   exit 0
   ;;
   --expect-files)
-  echo "*" # Tell which files should extracted from the input file. Can enable * to give them all. or "foo.txt,bar.txt"
+  echo "contigs.fa" # Tell which files should extracted from the input file. Can enable * to give them all. or "foo.txt,bar.txt"
   exit 0
   ;;
   --missing-file-mode)
@@ -69,13 +69,13 @@ done
 ######################## Execute script below #####################
 
 if [ -z ${INPUT_DIR} ]; then 
-echo "input directory is unset"; 
-exit 1;
+  echo "input directory is unset"; 
+  exit 1;
 fi
 
 if [ -z ${OUTPUT_DIR} ]; then 
-echo "output directory is unset"; 
-exit 1;
+  echo "output directory is unset"; 
+  exit 1;
 fi
 
 echo "Running QUAST"

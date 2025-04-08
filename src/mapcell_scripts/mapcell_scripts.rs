@@ -30,14 +30,20 @@ fn get_preset_scripts() -> HashMap<String,MapCellFunctionConstuctor> {
     let mut map: HashMap<String, MapCellFunctionConstuctor> = HashMap::new(); 
 
     //Add all BASH scripts
-//    map.insert("testing".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(PRESET_SCRIPT_TEST.to_vec()));
+    map.insert("abricate".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("abricate.sh").to_vec()));
+    map.insert("amrfinder".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("amrfinder.sh").to_vec()));
+    map.insert("ariba".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("ariba.sh").to_vec()));
+    map.insert("bakta".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("bakta.sh").to_vec()));
+    map.insert("checkm".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("checkm.sh").to_vec()));
+    map.insert("fastqc".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("fastqc.sh").to_vec()));
+    map.insert("gecco".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("gecco.sh").to_vec()));
+    map.insert("gtdbtk".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("gtdbtk.sh").to_vec()));
+    map.insert("kmc_process_reads".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("kmc_process_reads.sh").to_vec()));
+    map.insert("kmc_process_contigs".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("kmc_process_contigs.sh").to_vec()));
+    map.insert("prokka".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("prokka.sh").to_vec()));
     map.insert("quast".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("quast.sh").to_vec()));
     map.insert("skesa".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("skesa.sh").to_vec()));
     map.insert("spades".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("spades.sh").to_vec()));
-
-    map.insert("kmc_process_reads".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("kmc_process_reads.sh").to_vec()));
-    map.insert("kmc_process_contigs".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("kmc_process_contigs.sh").to_vec()));
-
 
     //Add all Rust scripts
     map.insert("minhash_kmc".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_kmc::MapCellMinHashKMC{}))));

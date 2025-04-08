@@ -69,13 +69,13 @@ done
 ######################## Execute script below #####################
 
 if [ -z ${INPUT_DIR} ]; then 
-echo "input directory is unset"; 
-exit 1;
+  echo "input directory is unset"; 
+  exit 1;
 fi
 
 if [ -z ${OUTPUT_DIR} ]; then 
-echo "output directory is unset"; 
-exit 1;
+  echo "output directory is unset"; 
+  exit 1;
 fi
 
 echo "Running SKESA"
