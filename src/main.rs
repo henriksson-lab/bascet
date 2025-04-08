@@ -26,6 +26,7 @@ enum Commands {
     Bam2fragments(cmd::Bam2FragmentsCMD),
     Kraken(cmd::KrakenCMD),
     Countchrom(cmd::CountChromCMD),
+    PipeSamAddTags(cmd::PipeSamAddTagsCMD)
 }
 
 fn main() -> ExitCode {
@@ -54,6 +55,7 @@ fn main() -> ExitCode {
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
         Commands::Kraken(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
+        Commands::PipeSamAddTags(mut cmd) => cmd.try_execute()
     };
 
     if let Err(e) = result {
