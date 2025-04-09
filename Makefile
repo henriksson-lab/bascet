@@ -5,7 +5,7 @@ test:
 	cargo +nightly test
 
 fix:
-	cargo +nightly fix --lib -p robert --allow-dirty
+	cargo +nightly fix --lib -p bascet --allow-dirty
 
 install_rust:
 	rustup toolchain install nightly
