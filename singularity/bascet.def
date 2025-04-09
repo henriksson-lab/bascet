@@ -3,8 +3,6 @@ From: deps.sif
 
 
 %environment
-    #export LC_ALL=C
-    #. /opt/software/conda/bin/activate /opt/software/conda_env  #in deps. need do twice??
     . "$HOME/.cargo/env"
 
 %files
@@ -14,20 +12,16 @@ From: deps.sif
 %post
     SINGULARITY_SHELL=/bin/bash
 
-    ### get bascet
-    #git clone git@github.com:henriksson-lab/bascet.git
-	#https://github.com/henriksson-lab/bascet
-
-    ### build bascet    
+    ### build bascet
     . "$HOME/.cargo/env"
     cd /src/bascet
     cargo +nightly build
 
-    ### link bascet to where it should be    
+    ### link bascet to where it should be
+    cp /src/bascet/target/debug/bascet /bin/bascet
 
-    cp /src/bascet/target/debug/robert /bin/bascet
-
-    #rm -Rf /src/bascet
+    ### cleanup
+    rm -Rf /src/bascet
 
 %runscript
     exec "$@"
