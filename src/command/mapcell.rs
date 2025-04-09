@@ -314,7 +314,7 @@ fn create_streaming_shard_reader<R>(
         let mut num_cells_processed = 0;
         while let Ok(Some(cell_id)) = shard.next_cell() {
 
-            println!("Starting extraction of {}", num_cells_processed);
+            //println!("Starting extraction of {}", num_cells_processed);
 
             if num_cells_processed%10 ==0 {
                 println!("processed {} cells, now at {}",num_cells_processed, cell_id);
@@ -330,7 +330,7 @@ fn create_streaming_shard_reader<R>(
                 &path_cell_dir
             ).expect("error during extraction");
 
-            println!("Done extraction of {}", num_cells_processed);
+            //println!("Done extraction of {}", num_cells_processed);
 
             if success {
                 //Inform writer that the cell is ready for processing
@@ -384,7 +384,7 @@ fn create_writer(
         //Handle each cell, for which files have now been extracted
         while let Ok(Some(cell_id)) = rx.recv() {
 
-            println!("Writer starting mapcell for extracted {}",cell_id);
+            //println!("Writer starting mapcell for extracted {}",cell_id);
 
             //////// Run the script on the input, creating files in output
             let path_input_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
@@ -459,7 +459,7 @@ fn create_writer(
                 let _ = fs::remove_dir_all(&path_output_dir);
             }
 
-            println!("Writer done mapcell for extracted {}",cell_id);
+            //println!("Writer done mapcell for extracted {}",cell_id);
 
         }
         debug!("Writer got stop signal, now finishing zip");
