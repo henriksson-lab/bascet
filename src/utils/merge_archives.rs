@@ -71,3 +71,9 @@ where
 
     Ok(())
 }
+
+
+// https://linux.die.net/man/1/zipmerge
+// usage: zipmerge [-DhIikSsV] target-zip zip...
+
+// have we lost any threads on the way?
