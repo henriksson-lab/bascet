@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
+use anyhow::Result;
+use clap::Args;
 
 use anyhow::bail;
 use crossbeam::channel::Receiver;
@@ -27,6 +29,116 @@ use crate::fileformat::DetectedFileformat;
 use crate::mapcell::CompressionMode;
 use crate::mapcell::MissingFileMode;
 use crate::mapcell::MapCellFunction;
+use crate::{command::mapcell, mapcell::MapCellFunctionShellScript};
+use super::determine_thread_counts_2;
+
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+
+
+#[derive(Args)]
+pub struct MapCellCMD {
+    // Input bascet, TIRP etc
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
+    pub path_in: Option<PathBuf>,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
+    pub path_tmp: PathBuf,
+
+    // Output bascet
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
+    pub path_out: Option<PathBuf>,
+
+
+    //The script to run
+    #[arg(short = 's', value_parser = clap::value_parser!(PathBuf))]
+    pub path_script: PathBuf,
+
+    //If we should show script output in terminal
+    #[arg(long = "show-script-output")]
+    pub show_script_output: bool,
+
+
+    //Show a list of preset scripts available
+    #[arg(long = "show-presets")]
+    pub show_presets: bool,
+
+    //Keep files extracted for the script. For debugging purposes
+    #[arg(long = "keep-files")]
+    pub keep_files: bool,
+
+    //Thread settings
+    #[arg(short = '@', value_parser = clap::value_parser!(usize))]
+    num_threads_total: Option<usize>,
+    #[arg(long, value_parser = clap::value_parser!(usize))]
+    num_threads_read: Option<usize>,
+    #[arg(long, value_parser = clap::value_parser!(usize))]
+    num_threads_write: Option<usize>,
+    #[arg(long, value_parser = clap::value_parser!(usize))]
+    num_threads_mapcell: Option<usize>,
+}
+
+
+
+impl MapCellCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        //Normally we give one thread to each mapcell script
+        let num_threads_mapcell = self.num_threads_mapcell.unwrap_or(1);
+
+        //Note: we always have two extra writer threads, because reading is expected to be the slow part. not an ideal implementation!
+        let (num_threads_read, num_threads_write) = determine_thread_counts_2(
+            self.num_threads_total,
+            self.num_threads_read,
+            self.num_threads_write,
+        )?;
+        println!("Using threads, readers: {}, writers: {}, mapcell: {}",num_threads_read, num_threads_write, num_threads_mapcell);
+
+        if self.show_presets {
+            let names = crate::mapcell_scripts::get_preset_script_names();
+            println!("Available preset scripts: {:?}", names);
+            return Ok(());
+        }
+
+        //Figure out what script to use.
+        //Check if using a new script or a preset. user scripts start with _
+        let preset_name = self.path_script.to_str().expect("argument conversion error");
+        let script: Arc<Box<dyn MapCellFunction>> = if preset_name.starts_with("_") {
+            println!("Using preset script: {:?}", self.path_script);
+            let preset_name=&preset_name[1..]; //Remove the initial _  ; or capital letter? 
+            crate::mapcell_scripts::get_preset_script(preset_name).expect("Unable to load preset script")            
+        } else {
+            println!("Using user provided script: {:?}", self.path_script);
+            let s = MapCellFunctionShellScript::new_from_file(&self.path_script).expect("Failed to load user defined script");
+            Arc::new(Box::new(s))
+        };
+
+        println!("Script info: {:?}", script);
+
+        let params = mapcell::MapCellParams {
+            
+            path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
+            path_tmp: self.path_tmp.clone(),
+            path_out: self.path_out.as_ref().expect("Output file was not provided").clone(),
+            script: script,
+
+            threads_read: num_threads_read,
+            threads_write: num_threads_write,
+            threads_mapcell: num_threads_mapcell,
+
+            show_script_output: self.show_script_output,
+            keep_files: self.keep_files            
+        };
+
+        let _ = mapcell::MapCell::run(params).expect("mapcell failed");
+
+        log::info!("Mapcell has finished!");
+        Ok(())
+    }
+}
+
+
 
 
 #[derive(Clone)]
@@ -39,15 +151,12 @@ pub struct MapCellParams {
 
     //How many threads are reading the input zip file?
     pub threads_read: usize,
-
     //How many runners are there? each runner writes it's own zip file output, to be merged later
     pub threads_write: usize,
-
     //How many threads should the invoked script use? Passed on as a parameter. Not all commands will support this
-    pub threads_work: usize,
+    pub threads_mapcell: usize,
 
-    pub show_script_output: bool,
-    
+    pub show_script_output: bool,    
     pub keep_files: bool
 }
 
@@ -397,7 +506,7 @@ fn create_writer(
             let (success, script_output) = mapcell_script.invoke(
                 &path_input_dir,
                 &path_output_dir,
-            params_io.threads_work
+            params_io.threads_mapcell
             ).expect("Failed to invoke script"); 
             debug!("Writer for '{}', done running script", cell_id);
 

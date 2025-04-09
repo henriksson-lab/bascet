@@ -1,5 +1,5 @@
-// This file is part of babbles which is released under the MIT license.
-// See file LICENSE or go to https://github.com/HadrienG/babbles for full license details.
+// This software is released under the MIT license.
+// See file LICENSE for full license details.
 use log::{debug, info};
 use seq_io::fastq::OwnedRecord;
 use std::fs;
@@ -12,16 +12,153 @@ use std::sync::Mutex;
 use crossbeam::channel::Sender;
 use crossbeam::channel::Receiver;
 use std::io::{BufWriter, Write, Read};
+use anyhow::Result;
+use anyhow::bail;
+use clap::Args;
 
 use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
 
 use crate::barcode::Chemistry;
-
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
+use super::determine_thread_counts_1;
+use crate::barcode::PetriseqChemistry;
+use crate::barcode::AtrandiWGSChemistry;
+use crate::barcode::AtrandiRNAseqChemistry;
+use crate::barcode::GeneralCombinatorialBarcode;
+
+
+type ListReadWithBarcode = Arc<Vec<(ReadPair,CellID)>>;
+type ListRecordPair = Arc<Vec<RecordPair>>;
+
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
+
+
+#[derive(Args)]
+pub struct GetRawCMD {
+    // FASTQ for r1
+    #[arg(long = "r1", value_parser)]
+    pub path_forward: PathBuf,
+
+    // FASTQ for r2
+    #[arg(long = "r2", value_parser)]
+    pub path_reverse: PathBuf,
+
+    // Output filename for complete reads
+    #[arg(short = 'o', long="out-complete", value_parser)]
+    pub path_output_complete: PathBuf,
+
+    // Output filename for incomplete reads
+    #[arg(long = "out-incomplete", value_parser)]
+    pub path_output_incomplete: PathBuf, 
+
+    // Optional: chemistry with barcodes to use
+    #[arg(long = "chemistry", value_parser, default_value = DEFAULT_CHEMISTRY)]
+    pub chemistry: String, 
+
+    // Optional: file with barcodes to use
+    #[arg(long = "barcodes", value_parser)]
+    pub path_barcodes: Option<PathBuf>, 
+
+    // Optional: Prepend library name to barcodes
+    #[arg(long = "libname", value_parser)]
+    pub libname: Option<String>,
+
+    // Temporary file directory. TODO - use system temp directory as default? TEMP variable?
+    #[arg(short = 't', value_parser, default_value = DEFAULT_PATH_TEMP)]
+    pub path_tmp: PathBuf,
+
+    //Whether to sort or not
+    #[arg(long = "no-sort")]
+    pub no_sort: bool,  
+
+    // Optional: How many threads to use. Need better way of specifying? TODO
+    #[arg(long, value_parser = clap::value_parser!(usize))]
+    threads_work: Option<usize>,
+
+    //Thread settings
+    #[arg(short = '@', value_parser = clap::value_parser!(usize))]
+    num_threads_total: Option<usize>,
+
+}
+impl GetRawCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        crate::fileformat::verify_input_fq_file(&self.path_forward)?;
+        crate::fileformat::verify_input_fq_file(&self.path_reverse)?;
+
+        //Note: we always have two extra writer threads, because reading is expected to be the slow part. not an ideal implementation!
+        let num_threads_reader = determine_thread_counts_1(
+            self.num_threads_total,
+        )?;
+        println!("Using threads: {}",num_threads_reader);
+
+        //Set default libname
+        let libname = if let Some(libname)=&self.libname {
+            libname.clone()
+        } else {
+            "".to_string()
+        };
+
+
+        let params_io = GetRawParams {
+            path_tmp: self.path_tmp.clone(),            
+            path_forward: self.path_forward.clone(),            
+            path_reverse: self.path_reverse.clone(),            
+            path_output_complete: self.path_output_complete.clone(),            
+            path_output_incomplete: self.path_output_incomplete.clone(),            
+            libname: libname,
+            //barcode_file: self.barcode_file.clone(),            
+            sort: !self.no_sort,            
+            threads_reader: num_threads_reader,
+        };
+
+        // Start the debarcoding for specified chemistry
+        if self.chemistry == "atrandi_wgs" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut AtrandiWGSChemistry::new()
+            );
+        } else if self.chemistry == "atrandi_rnaseq" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut AtrandiRNAseqChemistry::new()
+            );
+        } else if self.chemistry == "petriseq" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut PetriseqChemistry::new()
+            );
+        } else if self.chemistry == "combinatorial" {
+            if let Some(path_barcodes) = &self.path_barcodes {
+                let _ = GetRaw::getraw(
+                    Arc::new(params_io),
+                    &mut GeneralCombinatorialBarcode::new(&path_barcodes)
+                );
+            } else {
+                bail!("Barcode file not specified");
+            }
+        } else if self.chemistry == "10x" {
+            panic!("not implemented");
+        } else if self.chemistry == "parsebio" {
+            panic!("not implemented");
+
+        } else {
+            bail!("Unidentified chemistry");
+        }
+
+        log::info!("GetRaw has finished succesfully");
+        Ok(())
+    }
+}
+
+
+
 
 
 
@@ -38,10 +175,9 @@ pub struct GetRawParams {
 
     pub sort: bool,
 
-    pub threads_work: usize,   
+    pub threads_reader: usize,   
 
 }
-
 
 
 
@@ -50,11 +186,6 @@ struct RecordPair {
     reverse_record: OwnedRecord,
     forward_record: OwnedRecord
 }
-
-type ListReadWithBarcode = Arc<Vec<(ReadPair,CellID)>>;
-type ListRecordPair = Arc<Vec<RecordPair>>;
-
-
 
 
 
@@ -243,10 +374,10 @@ impl GetRaw {
 
         // Start worker threads.
         // Limit how many chunks can be in the air at the same time, as writers must be able to keep up with the reader
-        let thread_pool_work = threadpool::ThreadPool::new(params.threads_work);
+        let thread_pool_work = threadpool::ThreadPool::new(params.threads_reader);
         let (tx, rx) = crossbeam::channel::bounded::<Option<ListRecordPair>>(100);   
         let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
-        for tidx in 0..params.threads_work {
+        for tidx in 0..params.threads_reader {
             let rx = Arc::clone(&rx);
             let tx_writer_complete=Arc::clone(&tx_writer_complete);
             let tx_writer_incomplete=Arc::clone(&tx_writer_incomplete);
@@ -298,7 +429,7 @@ impl GetRaw {
         );
 
         // Send termination signals to workers, then wait for them to complete
-        for _ in 0..params.threads_work {
+        for _ in 0..params.threads_reader {
             let _ = tx.send(None);
         }
         thread_pool_work.join();
@@ -316,7 +447,7 @@ impl GetRaw {
             &list_inputfiles, 
             &params.path_output_complete, 
             params.sort,
-            params.threads_work
+            params.threads_reader
         );
 
         //// Concatenate also the incomplete reads. Sorting never needed
@@ -326,7 +457,7 @@ impl GetRaw {
             &list_inputfiles, 
             &params.path_output_incomplete, 
             false,
-            params.threads_work
+            params.threads_reader
         );
 
         //// Index the final file with tabix  

@@ -2,10 +2,59 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-
+use anyhow::Result;
+use clap::Args;
 use bgzip::Compression;
 use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
+
+use super::determine_thread_counts_1;
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+pub const DEFAULT_THREADS: usize = 5;
+
+
+#[derive(Args)]
+pub struct Bam2FragmentsCMD {
+    #[arg(short = 'i', value_parser)]  /// BAM or CRAM file; sorted, indexed? unless cell_id's given, no need for sorting
+    pub path_in: PathBuf,
+
+    #[arg(short = 'o', value_parser)]  /// Full path to file to store in
+    pub path_out: PathBuf,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)] //Not used, but kept here for consistency with other commands
+    pub path_tmp: PathBuf,
+
+ 
+    //Thread settings
+    #[arg(short = '@', value_parser = clap::value_parser!(usize))]
+    num_threads_total: Option<usize>,
+       
+}
+impl Bam2FragmentsCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+
+        let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
+        println!("Using threads {}",num_threads_total);
+
+        //TODO Can check that input file is sorted via header
+
+        Bam2Fragments::run(& Bam2FragmentsParams {
+            path_input: self.path_in.clone(),
+            path_tmp: self.path_tmp.clone(),
+            path_output: self.path_out.clone(),
+            num_threads: num_threads_total,
+
+        }).unwrap();
+
+        log::info!("Bam2Fragments has finished succesfully");
+        Ok(())
+    }
+}
+
+
 
 
 pub struct Bam2FragmentsParams {

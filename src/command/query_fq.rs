@@ -5,6 +5,9 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::collections::BTreeMap;
 use crossbeam::channel::Receiver;
+use anyhow::Result;
+use clap::Args;
+use std::path::PathBuf;
 
 use crate::fileformat::SparseCountMatrix;
 use crate::fileformat::{CellID, ReadPair};
@@ -13,15 +16,55 @@ type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
 
-pub struct QueryFqParams {
 
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+
+
+
+#[derive(Args)]
+pub struct QueryFqCMD {
+    // Input bascet or gascet
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
+    pub path_in: PathBuf,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
+    pub path_tmp: PathBuf,
+
+    // Output bascet
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
+    pub path_out: PathBuf,
+
+    // Input feature file (text file, one kmer per line)
+    #[arg(short = 'f', value_parser = clap::value_parser!(PathBuf))]  
+    pub path_features: PathBuf,
+}
+impl QueryFqCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        let params = QueryFqParams {
+            path_tmp: self.path_tmp.clone(),            
+            path_input: self.path_in.clone(),            
+            path_output: self.path_out.clone(),   
+            path_features: self.path_features.clone(), 
+        };
+
+        let _ = QueryFq::run(
+            &Arc::new(params)
+        );
+
+        log::info!("Query has finished succesfully");
+        Ok(())
+    }
+}
+
+
+
+pub struct QueryFqParams {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
     pub path_features: std::path::PathBuf, 
-
-
-    pub threads_work: usize,  
 }
 
 
