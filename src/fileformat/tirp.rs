@@ -582,12 +582,11 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
         for f in needed_files {
             if f=="r1.fq" {
                 if let Some(rp) = &self.last_read {
+                    let p = out_directory.join("r1.fq");
+                    let f=File::create(p).expect("Could not open r1.fq file for writing");
+                    let mut writer=BufWriter::new(f);
+
                     for one_read in rp.1.iter() {
-                        
-                        let p = out_directory.join("r1.fq");
-                        let f=File::create(p).expect("Could not open r1.fq file for writing");
-                        let mut writer=BufWriter::new(f);
-                        
                         writer.write_all(b"@x")?;
                         //writer.write_all(head.as_slice())?;  //no name of read needed
                         writer.write_all(b"\n")?;
@@ -599,12 +598,11 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
                 }
             } else if f=="r2.fq" {
                 if let Some(rp) = &self.last_read {
+                    let p = out_directory.join("r2.fq");
+                    let f=File::create(p).expect("Could not open r2.fq file for writing");
+                    let mut writer=BufWriter::new(f);
+
                     for one_read in rp.1.iter() {
-                        
-                        let p = out_directory.join("r2.fq");
-                        let f=File::create(p).expect("Could not open r2.fq file for writing");
-                        let mut writer=BufWriter::new(f);
-                        
                         writer.write_all(b"@x")?;
                         //writer.write_all(head.as_slice())?;  //no name of read needed
                         writer.write_all(b"\n")?;
