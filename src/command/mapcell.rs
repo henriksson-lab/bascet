@@ -171,8 +171,6 @@ impl MapCell {
         params: MapCellParams
     ) -> anyhow::Result<()> {
 
-        //Create thread pool. note that worker threads here refer to script threads (script manages it)
-        let thread_pool = threadpool::ThreadPool::new(params.threads_read + params.threads_write);
 
         //Need to create temp dir
         if params.path_tmp.exists() {
@@ -196,7 +194,8 @@ impl MapCell {
         let (tx_loaded_cell, rx_loaded_cell) = crossbeam::channel::bounded::<Option<String>>(read_queue_size);
         let (tx_loaded_cell, rx_loaded_cell) = (Arc::new(tx_loaded_cell), Arc::new(rx_loaded_cell));
 
-        //Create all writers
+        //Create all writers. these also take care of running mapcell
+        let thread_pool_writers = threadpool::ThreadPool::new(params.threads_write);
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
         for tidx in 0..params.threads_write {
             let file_zip = params.path_tmp.join(format!("out-{}.zip", tidx));
@@ -205,7 +204,7 @@ impl MapCell {
                 &params,
                 &file_zip,
                 &Arc::clone(&params.script),
-                &thread_pool,
+                &thread_pool_writers,
                 &rx_loaded_cell
             );
 
@@ -225,16 +224,16 @@ impl MapCell {
 
             //Create all streaming readers. Detect what we need from the file extension.
             //The readers will start immediately
-            let reader_thread_group = ThreadGroup::new(params.threads_read);
+            //let reader_thread_group = ThreadGroup::new(params.threads_read);
+            let thread_pool_readers = threadpool::ThreadPool::new(params.threads_read);
             if input_shard_type == DetectedFileformat::TIRP {
                 println!("Detected input as TIRP");
                 for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
                     _ = create_streaming_shard_reader(
                         &params,
-                        &thread_pool,
+                        &thread_pool_readers,
                         &Arc::clone(&params.script),
                         &tx_loaded_cell,
-                        &reader_thread_group,
                         &Arc::new(TirpStreamingShardReaderFactory::new())
                     );
                 }
@@ -243,30 +242,32 @@ impl MapCell {
             }
 
             //Wait for all reader threads to complete
-            reader_thread_group.join();
-
+            thread_pool_readers.join();
+            println!("Readers have finished")
 
         } else {
             ////////////////////////////////// Random reading of input
             println!("Reading will be random (this can be slow depending on file format)");
 
+            panic!("this need to be rewritten; let readers stream on their own")
+            /* 
             //Queue of cells to be extracted
             let (tx_cell_to_read, rx_cell_to_read) = crossbeam::channel::unbounded::<Option<String>>();
             let (tx_cell_to_read, rx_cell_to_read) = (Arc::new(tx_cell_to_read), Arc::new(rx_cell_to_read));        
 
             //Create all random readers. Detect what we need from the file extension
-            let reader_thread_group = ThreadGroup::new(params.threads_read);
+            //let reader_thread_group = ThreadGroup::new(params.threads_read);
             let input_shard_type = detect_shard_format(&params.path_in);
             if input_shard_type == DetectedFileformat::TIRP {
                 println!("Detected input as TIRP");
                 for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
                     _ = create_random_shard_reader(
                         &params,
-                        &thread_pool,
+                        &thread_pool_writers,
                         &Arc::clone(&params.script),
                         &rx_cell_to_read,
                         &tx_loaded_cell,
-                        &reader_thread_group,
+                        //&reader_thread_group,
                         &Arc::new(TirpBascetShardReaderFactory::new())
                     );
                 }
@@ -276,11 +277,11 @@ impl MapCell {
                 for _tidx in 0..params.threads_read {
                     _ = create_random_shard_reader(
                         &params,
-                        &thread_pool,
+                        &thread_pool_writers,
                         &Arc::clone(&params.script),
                         &rx_cell_to_read,
                         &tx_loaded_cell,
-                        &reader_thread_group,
+                        //&reader_thread_group,
                         &Arc::new(ZipBascetShardReaderFactory::new())
                     );
                 }
@@ -306,16 +307,18 @@ impl MapCell {
 
             //Wait for all reader threads to complete
             reader_thread_group.join();
-
+            */
         }
 
 
         //Terminate all writers. Then wait for all threads to finish
+        println!("Waiting for writers to finish");
         for i in 0..params.threads_write {
-            debug!("Sending termination signal to writer {i}");
+            println!("Sending termination signal to writer {i}");
             _ = tx_loaded_cell.send(None).unwrap();
         }
-        thread_pool.join();
+        thread_pool_writers.join();
+        println!("Writers have finished");
         
         // Merge temp zip archives into one new zip archive 
         println!("Merging zip from writers");
@@ -339,7 +342,6 @@ fn create_random_shard_reader<R>(
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     rx: &Arc<Receiver<Option<String>>>,
     tx: &Arc<Sender<Option<String>>>,
-    thread_group: &Arc<ThreadGroup>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R:ShardRandomFileExtractor {
 
@@ -349,14 +351,15 @@ fn create_random_shard_reader<R>(
     let params_io = Arc::clone(&params_io);
     let mapcell_script = Arc::clone(mapcell_script);
 
-    let thread_group = Arc::clone(thread_group);
     let constructor = Arc::clone(constructor);
 
     thread_pool.execute(move || {
-        debug!("Worker started");
+        println!("Reader started");
 
         let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
 
+
+        // TODO: each reader manages its own list of cells
         while let Ok(Some(cell_id)) = rx.recv() {
             info!("request to read {}",cell_id);
 
@@ -383,10 +386,10 @@ fn create_random_shard_reader<R>(
                 } 
                 if missing_file_mode==MissingFileMode::Ignore {
                     println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell(&cell_id));
-                } 
+                }
             }
         }
-        thread_group.is_done();
+        println!("Reader ended");
     });
     Ok(())
 }
@@ -403,7 +406,6 @@ fn create_streaming_shard_reader<R>(
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     tx: &Arc<Sender<Option<String>>>,
-    thread_group: &Arc<ThreadGroup>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R:ShardStreamingFileExtractor {
 
@@ -412,11 +414,11 @@ fn create_streaming_shard_reader<R>(
     let params_io = Arc::clone(&params_io);
     let mapcell_script = Arc::clone(mapcell_script);
 
-    let thread_group = Arc::clone(thread_group);
+    //let thread_group = Arc::clone(thread_group);
     let constructor = Arc::clone(constructor);
 
     thread_pool.execute(move || {
-        debug!("Worker started");
+        println!("Reader started");
 
         let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
 
@@ -455,8 +457,13 @@ fn create_streaming_shard_reader<R>(
                 } 
             }
             num_cells_processed+=1;
+
+            if num_cells_processed==10 {
+                break;
+            }
         }
-        thread_group.is_done();
+        println!("Reader ended");
+        //thread_group.is_done();
     });
     Ok(())
 }
@@ -617,7 +624,7 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
 
 
 
-
+/* 
 
 
 /////////////////// barrier for a set of threads
@@ -647,5 +654,5 @@ impl ThreadGroup {
     }
 }
 
-
+*/
 ////// would be nice to generalize this pattern, and then hide some things like number of threads etc
