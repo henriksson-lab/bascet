@@ -170,7 +170,8 @@ impl MapCellFunction for MapCellFunctionShellScript {
     }
 
     fn preflight_check(&self) -> bool {
-        let run_output = process::Command::new(&self.script_file)
+        let run_output = process::Command::new("bash")
+            .arg(&self.script_file)
             .arg("--preflight-check")
             .output();
 
@@ -200,7 +201,8 @@ impl MapCellFunction for MapCellFunctionShellScript {
 
 
 pub fn get_script_expect_files(path_script: &impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
-    let run_output = process::Command::new(path_script.as_ref())
+    let run_output = process::Command::new("bash")
+        .arg(path_script.as_ref())
         .arg("--expect-files")
         .output()?;
     let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
@@ -214,7 +216,8 @@ pub fn get_script_expect_files(path_script: &impl AsRef<Path>) -> anyhow::Result
 
 
 fn get_missing_file_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<MissingFileMode> {
-    let run_output = process::Command::new(path_script.as_ref())
+    let run_output = process::Command::new("bash")
+        .arg(path_script.as_ref())
         .arg("--missing-file-mode")
         .output()?;
     let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
@@ -226,7 +229,8 @@ fn get_missing_file_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<Missi
 
 
 fn get_compression_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<CompressionMode> {
-    let run_output = process::Command::new(path_script.as_ref())
+    let run_output = process::Command::new("bash")
+        .arg(path_script.as_ref())
         .arg("--compression-mode")
         .output()?;
     let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
@@ -239,7 +243,8 @@ fn get_compression_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<Compre
 
 //// Get API version. This is the first call so a lot of checks to help user debug
 fn get_script_api_version(path_script: &impl AsRef<Path>) -> anyhow::Result<String> {
-    let run_output = process::Command::new(path_script.as_ref())
+    let run_output = process::Command::new("bash")
+        .arg(path_script.as_ref())
         .arg("--bascet-api")
         .output();
 
@@ -259,7 +264,7 @@ fn get_script_api_version(path_script: &impl AsRef<Path>) -> anyhow::Result<Stri
             bail!("Failed to parse --bascet-api output of script. Are you sure this is a valid script?");
         }
     } else {
-        bail!("Failed to run script {:?}. Try chmod +x script.sh to make it executable", path_script.as_ref());
+        bail!("Failed to run script {:?}", path_script.as_ref());
     }
 }
 
