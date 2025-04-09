@@ -2,7 +2,7 @@ use std::{panic, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
-use robert::command;
+use bascet::command;
 
 
 #[derive(Parser)]
