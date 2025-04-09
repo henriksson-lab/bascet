@@ -17,11 +17,6 @@ use super::CompressionMode;
 use super::parse_missing_file_mode;
 use super::parse_compression_mode;
 
-use std::{thread, time};
-
-
-
-
 
 
 
@@ -50,8 +45,9 @@ impl MapCellFunctionShellScript {
         }
         let path_script=path_script.canonicalize().expect("Failed to get full temp script path");
 
-        //Make the script executable
         let path_script_s = &path_script.clone().into_os_string().into_string().unwrap();
+        /* 
+        //Make the script executable
         process::Command::new("chmod")
             .arg("u+x")
             .arg(&path_script_s)
@@ -60,7 +56,7 @@ impl MapCellFunctionShellScript {
 
         //Ugly hack: To avoid running the script before ready. another way is to keep trying to run it until OK
         thread::sleep(time::Duration::from_millis(1000));
-        
+        */
 
         //Return script
         println!("Extracted preset script to {:?} and set chmod", &path_script_s);
@@ -128,13 +124,23 @@ impl MapCellFunction for MapCellFunctionShellScript {
         let path_script = to_absolute_path(&self.script_file).expect("Could not get absolute directory for script"); 
         
         //Invoke command
-        let run_output = process::Command::new(&path_script)
+        let run_output = process::Command::new("bash")  // do we need path?
             .current_dir(&output_dir)
+            .arg(&path_script)
             .arg("--num-threads").arg(num_threads.to_string())
             .arg("--input-dir").arg(&input_dir)
             .arg("--output-dir").arg(&output_dir)
             .output()
             .expect(format!("Could not spawn process in mapcell script {:?}", &path_script).as_str());
+
+
+//randomly occurs
+//            Could not spawn process in mapcell script "/pfs/proj/nobackup/fs/projnb10/hpc2nstor2024-027/atrandi/v2_wgs_novaseq3/_temp_script.64315.sh": Os { code: 2, kind: NotFound, message: "No such file or directory" }
+//run bash instead on script??
+//crashes minhash and skesa
+//sometimes ExecutableFileBusy
+
+
         let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
         let run_output_string = run_output_string.trim();
         let run_stderr_string = String::from_utf8(run_output.stderr).expect("utf8 error");
