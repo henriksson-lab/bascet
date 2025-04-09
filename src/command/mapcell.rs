@@ -81,7 +81,8 @@ impl MapCell {
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
         let read_queue_size = params.threads_write*2;
 
-
+        println!("Queue of cells is of size: {}",read_queue_size);
+    
         //Queue of cells that have been extracted
         let (tx_loaded_cell, rx_loaded_cell) = crossbeam::channel::bounded::<Option<String>>(read_queue_size);
         let (tx_loaded_cell, rx_loaded_cell) = (Arc::new(tx_loaded_cell), Arc::new(rx_loaded_cell));
@@ -118,7 +119,7 @@ impl MapCell {
             let reader_thread_group = ThreadGroup::new(params.threads_read);
             if input_shard_type == DetectedFileformat::TIRP {
                 println!("Detected input as TIRP");
-                for _tidx in 0..params.threads_read {
+                for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
                     _ = create_streaming_shard_reader(
                         &params,
                         &thread_pool,
@@ -149,7 +150,7 @@ impl MapCell {
             let input_shard_type = detect_shard_format(&params.path_in);
             if input_shard_type == DetectedFileformat::TIRP {
                 println!("Detected input as TIRP");
-                for _tidx in 0..params.threads_read {
+                for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
                     _ = create_random_shard_reader(
                         &params,
                         &thread_pool,
@@ -312,6 +313,9 @@ fn create_streaming_shard_reader<R>(
 
         let mut num_cells_processed = 0;
         while let Ok(Some(cell_id)) = shard.next_cell() {
+
+            println!("Starting extraction of {}", num_cells_processed);
+
             if num_cells_processed%10 ==0 {
                 println!("processed {} cells, now at {}",num_cells_processed, cell_id);
             }
@@ -319,13 +323,14 @@ fn create_streaming_shard_reader<R>(
             let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
             let _ = fs::create_dir(&path_cell_dir);  
 
-
             let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
             let success = shard.extract_to_outdir(
                 &mapcell_script.get_expect_files(),
                 fail_if_missing,
                 &path_cell_dir
             ).expect("error during extraction");
+
+            println!("Done extraction of {}", num_cells_processed);
 
             if success {
                 //Inform writer that the cell is ready for processing
@@ -379,7 +384,7 @@ fn create_writer(
         //Handle each cell, for which files have now been extracted
         while let Ok(Some(cell_id)) = rx.recv() {
 
-            //println!("Processing extracted {}",cell_id);
+            println!("Writer starting mapcell for extracted {}",cell_id);
 
             //////// Run the script on the input, creating files in output
             let path_input_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
@@ -453,6 +458,9 @@ fn create_writer(
                 let _ = fs::remove_dir_all(&path_input_dir);
                 let _ = fs::remove_dir_all(&path_output_dir);
             }
+
+            println!("Writer done mapcell for extracted {}",cell_id);
+
         }
         debug!("Writer got stop signal, now finishing zip");
 
