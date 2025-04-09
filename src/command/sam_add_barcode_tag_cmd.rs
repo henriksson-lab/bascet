@@ -11,9 +11,6 @@ pub struct PipeSamAddTagsCMD {
 impl PipeSamAddTagsCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
-
-
-        //let mut stdout_lock = stdout().lock();
         let mut writer=BufWriter::new(stdout());
 
         let stdin = io::stdin();
@@ -25,15 +22,7 @@ impl PipeSamAddTagsCMD {
                 writeln!(writer, "{}", line).unwrap();
             } else {
                 //This is a read that need to be mangled
-
-//                let cellid ="";
-//                let umi = "";
-//                let mut splitter = read_name.split(|b| *b == b':'); 
- //               let cell_id = splitter.next().expect("Could not parse cellID from read name");
-  //              let umi = splitter.next().expect("Could not parse UMI from read name");
-            
                 let (cell_id, umi) = crate::fileformat::bam::readname_to_cell_umi(line.as_bytes());
-
                         
                 writer.write_all(line.as_bytes())?;
                 writer.write_all(b"\tCB:Z:")?;
@@ -49,13 +38,7 @@ impl PipeSamAddTagsCMD {
                 //UB:Z:TAGGCAGAAGCT
 
             }
-
-
-
-            //Could also use bam reader from stdin??
         }
-
-
         Ok(())
     }
 }

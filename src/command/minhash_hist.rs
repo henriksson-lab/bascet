@@ -6,11 +6,80 @@ use std::io::Write;
 use std::io::BufRead;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use anyhow::Result;
+use clap::Args;
+use std::path::PathBuf;
 
 use crate::fileformat::CellID;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
+use crate::fileformat::read_cell_list_file;
+
+
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+pub const DEFAULT_THREADS_READ: usize = 1;
+pub const DEFAULT_THREADS_WRITE: usize = 10;
+pub const DEFAULT_THREADS_WORK: usize = 1;
+
+
+
+
+
+
+#[derive(Args)]
+pub struct MinhashHistCMD {
+    // Input bascet or gascet
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]  //
+    pub path_in: Vec<PathBuf>,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
+    pub path_tmp: PathBuf,
+
+    // Output bascet
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
+    pub path_out: PathBuf,
+
+    // File with a list of cells to include
+    #[arg(long = "cells")]
+    pub include_cells: Option<PathBuf>,
+    
+}
+impl MinhashHistCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+        
+        //Read optional list of cells
+        let include_cells = if let Some(p) = &self.include_cells {
+            let name_of_cells = read_cell_list_file(&p);
+            Some(name_of_cells)
+        } else {
+            None
+        };
+        
+
+        let params = MinhashHistParams {
+            path_tmp: self.path_tmp.clone(),            
+            path_input: self.path_in.clone(),            
+            path_output: self.path_out.clone(),  
+            include_cells: include_cells.clone(),          
+        };
+
+        let _ = MinhashHist::run(
+            &Arc::new(params)
+        );
+
+        log::info!("MinhashHist has finished succesfully");
+        Ok(())
+    }
+}
+
+
+
+
+
+
 
 
 pub struct MinhashHistParams {
@@ -20,8 +89,6 @@ pub struct MinhashHistParams {
     pub path_output: std::path::PathBuf,
 
     pub include_cells: Option<Vec<CellID>>,
-
-    pub threads_work: usize,  
 
 }
 

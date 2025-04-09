@@ -2,7 +2,7 @@ use std::{panic, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
-use robert::cmd;
+use robert::command;
 
 
 #[derive(Parser)]
@@ -14,19 +14,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Getraw(cmd::GetRawCMD),
-    Mapcell(cmd::MapCellCMD),
-    Extract(cmd::ExtractCMD),
-    Shardify(cmd::ShardifyCMD),
-    Transform(cmd::TransformCMD),
-    Featurise(cmd::FeaturiseKmcCMD),
-    MinhashHist(cmd::MinhashHistCMD),
-    QueryKmc(cmd::QueryKmcCMD),
-    QueryFq(cmd::QueryFqCMD),
-    Bam2fragments(cmd::Bam2FragmentsCMD),
-    Kraken(cmd::KrakenCMD),
-    Countchrom(cmd::CountChromCMD),
-    PipeSamAddTags(cmd::PipeSamAddTagsCMD)
+    Getraw(command::GetRawCMD),
+    Mapcell(command::MapCellCMD),
+    Extract(command::ExtractCMD),
+    Shardify(command::ShardifyCMD),
+    Transform(command::TransformCMD),
+    Featurise(command::FeaturiseKmcCMD),
+    MinhashHist(command::MinhashHistCMD),
+    QueryKmc(command::QueryKmcCMD),
+    QueryFq(command::QueryFqCMD),
+    Bam2fragments(command::Bam2FragmentsCMD),
+    Kraken(command::KrakenCMD),
+    Countchrom(command::CountChromCMD),
+    PipeSamAddTags(command::PipeSamAddTagsCMD)
 }
 
 fn main() -> ExitCode {

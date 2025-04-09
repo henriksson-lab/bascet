@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use std::collections::HashSet;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use anyhow::Result;
+use clap::Args;
+use crate::fileformat::read_cell_list_file;
 
 use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
 use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
@@ -15,9 +18,6 @@ use crate::fileformat::try_get_cells_in_file;
 use crate::fileformat::ReadPairWriter;
 use crate::fileformat::ReadPairReader;
 use crate::fileformat::StreamingReadPairReader;
-
-//use crate::fileformat::BascetFastqWriter;
-//use crate::fileformat::TirpBascetShardReader;
 use crate::fileformat::ConstructFromPath;
 use crate::fileformat::ShardCellDictionary;
 
@@ -25,14 +25,67 @@ type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
 
-pub struct TransformFileParams {
 
-    pub include_cells: Option<Vec<CellID>>,
+#[derive(Args)]
+pub struct TransformCMD {
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    pub path_in: Vec<PathBuf>,
+
+    #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    pub path_out: Vec<PathBuf>,
+
+    // File with a list of cells to include
+    #[arg(long = "cells")]
+    pub include_cells: Option<PathBuf>,
+    
+}
+impl TransformCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        if self.path_in.is_empty() {
+            anyhow::bail!("No input files were specified");
+        }
+        if self.path_out.is_empty() {
+            anyhow::bail!("No output files were specified");
+        }
+
+        //Read optional list of cells
+        let include_cells = if let Some(p) = &self.include_cells {
+            let name_of_cells = read_cell_list_file(&p);
+            Some(name_of_cells)
+        } else {
+            None
+        };
+
+        //Set up parameters and run the function
+        let params = TransformFileParams {
+            path_in: self.path_in.clone(),
+            //path_tmp: self.path_tmp.clone(),
+            path_out: self.path_out.clone(),
+
+            include_cells: include_cells
+        };
+        
+        let _ = TransformFile::run(&Arc::new(params)).expect("tofastq failed");
+
+        log::info!("Transform has finished succesfully");
+        Ok(())
+    }
+}
+
+
+
+
+
+
+
+pub struct TransformFileParams {
 
     pub path_in: Vec<std::path::PathBuf>,
     //pub path_tmp: std::path::PathBuf,
     pub path_out: Vec<std::path::PathBuf>,
 
+    pub include_cells: Option<Vec<CellID>>,
 }
 
 //Convert from [X] -> [Y], with selection of cells. this enables splitting, merging and subsetting in one command.

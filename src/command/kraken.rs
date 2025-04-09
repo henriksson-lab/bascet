@@ -5,6 +5,51 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::collections::BTreeMap;
 use hdf5::File as H5File;
+use anyhow::Result;
+use clap::Args;
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+
+
+
+
+#[derive(Args)]
+pub struct KrakenCMD {
+
+    // Input bascet or gascet
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
+    pub path_in: PathBuf,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
+    pub path_tmp: PathBuf,
+
+    // Output bascet
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
+    pub path_out: PathBuf,
+    
+}
+impl KrakenCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        let params = KrakenParams {
+            path_tmp: self.path_tmp.clone(),            
+            path_input: self.path_in.clone(),            
+            path_output: self.path_out.clone(),   
+        };
+
+        let _ = Kraken::run(
+            &Arc::new(params)
+        );
+
+        log::info!("Kraken has finished succesfully");
+        Ok(())
+    }
+}
+
+
+
+
 
 
 

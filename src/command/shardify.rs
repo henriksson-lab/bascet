@@ -3,6 +3,10 @@ use log::{debug, info};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::fs::File;
+use anyhow::Result;
+use clap::Args;
+
 
 use std::io::{BufWriter, Write};
 
@@ -10,10 +14,11 @@ use crossbeam::channel::Sender;
 use crossbeam::channel::Receiver;
 
 
+use crate::fileformat::read_cell_list_file;
+
 use crate::fileformat::CellID;
 use crate::fileformat::ReadPair;
 
-//use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::TirpBascetShardReader;
 use crate::fileformat::ShardCellDictionary;
 use crate::fileformat::ReadPairReader;
@@ -21,7 +26,62 @@ use crate::fileformat::ReadPairReader;
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 
-use std::fs::File;
+
+
+
+
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+
+
+#[derive(Args)]
+pub struct ShardifyCMD {
+    // Input bascets (comma separated; ok with PathBuf???)
+    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    pub path_in: Vec<PathBuf>,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
+    pub path_tmp: PathBuf,
+
+    // Output bascets
+    #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    pub path_out: Vec<PathBuf>,
+
+
+    // File with a list of cells to include
+    #[arg(long = "cells")]
+    pub include_cells: Option<PathBuf>,
+
+}
+impl ShardifyCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        //Read optional list of cells
+        let include_cells = if let Some(p) = &self.include_cells {
+            let name_of_cells = read_cell_list_file(&p);
+            Some(name_of_cells)
+        } else {
+            None
+        };
+
+        //Set up parameters and run the function
+        let params = ShardifyParams {
+            path_in: self.path_in.clone(),
+            path_tmp: self.path_tmp.clone(),
+            path_out: self.path_out.clone(),
+            include_cells: include_cells
+        };
+        
+        let _ = Shardify::run(Arc::new(params)).expect("shardify failed");
+
+        log::info!("Shardify has finished succesfully");
+        Ok(())
+    }
+}
+
+
+
 
 
 
@@ -33,11 +93,7 @@ pub struct ShardifyParams {
     pub path_out: Vec<std::path::PathBuf>,
 
     pub include_cells: Option<Vec<CellID>>,
-
 }
-
-
-
 
 
 

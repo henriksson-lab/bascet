@@ -1,25 +1,60 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use hdf5::types::VarLenUnicode;
 use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
 use rust_htslib::htslib::uint;
-
-
-use std::path::PathBuf;
 use hdf5::File as H5File;
+use anyhow::Result;
+use clap::Args;
+
+use super::determine_thread_counts_1;
+
+pub const DEFAULT_PATH_TEMP: &str = "temp";
+
+
+#[derive(Args)]
+pub struct CountChromCMD {
+    #[arg(short = 'i', value_parser)]  /// BAM or CRAM file; sorted, indexed? unless cell_id's given, no need for sorting
+    pub path_in: PathBuf,
+
+    #[arg(short = 'o', value_parser)]  /// Full path to file to store in
+    pub path_out: PathBuf,
+
+    // Temp file directory
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)] //Not used, but kept here for consistency with other commands
+    pub path_tmp: PathBuf,
+
+    //Thread settings
+    #[arg(short = '@', value_parser = clap::value_parser!(usize))]
+    num_threads_total: Option<usize>,
+}
+impl CountChromCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+        let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
+        println!("Using threads {}",num_threads_total);
+
+        //TODO Can check that input file is sorted via header
+
+        CountChrom::run(&CountGenomeParams {
+            path_in: self.path_in.clone(),
+         //   path_tmp: self.path_tmp.clone(),
+            path_out: self.path_out.clone(),
+            num_threads: num_threads_total
+        }).unwrap();
+
+        log::info!("CountChrom has finished succesfully");
+        Ok(())
+    }
+}
 
 
 pub struct CountGenomeParams {
-
-//    pub include_cells: Option<Vec<CellID>>,
-
     pub path_in: std::path::PathBuf,
-    //pub path_tmp: std::path::PathBuf,
     pub path_out: std::path::PathBuf,
-
     pub num_threads: usize
-
 }
 
 
@@ -134,19 +169,11 @@ impl CountChrom {
 
 /**
  * 
- * Currently uses 200% CPU.
+ * Currently uses only 200% CPU.
  * 
  * Speed optimization: need to read chunks and count in separate threads. should study how their reader is implemented
  * 
  */
-
-
-
-
-
-
-
-
 
 
 
