@@ -458,9 +458,9 @@ fn create_streaming_shard_reader<R>(
             }
             num_cells_processed+=1;
 
-            if num_cells_processed==10 {
+/*             if num_cells_processed==10 {
                 break;
-            }
+            }*/
         }
         println!("Reader ended");
         //thread_group.is_done();
