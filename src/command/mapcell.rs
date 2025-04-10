@@ -492,7 +492,7 @@ fn create_writer(
     thread_pool.execute(move || {
 
         //Open zip file for writing
-        debug!("Writer started");
+        println!("Writer started");
         let zip_file = File::create(zip_file).unwrap();  //////// called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
         let buf_writer = BufWriter::new(zip_file);
         let mut zip_writer = ZipWriter::new(buf_writer);
@@ -509,13 +509,13 @@ fn create_writer(
             let path_output_dir = params_io.path_tmp.join(format!("output-{}", cell_id));
             let _ = fs::create_dir(&path_output_dir);  
 
-            debug!("Writer for '{}', running script", cell_id);
+            println!("Writer for '{}', running script", cell_id);
             let (success, script_output) = mapcell_script.invoke(
                 &path_input_dir,
                 &path_output_dir,
             params_io.threads_mapcell
             ).expect("Failed to invoke script"); 
-            debug!("Writer for '{}', done running script", cell_id);
+            println!("Writer for '{}', done running script", cell_id);
 
             if !success {
                 if mapcell_script.get_missing_file_mode()==MissingFileMode::Fail {
@@ -529,7 +529,7 @@ fn create_writer(
             }
 
             //Store script output as log file
-            debug!("Writer for '{}', adding log file to zip", cell_id);
+            println!("Writer for '{}', adding log file to zip", cell_id);
             {
                 let path_logfile = path_output_dir.join("_mapcell.log");
                 let log_file = File::create(&path_logfile).unwrap();
@@ -546,12 +546,12 @@ fn create_writer(
             let fname_as_string: Vec<String> = list_output_files.iter().map(|f| f.display().to_string() ).collect();
             let names_in_zip: Vec<&str> = fname_as_string.iter().map(|f| &f[basepath_len..] ).collect();
 
-            debug!("Writer for '{}', got files {:?}", cell_id, list_output_files);
-            debug!("Writer for '{}', got names {:?}", cell_id, names_in_zip);
+            println!("Writer for '{}', got files {:?}", cell_id, list_output_files);
+            println!("Writer for '{}', got names {:?}", cell_id, names_in_zip);
 
             //Add each file to the zip
             for (file_path, &file_name) in list_output_files.iter().zip(names_in_zip.iter()) {
-                debug!("Writer for '{}', adding to zip: {}",cell_id, file_path.display());
+                println!("Writer for '{}', adding to zip: {}",cell_id, file_path.display());
 
                 //Open file for reading
                 let mut file_input = File::open(&file_path).unwrap();
@@ -578,10 +578,10 @@ fn create_writer(
             //println!("Writer done mapcell for extracted {}",cell_id);
 
         }
-        debug!("Writer got stop signal, now finishing zip");
+        println!("Writer got stop signal, now finishing zip");
 
         let _ = zip_writer.finish();   
-        debug!("Writer exiting");
+        println!("Writer exiting");
         // note from julian: included finishing the writers here before, chance that removing this fucked things up
         //      but unfortunately borrow checker didnt like that at all
     });
