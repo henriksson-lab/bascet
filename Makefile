@@ -59,7 +59,8 @@ test_countsketch_fq:
 	rm -Rf temp; cargo +nightly run mapcell -i miseqdata/filtered.1.tirp.gz -o miseqdata/countsketch.0.zip -s _countsketch_fq # --show-script-output --keep-files 
 
 test_countsketch_mat:
-	rm -Rf temp; cargo +nightly run countsketch -i testdata/countsketch.0.zip -o testdata/countsketch_mat.csv
+	rm -Rf temp; cargo +nightly run countsketch -i miseqdata/countsketch.0.zip -o miseqdata/countsketch_mat.csv
+	#rm -Rf temp; cargo +nightly run countsketch -i testdata/countsketch.0.zip -o testdata/countsketch_mat.csv
 
 test_minhash_fq:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/minhash.0.zip -s _minhash_fq # --show-script-output --keep-files 
