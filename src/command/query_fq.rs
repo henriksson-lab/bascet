@@ -42,7 +42,7 @@ pub struct QueryFqCMD {
 impl QueryFqCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
-        let params = QueryFqParams {
+        let params = QueryFq {
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),   
@@ -60,22 +60,17 @@ impl QueryFqCMD {
 
 
 
-pub struct QueryFqParams {
+pub struct QueryFq {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
     pub path_features: std::path::PathBuf, 
 }
-
-
-
-pub struct QueryFq {
-}
 impl QueryFq {
 
 
     pub fn run(
-        params: &Arc<QueryFqParams>
+        params: &Arc<QueryFq>
     ) -> anyhow::Result<()> {
 
 

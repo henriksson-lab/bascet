@@ -10,9 +10,9 @@ use crate::kmer::kmc_counter::KmerCounter;
 
 
 #[derive(Clone, Debug)] 
-pub struct MapCellMinHashFQ {
+pub struct MapCellCountSketchFQ {
 }
-impl MapCellFunction for MapCellMinHashFQ {
+impl MapCellFunction for MapCellCountSketchFQ {
 
     fn invoke(
         &self,
@@ -24,22 +24,22 @@ impl MapCellFunction for MapCellMinHashFQ {
         //Define files
         let input_file_r1 = input_dir.join("r1.fq"); 
         let input_file_r2 = input_dir.join("r2.fq"); 
-        let output_file = output_dir.join("minhash.txt");
+        let output_file = output_dir.join("countsketch.txt");
 
         //Parse parameters
         let kmer_size: usize = get_param_kmer_size().unwrap_or(31);
-        let num_min_hash = get_param_num_minhash().unwrap_or(1000);
+        let sketch_size = get_param_num_minhash().unwrap_or(100);
         let max_reads = get_param_max_reads().unwrap_or(100000000);
 
         log::debug!("Chosen KMER size: {}", kmer_size);
-        log::debug!("Chosen #minhash: {}", num_min_hash);
+        log::debug!("Chosen sketch size: {}", sketch_size);
 
         //Example: novaseq cell of 8M reads - this took quite some time with this function
         let mut min_hash = KmerCounter::get_minhash_fq(
             input_file_r1,
             input_file_r2,
             kmer_size,
-            num_min_hash,
+            sketch_size,
             max_reads
         ).expect("Could not get minhash");
 
@@ -99,7 +99,6 @@ fn get_param_num_minhash() -> Option<usize> {
         None
     }
 }
-
 
 
 

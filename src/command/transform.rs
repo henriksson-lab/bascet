@@ -58,7 +58,7 @@ impl TransformCMD {
         };
 
         //Set up parameters and run the function
-        let params = TransformFileParams {
+        let params = TransformFile {
             path_in: self.path_in.clone(),
             //path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
@@ -79,24 +79,21 @@ impl TransformCMD {
 
 
 
-pub struct TransformFileParams {
 
+//Convert from [X] -> [Y], with selection of cells. this enables splitting, merging and subsetting in one command.
+//However, this is not quite enough to Shardify, as this requires synchronization between readers
+pub struct TransformFile { 
     pub path_in: Vec<std::path::PathBuf>,
     //pub path_tmp: std::path::PathBuf,
     pub path_out: Vec<std::path::PathBuf>,
 
     pub include_cells: Option<Vec<CellID>>,
 }
-
-//Convert from [X] -> [Y], with selection of cells. this enables splitting, merging and subsetting in one command.
-//However, this is not quite enough to Shardify, as this requires synchronization between readers
-pub struct TransformFile { 
-}
 impl TransformFile {
 
 
     pub fn run(
-        params: &Arc<TransformFileParams>
+        params: &Arc<TransformFile>
     ) -> anyhow::Result<()> {
 
 
@@ -184,7 +181,7 @@ impl TransformFile {
 
 
 pub fn create_random_readers(
-    params: &Arc<TransformFileParams>,
+    params: &Arc<TransformFile>,
     path_in: &Vec<std::path::PathBuf>,
     tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>
 ) -> anyhow::Result<()>{
@@ -337,7 +334,7 @@ fn create_writer_thread<W>(
 /// Get the list of all files to process, given by user or by getting names from the files.
 /// The latter case is only relevant for compatibility with non-streaming APIs (which likely are slower than streaming APIs)
 fn get_list_of_all_cells(
-    params: &Arc<TransformFileParams>
+    params: &Arc<TransformFile>
 ) -> Vec<CellID> {
 
     //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?

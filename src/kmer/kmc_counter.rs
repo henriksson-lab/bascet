@@ -30,39 +30,77 @@ pub struct KmerCounterParams {
 }
 
 
+pub struct CountSketch {
+    pub sketch: Vec<i64> 
+}
+impl CountSketch {
+    pub fn new(size: usize) -> CountSketch {
+        CountSketch {
+            sketch: vec![0; size]
+        }
+    }
+
+    pub fn add(&mut self, kmer: KMERandCount) {
+
+        // https://wangshusen.github.io/code/countsketch.html inspo
+        // in R: https://www.rdocumentation.org/packages/aroma.light/versions/3.2.0/topics/wpca
+        // https://docs.rs/streaming_algorithms/latest/streaming_algorithms/  mincounthash code
+        // python: https://pdsa.readthedocs.io/en/latest/frequency/count_sketch.html
+        // MurmurHash3
+
+        let h = KMERCodec::hash_for_kmer(kmer.kmer);
+        let g = KMERCodec::plusmin_one_hash_for_kmer(h) as i64; //TODO currently using using last bit. no fan here - if number of features is co-prime with 2 then this might be ok
+
+        let pos = (h as usize) % self.sketch.len();
+        self.sketch[pos] += g;
+    }
+
+} 
+
+
 pub struct KmerCounter {}
 impl KmerCounter {
 
-    pub fn extract_fq(
+
+
+    pub fn get_countsketch_fq(
         path_read_r1: std::path::PathBuf,
         path_read_r2: std::path::PathBuf,
         kmer_size: usize,
-        features_nmin: usize
-    ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
-
-        let mut min_heap = BoundedMinHeap::with_capacity(features_nmin);
+        sketch_size: usize,
+        max_reads: usize
+    ) -> anyhow::Result<CountSketch> {
 
         //Decide on KMER encoding
         let codec = KMERCodec::new(kmer_size);
 
-        //Process both R1 and R2
-        KmerCounter::extract_fq_one(path_read_r1, &mut min_heap, &codec)?;
-        KmerCounter::extract_fq_one(path_read_r2, &mut min_heap, &codec)?;
+        let mut sketch=CountSketch::new(sketch_size);
 
-        Ok(min_heap)
+        //Process both R1 and R2
+        KmerCounter::get_countsketch_fq_one(path_read_r1, &mut sketch, &codec, max_reads)?;
+        KmerCounter::get_countsketch_fq_one(path_read_r2, &mut sketch, &codec, max_reads)?;
+
+        //TODO We can speed up the process by directly getting the readpairs without writing to disk. this needs a new API
+
+        Ok(sketch)
     }
 
-    pub fn extract_fq_one(
+
+
+
+    pub fn get_countsketch_fq_one(
         path_read: std::path::PathBuf,
-        min_heap: &mut BoundedMinHeap<KMERandCount>,
-        codec: &KMERCodec
+        sketch: &mut CountSketch,
+        codec: &KMERCodec,
+        max_reads: usize
     ) -> anyhow::Result<()> {
 
         //Read FASTQ file
+        let mut cur_reads = 0;
         let file = File::open(&path_read).unwrap();
         let reader = BufReader::new(file);
         let mut readit = reader.lines();
-        loop {
+        while cur_reads < max_reads {
             if let Some(_line1) = readit.next() {
                 let seq= readit.next().unwrap()?;
                 let _line3= readit.next().unwrap()?;
@@ -70,14 +108,15 @@ impl KmerCounter {
 
                 for kmer in seq.as_bytes().windows(codec.kmer_size) {
                     let encoded = unsafe {
-                        codec.encode(kmer, 1)
+                        codec.encode(kmer, 1) ///////////////////////////////// TODO there is a big loop inside here to compress bytes using lookup. should get a kmer iterator instead
                     };    
-                    let _ = min_heap.push(encoded);
+                    sketch.add(encoded);
                 }
 
             } else {
                 break;
             }
+            cur_reads += 1;
         }
 
         Ok(())
@@ -88,7 +127,68 @@ impl KmerCounter {
 
 
 
-    pub fn extract_kmcdump_parallel(
+    pub fn get_minhash_fq(
+        path_read_r1: std::path::PathBuf,
+        path_read_r2: std::path::PathBuf,
+        kmer_size: usize,
+        features_nmin: usize,
+        max_reads: usize
+    ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
+
+        let mut min_heap = BoundedMinHeap::with_capacity(features_nmin);
+
+        //Decide on KMER encoding
+        let codec = KMERCodec::new(kmer_size);
+
+        //Process both R1 and R2
+        KmerCounter::get_minhash_fq_one(path_read_r1, &mut min_heap, &codec, max_reads)?;
+        KmerCounter::get_minhash_fq_one(path_read_r2, &mut min_heap, &codec, max_reads)?;
+
+        //TODO We can speed up the process by directly getting the readpairs without writing to disk. this needs a new API
+
+        Ok(min_heap)
+    }
+
+    pub fn get_minhash_fq_one(
+        path_read: std::path::PathBuf,
+        min_heap: &mut BoundedMinHeap<KMERandCount>,
+        codec: &KMERCodec,
+        max_reads: usize
+    ) -> anyhow::Result<()> {
+
+        //Read FASTQ file
+        let mut cur_reads = 0;
+        let file = File::open(&path_read).unwrap();
+        let reader = BufReader::new(file);
+        let mut readit = reader.lines();
+        while cur_reads < max_reads {
+            if let Some(_line1) = readit.next() {
+                let seq= readit.next().unwrap()?;
+                let _line3= readit.next().unwrap()?;
+                let _line4= readit.next().unwrap()?;
+
+                for kmer in seq.as_bytes().windows(codec.kmer_size) {
+                    let encoded = unsafe {
+                        codec.encode(kmer, 1) ///////////////////////////////// TODO there is a big loop inside here to compress bytes using lookup. should get a kmer iterator instead
+                    };    
+                    let _ = min_heap.push(encoded);
+                }
+
+            } else {
+                break;
+            }
+            cur_reads += 1;
+        }
+
+        Ok(())
+    }
+
+
+
+
+
+
+    pub fn get_minhash_kmcdump_parallel(
         params: &KmerCounterParams,
         n_workers: usize
     ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
@@ -221,6 +321,10 @@ impl KmerCounter {
     }
 
 
+
+
+
+    
     pub fn store_minhash_seq(
         kmer_size: usize, 
         minhash: &mut BoundedMinHeap<KMERandCount>,
