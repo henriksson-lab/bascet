@@ -5,7 +5,6 @@ use crate::mapcell::CompressionMode;
 use crate::mapcell::MissingFileMode;
 use crate::mapcell::MapCellFunction;
 
-use crate::kmer::kmc_counter::KmerCounterParams;
 use crate::kmer::kmc_counter::KmerCounter;
 
 
@@ -33,7 +32,7 @@ impl MapCellFunction for MapCellMinHashKMC {
 
             log::debug!("Detected KMER size: {}", kmer_size);
 
-            let params = KmerCounterParams {
+            let params = KmerCounter {
                 path_kmcdump: input_file,
                 kmer_size: kmer_size,
                 features_nmin: num_min_hash

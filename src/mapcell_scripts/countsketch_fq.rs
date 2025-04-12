@@ -35,17 +35,17 @@ impl MapCellFunction for MapCellCountSketchFQ {
         log::debug!("Chosen sketch size: {}", sketch_size);
 
         //Example: novaseq cell of 8M reads - this took quite some time with this function
-        let mut min_hash = KmerCounter::get_minhash_fq(
+        let mut sketch = KmerCounter::get_countsketch_fq(
             input_file_r1,
             input_file_r2,
             kmer_size,
             sketch_size,
             max_reads
-        ).expect("Could not get minhash");
+        ).expect("Could not get countsketch");
 
-        KmerCounter::store_minhash_seq(
+        KmerCounter::store_countsketch_seq(
             kmer_size,
-            &mut min_hash,
+            &mut sketch,
             &output_file
         );
             
