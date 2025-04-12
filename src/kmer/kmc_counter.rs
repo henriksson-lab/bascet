@@ -23,20 +23,17 @@ pub const HUGE_PAGE_SIZE: usize = 2048 * 1024;
 
 
 
-pub struct KmerCounterParams {
-    pub path_kmcdump: std::path::PathBuf,
-    pub kmer_size: usize,
-    pub features_nmin: usize,
-}
 
 
 pub struct CountSketch {
-    pub sketch: Vec<i64> 
+    pub sketch: Vec<i64>,
+    pub total: i64
 }
 impl CountSketch {
     pub fn new(size: usize) -> CountSketch {
         CountSketch {
-            sketch: vec![0; size]
+            sketch: vec![0; size],
+            total: 0
         }
     }
 
@@ -53,12 +50,18 @@ impl CountSketch {
 
         let pos = (h as usize) % self.sketch.len();
         self.sketch[pos] += g;
+
+        self.total += 1;
     }
 
 } 
 
 
-pub struct KmerCounter {}
+pub struct KmerCounter {
+    pub path_kmcdump: std::path::PathBuf,
+    pub kmer_size: usize,
+    pub features_nmin: usize,
+}
 impl KmerCounter {
 
 
@@ -189,7 +192,7 @@ impl KmerCounter {
 
 
     pub fn get_minhash_kmcdump_parallel(
-        params: &KmerCounterParams,
+        params: &KmerCounter,
         n_workers: usize
     ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
         //Spinning up workers for every new file can be pricey... could put this in params or something, to hide it. future work
@@ -293,7 +296,7 @@ impl KmerCounter {
 
 
     pub fn extract_kmcdump_single_thread (
-        params: &KmerCounterParams
+        params: &KmerCounter
     ) -> anyhow::Result<BoundedMinHeap<KMERandCount>> {
 
         let mut min_heap = BoundedMinHeap::with_capacity(params.features_nmin);
@@ -321,6 +324,27 @@ impl KmerCounter {
     }
 
 
+
+
+
+    
+    pub fn store_countsketch_seq(
+        _kmer_size: usize, 
+        sketch: &CountSketch,
+        p: &PathBuf
+    ){
+        //Open file for writing
+        let f=File::create(p).expect("Could not open file for writing");
+        let mut bw=BufWriter::new(f);
+
+        //Write total number of counts
+        writeln!(bw, "{}", sketch.total).unwrap();    
+
+        //Write each sketch entry
+        for e in &sketch.sketch {
+            writeln!(bw, "{}", e).unwrap();    
+        }
+    }
 
 
 

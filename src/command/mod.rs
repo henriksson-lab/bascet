@@ -14,6 +14,7 @@ pub mod sam_add_barcode_tag_cmd;
 pub mod minhash_hist;
 pub mod threadcount;
 pub mod extract;
+pub mod countsketch_mat;
 
 pub use query_kmc::QueryKmcCMD;
 pub use query_kmc::QueryKmc;
