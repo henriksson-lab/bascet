@@ -39,7 +39,7 @@ impl MapCellFunction for MapCellMinHashKMC {
                 features_nmin: num_min_hash
             };
     
-            let mut min_hash = KmerCounter::extract_kmcdump_parallel(&params, num_threads).expect("Could not get minhash");
+            let mut min_hash = KmerCounter::get_minhash_kmcdump_parallel(&params, num_threads).expect("Could not get minhash");
             KmerCounter::store_minhash_all(
                 kmer_size,
                 &mut min_hash,

@@ -38,7 +38,7 @@ impl CountChromCMD {
 
         //TODO Can check that input file is sorted via header
 
-        CountChrom::run(&CountGenomeParams {
+        CountChrom::run(&CountChrom {
             path_in: self.path_in.clone(),
          //   path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
@@ -51,23 +51,20 @@ impl CountChromCMD {
 }
 
 
-pub struct CountGenomeParams {
-    pub path_in: std::path::PathBuf,
-    pub path_out: std::path::PathBuf,
-    pub num_threads: usize
-}
-
 
 type Cellid = Vec<u8>;
 
 
 pub struct CountChrom { 
+    pub path_in: std::path::PathBuf,
+    pub path_out: std::path::PathBuf,
+    pub num_threads: usize
 }
 impl CountChrom {
 
 
     pub fn run(
-        params: &CountGenomeParams
+        params: &CountChrom
     ) -> anyhow::Result<()> {
 
 

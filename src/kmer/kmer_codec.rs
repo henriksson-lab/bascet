@@ -153,19 +153,27 @@ impl KMERCodec {
         sequence.reverse();
         String::from_utf8_unchecked(sequence)
     }
+
+
+    #[inline(always)]
+    pub fn hash_for_kmer(kmer: u64) -> u32 {
+        //Use a fast hash function https://docs.rs/fasthash/latest/fasthash/sea/index.html
+        let mut hasher=fasthash::sea::Hasher64::new();
+        hasher.write_u64(kmer);
+        let f= hasher.finish();
+
+        let hash = f ^ (f>>32); //fit hash in u32
+        hash as u32
+    }
+
+    // Return +1 for even numbers, and -1 for odd numbers
+    #[inline(always)]
+    pub fn plusmin_one_hash_for_kmer(kmer: u32) -> i32 {
+//        pub fn plusmin_one_for_kmer(kmer: u64) -> i32 {
+        1 - ((kmer & 1) << 1) as i32
+    }
 }
 
-
-#[inline(always)]
-fn hash_for_kmer(kmer: u64) -> u32 {
-    //Use a fast hash function https://docs.rs/fasthash/latest/fasthash/sea/index.html
-    let mut hasher=fasthash::sea::Hasher64::new();
-    hasher.write_u64(kmer);
-    let f= hasher.finish();
-
-    let hash = f ^ (f>>32); //fit hash in u32
-    hash as u32
-}
 
 
 
@@ -184,7 +192,7 @@ impl KMERandCount {
    ) -> KMERandCount {
        Self {
            kmer: kmer,
-           hash: hash_for_kmer(kmer), 
+           hash: KMERCodec::hash_for_kmer(kmer), 
            count: count
        }
    }

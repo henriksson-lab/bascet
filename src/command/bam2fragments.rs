@@ -41,7 +41,7 @@ impl Bam2FragmentsCMD {
 
         //TODO Can check that input file is sorted via header
 
-        Bam2Fragments::run(& Bam2FragmentsParams {
+        Bam2Fragments::run(& Bam2Fragments {
             path_input: self.path_in.clone(),
             path_tmp: self.path_tmp.clone(),
             path_output: self.path_out.clone(),
@@ -57,15 +57,6 @@ impl Bam2FragmentsCMD {
 
 
 
-pub struct Bam2FragmentsParams {
-
-    pub path_input: std::path::PathBuf,
-    pub path_tmp: std::path::PathBuf,
-    pub path_output: std::path::PathBuf,
-
-    pub num_threads: usize,
-}
-
 
 
 
@@ -77,12 +68,18 @@ pub struct Bam2FragmentsParams {
  */
 
 pub struct Bam2Fragments {
+
+    pub path_input: std::path::PathBuf,
+    pub path_tmp: std::path::PathBuf,
+    pub path_output: std::path::PathBuf,
+
+    pub num_threads: usize,
 }
 impl Bam2Fragments {
 
 
     pub fn run(
-        params: &Bam2FragmentsParams
+        params: &Bam2Fragments
     ) -> anyhow::Result<()> {
 
         //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads

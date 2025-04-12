@@ -66,7 +66,7 @@ impl ShardifyCMD {
         };
 
         //Set up parameters and run the function
-        let params = ShardifyParams {
+        let params = Shardify {
             path_in: self.path_in.clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
@@ -87,21 +87,17 @@ impl ShardifyCMD {
 
 
 #[derive(Clone,Debug)]
-pub struct ShardifyParams {
+pub struct Shardify {
     pub path_in: Vec<std::path::PathBuf>,
     pub path_tmp: std::path::PathBuf,
     pub path_out: Vec<std::path::PathBuf>,
 
     pub include_cells: Option<Vec<CellID>>,
+
 }
-
-
-
-pub struct Shardify {}
-
 impl Shardify {
     pub fn run(
-        params: Arc<ShardifyParams>
+        params: Arc<Shardify>
     ) -> anyhow::Result<()> {
 
         info!("Running command: shardify");

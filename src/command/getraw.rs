@@ -106,7 +106,7 @@ impl GetRawCMD {
         };
 
 
-        let params_io = GetRawParams {
+        let params_io = GetRaw {
             path_tmp: self.path_tmp.clone(),            
             path_forward: self.path_forward.clone(),            
             path_reverse: self.path_reverse.clone(),            
@@ -163,21 +163,6 @@ impl GetRawCMD {
 
 
 
-
-pub struct GetRawParams {
-    pub path_tmp: std::path::PathBuf,
-
-    pub path_forward: std::path::PathBuf,
-    pub path_reverse: std::path::PathBuf,
-    pub path_output_complete: std::path::PathBuf,
-    pub path_output_incomplete: std::path::PathBuf,
-    pub libname: String, 
-
-    pub sort: bool,
-
-    pub threads_reader: usize,   
-
-}
 
 
 
@@ -308,11 +293,24 @@ fn create_writer_thread(
 
 
 
-pub struct GetRaw {}
+pub struct GetRaw {
+    pub path_tmp: std::path::PathBuf,
+
+    pub path_forward: std::path::PathBuf,
+    pub path_reverse: std::path::PathBuf,
+    pub path_output_complete: std::path::PathBuf,
+    pub path_output_incomplete: std::path::PathBuf,
+    pub libname: String, 
+
+    pub sort: bool,
+
+    pub threads_reader: usize,   
+
+}
 
 impl GetRaw {
     pub fn getraw<'a>(
-        params: Arc<GetRawParams>,
+        params: Arc<GetRaw>,
         barcodes: &mut (impl Chemistry+Clone+Send+'static)
     ) -> anyhow::Result<()> {
 

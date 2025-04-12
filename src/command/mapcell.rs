@@ -116,7 +116,7 @@ impl MapCellCMD {
 
         println!("Script info: {:?}", script);
 
-        let params = mapcell::MapCellParams {
+        let params = mapcell::MapCell {
             
             path_in: self.path_in.as_ref().expect("Input file was not provided").clone(),
             path_tmp: self.path_tmp.clone(),
@@ -142,7 +142,7 @@ impl MapCellCMD {
 
 
 #[derive(Clone)]
-pub struct MapCellParams {
+pub struct MapCell {
     pub path_in: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_out: std::path::PathBuf,
@@ -158,17 +158,13 @@ pub struct MapCellParams {
 
     pub show_script_output: bool,    
     pub keep_files: bool
+
 }
-
-
-
-
-pub struct MapCell {}
 
 impl MapCell {
 
     pub fn run(
-        params: MapCellParams
+        params: MapCell
     ) -> anyhow::Result<()> {
 
 
@@ -337,7 +333,7 @@ impl MapCell {
 
 //////////////////////////////////// Reader for random I/O shard files
 fn create_random_shard_reader<R>(
-    params_io: &Arc<MapCellParams>,
+    params_io: &Arc<MapCell>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     rx: &Arc<Receiver<Option<String>>>,
@@ -402,7 +398,7 @@ fn create_random_shard_reader<R>(
 
 //////////////////////////////////// Reader for streaming I/O shard files
 fn create_streaming_shard_reader<R>(
-    params_io: &Arc<MapCellParams>,
+    params_io: &Arc<MapCell>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     tx: &Arc<Sender<Option<String>>>,
@@ -479,7 +475,7 @@ fn create_streaming_shard_reader<R>(
 
 ///////////////////////////// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
 fn create_writer(
-    params_io: &Arc<MapCellParams>,
+    params_io: &Arc<MapCell>,
     zip_file: &PathBuf,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     thread_pool: &threadpool::ThreadPool,
@@ -613,46 +609,3 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
     Ok(buf)
 }
 
-
-
-
-
-
-
-
-
-
-
-
-/* 
-
-
-/////////////////// barrier for a set of threads
-struct ThreadGroup {
-    rx_done: Receiver<()>,
-    tx_done: Sender<()>,
-    num_thread: usize
-}
-impl ThreadGroup {
-    pub fn new(num_thread:usize) -> Arc<ThreadGroup> {
-        let (tx_done, rx_done) = crossbeam::channel::bounded::<()>(1000);
-        return Arc::new(ThreadGroup {
-            rx_done: rx_done,
-            tx_done: tx_done,
-            num_thread: num_thread
-        })
-    }
-
-    pub fn join(&self) {
-        for _i in 0..self.num_thread {
-            _ = self.rx_done.recv();
-        }
-    }
-
-    pub fn is_done(&self) {
-        _ = self.tx_done.send(());
-    }
-}
-
-*/
-////// would be nice to generalize this pattern, and then hide some things like number of threads etc

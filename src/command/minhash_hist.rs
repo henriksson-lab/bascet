@@ -59,7 +59,7 @@ impl MinhashHistCMD {
         };
         
 
-        let params = MinhashHistParams {
+        let params = MinhashHist {
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),  
@@ -82,25 +82,18 @@ impl MinhashHistCMD {
 
 
 
-pub struct MinhashHistParams {
-
+pub struct MinhashHist {
     pub path_input: Vec<std::path::PathBuf>,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
 
     pub include_cells: Option<Vec<CellID>>,
-
-}
-
-
-
-pub struct MinhashHist {
 }
 impl MinhashHist {
 
 
     pub fn run(
-        params: &Arc<MinhashHistParams>
+        params: &Arc<MinhashHist>
     ) -> anyhow::Result<()> {
 
         //Need to create temp dir

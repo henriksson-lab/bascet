@@ -32,7 +32,7 @@ pub struct KrakenCMD {
 impl KrakenCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
-        let params = KrakenParams {
+        let params = Kraken {
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),   
@@ -53,13 +53,6 @@ impl KrakenCMD {
 
 
 
-pub struct KrakenParams {
-
-    pub path_input: std::path::PathBuf,
-    pub path_tmp: std::path::PathBuf,
-    pub path_output: std::path::PathBuf,
-
-}
 
 
 
@@ -72,12 +65,15 @@ pub struct KrakenParams {
  */
 
 pub struct Kraken {
+    pub path_input: std::path::PathBuf,
+    pub path_tmp: std::path::PathBuf,
+    pub path_output: std::path::PathBuf,
 }
 impl Kraken {
 
 
     pub fn run(
-        params: &Arc<KrakenParams>
+        params: &Arc<Kraken>
     ) -> anyhow::Result<()> {
 
         //Prepare matrix that we will store into

@@ -562,11 +562,13 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
 
         //Check if we still have cells
         let cellid = if let Some(d) = &dat {
+            println!("TIRP got reads for cell {}, count {}", &d.0, &d.1.len());
             Ok(Some(d.0.clone()))
         } else {
             Ok(None)
         };
         
+
         self.last_read=dat;
         cellid
     }
