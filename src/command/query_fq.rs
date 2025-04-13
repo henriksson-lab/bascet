@@ -26,7 +26,7 @@ pub struct QueryFqCMD {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
-
+    
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
@@ -38,6 +38,11 @@ pub struct QueryFqCMD {
     // Input feature file (text file, one kmer per line)
     #[arg(short = 'f', value_parser = clap::value_parser!(PathBuf))]  
     pub path_features: PathBuf,
+
+    // Max number of reads to sample per cell
+    #[arg(short = 'm', value_parser = clap::value_parser!(usize), default_value = "1000000")]  
+    pub max_reads: usize,
+    
 }
 impl QueryFqCMD {
     pub fn try_execute(&mut self) -> Result<()> {
@@ -46,6 +51,7 @@ impl QueryFqCMD {
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),   
+            max_reads: self.max_reads,
             path_features: self.path_features.clone(), 
         };
 
@@ -65,6 +71,7 @@ pub struct QueryFq {
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
     pub path_features: std::path::PathBuf, 
+    pub max_reads: usize,
 }
 impl QueryFq {
 
@@ -138,6 +145,7 @@ impl QueryFq {
             setup_matrix_counter(
                 &Arc::clone(&features_reference),
                 kmer_size,
+                params.max_reads,
                 &mm,
                 &thread_pool_write,
                 &rx_data
@@ -177,6 +185,7 @@ impl QueryFq {
 pub fn setup_matrix_counter(
     features_reference: &Arc<BTreeMap<Vec<u8>, usize>>, //Map from feature to index
     kmer_size: usize,
+    max_reads: usize,
     mm: &Arc<Mutex<SparseCountMatrix>>,
     thread_pool: &threadpool::ThreadPool,
     rx_data: &Arc<Receiver<Option<ListReadWithBarcode>>>,
@@ -197,6 +206,7 @@ pub fn setup_matrix_counter(
             //A common place to count KMERs
             let mut features_count: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
 
+            let mut cur_line = 0;
             for rp in list_reads.iter() {
 
                 count_from_seq(
@@ -213,6 +223,12 @@ pub fn setup_matrix_counter(
                     kmer_size    
                 ).unwrap();
 
+                //Abort early if too many reads for this cell
+                cur_line += 1;
+                if cur_line==max_reads {
+                    break
+                }
+                
             }
 
 
