@@ -33,7 +33,7 @@ pub struct MinhashHistCMD {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]  //
     pub path_in: Vec<PathBuf>,
-
+    
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
@@ -86,7 +86,6 @@ pub struct MinhashHist {
     pub path_input: Vec<std::path::PathBuf>,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
-
     pub include_cells: Option<Vec<CellID>>,
 }
 impl MinhashHist {

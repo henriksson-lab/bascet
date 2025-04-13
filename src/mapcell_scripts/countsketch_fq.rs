@@ -33,6 +33,11 @@ impl MapCellFunction for MapCellCountSketchFQ {
 
         log::debug!("Chosen KMER size: {}", kmer_size);
         log::debug!("Chosen sketch size: {}", sketch_size);
+        log::debug!("Chosen max reads: {}", max_reads);
+
+/*         println!("Chosen KMER size: {}", kmer_size);
+        println!("Chosen sketch size: {}", sketch_size);
+        println!("Chosen max reads: {}", max_reads); */
 
         //Example: novaseq cell of 8M reads - this took quite some time with this function
         let mut sketch = KmerCounter::get_countsketch_fq(
