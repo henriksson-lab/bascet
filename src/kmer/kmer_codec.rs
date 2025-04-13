@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, hash::Hasher};
 
+use fasthash::FastHasher;
+
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
     let mut table = [0u8; (b'T' - b'A' + 1) as usize];
@@ -166,12 +168,34 @@ impl KMERCodec {
         hash as u32
     }
 
+
+    #[inline(always)]
+    pub fn g_hash_for_kmer(kmer: u64) -> u32 {
+
+        //https://docs.rs/fasthash/latest/fasthash/murmur3/index.html    note!!! will get different results depending on architecture. this can be a pain!
+        let mut hasher = fasthash::murmur3::Hasher32::new();
+        hasher.write_u64(kmer);
+        let f= hasher.finish();
+
+        let hash = f ^ (f>>32); //fit hash in u32
+        hash as u32
+    }
+
+
+    /* 
     // Return +1 for even numbers, and -1 for odd numbers
     #[inline(always)]
     pub fn plusmin_one_hash_for_kmer(kmer: u32) -> i32 {
-//        pub fn plusmin_one_for_kmer(kmer: u64) -> i32 {
         1 - ((kmer & 1) << 1) as i32
     }
+    */
+
+
+    pub fn plusmin_one_hash_for_kmer(kmer: u32) -> i32 {
+        1 - ((kmer & 1) << 1) as i32
+    }
+
+
 }
 
 
