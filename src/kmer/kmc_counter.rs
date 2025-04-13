@@ -37,6 +37,12 @@ impl CountSketch {
         }
     }
 
+    // Return +1 for even numbers, and -1 for odd numbers. note that the type likely is important
+    #[inline(always)]
+    fn to_plusmin_one(kmer: u32) -> i32 {
+        1 - ((kmer & 1) << 1) as i32
+    }
+    
     pub fn add(&mut self, kmer: KMERandCount) {
 
         // https://wangshusen.github.io/code/countsketch.html inspo
@@ -46,10 +52,13 @@ impl CountSketch {
         // MurmurHash3
 
         let h = KMERCodec::hash_for_kmer(kmer.kmer);
-        let g = KMERCodec::plusmin_one_hash_for_kmer(h) as i64; //TODO currently using using last bit. no fan here - if number of features is co-prime with 2 then this might be ok
+        let g = KMERCodec::g_hash_for_kmer(kmer.kmer);
+
+        let sgn = CountSketch::to_plusmin_one(g) as i64;  //using last bit of hash only. suspect this can be sped up
+        //println!("{} {}", h, sgn);
 
         let pos = (h as usize) % self.sketch.len();
-        self.sketch[pos] += g;
+        self.sketch[pos] += sgn;
 
         self.total += 1;
     }
