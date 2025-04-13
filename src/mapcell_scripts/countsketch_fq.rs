@@ -28,7 +28,7 @@ impl MapCellFunction for MapCellCountSketchFQ {
 
         //Parse parameters
         let kmer_size: usize = get_param_kmer_size().unwrap_or(31);
-        let sketch_size = get_param_num_minhash().unwrap_or(100);
+        let sketch_size = get_param_sketch_size().unwrap_or(100);
         let max_reads = get_param_max_reads().unwrap_or(100000000);
 
         log::debug!("Chosen KMER size: {}", kmer_size);
@@ -90,8 +90,8 @@ fn get_param_kmer_size() -> Option<usize> {
 
 
 
-fn get_param_num_minhash() -> Option<usize> {
-    let key = "NUM_MINHASH";
+fn get_param_sketch_size() -> Option<usize> {
+    let key = "SKETCH_SIZE";
     let val = env::var(key);
     if let Ok(val) = val {
         Some(val.parse::<usize>().unwrap())
