@@ -27,9 +27,9 @@ impl MapCellFunction for MapCellCountSketchFQ {
         let output_file = output_dir.join("countsketch.txt");
 
         //Parse parameters
-        let kmer_size: usize = get_param_kmer_size().unwrap_or(31);
-        let sketch_size = get_param_sketch_size().unwrap_or(100);
-        let max_reads = get_param_max_reads().unwrap_or(100000000);
+        let kmer_size: usize = get_param_num("KMER_SIZE").unwrap_or(31);
+        let sketch_size = get_param_num("SKETCH_SIZE").unwrap_or(100);
+        let max_reads = get_param_num("MAX_READS").unwrap_or(100000000);
 
         log::debug!("Chosen KMER size: {}", kmer_size);
         log::debug!("Chosen sketch size: {}", sketch_size);
@@ -82,37 +82,17 @@ impl MapCellFunction for MapCellCountSketchFQ {
 
 
 
-
-fn get_param_kmer_size() -> Option<usize> {
-    let key = "KMER_SIZE";
+fn get_param_num(key: &str) -> Option<usize> {
     let val = env::var(key);
     if let Ok(val) = val {
-        Some(val.parse::<usize>().unwrap())
+        let num = val.parse::<usize>();
+        if let Ok(num) = num {
+            Some(num)
+        } else {
+            panic!("Expected a number for parameter {}, but got {}", key, val);
+        }
     } else {
         None
     }
 }
 
-
-
-fn get_param_sketch_size() -> Option<usize> {
-    let key = "SKETCH_SIZE";
-    let val = env::var(key);
-    if let Ok(val) = val {
-        Some(val.parse::<usize>().unwrap())
-    } else {
-        None
-    }
-}
-
-
-
-fn get_param_max_reads() -> Option<usize> {
-    let key = "MAX_READS";
-    let val = env::var(key);
-    if let Ok(val) = val {
-        Some(val.parse::<usize>().unwrap())
-    } else {
-        None
-    }
-}

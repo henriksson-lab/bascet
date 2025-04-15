@@ -83,7 +83,7 @@ impl Chemistry for AtrandiWGSChemistry {
             //Scan gDNA read for adapter
             let adapter_pos = find_subsequence(r1_seq,adapter_seq_rc.as_slice());
 
-            //Trim reads if overlap detected
+            //Trim reads if overlap detected - based on last gDNA part in R2
             if let Some(adapter_pos) = adapter_pos {
 
                 let insert_size = r2_seq.len() + adapter_pos;
@@ -100,30 +100,43 @@ impl Chemistry for AtrandiWGSChemistry {
 
                 //Trim barcode read. This is only needed if it is larger than the insert size
                 r2_to = min(r2_to,insert_size);
+            }
+            
+            
+            
 
-                /* 
-                println!();
-                println!("detect overlap, insert size {},  r1_from {} r1_to {},        r2_from {} r2_to {},    ad_pos {}", insert_size, r1_from, r1_to, r2_from, r2_to, adapter_pos);
-                let rp = ReadPair{
-                    r1: r1_seq.to_vec(), 
-                    r2: trim_pairwise::revcomp_n(r2_seq), 
-                    q1: r1_qual.to_vec(), 
-                    q2: r2_qual.to_vec(), 
-                    umi: vec![].to_vec()
-                };
+            //If the insert is too small then the previous trick may not work,
+            //as the sought sequence at the end of one read will be beyond
+            //the other read primer adapter site. Thus, we should also attempt
+            //to also just find the adapters
 
-                let rp_trim = ReadPair{
-                    r1: r1_seq[r1_from..r1_to].to_vec(), 
-                    r2: trim_pairwise::revcomp_n(&r2_seq[r2_from..r2_to]), 
-                    q1: r1_qual[r1_from..r1_to].to_vec(), 
-                    q2: r2_qual[r2_from..r2_to].to_vec(), 
-                    umi: vec![].to_vec()
-                };
-    
-                println!("{}", rp);
-                println!("{}", rp_trim);
-                */
-            } 
+            let _adapter_fragment_full = b"GATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT";
+            let adapter_fragment       = b"GATCGGAAGAGC";
+
+            //Can scan for start of R1 (DNA) in R2 (holding barcodes), to prove the end position
+            //let dna_end_seq = &r1_seq[0..12];
+            //let dna_end_seq_rc = trim_pairwise::revcomp_n(&dna_end_seq);
+
+            //Scan gDNA read for adapter
+            let dna_end_pos = find_subsequence(r2_seq,adapter_fragment.as_slice());
+
+            //See if this trims the read even more than previous scans
+            if let Some(dna_end_pos) = dna_end_pos {
+                let new_r2_to = adapter_fragment.len() + dna_end_pos;
+                if new_r2_to < r2_to {
+
+                    //It may still happen that the read is cropped.
+                    //Just give up in such case
+                    if new_r2_to<barcode_size {
+                        return (false, "".to_string(), ReadPair{r1: r1_seq.to_vec(), r2: r2_seq.to_vec(), q1: r1_qual.to_vec(), q2: r2_qual.to_vec(), umi: vec![].to_vec()})
+                    } else {
+                        r2_to = new_r2_to;
+
+                        let insert_size = r2_to - barcode_size;
+                        r1_to = insert_size;    
+                    }
+                }
+            }
 
             //Return trimmed reads
             (true, bc, ReadPair{
@@ -134,7 +147,7 @@ impl Chemistry for AtrandiWGSChemistry {
                 umi: vec![].to_vec()})
 
         } else {
-            //Just return the sequence as-is
+            //If barcode is bad, just return the sequence as-is
             (false, "".to_string(), ReadPair{r1: r1_seq.to_vec(), r2: r2_seq.to_vec(), q1: r1_qual.to_vec(), q2: r2_qual.to_vec(), umi: vec![].to_vec()})
         }
 
@@ -164,3 +177,56 @@ fn find_subsequence<T>(haystack: &[T], needle: &[T]) -> Option<usize>
 {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
+
+
+
+
+/*
+https://gist.github.com/photocyte/3edd9401d0b13476e60f8b104c2575f8
+
+>TruSeq Universal Adapter						
+AATGATACGGCGACCACCGAGATCTACACTCTTTCCCTACACGACGCTCTTCCGATCT
+
+(base) mahogny@beagle:/husky/henriksson/atrandi/v2_wgs_novaseq1/temp$ zcat asfq.1.R2.fq.gz | grep ACACGACGCTCTTCCGA
+CCTCGCGCGACCGCTGGATGGTCACGGCCTGCGCCAGCTGCGTCTCCCAGAGCGGGACCGTGTTGACGAGGGTCGAGTTGATCCGCGTGACCAGCGCCTTGTCGTTCTCCTACACGACGCTCTTCCGATCT
+
+
+fastqc claims to find it
+fastqc asfq.1.R1.fq.gz asfq.1.R2.fq.gz -t 5 
+
+/husky/henriksson/atrandi/v2_wgs_novaseq1/temp   suspicious seq: ACACGACGCTCTTCCGA
+
+                                                                                                           ___________________________   
+   CCTCGCGCGACCGCTGGATGGTCACGGCCTGCGCCAGCTGCGTCTCCCAGAGCGGGACCGTGTTGACGAGGGTCGAGTTGATCCGCGTGACCAGCGCCTTGTCGTTCTCCTACACGACGCTCTTCCGATCT
+(base) mahogny@beagle:/husky/henriksson/atrandi/v2_wgs_novaseq1/temp$ zcat asfq.1.R1.fq.gz |                 grep ACACGACGCTCTTCCGA
+                 AACTACAATCGGTTACCCTTCCATAGCAGAGTTAGTAGCGTCCTAGTCTCACAGATCGGAAGAGCACACGTCTGAACTCCAGTCACCCTCTTCCCCTACACGACGCTCTTCCGATCTAACCAAAAGAG
+                                                                                             AAAGTCTCACCCTCTTTCCCTACACGACGCTCTTCCGATCTAAGGTGGGAGCTCCCGTCGTAAAGCGTGTTAAGTTGGACACCGGGCAGCACATGGCCCCCGTTCTCCTCGTAAATGATAAAAATTTC
+     CGCACCCTCCCACTCTGGCCCTCACCTTGTCCTCACCAGTTAACTCGGCAGCGCACCCCTCCTAACTCCCGCCACCACCCCACCTCGCAAACGTGCCCCCTCTTTCCCCACACGACGCTCTTCCGATC
+                               GTCCTTACAGTTCCGAGTTCAAGGTGTCCTGGCTGATAAGATCGGAAGAGCACACGTCTGAACTCCAGTCACCCTCTTCCCCTACACGACGCTCTTCCGATCTGCCCGTAAAGGTGAGGGGGGGGGGG
+   CCCCACCCCGCTCCTCCCCTTCCACCACACCCCCCCCCCCCACATCACAACCTCACCCGTCCCCCCTCCCGCCACCAAGCCACCTCCGCTGACCACGTCCCCTCTTTCCCTACACGACGCTCTTCCGA
+   CCCCACCCCGCTCCTCCCCTTCCACCACACCCCCCCCCCCCACATCACAACCTCACCCGTCCCCCCTCCCGCCACCAAGCCACCTTCGCTGACCCCGTCCCCTCTTTCCCCACACGACGCTCTTCCGA
+
+*/
+
+                /* 
+                println!();
+                println!("detect overlap, insert size {},  r1_from {} r1_to {},        r2_from {} r2_to {},    ad_pos {}", insert_size, r1_from, r1_to, r2_from, r2_to, adapter_pos);
+                let rp = ReadPair{
+                    r1: r1_seq.to_vec(), 
+                    r2: trim_pairwise::revcomp_n(r2_seq), 
+                    q1: r1_qual.to_vec(), 
+                    q2: r2_qual.to_vec(), 
+                    umi: vec![].to_vec()
+                };
+
+                let rp_trim = ReadPair{
+                    r1: r1_seq[r1_from..r1_to].to_vec(), 
+                    r2: trim_pairwise::revcomp_n(&r2_seq[r2_from..r2_to]), 
+                    q1: r1_qual[r1_from..r1_to].to_vec(), 
+                    q2: r2_qual[r2_from..r2_to].to_vec(), 
+                    umi: vec![].to_vec()
+                };
+    
+                println!("{}", rp);
+                println!("{}", rp_trim);
+                */

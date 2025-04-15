@@ -239,17 +239,15 @@ impl MapCell {
 
             //Wait for all reader threads to complete
             thread_pool_readers.join();
-            println!("Readers have finished")
+            println!("Streaming readers have finished")
 
         } else {
             ////////////////////////////////// Random reading of input
             println!("Reading will be random (this can be slow depending on file format)");
 
-            panic!("this need to be rewritten; let readers stream on their own")
-            /* 
-            //Queue of cells to be extracted
-            let (tx_cell_to_read, rx_cell_to_read) = crossbeam::channel::unbounded::<Option<String>>();
-            let (tx_cell_to_read, rx_cell_to_read) = (Arc::new(tx_cell_to_read), Arc::new(rx_cell_to_read));        
+//            panic!("this need to be rewritten; let readers stream on their own")
+
+            let thread_pool_readers = threadpool::ThreadPool::new(params.threads_read);
 
             //Create all random readers. Detect what we need from the file extension
             //let reader_thread_group = ThreadGroup::new(params.threads_read);
@@ -259,11 +257,9 @@ impl MapCell {
                 for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
                     _ = create_random_shard_reader(
                         &params,
-                        &thread_pool_writers,
+                        &thread_pool_readers,
                         &Arc::clone(&params.script),
-                        &rx_cell_to_read,
                         &tx_loaded_cell,
-                        //&reader_thread_group,
                         &Arc::new(TirpBascetShardReaderFactory::new())
                     );
                 }
@@ -273,11 +269,9 @@ impl MapCell {
                 for _tidx in 0..params.threads_read {
                     _ = create_random_shard_reader(
                         &params,
-                        &thread_pool_writers,
+                        &thread_pool_readers,
                         &Arc::clone(&params.script),
-                        &rx_cell_to_read,
                         &tx_loaded_cell,
-                        //&reader_thread_group,
                         &Arc::new(ZipBascetShardReaderFactory::new())
                     );
                 }
@@ -285,25 +279,9 @@ impl MapCell {
                 bail!("Cannot tell the type of the input format");
             }
 
-            //Tell readers to go through all cells, then terminate all readers
-            let list_cells = fileformat::try_get_cells_in_file(&params.path_in).expect("Could not get list of cells from input file");
-            if let Some(list_cells) = list_cells {
-                let num_total_cell = list_cells.len();
-                for cell_id in list_cells {
-                    _ = tx_cell_to_read.send(Some(cell_id.clone()));
-                }
-                println!("Processed a final of {} cells", num_total_cell);
-            } else {
-                panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
-            }
-            for i in 0..params.threads_read {
-                debug!("Sending termination signal to reader {i}");
-                _ = tx_cell_to_read.send(None).unwrap();
-            }
-
             //Wait for all reader threads to complete
-            reader_thread_group.join();
-            */
+            thread_pool_readers.join();
+            println!("Random I/O readers have finished")
         }
 
 
@@ -336,12 +314,10 @@ fn create_random_shard_reader<R>(
     params_io: &Arc<MapCell>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
-    rx: &Arc<Receiver<Option<String>>>,
     tx: &Arc<Sender<Option<String>>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R:ShardRandomFileExtractor {
 
-    let rx = Arc::clone(rx);
     let tx = Arc::clone(tx);
 
     let params_io = Arc::clone(&params_io);
@@ -354,14 +330,25 @@ fn create_random_shard_reader<R>(
 
         let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
 
+        //Tell readers to go through all cells, then terminate all readers
+        let list_cells = fileformat::try_get_cells_in_file(&params_io.path_in).expect("Could not get list of cells from input file");
+        let list_cells = if let Some(list_cells) = list_cells {
+            list_cells
+        } else {
+            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
+        };
 
         // TODO: each reader manages its own list of cells
-        while let Ok(Some(cell_id)) = rx.recv() {
+        let mut num_cells_processed = 0;
+        for cell_id in list_cells { //  let Ok(Some(cell_id)) = rx.recv()
             info!("request to read {}",cell_id);
+
+            if num_cells_processed%10 ==0 {
+                println!("processed {} cells, now at {}",num_cells_processed, cell_id);
+            }
 
             let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
             fs::create_dir(&path_cell_dir).unwrap();
-
 
             let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
             let success = shard.extract_to_outdir(
@@ -384,8 +371,10 @@ fn create_random_shard_reader<R>(
                     println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell(&cell_id));
                 }
             }
+
+            num_cells_processed += 1;
         }
-        println!("Reader ended");
+        println!("Reader ended; read a total of {} cells", num_cells_processed);
     });
     Ok(())
 }
@@ -453,13 +442,8 @@ fn create_streaming_shard_reader<R>(
                 } 
             }
             num_cells_processed+=1;
-
-/*             if num_cells_processed==10 {
-                break;
-            }*/
         }
-        println!("Reader ended");
-        //thread_group.is_done();
+        println!("Reader ended; read a total of {} cells", num_cells_processed);
     });
     Ok(())
 }
