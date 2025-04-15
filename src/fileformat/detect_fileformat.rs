@@ -40,6 +40,7 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
     } else if p_string.ends_with(".fq.gz") | p_string.ends_with(".fastq.gz")  | p_string.ends_with(".fq")  | p_string.ends_with(".fastq") { 
         DetectedFileformat::SingleFASTQ
     } else {
+        println!("Warning: Unknown file format for {}", p.display());
         DetectedFileformat::Other
     }
 }
