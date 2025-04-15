@@ -12,6 +12,7 @@ use anyhow::bail;
 
 
 use super::ConstructFromPath;
+use super::ReadPairWriter;
 use super::ShardRandomFileExtractor;
 use super::ShardStreamingFileExtractor;
 use super::ReadPair;
@@ -234,11 +235,10 @@ impl ShardRandomFileExtractor for TirpBascetShardReader {
 
 
 pub fn write_records_pair_to_tirp(
-//    writer: &mut BufWriter<impl Write>, 
     writer: &mut impl Write, 
     cell_id: &CellID,    
     read: &ReadPair,
-)  { //where W:Write
+)  { 
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi
 
@@ -658,3 +658,84 @@ impl ConstructFromPath<TirpStreamingShardExtractor> for TirpStreamingShardReader
         TirpStreamingShardExtractor::new(fname)
     }
 }
+
+
+
+
+
+
+
+
+
+///////////////////
+/////////////////// Writer for TIRPs
+///////////////////
+
+
+
+#[derive(Debug,Clone)]
+pub struct BascetTIRPWriterFactory {
+}
+impl BascetTIRPWriterFactory {
+    pub fn new() -> BascetTIRPWriterFactory {
+        BascetTIRPWriterFactory {}
+    } 
+}
+impl ConstructFromPath<BascetTIRPWriter> for BascetTIRPWriterFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<BascetTIRPWriter> {  ///////// maybe anyhow prevents spec of reader?
+        BascetTIRPWriter::new(fname)
+    }
+}
+
+
+
+
+pub struct BascetTIRPWriter {
+    pub path: PathBuf,
+    pub writer: BufWriter<File>
+}
+impl BascetTIRPWriter {
+
+    fn new(path: &PathBuf) -> anyhow::Result<BascetTIRPWriter>{
+
+        println!("starting writer for TIRP {}", path.display());
+
+        let f = File::create(path).unwrap();   
+        let writer=BufWriter::new(f);  //TODO  put in a buffered writer in loop. no need to do twice
+
+        Ok(BascetTIRPWriter {
+            path: path.clone(),
+            writer: writer,
+        })
+    }
+
+
+}
+impl ReadPairWriter for BascetTIRPWriter {
+
+
+    fn write_reads_for_cell(&mut self, cell_id:&CellID, list_reads: &Arc<Vec<ReadPair>>) {
+        for rp in list_reads.iter() {
+            write_records_pair_to_tirp( 
+                &mut self.writer, 
+                &cell_id, 
+                &rp
+            );
+        }
+    }
+
+
+    fn writing_done(&mut self) -> anyhow::Result<()> {
+
+        //// Index the final file with tabix  
+        println!("Indexing final output file");
+        index_tirp(&self.path).expect("Failed to index file");
+
+        Ok(())
+    }
+   
+}
+
+
+
+

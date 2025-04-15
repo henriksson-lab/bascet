@@ -11,7 +11,6 @@ use anyhow::bail;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use log::info;
-use log::debug;
 use zip::ZipWriter;
 
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;

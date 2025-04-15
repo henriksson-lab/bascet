@@ -9,6 +9,7 @@ use crate::fileformat::read_cell_list_file;
 
 use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
 use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
+use crate::fileformat::tirp::BascetTIRPWriterFactory;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
 use crate::fileformat::TirpStreamingReadPairReaderFactory;
@@ -118,6 +119,14 @@ impl TransformFile {
             match crate::fileformat::detect_shard_format(&p) {
                 DetectedFileformat::ZIP => {
                     panic!("Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option")
+                },
+                DetectedFileformat::TIRP => {
+                    create_writer_thread(
+                        &p,
+                        &thread_pool_write,
+                        &rx_data,
+                        &Arc::new(BascetTIRPWriterFactory::new())
+                    ).unwrap()
                 },
                 DetectedFileformat::SingleFASTQ => {
                     create_writer_thread(
@@ -319,6 +328,8 @@ fn create_writer_thread<W>(
 
             writer.write_reads_for_cell(&cell_id, &Arc::clone(list_reads));
         }
+        writer.writing_done().unwrap();
+        
         println!("Shutting down writer for {}", outfile.display());
 
 

@@ -92,6 +92,10 @@ impl ReadPairWriter for BascetPairedFastqWriter {
         }
     }
    
+    fn writing_done(&mut self) -> anyhow::Result<()> {
+        anyhow::Ok(())
+    }
+
 }
 
 
