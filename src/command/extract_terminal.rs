@@ -1,12 +1,6 @@
 use anyhow::Result;
 use clap::Args;
-use std::fs::File;
-use std::{
-    io::{BufReader, BufWriter},
-    path::PathBuf,
-};
-use zip::ZipArchive;
-use log::debug;
+use std::path::PathBuf;
 
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";

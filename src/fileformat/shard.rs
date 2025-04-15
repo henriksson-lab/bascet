@@ -83,6 +83,8 @@ pub trait ReadPairWriter {
         list_reads: &Arc<Vec<ReadPair>>
     );
 
+    fn writing_done(&mut self) -> anyhow::Result<()>;
+    
 }
 
 
