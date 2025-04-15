@@ -1,3 +1,5 @@
+use bgzip::{write::BGZFMultiThreadWriter, Compression};
+
 use log::debug;
 use std::collections::HashSet;
 use std::io::BufRead;
@@ -692,7 +694,8 @@ impl ConstructFromPath<BascetTIRPWriter> for BascetTIRPWriterFactory {
 
 pub struct BascetTIRPWriter {
     pub path: PathBuf,
-    pub writer: BufWriter<File>
+//    pub writer: BufWriter<File>
+    pub writer: BGZFMultiThreadWriter<File>,
 }
 impl BascetTIRPWriter {
 
@@ -701,7 +704,8 @@ impl BascetTIRPWriter {
         println!("starting writer for TIRP {}", path.display());
 
         let f = File::create(path).unwrap();   
-        let writer=BufWriter::new(f);  //TODO  put in a buffered writer in loop. no need to do twice
+        //let writer=BufWriter::new(f);  //TODO  put in a buffered writer in loop. no need to do twice
+        let writer = BGZFMultiThreadWriter::new(f, Compression::default());
 
         Ok(BascetTIRPWriter {
             path: path.clone(),
