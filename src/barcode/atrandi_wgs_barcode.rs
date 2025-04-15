@@ -17,7 +17,11 @@ use crate::fileformat::shard::ReadPair;
 
 #[derive(Clone)]
 pub struct AtrandiWGSChemistry {
-    barcode: CombinatorialBarcode
+    barcode: CombinatorialBarcode,
+    num_reads_pass: usize,
+    num_reads_fail: usize,
+    num_adapt_trim1: usize,
+    num_adapt_trim2: usize
 }
 
 impl Chemistry for AtrandiWGSChemistry {
@@ -73,18 +77,22 @@ impl Chemistry for AtrandiWGSChemistry {
             let mut r2_to = r2_seq.len();
 
 
-            //Pick last 10bp of barcode read. Scan for this segment in the gDNA read. Probability of it appearing randomly is 9.536743e-07. but multiply by 150bp to get 0.00014
+            //Pick last 10bp of barcode read. Scan for this segment in the gDNA read. Probability of it appearing randomly is 9.536743e-07. but multiply by 150bp to get 0.00014.
+            //update: 12b, 1bp mismatch
             //If this part is not present then we can ignore any type of overlap
-            let adapter_seq = &r2_seq[(r2_seq.len()-10)..(r2_seq.len())];
+            let overlap_size = 12; //10
+
+            let adapter_seq = &r2_seq[(r2_seq.len()-overlap_size)..(r2_seq.len())];
 
             //Revcomp adapter for comparison. It is cheaper to revcomp the adapter than the whole other read
             let adapter_seq_rc = trim_pairwise::revcomp_n(&adapter_seq);
 
             //Scan gDNA read for adapter
-            let adapter_pos = find_subsequence(r1_seq,adapter_seq_rc.as_slice());
+            let adapter_pos = find_subsequence_mismatch(r1_seq,adapter_seq_rc.as_slice(),1);
 
             //Trim reads if overlap detected - based on last gDNA part in R2
             if let Some(adapter_pos) = adapter_pos {
+                self.num_adapt_trim1 += 1;
 
                 let insert_size = r2_seq.len() + adapter_pos;
 
@@ -118,10 +126,15 @@ impl Chemistry for AtrandiWGSChemistry {
             //let dna_end_seq_rc = trim_pairwise::revcomp_n(&dna_end_seq);
 
             //Scan gDNA read for adapter
-            let dna_end_pos = find_subsequence(r2_seq,adapter_fragment.as_slice());
+            let dna_end_pos = find_subsequence_mismatch(
+                r2_seq,
+                adapter_fragment.as_slice(),
+                1);
 
             //See if this trims the read even more than previous scans
             if let Some(dna_end_pos) = dna_end_pos {
+                self.num_adapt_trim2 += 1;
+
                 let new_r2_to = adapter_fragment.len() + dna_end_pos;
                 if new_r2_to < r2_to {
 
@@ -137,8 +150,16 @@ impl Chemistry for AtrandiWGSChemistry {
                     }
                 }
             }
+/* 
+            println!("Trim stats: {}\t{}\t{}\t{}", 
+                self.num_reads_pass, 
+                self.num_reads_fail,
+                self.num_adapt_trim1, 
+                self.num_adapt_trim2,
+            );*/
 
             //Return trimmed reads
+            self.num_reads_pass += 1;
             (true, bc, ReadPair{
                 r1: r1_seq[r1_from..r1_to].to_vec(), 
                 r2: r2_seq[r2_from..r2_to].to_vec(), 
@@ -148,6 +169,7 @@ impl Chemistry for AtrandiWGSChemistry {
 
         } else {
             //If barcode is bad, just return the sequence as-is
+            self.num_reads_fail += 1;
             (false, "".to_string(), ReadPair{r1: r1_seq.to_vec(), r2: r2_seq.to_vec(), q1: r1_qual.to_vec(), q2: r2_qual.to_vec(), umi: vec![].to_vec()})
         }
 
@@ -164,7 +186,11 @@ impl AtrandiWGSChemistry {
         let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
 
         AtrandiWGSChemistry {
-            barcode: barcode
+            barcode: barcode,
+            num_reads_pass: 0,
+            num_reads_fail: 0,
+            num_adapt_trim1: 0,
+            num_adapt_trim2: 0
         }
     }
 
@@ -172,11 +198,40 @@ impl AtrandiWGSChemistry {
 } 
 
 
-fn find_subsequence<T>(haystack: &[T], needle: &[T]) -> Option<usize>
-    where for<'a> &'a [T]: PartialEq
-{
+pub fn find_subsequence<T>(haystack: &[T], needle: &[T]) 
+    -> Option<usize>
+    where for<'a> &'a [T]: PartialEq {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
+
+
+
+
+fn find_subsequence_mismatch(haystack: &[u8], needle: &[u8], allow_mismatches: u8) -> Option<usize> {
+    // Modelled after https://github.com/OpenGene/fastp/blob/master/src/adaptertrimmer.cpp  AdapterTrimmer::trimBySequence
+    // surprisingly there is no attempt to make this fast
+
+    for pos in 0..(haystack.len()-needle.len()) {
+
+        let mut mismatch=0;
+        let mut is_match = true;
+        for i in 0..needle.len() {
+
+            if needle[i] != haystack[pos+i] {
+                mismatch += 1;
+                if mismatch>allow_mismatches {
+                    is_match = false;
+                    break;
+                }
+            }
+        }
+        if is_match {
+            return Some(pos);
+        }
+    }
+    None
+}
+
 
 
 
