@@ -5,6 +5,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use anyhow::Result;
 use clap::Args;
+use crate::fileformat::paired_fastq::PairedFastqStreamingReadPairReaderFactory;
 use crate::fileformat::read_cell_list_file;
 
 use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
@@ -268,6 +269,14 @@ pub fn create_stream_readers(
     for p in path_in {
 
         let read_thread = match crate::fileformat::detect_shard_format(&p) {
+            DetectedFileformat::PairedFASTQ => {
+                create_stream_reader_thread( 
+                    &p,
+                    &thread_pool_read,
+                    &tx_data,
+                    &Arc::new(PairedFastqStreamingReadPairReaderFactory::new())
+                )
+            },
             DetectedFileformat::TIRP => {
                 create_stream_reader_thread( 
                     &p,

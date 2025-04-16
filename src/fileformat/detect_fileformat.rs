@@ -90,3 +90,29 @@ pub fn verify_input_fq_file(path_in: &PathBuf) -> anyhow::Result<()> {
         bail!("Input file must be a fastq file")
     }
 }
+
+
+
+pub fn get_fq_filename_r2_from_r1(
+    path: &PathBuf
+) -> anyhow::Result<PathBuf> {
+    let p_string = path.file_name().expect("cannot convert OS string when detecting file format").to_string_lossy();
+    if p_string.ends_with(".R1.fq.gz") { 
+        anyhow::Ok(PathBuf::from(replace_file_ending(path, ".R1.fq.gz", ".R2.fq.gz")))
+    } else if p_string.ends_with(".R1.fastq.gz") { 
+        anyhow::Ok(PathBuf::from(replace_file_ending(path, ".R1.fastq.gz", ".R2.fastq.gz")))
+    } else if p_string.ends_with(".R1.fq") { 
+        anyhow::Ok(PathBuf::from(replace_file_ending(path, ".R1.fq", ".R2.fq")))
+    } else if p_string.ends_with(".R1.fastq") { 
+        anyhow::Ok(PathBuf::from(replace_file_ending(path, ".R1.fastq", ".R2.fastq")))
+    } else {
+        bail!("Cannot figure out R2 for file {}", path.display())
+    }
+}
+
+pub fn replace_file_ending(path: &PathBuf, old_ending: &str, new_ending: &str) -> String {
+    let full_fname = path.to_str().expect("Could not get string from path");
+    let mut sub = full_fname[0..(full_fname.len()-old_ending.len())].to_owned();
+    sub.push_str(new_ending);
+    sub
+}
