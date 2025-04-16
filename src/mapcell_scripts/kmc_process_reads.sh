@@ -38,7 +38,10 @@ for i in "$@"; do
   shift # past argument=value
   shift
   ;;
-
+        --recommend-threads)
+        echo "1" # Tell how many threads that is recommended by default
+        exit 0
+        ;;
   --preflight-check)
   if ! command -v kmc 2>&1 >/dev/null
   then

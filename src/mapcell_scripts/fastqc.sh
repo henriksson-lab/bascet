@@ -51,7 +51,10 @@ for i in "$@"; do
         echo "MAPCELL-CHECK"
         exit 0
         ;;
-
+        --recommend-threads)
+        echo "1" # Tell how many threads that is recommended by default
+        exit 0
+        ;;
         --default)
         DEFAULT=YES
         shift # past argument with no value

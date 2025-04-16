@@ -40,7 +40,10 @@ for i in "$@"; do
         shift # past argument=value
         shift
         ;;
-
+        --recommend-threads)
+        echo "1" # Tell how many threads that is recommended by default
+        exit 0
+        ;;
         --preflight-check)
         if ! command -v abricate 2>&1 >/dev/null
         then
@@ -73,8 +76,8 @@ if [ -z ${INPUT_DIR} ]; then
 fi
 
 if [ -z ${OUTPUT_DIR} ]; then 
-  echo "output directory is unset"; 
-  exit 1;
+    echo "output directory is unset"; 
+    exit 1;
 fi
 
 if [ -z ${DATABASE_DIR} ]; then 
@@ -83,13 +86,13 @@ if [ -z ${DATABASE_DIR} ]; then
 fi
 
 if [ -z ${MINID} ]; then 
-  echo "using default minid=80"; 
-  MINID=80
+    echo "using default minid=80"; 
+    MINID=80
 fi
 
 if [ -z ${MINCOV} ]; then 
-  echo "using default mincov=80"; 
-  MINCOV=80
+    echo "using default mincov=80"; 
+    MINCOV=80
 fi
 
 

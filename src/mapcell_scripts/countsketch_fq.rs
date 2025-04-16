@@ -73,6 +73,10 @@ impl MapCellFunction for MapCellCountSketchFQ {
     }
 
 
+    fn get_recommend_threads(&self) -> usize {
+        1
+    }
+
     fn preflight_check(&self) -> bool {
         // KMER_SIZE must be set
         //get_param_kmer_size().is_some()
