@@ -146,7 +146,7 @@ impl Chemistry for AtrandiWGSChemistry {
                         r2_to = new_r2_to;
 
                         let insert_size = r2_to - barcode_size;
-                        r1_to = insert_size;    
+                        r1_to = min(r1_to, insert_size);    
                     }
                 }
             }
@@ -161,7 +161,7 @@ impl Chemistry for AtrandiWGSChemistry {
             //Return trimmed reads
             self.num_reads_pass += 1;
             (true, bc, ReadPair{
-                r1: r1_seq[r1_from..r1_to].to_vec(), 
+                r1: r1_seq[r1_from..r1_to].to_vec(), // range end index 129 out of range for slice of length 128
                 r2: r2_seq[r2_from..r2_to].to_vec(), 
                 q1: r1_qual[r1_from..r1_to].to_vec(), 
                 q2: r2_qual[r2_from..r2_to].to_vec(), 
