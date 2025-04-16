@@ -167,9 +167,9 @@ impl GetRawCMD {
 
 
 #[derive(Debug,Clone)]
-struct RecordPair {
-    reverse_record: OwnedRecord,
-    forward_record: OwnedRecord
+pub struct RecordPair {
+    pub reverse_record: OwnedRecord,
+    pub forward_record: OwnedRecord
 }
 
 
@@ -305,9 +305,7 @@ pub struct GetRaw {
     pub sort: bool,
 
     pub threads_reader: usize,   
-
 }
-
 impl GetRaw {
     pub fn getraw<'a>(
         params: Arc<GetRaw>,

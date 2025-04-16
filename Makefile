@@ -38,7 +38,6 @@ test_pipe_sam_add_tags:
 #########
 
 
-# unzip -l testdata/kmc.0.zip
 
 
 test_countchrom:
@@ -104,6 +103,9 @@ test_transform_tirp_fastq:
 
 test_transform_tirp_2fastq:
 	rm -Rf temp; cargo +nightly run transform -i testdata/out_complete.0.tirp.gz  -o testdata/newout.R1.fq.gz
+
+test_transform_2fastq_tirp:
+	rm -Rf temp; cargo +nightly run transform -i testdata/newout.R1.fq.gz -o  testdata/out_complete.0.tirp.gz
 
 
 test_mapcell:

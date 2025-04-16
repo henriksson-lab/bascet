@@ -4,11 +4,19 @@ use std::path::PathBuf;
 use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
 
 
-use crate::fileformat::{shard::{CellID, ReadPair}, CellUMI};
+use crate::{command::getraw, fileformat::{shard::{CellID, ReadPair}, CellUMI}};
 use crate::fileformat::ReadPairWriter;
 
-use super::ConstructFromPath;
+use super::{bam, detect_fileformat::get_fq_filename_r2_from_r1, ConstructFromPath, StreamingReadPairReader};
 
+use seq_io::fastq::Reader as FastqReader;
+use seq_io::fastq::Record as FastqRecord;
+
+type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
+
+///////////////////////////////
+/////////////////////////////// Writer
+///////////////////////////////
 
 
 #[derive(Debug,Clone)]
@@ -103,13 +111,6 @@ impl ReadPairWriter for BascetPairedFastqWriter {
 
 
 
-
-
-
-
-
-
-
 ////////// Write one FASTQ read
 fn write_paired_fastq_read<W: std::io::Write>(
     writer: &mut W,
@@ -145,3 +146,148 @@ fn make_fastq_readname(
 }
 
 
+
+
+
+
+///////////////////////////////
+/////////////////////////////// Streaming reader
+///////////////////////////////
+
+
+
+
+
+
+
+pub struct PairedFastqStreamingReadPairReader {
+
+    forward_file: FastqReader<Box<dyn std::io::Read>>,
+    reverse_file: FastqReader<Box<dyn std::io::Read>>,
+
+    last_rp: Option<(Vec<u8>,ReadPair)>
+}
+impl PairedFastqStreamingReadPairReader {
+    pub fn new(fname: &PathBuf) -> anyhow::Result<PairedFastqStreamingReadPairReader> {
+
+        
+        //Figure out name of R2 from R1
+        let fname_r2 = get_fq_filename_r2_from_r1(&fname).unwrap();
+
+        // Open fastq files
+        let mut forward_file = getraw::open_fastq(&fname).unwrap();
+        let mut reverse_file = getraw::open_fastq(&fname_r2).unwrap();
+
+        //Read the first read right away
+        let r1 = forward_file.next();
+        let r2 = reverse_file.next();
+
+        let rp = if let Some(r1) = r1 {
+
+
+            let r1= r1.as_ref().expect("Error reading record r1");
+            let r2 = r2.unwrap().expect("Error reading record r2");
+        
+            let (cell_id, umi) = bam::readname_to_cell_umi(r1.head());
+            Some((cell_id.to_vec(), ReadPair {
+                r1: r1.seq().to_vec(),
+                r2: r2.seq().to_vec(),
+                q1: r1.qual().to_vec(),
+                q2: r2.qual().to_vec(),
+                umi: umi.to_vec()
+            }))  
+        } else {
+            //The FASTQ file is empty!
+            println!("Warning: empty input BAM");
+            None    
+        };
+
+        Ok(PairedFastqStreamingReadPairReader {
+            forward_file: forward_file,
+            reverse_file: reverse_file,
+            last_rp: rp
+        })
+
+
+    }
+}
+
+
+impl StreamingReadPairReader for PairedFastqStreamingReadPairReader {
+
+    fn get_reads_for_next_cell(
+        &mut self
+    ) -> anyhow::Result<Option<ListReadWithBarcode>> {
+
+        //Check if we arrived at the end already
+        if let Some((current_cell, last_rp)) = self.last_rp.clone()  {
+
+            //First push the last read pair we had
+            let mut reads:Vec<ReadPair> = Vec::new();
+            reads.push(last_rp);
+            self.last_rp = None;
+    
+            //Keep reading lines until we reach the next cell or the end
+            while let Some(r1) = self.forward_file.next() {
+    
+                let r1 = r1.expect("Error reading record r1");
+                let r2 = self.reverse_file.next().unwrap().expect("Error reading record r2");
+            
+                let (cell_id, umi) = bam::readname_to_cell_umi(r1.head());
+
+                let rp = ReadPair {
+                    r1: r1.seq().to_vec(),
+                    r2: r2.seq().to_vec(),
+                    q1: r1.qual().to_vec(),
+                    q2: r2.qual().to_vec(),
+                    umi: umi.to_vec()
+                };            
+    
+                if cell_id == current_cell {
+                    //This read belongs to this cell, so add to the list and continue
+                    reads.push(rp);
+                } else {
+                    //This read belongs to the next cell, so stop reading for now
+                    self.last_rp = Some((
+                        cell_id.to_vec(),
+                        rp
+                    ));
+                    break;
+                }
+            }
+
+            //Package and return data
+            let reads = Arc::new(reads);
+            let cellid_reads = (
+                String::from_utf8(current_cell).unwrap(), 
+                reads
+            );
+
+            Ok(Some(Arc::new(cellid_reads)))
+        } else {
+            //There is nothing more to read
+            Ok(None)
+        }
+    }
+   
+}
+
+
+
+
+
+
+
+#[derive(Debug,Clone)]
+pub struct PairedFastqStreamingReadPairReaderFactory {
+}
+impl PairedFastqStreamingReadPairReaderFactory {
+    pub fn new() -> PairedFastqStreamingReadPairReaderFactory {
+        PairedFastqStreamingReadPairReaderFactory {}
+    } 
+}
+impl ConstructFromPath<PairedFastqStreamingReadPairReader> for PairedFastqStreamingReadPairReaderFactory {
+    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<PairedFastqStreamingReadPairReader> {
+        PairedFastqStreamingReadPairReader::new(fname)
+    }
+}
