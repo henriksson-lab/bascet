@@ -63,6 +63,10 @@ impl MapCellFunction for MapCellMinHashKMC {
         expect
     }
 
+    fn get_recommend_threads(&self) -> usize {
+        1
+    }
+
     fn preflight_check(&self) -> bool {
         true
     }

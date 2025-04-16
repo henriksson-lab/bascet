@@ -67,6 +67,10 @@ impl MapCellFunction for MapCellMinHashFQ {
         expect
     }
 
+    fn get_recommend_threads(&self) -> usize {
+        1
+    }
+
 
     fn preflight_check(&self) -> bool {
         // KMER_SIZE must be set

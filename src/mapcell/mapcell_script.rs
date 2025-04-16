@@ -26,7 +26,8 @@ pub struct MapCellFunctionShellScript {
     api_version: String,
     expect_files: Vec<String>,
     missing_file_mode: MissingFileMode,
-    compression_mode: CompressionMode
+    compression_mode: CompressionMode,
+    recommend_threads: usize
 }
 impl MapCellFunctionShellScript {
 
@@ -66,13 +67,15 @@ impl MapCellFunctionShellScript {
         let expect_files = get_script_expect_files(&path_script)?;
         let missing_file_mode = get_missing_file_mode(&path_script)?; 
         let compression_mode = get_compression_mode(&path_script)?;
+        let recommend_threads = get_recommend_threads(&path_script)?;
 
         let script = MapCellFunctionShellScript {
             script_file: path_script,
             api_version: api_version,
             expect_files: expect_files,
             missing_file_mode: missing_file_mode,
-            compression_mode: compression_mode
+            compression_mode: compression_mode,
+            recommend_threads: recommend_threads,
         };
 
 
@@ -169,6 +172,10 @@ impl MapCellFunction for MapCellFunctionShellScript {
         self.expect_files.clone()
     }
 
+    fn get_recommend_threads(&self) -> usize {
+        self.recommend_threads
+    }
+
     fn preflight_check(&self) -> bool {
         let run_output = process::Command::new("bash")
             .arg(&self.script_file)
@@ -191,6 +198,9 @@ impl MapCellFunction for MapCellFunctionShellScript {
         }
     }
 
+
+
+
 }
 
 
@@ -198,6 +208,17 @@ impl MapCellFunction for MapCellFunctionShellScript {
 
 
 
+
+
+fn get_recommend_threads(path_script: &impl AsRef<Path>) -> anyhow::Result<usize> {
+    let run_output = process::Command::new("bash")
+        .arg(path_script.as_ref())
+        .arg("--recommend-threads")
+        .output()?;
+    let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
+    let t:usize = run_output_string.trim().parse().unwrap();
+    Ok(t)
+}
 
 
 pub fn get_script_expect_files(path_script: &impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
