@@ -111,7 +111,9 @@ impl Chemistry for AtrandiWGSChemistry {
             }
             
             
+            /* 
             
+            /////////////// significant slowdown. using fastp anyway
 
             //If the insert is too small then the previous trick may not work,
             //as the sought sequence at the end of one read will be beyond
@@ -150,6 +152,8 @@ impl Chemistry for AtrandiWGSChemistry {
                     }
                 }
             }
+
+            */
 /* 
             println!("Trim stats: {}\t{}\t{}\t{}", 
                 self.num_reads_pass, 
