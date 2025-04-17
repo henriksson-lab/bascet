@@ -111,7 +111,7 @@ impl ExtractStreamCMD {
             println!("exiting");            
 
         } else {
-            println!("error no such file {}", self.path_in);
+            println!("error no such file {}", self.path_in.display());
         }
         Ok(())
     }
