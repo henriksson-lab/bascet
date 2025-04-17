@@ -48,8 +48,8 @@ for i in "$@"; do
         --preflight-check)
         if ! command -v quast.py 2>&1 >/dev/null
         then
-          echo "quast.py could not be found"
-          exit 1
+            echo "quast.py could not be found"
+            exit 1
         fi
         echo "MAPCELL-CHECK"
         exit 0

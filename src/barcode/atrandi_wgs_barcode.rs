@@ -21,7 +21,7 @@ pub struct AtrandiWGSChemistry {
     num_reads_pass: usize,
     num_reads_fail: usize,
     num_adapt_trim1: usize,
-    num_adapt_trim2: usize
+    //num_adapt_trim2: usize
 }
 
 impl Chemistry for AtrandiWGSChemistry {
@@ -194,7 +194,7 @@ impl AtrandiWGSChemistry {
             num_reads_pass: 0,
             num_reads_fail: 0,
             num_adapt_trim1: 0,
-            num_adapt_trim2: 0
+            //num_adapt_trim2: 0
         }
     }
 

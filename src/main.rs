@@ -27,7 +27,8 @@ enum Commands {
     Kraken(command::KrakenCMD),
     Countchrom(command::CountChromCMD),
     PipeSamAddTags(command::PipeSamAddTagsCMD),
-    Countsketch(command::countsketch_mat::CountsketchCMD)
+    Countsketch(command::countsketch_mat::CountsketchCMD),
+    ExtractStream(command::ExtractStreamCMD),    
 }
 
 fn main() -> ExitCode {
@@ -57,7 +58,8 @@ fn main() -> ExitCode {
         Commands::Kraken(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
         Commands::PipeSamAddTags(mut cmd) => cmd.try_execute(),
-        Commands::Countsketch(mut cmd) => cmd.try_execute()
+        Commands::Countsketch(mut cmd) => cmd.try_execute(),
+        Commands::ExtractStream(mut cmd) => cmd.try_execute(),
     };
 
     if let Err(e) = result {

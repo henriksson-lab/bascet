@@ -15,6 +15,13 @@ loc:
 
 
 #########
+######### test of stream
+#########
+
+stream:
+	cargo +nightly run extract-stream -i testdata/minhash.0.zip
+
+#########
 ######### test of RNAseq
 #########
 
