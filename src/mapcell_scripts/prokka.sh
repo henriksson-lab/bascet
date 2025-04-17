@@ -49,11 +49,11 @@ for i in "$@"; do
         --preflight-check)
         if ! command -v prokka 2>&1 >/dev/null
         then
-        echo "prokka could not be found"
-        exit 1
+            echo "prokka could not be found"
+            exit 1
         fi
-        echo "MAPCELL-CHECK"
-        exit 0
+            echo "MAPCELL-CHECK"
+            exit 0
         ;;
 
         --default)

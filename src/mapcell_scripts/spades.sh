@@ -42,7 +42,7 @@ for i in "$@"; do
         shift
         ;;
         --recommend-threads)
-        echo "1" # Tell how many threads that is recommended by default
+        echo "10" # Tell how many threads that is recommended by default
         exit 0
         ;;
         --preflight-check)
@@ -73,13 +73,13 @@ done
 ######################## Execute script below #####################
 
 if [ -z ${INPUT_DIR} ]; then 
-echo "input directory is unset"; 
-exit 1;
+  echo "input directory is unset"; 
+  exit 1;
 fi
 
 if [ -z ${OUTPUT_DIR} ]; then 
-echo "output directory is unset"; 
-exit 1;
+  echo "output directory is unset"; 
+  exit 1;
 fi
 
 echo "Running Spades"
@@ -89,7 +89,7 @@ echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-spades.py -1 ${INPUT_DIR}/r1.fq -2 ${INPUT_DIR}/r2.fq --sc -o spades
+spades.py -1 ${INPUT_DIR}/r1.fq -2 ${INPUT_DIR}/r2.fq --sc --threads ${USE_THREADS} -o spades 
 mv spades/contigs.fasta contigs.fasta
 
 ### The last line must be "MAPCELL-OK".

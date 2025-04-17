@@ -13,6 +13,7 @@ use crossbeam::channel::Sender;
 use log::info;
 use zip::ZipWriter;
 
+use crate::command::threadcount::determine_thread_counts_mapcell;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::zip::ZipBascetShardReaderFactory;
 use crate::fileformat::TirpStreamingShardReaderFactory;
@@ -29,7 +30,6 @@ use crate::mapcell::CompressionMode;
 use crate::mapcell::MissingFileMode;
 use crate::mapcell::MapCellFunction;
 use crate::{command::mapcell, mapcell::MapCellFunctionShellScript};
-use super::determine_thread_counts_2;
 
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
@@ -83,17 +83,6 @@ pub struct MapCellCMD {
 impl MapCellCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
-        //Normally we give one thread to each mapcell script
-        let num_threads_mapcell = self.num_threads_mapcell.unwrap_or(1);
-
-        //Note: we always have two extra writer threads, because reading is expected to be the slow part. not an ideal implementation!
-        let (num_threads_read, num_threads_write) = determine_thread_counts_2(
-            self.num_threads_total,
-            self.num_threads_read,
-            self.num_threads_write,
-        )?;
-        println!("Using threads, readers: {}, writers: {}, mapcell: {}",num_threads_read, num_threads_write, num_threads_mapcell);
-
         if self.show_presets {
             let names = crate::mapcell_scripts::get_preset_script_names();
             println!("Available preset scripts: {:?}", names);
@@ -114,6 +103,21 @@ impl MapCellCMD {
         };
 
         println!("Script info: {:?}", script);
+
+        //Normally we give one thread to each mapcell script
+        //let num_threads_mapcell = self.num_threads_mapcell.unwrap_or(1);
+
+        //Note: we always have two extra writer threads, because reading is expected to be the slow part. not an ideal implementation!
+        let (num_threads_read, num_threads_write, num_threads_mapcell) = determine_thread_counts_mapcell(
+            self.num_threads_total,
+            self.num_threads_read,
+            self.num_threads_write,
+            self.num_threads_mapcell,
+            script.get_recommend_threads()
+        )?;
+        println!("Using threads, readers: {}, writers: {}, mapcell: {}",num_threads_read, num_threads_write, num_threads_mapcell);
+
+
 
         let params = mapcell::MapCell {
             

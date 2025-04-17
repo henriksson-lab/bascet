@@ -17,6 +17,8 @@ pub mod extract;
 pub mod extract_terminal;
 pub mod countsketch_mat;
 
+pub use extract_terminal::ExtractStreamCMD;
+
 pub use query_kmc::QueryKmcCMD;
 pub use query_kmc::QueryKmc;
 pub use query_kmc::QueryKmcParams;

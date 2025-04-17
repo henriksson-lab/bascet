@@ -122,7 +122,7 @@ impl KmerCounter {
                     let encoded = unsafe {
                         codec.encode(kmer, 1) ///////////////////////////////// TODO there is a big loop inside here to compress bytes using lookup. should get a kmer iterator instead
                     };    
-                    sketch.add(encoded);
+                    sketch.add(encoded); //can reduce to one addition per read for speed
                 }
 
             } else {
