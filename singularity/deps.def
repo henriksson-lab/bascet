@@ -15,7 +15,8 @@ From: ubuntu:24.10
     apt-get install -y wget
     apt-get install -y make 
     apt-get install -y curl
-    apt install -y bc
+    apt-get install -y fastp
+    apt-get install -y bc
 
     mkdir -p /opt/software
 
@@ -26,19 +27,7 @@ From: ubuntu:24.10
     /opt/software/conda/bin/conda config --add channels defaults
     /opt/software/conda/bin/conda config --add channels conda-forge
     /opt/software/conda/bin/conda config --add channels bioconda 
-    /opt/software/conda/bin/conda create -p /opt/software/conda_env -y abricate ariba bakta bamtools checkm-genome cellsnp-lite diamond fastani fastqc gecco genomad gtdbtk kmc kraken2 mash mlst mmseqs2 ncbi-amrfinderplus prokka quast skani skesa snippy spades star tabix trust4
-
-    pip install -U vireoSNP
-
-    #/opt/software/conda/bin/conda create -p /opt/software/conda_env -y samtools picard art mummer
-    #. /opt/software/conda/bin/activate /opt/software/conda_env
-    #wget https://github.com/IEkAdN/BactSNP/releases/download/v1.1.0/bactsnp-1.1.0.linux64.tgz
-    #tar xf bactsnp-1.1.0.linux64.tgz
-    #rm bactsnp-1.1.0.linux64.tgz
-    #cd bactsnp-1.1.0.linux64
-    #make
-    #mv bactsnp /opt/software/conda_env/bin/
-    #cd /opt/software
+    /opt/software/conda/bin/conda create -p /opt/software/conda_env -y abricate ariba bakta bamtools checkm-genome cellsnp-lite diamond fastani fastqc gecco genomad gtdbtk kmc kraken2 mash mlst mmseqs2 ncbi-amrfinderplus prokka quast skani skesa snippy spades star tabix trust4 vireosnp
 
 
     ########## Bascet dependencies
