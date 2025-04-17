@@ -19,7 +19,8 @@ loc:
 #########
 
 stream:
-	cargo +nightly run extract-stream -i testdata/minhash.0.zip
+	cargo +nightly run extract-stream
+	#cargo +nightly run extract-stream -i testdata/minhash.0.zip
 
 #########
 ######### test of RNAseq
