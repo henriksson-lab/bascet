@@ -64,7 +64,7 @@ impl ExtractStream {
 
 
     pub fn open(&mut self, path_in: &String) -> Result<()> {
-        
+
         let file = File::open(path_in);
 
         if let Ok(file) = file {
@@ -185,7 +185,7 @@ impl ExtractStream {
                             let mut bufwriter_out = BufWriter::new(&file_out);
                             let mut bufreader_found = BufReader::new(entry);
                             std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
-                            println!("done");
+                            println!("ok");
                         } else {
                             println!("error not a file");
                         }
