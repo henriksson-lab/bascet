@@ -110,7 +110,7 @@ impl ReadPairReader for ListFastqReader {
 
         let mut list_rp: Vec<ReadPair> = Vec::new();
 
-        let mut forward_file = open_fastq(&self.records.get(cell_id).unwrap().r1).expect("Could not open fastq R1");
+        let mut forward_file = open_fastq(&self.records.get(cell_id).unwrap().r1).expect("Could not open fastq R1"); //TODO detect if fastq or fasta by first character
         let mut reverse_file = open_fastq(&self.records.get(cell_id).unwrap().r2).expect("Could not open fastq R2");
 
         loop {
