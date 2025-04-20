@@ -91,16 +91,34 @@ echo "USE_THREADS  = ${USE_THREADS}"
 fastqc -o ./ --extract -t ${USE_THREADS} ${INPUT_DIR}/r1.fq ${INPUT_DIR}/r2.fq
 #head ${INPUT_DIR}/contig.fa > firstpart.txt
 
-#Only keep files of interest
-unzip -c r1_fastqc.zip r1_fastqc/fastqc_data.txt > r1_fastqc_data.txt
-unzip -c r2_fastqc.zip r2_fastqc/fastqc_data.txt > r2_fastqc_data.txt
+#Only keep files of interest. below gets crap output from unzip mixed in
+#unzip -c r1_fastqc.zip r1_fastqc/fastqc_data.txt > r1_fastqc_data.txt
+#unzip -c r2_fastqc.zip r2_fastqc/fastqc_data.txt > r2_fastqc_data.txt
 
-unzip -c r1_fastqc.zip r1_fastqc/summary.txt > r1_summary.txt
-unzip -c r2_fastqc.zip r2_fastqc/summary.txt > r2_summary.txt
+#unzip -c r1_fastqc.zip r1_fastqc/summary.txt > r1_summary.txt
+#unzip -c r2_fastqc.zip r2_fastqc/summary.txt > r2_summary.txt
+
+
+#Only keep files of interest
+unzip r1_fastqc.zip r1_fastqc/fastqc_data.txt
+unzip r2_fastqc.zip fastqc/fastqc_data.txt
+
+mv r1_fastqc/fastqc_data.txt r1_fastqc_data.txt
+mv r2_fastqc/fastqc_data.txt r2_fastqc_data.txt
+
+unzip r1_fastqc.zip r1_fastqc/summary.txt 
+unzip r2_fastqc.zip r2_fastqc/summary.txt 
+
+mv r1_fastqc/summary.txt r1_summary.txt
+mv r2_fastqc/summary.txt r2_summary.txt
+
 
 #remove the zip files
 rm r1_fastqc.zip
 rm r2_fastqc.zip
+
+rmdir r1_fastqc
+rmdir r2_fastqc
 
 ### The last line must be "MAPCELL-OK".
 echo "MAPCELL-OK"
