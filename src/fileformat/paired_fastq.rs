@@ -175,7 +175,7 @@ impl PairedFastqStreamingReadPairReader {
         let fname_r2 = get_fq_filename_r2_from_r1(&fname).unwrap();
 
         // Open fastq files
-        let mut forward_file = getraw::open_fastq(&fname).unwrap();
+        let mut forward_file = getraw::open_fastq(&fname).unwrap();  /////////// TODO detect if fastq or fasta depending on first character
         let mut reverse_file = getraw::open_fastq(&fname_r2).unwrap();
 
         //Read the first read right away

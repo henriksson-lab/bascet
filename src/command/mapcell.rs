@@ -223,7 +223,6 @@ impl MapCell {
 
             //Create all streaming readers. Detect what we need from the file extension.
             //The readers will start immediately
-            //let reader_thread_group = ThreadGroup::new(params.threads_read);
             let thread_pool_readers = threadpool::ThreadPool::new(params.threads_read);
             if input_shard_type == DetectedFileformat::TIRP {
                 println!("Detected input as TIRP");
@@ -237,7 +236,7 @@ impl MapCell {
                     );
                 }
             } else {
-                bail!("Cannot tell the type of the input format");
+                bail!("Cannot tell the type of the input format"); /////////////////////////// TODO add support for BAM etc as a shardreader
             }
 
             //Wait for all reader threads to complete

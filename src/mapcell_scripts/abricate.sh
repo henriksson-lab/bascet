@@ -81,7 +81,7 @@ if [ -z ${OUTPUT_DIR} ]; then
 fi
 
 if [ -z ${DATABASE_DIR} ]; then 
-    echo "database directory is unset"; 
+    echo "database directory is unset. set with parameter DATABASE_DIR"; 
     exit 1;
 fi
 
@@ -106,11 +106,13 @@ echo "USE_THREADS  = ${USE_THREADS}"
 # LC's note: will need to specify db, ID, coverage
 abricate --threads ${USE_THREADS} \
     --db ${DATABASE_DIR} \
-    --noheader \
     --nopath \
     --minid ${MINID} \
     --mincov ${MINCOV} \
     ${INPUT_DIR}/contigs.fa > ./abricate.tsv
+
+#    --noheader \
+
 
 ### The last line must be "MAPCELL-OK".
 echo "MAPCELL-OK"
