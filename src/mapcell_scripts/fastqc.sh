@@ -88,7 +88,7 @@ echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
 #Can assume to be running in the output directory
-fastqc -o ./ --extract -t ${USE_THREADS} ${INPUT_DIR}/r1.fq ${INPUT_DIR}/r2.fq
+fastqc -o ./ -t ${USE_THREADS} ${INPUT_DIR}/r1.fq ${INPUT_DIR}/r2.fq
 #head ${INPUT_DIR}/contig.fa > firstpart.txt
 
 #Only keep files of interest. below gets crap output from unzip mixed in
