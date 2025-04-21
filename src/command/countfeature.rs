@@ -1,19 +1,16 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-//use std::collections::LinkedList;
 
 use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
 
-/* 
-use hdf5::types::VarLenUnicode;
-use hdf5::File as H5File;*/
+
 use anyhow::Result;
 use clap::Args;
 
-use noodles::gff::record::Strand;
-use noodles::gff as gff;
+use noodles_gff::feature::record::Strand;
+use noodles_gff as gff;
 
 
  
@@ -357,13 +354,13 @@ impl GFF {
                 );
 
                 let attr = record.attributes();
-                let attr_id = attr.get("ID");
+                let attr_id = attr.get(b"ID");
 
                 if let Some(attr_id)=attr_id {
                     let attr_id = attr_id.as_string().expect("ID is not a string").to_string();
 
                     //Pick a name. Use ID if nothing else
-                    let attr_name = attr.get("Name");
+                    let attr_name = attr.get(b"Name");
                     let attr_name = match attr_name {
                         Some(attr_name) => attr_name.as_string().expect("Name is not a string").to_string(),
                         None => attr_id.clone()
