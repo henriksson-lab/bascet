@@ -14,9 +14,12 @@ loc:
 	wc -l src/*.rs src/*/*.rs src/*/*/*.rs  src/*/*.sh
 
 docker:
-	docker build .
-	#docker save -o docker/bascet.tar bascet
-	#scp docker/bascet.tar beagle:/corgi/public_http/public/bascet/
+	#docker build .
+	docker build -t henriksson-lab/bascet .
+
+docker_upload: docker
+	docker save -o docker_image/bascet.tar henriksson-lab/bascet
+	scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/
 	#hpc2n:~/mystore/
 
 
