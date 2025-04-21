@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::collections::HashMap;
 
 use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
@@ -13,18 +14,11 @@ use noodles_gff::feature::record::Strand;
 use noodles_gff as gff;
 
 
- 
-pub enum BascetStrand {  //equivalent to GFF 
-    None,
-    Forward,
-    Reverse,
-    Unknown,
-}
-    
-
 use super::determine_thread_counts_1;
 
-pub const DEFAULT_PATH_TEMP: &str = "temp";
+   
+
+//pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 
 #[derive(Args)]
@@ -46,7 +40,7 @@ pub struct CountFeatureCMD {
     pub use_feature: String,
     
     // Temp file directory
-    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)] //Not used, but kept here for consistency with other commands
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = "temp")] //Not used, but kept here for consistency with other commands
     pub path_tmp: PathBuf,
 
     //Thread settings
@@ -81,10 +75,13 @@ type Cellid = Vec<u8>;
 
 
 
-
-
-
-use std::collections::HashMap;
+pub enum BascetStrand {  //equivalent to GFF 
+    None,
+    Forward,
+    Reverse,
+    Unknown,
+}
+ 
 
 
 
@@ -196,15 +193,6 @@ impl CountFeature {
 
 
         CountFeature::process_bam(&params, &mut gff)?;
-
-
-
-
-
-
-
-
-
 
 
         Ok(())

@@ -15,6 +15,19 @@ loc:
 
 docker:
 	docker build .
+	#docker save -o docker/bascet.tar bascet
+	#scp docker/bascet.tar beagle:/corgi/public_http/public/bascet/
+	#hpc2n:~/mystore/
+
+
+docker_load:
+	#
+	docker load -i docker/bascet.tar
+
+
+
+
+
 
 #########
 ######### test of stream
@@ -50,9 +63,11 @@ test_pipe_sam_add_tags:
 
 
 
-test_countchrom:
-	rm -Rf temp; cargo +nightly run countchrom -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.hdf5
+test_countf:
+	rm -Rf temp; cargo +nightly run countfeature -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.hdf5
 
+test_countchrom:
+	rm -Rf temp; cargo +nightly run countchrom -i counttest/aligned.1.bam -o counttest/cnt_feature.hdf5 -g counttest/all.gff3
 
 test_kraken:
 	rm -Rf temp; cargo +nightly run kraken -i testdata/kraken_out.1.kraken_out -o testdata/kraken_count.hdf5
