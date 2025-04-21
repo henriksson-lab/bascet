@@ -1,15 +1,13 @@
-//use std::any::Any;
-//use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 //use std::collections::LinkedList;
 
-/* 
-use hdf5::types::VarLenUnicode;
 use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
-use rust_htslib::htslib::uint;
+
+/* 
+use hdf5::types::VarLenUnicode;
 use hdf5::File as H5File;*/
 use anyhow::Result;
 use clap::Args;
@@ -104,6 +102,90 @@ pub struct CountFeature {
 impl CountFeature {
 
 
+    pub fn process_bam(
+        params: &CountFeature,
+        gff: &mut GFF
+    ) -> anyhow::Result<()> {
+
+        //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads.
+        //cannot be TIRF; if we divide up reads we risk double counting
+        let mut bam = rust_htslib::bam::Reader::from_path(&params.path_in)?;
+
+        //Activate multithreaded reading
+        bam.set_threads(params.num_threads).unwrap();
+
+        //Keep track of last chromosome seen (assuming that file is sorted)
+        let mut last_chr:Vec<u8> = Vec::new();        
+
+        //Map cellid -> count. Note that we do not have a list of cellid's at start; we need to harmonize this later
+        //let mut map_cell_count: BTreeMap<Cellid, uint> = BTreeMap::new();
+
+        let mut num_reads=0;
+
+        //Transfer all records
+        let mut record = BamRecord::new();
+        while let Some(_r) = bam.read(&mut record) {
+            //let record = record.expect("Failed to parse record");
+            // https://samtools.github.io/hts-specs/SAMv1.pdf
+
+            //Only keep mapping reads
+            let flags = record.flags();
+            if flags & 0x4 ==0 {
+
+                let header = bam.header();
+                let chr = header.tid2name(record.tid() as u32);
+
+                //Check if we now work on a new chromosome
+                if chr!=last_chr {    
+    /* 
+                    //Store counts for this cell
+                    if !map_cell_count.is_empty() { //Only empty the first loop
+
+                        if !last_chr.is_empty() { //Do not store empty feature
+                            //TODO count this read
+                            let feature_index = cnt_mat.get_or_create_feature(&last_chr.to_vec());
+                            cnt_mat.add_cell_counts(
+                                feature_index,
+                                 &mut map_cell_count
+                            );
+                            
+                        }
+                        //println!("{:?}", map_cell_count);
+                        //Clear buffers, move to the next cell
+                        map_cell_count.clear();
+                    }
+                    */
+                    last_chr=chr.to_vec();
+                } 
+
+                //Figure out the cell barcode. In one format, this is before the first :
+                //TODO support read name as a TAG
+                let read_name = record.qname();
+                let mut splitter = read_name.split(|b| *b == b':'); 
+                let cell_id = splitter.next().expect("Could not parse cellID from read name");
+
+                /* 
+                //Count this read
+                let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
+                *values += 1;*/
+
+                gff.count_read(
+                    cell_id
+                );
+
+
+                //Keep track of where we are
+                num_reads+=1;
+                if num_reads%1000000 == 0 {
+                    println!("Processed {} reads", num_reads);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+
 
     pub fn run(
         params: &CountFeature
@@ -113,7 +195,15 @@ impl CountFeature {
     
 //        "/husky/fromsequencer/241210_joram_rnaseq/ref/all.gff3"
 
-        let _gff = GFF::read_file(&params)?;
+        let mut gff = GFF::read_file(&params)?;
+
+
+        CountFeature::process_bam(&params, &mut gff)?;
+
+
+
+
+
 
 
 
@@ -205,6 +295,14 @@ impl GFF {
         GFF { 
             chroms: HashMap::new()
         }
+    }
+
+
+    pub fn count_read(
+        &mut self,
+        _cell_id: &[u8]
+    ) {
+
     }
 
 

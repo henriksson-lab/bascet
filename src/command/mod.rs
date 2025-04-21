@@ -54,6 +54,9 @@ pub use kraken::KrakenCMD;
 pub use countchrom::CountChromCMD;
 pub use countchrom::CountChrom;
 
+pub use countfeature::CountFeatureCMD;
+pub use countfeature::CountFeature;
+
 pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 
 
