@@ -103,7 +103,7 @@ ariba run \
     --threads ${USE_THREADS} \
     ${DATABASE_DIR} \
     ${INPUT_DIR}/r1.fq ${INPUT_DIR}/r2.fq \
-    ./out.run
+    ./report.tsv
 # --tmp_dir   # todo
 
 

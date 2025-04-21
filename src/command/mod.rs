@@ -10,6 +10,7 @@ pub mod bam2fragments;
 pub mod kraken;
 pub mod snpcall;
 pub mod countchrom;
+pub mod countfeature;
 pub mod sam_add_barcode_tag_cmd;
 pub mod minhash_hist;
 pub mod threadcount;
