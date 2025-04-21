@@ -13,6 +13,8 @@ install_rust:
 loc:
 	wc -l src/*.rs src/*/*.rs src/*/*/*.rs  src/*/*.sh
 
+docker:
+	docker build .
 
 #########
 ######### test of stream
