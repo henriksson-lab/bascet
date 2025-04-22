@@ -15,7 +15,21 @@ use crate::fileformat::shard::ReadPair;
 pub struct GeneralCombinatorialBarcode {
     barcode: CombinatorialBarcode
 }
+impl GeneralCombinatorialBarcode {
 
+    pub fn new(path_bc: &PathBuf) -> GeneralCombinatorialBarcode {
+
+        //Read the barcodes 
+        let bc_file = File::open(path_bc).expect("Could not open BC file");
+        let reader = BufReader::new(bc_file);
+        let barcode = CombinatorialBarcode::read_barcodes(reader);
+
+        GeneralCombinatorialBarcode {
+            barcode: barcode
+        }
+    }
+
+}
 impl Chemistry for GeneralCombinatorialBarcode {
 
     ////// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
@@ -57,20 +71,3 @@ impl Chemistry for GeneralCombinatorialBarcode {
 
 
 }
-
-impl GeneralCombinatorialBarcode {
-
-    pub fn new(path_bc: &PathBuf) -> GeneralCombinatorialBarcode {
-
-        //Read the barcodes 
-        let bc_file = File::open(path_bc).expect("Could not open BC file");
-        let reader = BufReader::new(bc_file);
-        let barcode = CombinatorialBarcode::read_barcodes(reader);
-
-        GeneralCombinatorialBarcode {
-            barcode: barcode
-        }
-    }
-
-
-} 

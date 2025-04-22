@@ -10,7 +10,6 @@ use crate::fileformat::shard::ReadPair;
 
 // system should suggest combinatorial barcoder!!
 
-
 // todo prepare barcodes for 10x and parse
 
 // https://lib.rs/crates/rust_code_visualizer   useful for documentation?
@@ -23,7 +22,24 @@ pub struct AtrandiWGSChemistry {
     num_adapt_trim1: usize,
     //num_adapt_trim2: usize
 }
+impl AtrandiWGSChemistry {
 
+    pub fn new() -> AtrandiWGSChemistry {
+
+        //Read the barcodes relevant for atrandi
+        let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
+        let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
+
+        AtrandiWGSChemistry {
+            barcode: barcode,
+            num_reads_pass: 0,
+            num_reads_fail: 0,
+            num_adapt_trim1: 0,
+            //num_adapt_trim2: 0
+        }
+    }
+
+}
 impl Chemistry for AtrandiWGSChemistry {
 
     ////// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
@@ -181,25 +197,6 @@ impl Chemistry for AtrandiWGSChemistry {
 
 }
 
-impl AtrandiWGSChemistry {
-
-    pub fn new() -> AtrandiWGSChemistry {
-
-        //Read the barcodes relevant for atrandi
-        let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
-        let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
-
-        AtrandiWGSChemistry {
-            barcode: barcode,
-            num_reads_pass: 0,
-            num_reads_fail: 0,
-            num_adapt_trim1: 0,
-            //num_adapt_trim2: 0
-        }
-    }
-
-
-} 
 
 
 pub fn find_subsequence<T>(haystack: &[T], needle: &[T]) 

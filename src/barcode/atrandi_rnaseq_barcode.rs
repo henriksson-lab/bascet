@@ -6,15 +6,30 @@ use std::io::Cursor;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
 
-
+///////////////////////////////
+/// Atrandi RNA-seq chemistry
 #[derive(Clone)]
 pub struct AtrandiRNAseqChemistry {
     barcode: CombinatorialBarcode
 }
+impl AtrandiRNAseqChemistry {
 
+    pub fn new() -> AtrandiRNAseqChemistry {
+
+        //Read the barcodes relevant for atrandi
+        let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
+        let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
+
+        AtrandiRNAseqChemistry {
+            barcode: barcode
+        }
+    }
+
+} 
 impl Chemistry for AtrandiRNAseqChemistry {
 
-    ////// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
+    ///////////////////////////////
+    /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
     fn prepare(
         &mut self,
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
@@ -169,24 +184,10 @@ impl Chemistry for AtrandiRNAseqChemistry {
 
 }
 
-impl AtrandiRNAseqChemistry {
 
-    pub fn new() -> AtrandiRNAseqChemistry {
-
-        //Read the barcodes relevant for atrandi
-        let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
-        let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
-
-        AtrandiRNAseqChemistry {
-            barcode: barcode
-        }
-    }
-
-
-} 
-
-
-
+///////////////////////////////
+/// Scan string until no more T found. Allow some mismatches.
+/// This is for polyT trimming
 fn scan_last_t(seq: &[u8]) -> usize {
 
     let mut pos=0;
@@ -217,7 +218,9 @@ fn scan_last_t(seq: &[u8]) -> usize {
 
 
 
-
+///////////////////////////////
+/// Scan string until no more G found.
+/// This is for G-trimming, after ISPCR
 fn scan_last_g(seq: &[u8]) -> usize {
 
     let mut pos=0;
@@ -241,7 +244,8 @@ fn scan_last_g(seq: &[u8]) -> usize {
 
 
 
-
+///////////////////////////////
+/// Find location of subsequence
 fn find_subsequence<T>(haystack: &[T], needle: &[T]) -> Option<usize>
     where for<'a> &'a [T]: PartialEq
 {

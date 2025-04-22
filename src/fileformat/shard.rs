@@ -9,24 +9,20 @@ use super::ZipBascetShardReader;
 use super::TirpBascetShardReader;
 use super::DetectedFileformat;
 
-//use super::TirpBascetShardReaderFactory;
-//use crate::ZipBascetShardReaderFactory;
 
-
-///////////////////////////////
-/////////////////////////////// The type of the cell ID
-///////////////////////////////
-
+/////////////////////////////// 
+/// Type: Cell ID
 pub type CellID = String;
+
+/////////////////////////////// 
+/// Type: UMI (unique molecular identifier)
 pub type CellUMI = Vec<u8>;
 
+type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
 ///////////////////////////////
-/////////////////////////////// One pair of reads with UMI
-///////////////////////////////
-
-
+/// One pair of reads with a UMI
 #[derive(Debug,Clone)]
 pub struct ReadPair {
     pub r1: Vec<u8>,
@@ -35,72 +31,59 @@ pub struct ReadPair {
     pub q2: Vec<u8>,
     pub umi: Vec<u8>
 }
-
 impl fmt::Display for ReadPair {
+
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Use `self.number` to refer to each positional data point.
         write!(f, "({}, {}, {})", 
             String::from_utf8_lossy(self.r1.as_slice()), 
             String::from_utf8_lossy(self.r2.as_slice()) ,
             String::from_utf8_lossy(self.umi.as_slice()) 
-    )
+        )
     }
 }
 
 
 
-
-
 ///////////////////////////////
-/////////////////////////////// 
-///////////////////////////////
-
-
+/// A constructor of objects given a path (a type of factory)
 pub trait ConstructFromPath<R> where Self: Clone { ///+Sized added later
     fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<R> where Self: Sized;
 }
 
-/* 
-impl<R> ConstructFromPath<R> for ConstructFromPath<Box<dyn R>> where R: Clone+ConstructFromPath<R> {
-    fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<R> where Self: Sized {
-        self.new_from_path(fname)
-    }
-}*/
-
 
 ///////////////////////////////
-/////////////////////////////// Common shard writer and reader traits, to handle readpairs only
-///////////////////////////////
-
-type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
-
-
+/// A writer of pairs of reads for a cell
 pub trait ReadPairWriter {
 
+    /////////////////////////////// 
+    /// Write all read pairs for a given cell
     fn write_reads_for_cell(
         &mut self, 
-        cell_id:&CellID, 
+        cell_id: &CellID, 
         list_reads: &Arc<Vec<ReadPair>>
     );
 
     fn writing_done(&mut self) -> anyhow::Result<()>;
-    
 }
 
+///////////////////////////////
+/// A random reader of pairs of reads from a cell
+pub trait ReadPairReader { 
 
-pub trait ReadPairReader { //where Self: ConstructFromPath
-
+    /////////////////////////////// 
+    /// Read all read pairs for a given cell
     fn get_reads_for_cell(
         &mut self, 
-        cell_id:&CellID
+        cell_id: &CellID
     ) -> anyhow::Result<Arc<Vec<ReadPair>>>;
 
 }
 
+///////////////////////////////
+/// A streaming reader of pairs of reads from a cell
+pub trait StreamingReadPairReader { 
 
-
-pub trait StreamingReadPairReader { //where Self: ConstructFromPath
-
+    /// Read all read pairs for the next cell being streamed
     fn get_reads_for_next_cell(
         &mut self
     ) -> anyhow::Result<Option<ListReadWithBarcode>>;
@@ -109,24 +92,25 @@ pub trait StreamingReadPairReader { //where Self: ConstructFromPath
 
 
 ///////////////////////////////
-/////////////////////////////// Common shard trait to get what files are in it
-///////////////////////////////
-
-
+/// A file that can return which cells are present in it
 pub trait ShardCellDictionary {
 
+    /////////////////////////////// 
+    /// Get list of cells in this file
     fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>>;
+
+    /////////////////////////////// 
+    /// Check if a cell is present
     fn has_cell(&mut self, cellid: &CellID) -> bool;
 
 }
 
-///////////////////////////////
-/////////////////////////////// Common shard reader trait  -- random I/O
-///////////////////////////////
+/////////////////////////////// 
+/// Common shard reader trait  -- random I/O
+pub trait ShardRandomFileExtractor { 
 
-
-pub trait ShardRandomFileExtractor  { 
-
+    /////////////////////////////// 
+    /// Extract requested files to a directory
     fn extract_to_outdir (
         &mut self, 
         cell_id: &CellID, 
@@ -135,11 +119,15 @@ pub trait ShardRandomFileExtractor  {
         out_directory: &PathBuf
     ) -> anyhow::Result<bool>;
 
+    /////////////////////////////// 
+    /// Return a list of files associated with given cell
     fn get_files_for_cell(
         &mut self, 
         cell_id: &CellID
     ) -> anyhow::Result<Vec<String>>;
 
+    /////////////////////////////// 
+    /// Extract specified file to path
     fn extract_as(
         &mut self, 
         cell_id: &String, 
@@ -150,18 +138,18 @@ pub trait ShardRandomFileExtractor  {
 }
 
 
-///////////////////////////////
-/////////////////////////////// Common shard reader trait   -- streaming I/O
-///////////////////////////////
-
-
+/////////////////////////////// 
+/// Common shard reader trait   -- streaming I/O
 pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to above
 
+    /////////////////////////////// 
+    /// Move to the next cell in the stream
     fn next_cell (
         &mut self, 
     ) -> anyhow::Result<Option<CellID>>;
 
-
+    /////////////////////////////// 
+    /// Extract requested files to a directory
     fn extract_to_outdir (
         &mut self, 
         needed_files: &Vec<String>,
@@ -169,6 +157,8 @@ pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to 
         out_directory: &PathBuf
     ) -> anyhow::Result<bool>;
 
+    /////////////////////////////// 
+    /// Return a list of files associated with given cell
     fn get_files_for_cell(
         &mut self
     ) -> anyhow::Result<Vec<String>>;
@@ -180,54 +170,13 @@ pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to 
 
 
 
-//////////////////
-////////////////// instead of dyn, an enum might be a better choice to cover all the different traits being implemented, since not every reader has every property!
-//////////////////
-
+///////////////////////////////
+/// An enum holding the type of readers that Bascet supports.
+/// instead of dyn, an enum might be a better choice to cover all the different traits being implemented, since not every reader has every property!
 pub enum DynShardReader {
     TirpBascetShardReader(TirpBascetShardReader),
     ZipBascetShardReader(ZipBascetShardReader)
 }
-/* 
-impl DynShardReader {  ////// attempt at generalizing
-
-    //This cannot be made to work as mut escapes into the box. the mut is later needed to read the cell dict.
-    //so need to read it in advance
-    pub fn get_celldict(&mut self) -> Box<dyn ShardCellDictionary> {
-        match self {
-            DynShardReader::TirpBascetShardReader(r) => Box::new(&r),
-            DynShardReader::ZipBascetShardReader(r) => Box::new(&r),
-        }
-
-    }
-
-}
-
-pub fn as_celldict<'a>(reader: &'a mut DynShardReader) -> &'a mut Box<&'a dyn ShardCellDictionary> {
-    match reader {
-        DynShardReader::TirpBascetShardReader(r) => &mut Box::new(r),
-        DynShardReader::ZipBascetShardReader(r) => &mut Box::new(r)
-    }
-}
-*/
-
-
-
-
-pub fn get_reader_for_path(p: &PathBuf) -> anyhow::Result<DynShardReader> {
-    match crate::fileformat::detect_shard_format(&p) {
-        DetectedFileformat::TIRP => {
-            Ok(DynShardReader::TirpBascetShardReader(TirpBascetShardReader::new(p).expect(format!("Failed to read {}",p.display()).as_str())))
-        },
-        DetectedFileformat::ZIP => {
-            Ok(DynShardReader::ZipBascetShardReader(ZipBascetShardReader::new(p).expect(format!("Failed to read {}",p.display()).as_str())))
-        },
-        _ => { 
-            anyhow::bail!("File format for {} does not support listing of cell IDs", p.display()) 
-        }
-    }
-}
-
 impl ShardCellDictionary for DynShardReader {
 
     fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
@@ -242,9 +191,8 @@ impl ShardCellDictionary for DynShardReader {
             DynShardReader::ZipBascetShardReader(r) => r.has_cell(&cellid)
         }
     }
+
 }
-
-
 impl ShardRandomFileExtractor for DynShardReader {
 
     fn extract_to_outdir (
@@ -287,13 +235,27 @@ impl ShardRandomFileExtractor for DynShardReader {
 
 
 
+///////////////////////////////
+/// Given a path, get a suitable shard reader
+pub fn get_shard_reader_for_path(p: &PathBuf) -> anyhow::Result<DynShardReader> {
+    match crate::fileformat::detect_shard_format(&p) {
+        DetectedFileformat::TIRP => {
+            Ok(DynShardReader::TirpBascetShardReader(TirpBascetShardReader::new(p).expect(format!("Failed to read {}",p.display()).as_str())))
+        },
+        DetectedFileformat::ZIP => {
+            Ok(DynShardReader::ZipBascetShardReader(ZipBascetShardReader::new(p).expect(format!("Failed to read {}",p.display()).as_str())))
+        },
+        _ => { 
+            anyhow::bail!("File format for {} does not support listing of cell IDs", p.display()) 
+        }
+    }
+}
 
-//////////////////
-//////////////////
-//////////////////
-//////////////////
 
 
+
+///////////////////////////////
+/// Given a path to a shard file, get a dictionary that can return which cells are in it
 pub fn get_dyn_celldict(
     p: &PathBuf
 ) -> anyhow::Result<Box<dyn ShardCellDictionary>> {
@@ -313,7 +275,7 @@ pub fn get_dyn_celldict(
 }
 
 
-//////////////////
+///////////////////////////////
 /// Try to figure out what cells are present in an input file.           
 /// If we cannot list the cells for this file then it will have to stream all the content
 pub fn try_get_cells_in_file(
@@ -355,31 +317,29 @@ pub fn try_get_cells_in_file(
 
 
 
-
-///////////////////////////////
-/////////////////////////////// Histogram for cell barcode counting
-///////////////////////////////
-
-
-
+/////////////////////////////// 
+/// Row in a histogram for cell barcode counting (used for serialization)
 #[derive(Debug, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
-struct HistogramCsvRow {
+struct BarcodeHistogramRow {
     bc: String,
     cnt: u64
 }
 
-
+/////////////////////////////// 
+/// Histogram for cell barcode counting
 pub struct BarcodeHistogram {
     histogram: HashMap<CellID, u64>
 }
 impl BarcodeHistogram {
 
+    /// Create a new empty histogram
     pub fn new() -> BarcodeHistogram {
         BarcodeHistogram {
             histogram: HashMap::new()
         }
     }
 
+    /// Increment the count of one cell by 1
     pub fn inc(
         &mut self, 
         cellid: &CellID
@@ -388,6 +348,7 @@ impl BarcodeHistogram {
         *counter += 1;
     }
 
+    /// Increment the count of one cell
     pub fn inc_by(
         &mut self, 
         cellid: &CellID, 
@@ -397,6 +358,7 @@ impl BarcodeHistogram {
         *counter += cnt;
     }
 
+    /// Add a histogram to this histogram
     pub fn add_histogram(
         &mut self, 
         other: &BarcodeHistogram
@@ -407,7 +369,7 @@ impl BarcodeHistogram {
         }
     }
 
-
+    /// Read histogram from file
     pub fn from_file(
         fname: &PathBuf
     ) -> anyhow::Result<BarcodeHistogram> {
@@ -422,13 +384,14 @@ impl BarcodeHistogram {
             .delimiter(b'\t')
             .from_reader(reader);
         for result in reader.deserialize() {
-            let record: HistogramCsvRow = result.unwrap();
+            let record: BarcodeHistogramRow = result.unwrap();
             hist.histogram.insert(record.bc, record.cnt);
         }
         Ok(hist)
     }
 
-    pub fn write(
+    /// Write histogram to file
+    pub fn write_file(
         &self, 
         fname: &PathBuf
     ) -> anyhow::Result<()> {
@@ -440,7 +403,7 @@ impl BarcodeHistogram {
                 .expect("Could not open histogram file for writing");
 
             for (bc, cnt) in self.histogram.iter() {
-                let _ = writer.serialize(HistogramCsvRow {
+                let _ = writer.serialize(BarcodeHistogramRow {
                     bc: bc.to_string(),
                     cnt: *cnt
                 });
@@ -452,6 +415,3 @@ impl BarcodeHistogram {
 
 
 }
-
-
-

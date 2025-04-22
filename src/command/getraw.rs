@@ -502,7 +502,7 @@ pub fn sum_and_store_histogram(
         //let one_hist = rx.recv().expect("Could not get one histrogram");
         totalhist.add_histogram(&one_hist);
     }
-    totalhist.write(&path).expect(format!("Failed to write histogram to {:?}", path).as_str());
+    totalhist.write_file(&path).expect(format!("Failed to write histogram to {:?}", path).as_str());
 }
 
 

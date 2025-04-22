@@ -9,15 +9,19 @@ use rust_htslib::bam::Read;
 use super::CellID;
 use rust_htslib::bam::record::Record as BamRecord;
 
+type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
-
+/////////////////////////////// 
+/// A streaming reader of BAM files, providing read pairs
 #[derive(Debug)]
 pub struct BAMStreamingReadPairReader {
     reader: rust_htslib::bam::Reader,
     last_rp: Option<(Vec<u8>,ReadPair)>,
 }
 impl BAMStreamingReadPairReader {
+
+    /// Create a new reader from a BAM file
     pub fn new(fname: &PathBuf) -> anyhow::Result<BAMStreamingReadPairReader> {
 
         //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads
@@ -53,53 +57,6 @@ impl BAMStreamingReadPairReader {
 
     }
 }
-
-
-
-pub fn readname_to_cell_umi(
-    read_name: &[u8]
-) -> (&[u8], &[u8]) {
-    let mut splitter = read_name.split(|b| *b == b':'); 
-    let mut cell_id = splitter.next().expect("Could not parse cellID from read name");
-    let umi = splitter.next().expect("Could not parse UMI from read name");
-
-    if cell_id.starts_with(b"BASCET_") {
-        cell_id = &cell_id["BASCET_".len()..];
-    }
-
-    (cell_id, umi)
-}
-
-
-////////////////////////
-/// Parse one BAM entry to a readpair
-fn read_to_readpair(
-    record: &BamRecord
-) -> (Vec<u8>, ReadPair) {
-
-    /* 
-    let read_name = record.qname();
-    let mut splitter = read_name.split(|b| *b == b':'); 
-    let cell_id = splitter.next().expect("Could not parse cellID from read name");
-    let umi = splitter.next().expect("Could not parse UMI from read name");
-*/
-    let (cell_id, umi) = readname_to_cell_umi(record.qname());
-
-    let rp = ReadPair {
-        r1: record.seq().as_bytes(),
-        r2: Vec::new(),
-        q1: record.qual().to_vec(),
-        q2: Vec::new(),
-        umi: umi.to_vec()
-    };
-
-    (cell_id.to_vec(), rp)  //this copying hurts a bit...
-}
-
-
-type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
-
-
 impl StreamingReadPairReader for BAMStreamingReadPairReader {
 
 
@@ -147,6 +104,55 @@ impl StreamingReadPairReader for BAMStreamingReadPairReader {
     }
    
 }
+
+
+
+
+
+
+
+/////////////////////////////// 
+/// Given the name of a read, divide into cell ID and UMI
+pub fn readname_to_cell_umi(
+    read_name: &[u8]
+) -> (&[u8], &[u8]) {
+    let mut splitter = read_name.split(|b| *b == b':'); 
+    let mut cell_id = splitter.next().expect("Could not parse cellID from read name");
+    let umi = splitter.next().expect("Could not parse UMI from read name");
+
+    if cell_id.starts_with(b"BASCET_") {
+        cell_id = &cell_id["BASCET_".len()..];
+    }
+
+    (cell_id, umi)
+}
+
+
+/////////////////////////////// 
+/// Parse one BAM entry to a readpair
+fn read_to_readpair(
+    record: &BamRecord
+) -> (Vec<u8>, ReadPair) {
+
+    /* 
+    let read_name = record.qname();
+    let mut splitter = read_name.split(|b| *b == b':'); 
+    let cell_id = splitter.next().expect("Could not parse cellID from read name");
+    let umi = splitter.next().expect("Could not parse UMI from read name");
+*/
+    let (cell_id, umi) = readname_to_cell_umi(record.qname());
+
+    let rp = ReadPair {
+        r1: record.seq().as_bytes(),
+        r2: Vec::new(),
+        q1: record.qual().to_vec(),
+        q2: Vec::new(),
+        umi: umi.to_vec()
+    };
+
+    (cell_id.to_vec(), rp)  //this copying hurts a bit...
+}
+
 
 
 

@@ -1,7 +1,5 @@
 use anyhow::bail;
-//use log::info;
 use log::debug;
-//use std::path::PathBuf;
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -17,10 +15,8 @@ use crate::fileformat::shard::ReadPair;
 
 
 
-
-
-
-
+///////////////////////////////
+/// Detector of barcode given Myers algorithm
 #[derive(Clone, Debug)]
 pub struct MyersBarcode {
     pub name: String,
@@ -40,9 +36,10 @@ impl MyersBarcode {
         }
     }
 
-
-    // Note: Mutatable because it modifies the Myers precalculated matrix
-    //// returns: name, start, score
+    ///////////////////////////////
+    /// Seek first barcode hit
+    /// Note: Mutatable because it modifies the Myers precalculated matrix
+    /// returns: name, start, score
     pub fn seek_one( 
         &mut self,
         record: &[u8],
@@ -80,7 +77,8 @@ impl MyersBarcode {
 
 
 
-
+///////////////////////////////
+/// A set of barcode positions and sequences, making up a total combinatorial barcode
 #[derive(Clone, Debug)]
 pub struct CombinatorialBarcode {
 
@@ -132,8 +130,8 @@ impl CombinatorialBarcode {
     }
 
 
-
-    //From histogram, decide where to start. This can fail if no barcode fitted at all
+    ///////////////////////////////
+    /// From histogram, decide where to start. This can fail if no barcode fitted at all
     fn pick_startpos(
         &mut self
     ) -> anyhow::Result<()> {
@@ -187,8 +185,8 @@ impl CombinatorialBarcode {
     }
 
 
-
-    ////////// Detect barcode only
+    ///////////////////////////////
+    /// Detect barcode only
     #[inline(always)]
     pub fn detect_barcode(
         &mut self,
@@ -223,7 +221,8 @@ impl CombinatorialBarcode {
         (true, bcvec_to_string(&full_bc))
     }
 
-    ////////// Detect barcode, and trim if ok
+    ///////////////////////////////
+    /// Detect barcode, and trim if ok
     #[inline(always)]
     pub fn detect_barcode_and_trim(
         &mut self,
@@ -319,7 +318,8 @@ fn bcvec_to_string(cell_id: &Vec<String>) -> CellID {
 
 
 
-
+///////////////////////////////
+/// One barcode position, in a combinatorial barcode
 #[derive(Clone, Debug)]
 pub struct CombinatorialBarcodePart {
 
@@ -333,7 +333,6 @@ pub struct CombinatorialBarcodePart {
     pub histogram_startpos:Vec<usize>
 }
 impl CombinatorialBarcodePart {
-
 
     fn new() -> CombinatorialBarcodePart {
         CombinatorialBarcodePart {
@@ -467,7 +466,8 @@ impl CombinatorialBarcodePart {
 
 
 
-
+///////////////////////////////
+/// For serialization: one row in a barcode CSV definition file
 #[derive(Debug, serde::Deserialize, Eq, PartialEq)]
 struct BarcodeCsvFileRow {
     pos: String,

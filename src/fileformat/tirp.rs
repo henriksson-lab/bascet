@@ -1,5 +1,3 @@
-use bgzip::{write::BGZFMultiThreadWriter, Compression};
-
 use log::debug;
 use std::collections::HashSet;
 use std::io::BufRead;
@@ -12,6 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use anyhow::bail;
 
+use bgzip::{write::BGZFMultiThreadWriter, Compression};
 
 use super::ConstructFromPath;
 use super::ReadPairWriter;
@@ -33,7 +32,8 @@ use noodles::fastq::Record as FastqRecord;
 
 type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
-
+///////////////////////////////
+/// A factory of TIRP readers, given paths
 #[derive(Debug,Clone)]
 pub struct TirpBascetShardReaderFactory {
 }
@@ -49,14 +49,15 @@ impl ConstructFromPath<TirpBascetShardReader> for TirpBascetShardReaderFactory {
 }
 
 
-//#[derive(Debug)]  //// not sure about all of these
+///////////////////////////////
+/// A reader of TIRPs as shards
 pub struct TirpBascetShardReader {
     tabix_reader: TabixReader     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
 }
 impl TirpBascetShardReader {
 
 
-    pub fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {  ///////// maybe anyhow prevents spec of reader?
+    pub fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {  
 
         //Check that the index .tbi-file is present; give better error message
         let index_path = get_tbi_path_for_tirp(&fname);
@@ -75,9 +76,6 @@ impl TirpBascetShardReader {
     }
 
 }
-
-
-
 impl ReadPairReader for TirpBascetShardReader {
 
 
@@ -106,9 +104,6 @@ impl ReadPairReader for TirpBascetShardReader {
 
 
 }
-
-
-
 impl ShardCellDictionary for TirpBascetShardReader {
     
     fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
@@ -121,10 +116,6 @@ impl ShardCellDictionary for TirpBascetShardReader {
     }
 
 }
-
-
-
-
 impl ShardRandomFileExtractor for TirpBascetShardReader {
 
 
@@ -235,7 +226,8 @@ impl ShardRandomFileExtractor for TirpBascetShardReader {
 
 
 
-
+///////////////////////////////
+/// Write a pair of reads to TIRP file
 pub fn write_records_pair_to_tirp(
     writer: &mut impl Write, 
     cell_id: &CellID,    
@@ -272,7 +264,8 @@ pub fn write_records_pair_to_tirp(
 }
 
 
-
+///////////////////////////////
+/// Given a line in a TIRP file, return pair of reads
 pub fn parse_tirp_readpair(
     line: &Vec<u8>,   
 ) -> ReadPair {
@@ -293,7 +286,8 @@ pub fn parse_tirp_readpair(
 }
 
 
-
+///////////////////////////////
+/// Given a line in a TIRP file, return pair of reads, and cellID
 pub fn parse_tirp_readpair_with_cellid(
     line: &[u8], //Vec<u8>,   
 ) -> (Vec<u8>, ReadPair) {
@@ -320,7 +314,8 @@ pub fn parse_tirp_readpair_with_cellid(
 
 
 
-
+///////////////////////////////
+/// 
 fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
     where T: PartialEq<T> {
         let indices: Vec<usize> = input.iter().enumerate().filter(|(_, value)| *value == delim).map(|(i, _)| i).collect();
@@ -335,7 +330,8 @@ fn split_delimited<'a, T>(input: &'a [T], delim: &T) -> Vec<&'a [T]>
 }
 
 
-
+///////////////////////////////
+/// TABIX-index TIRP file
 pub fn index_tirp(p: &PathBuf) -> anyhow::Result<()> {
     let p = p.to_str().expect("could not form path").to_string();
     let mut process = Command::new("tabix");
@@ -351,7 +347,8 @@ pub fn index_tirp(p: &PathBuf) -> anyhow::Result<()> {
 
 
 
-
+///////////////////////////////
+/// Get the path of the histogram file associated with TIRP file
 pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
     let p = p.as_os_str().as_encoded_bytes();
     let mut histpath = p.to_vec();
@@ -363,7 +360,8 @@ pub fn get_histogram_path_for_tirp(p: &PathBuf) -> PathBuf {
 
 
 
-
+///////////////////////////////
+/// Get the TABIX .tbi-file path
 pub fn get_tbi_path_for_tirp(p: &PathBuf) -> PathBuf {
     let p = p.as_os_str().as_encoded_bytes();
     let mut index_path = p.to_vec();
@@ -385,24 +383,17 @@ pub fn get_tbi_path_for_tirp(p: &PathBuf) -> PathBuf {
 
 
 
-
-
-
-
-
-///////////////////
-/////////////////// Below is code for streaming of data from TIRPs -- readpair system
-///////////////////
-
-
-
-
+///////////////////////////////
+/// A streaming reader of TIRPs - giving read pairs
 #[derive(Debug)]
 pub struct TirpStreamingReadPairReader {
     reader: BufReader<rust_htslib::bgzf::Reader>, //TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
     last_rp: Option<(Vec<u8>,ReadPair)>,
 }
 impl TirpStreamingReadPairReader {
+
+    ///////////////////////////////
+    /// Create a new TIRP file reader
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingReadPairReader> {
 
         let reader= rust_htslib::bgzf::Reader::from_path(&fname)
@@ -435,11 +426,8 @@ impl TirpStreamingReadPairReader {
     
         }
     }
+
 }
-
-
-
-
 impl StreamingReadPairReader for TirpStreamingReadPairReader {
 
 
@@ -515,7 +503,8 @@ impl StreamingReadPairReader for TirpStreamingReadPairReader {
 
 
 
-
+///////////////////////////////
+/// Factory of new TIRP file readers, given paths
 #[derive(Debug,Clone)]
 pub struct TirpStreamingReadPairReaderFactory {
 }
@@ -533,28 +522,28 @@ impl ConstructFromPath<TirpStreamingReadPairReader> for TirpStreamingReadPairRea
 
 
 
-
-
-///////////////////
-/////////////////// Below is code for streaming of data from TIRPs -- shard system ........... can be put on top of any streaming pair reader; generalize later
-///////////////////
-
-
+///////////////////////////////
+/// Reader of TIRP files, as shards
 pub struct TirpStreamingShardExtractor {
     reader: TirpStreamingReadPairReader,
     last_read: Option<ListReadWithBarcode>
 }
 impl TirpStreamingShardExtractor{
+
+    ///////////////////////////////
+    /// New reader of TIRP files, as shard files
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingShardExtractor> {
         Ok(TirpStreamingShardExtractor {
             reader: TirpStreamingReadPairReader::new(fname)?,
             last_read: None
         })
     }
-}
 
+}
 impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make it for any readpairstreamer. TODO generalize this
 
+    ///////////////////////////////
+    /// Move to the next cell in the stream
     fn next_cell (
         &mut self, 
     ) -> anyhow::Result<Option<CellID>> {
@@ -646,7 +635,8 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
 
 
 
-
+///////////////////////////////
+/// Factory of TIRP readers, given paths
 #[derive(Debug,Clone)]
 pub struct TirpStreamingShardReaderFactory {
 }
