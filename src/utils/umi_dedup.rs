@@ -17,8 +17,24 @@
 
 // could use this also to scan for barcodes if errors are present
 
-
-
 // there are several bk-tree implementations in rust:
 // https://www.google.com/search?q=rust+bk-tree&oq=rust+bk-tree&gs_lcrp=EgZjaHJvbWUyBggAEEUYOTIJCAEQABgNGIAEMggIAhAAGA0YHjIICAMQABgNGB4yCggEEAAYCBgNGB4yCggFEAAYCBgNGB4yDQgGEAAYhgMYgAQYigUyDQgHEAAYhgMYgAQYigUyDQgIEAAYhgMYgAQYigXSAQgxOTkxajBqN6gCALACAA&sourceid=chrome&ie=UTF-8
 
+// https://github.com/sstadick/rumi  -- can use. wants htslib Record; keep all the way to the end?
+
+
+use std::collections::HashSet;
+
+
+/// Given a list of sequenced UMIs, figure out how many 
+/// 
+/// For now: dummy, assuming no errors in sequencing
+pub fn dedup_umi(umis: &Vec<Vec<u8>>) -> usize {
+
+    let mut unique_umi = HashSet::new();
+    for umi in umis {
+        unique_umi.insert(umi);
+    }
+
+    unique_umi.len()
+}
