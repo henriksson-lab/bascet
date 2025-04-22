@@ -31,6 +31,7 @@ docker_load:
 	docker load -i docker_image/bascet.tar
 
 publish_test:
+	# find . -name .DS_Store -print0 | xargs -0 git rm -f --ignore-unmatch
 	cargo publish --dry-run
 
 
