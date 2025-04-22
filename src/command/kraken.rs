@@ -30,6 +30,9 @@ pub struct KrakenCMD {
     
 }
 impl KrakenCMD {
+
+    /// Run the commandline option.
+    /// This one takes a KRAKEN output-file, and outputs a taxonomy count matrix
     pub fn try_execute(&mut self) -> Result<()> {
 
         let params = Kraken {
@@ -48,22 +51,7 @@ impl KrakenCMD {
 }
 
 
-
-
-
-
-
-
-
-
-
-/**
- * 
- * as input, take total count matrix, pick features that are within a certain percentile. randomize and subset these further to get a good list!
- * 
- * 
- */
-
+/// KRAKEN count matrix constructor.
 pub struct Kraken {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
@@ -71,7 +59,7 @@ pub struct Kraken {
 }
 impl Kraken {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Arc<Kraken>
     ) -> anyhow::Result<()> {
@@ -191,10 +179,7 @@ Note that paired read data will contain a "|:|" token in this list to indicate t
 
 
 
-
-/**
- * Specialized count matrix for Kraken taxid counting per cell. As taxid is already numeric, there is no need to 
- */
+/// Specialized count matrix for Kraken taxid counting per cell. As taxid is numeric, there is no need to assign column names
 pub struct KrakenCountMatrix {
 
     pub cells: Vec<String>,
@@ -203,9 +188,6 @@ pub struct KrakenCountMatrix {
 
 }
 impl KrakenCountMatrix {
-
-
-
 
     pub fn new() -> Self {
         Self {
@@ -248,7 +230,7 @@ impl KrakenCountMatrix {
 
     }
 
-
+    /// Save matrix as anndata-like hdf5-file
     pub fn save_to_anndata(&self, p: &PathBuf) -> anyhow::Result<()> {
         
         //Delete output file if it exists already; HDF5 library complains otherwise
@@ -312,7 +294,7 @@ impl KrakenCountMatrix {
 
 }
 
-
+/// Helper: Take a list of strings, and generate a list of HDF5-type strings
 fn vec_to_h5_string(list: &[String]) -> Vec<hdf5::types::VarLenUnicode> {
     list.iter().map(|f| f.parse().unwrap()).collect()
 }

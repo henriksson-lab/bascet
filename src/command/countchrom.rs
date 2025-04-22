@@ -31,6 +31,8 @@ pub struct CountChromCMD {
     num_threads_total: Option<usize>,
 }
 impl CountChromCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
 
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
@@ -40,7 +42,6 @@ impl CountChromCMD {
 
         CountChrom::run(&CountChrom {
             path_in: self.path_in.clone(),
-         //   path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
             num_threads: num_threads_total
         }).unwrap();
@@ -62,7 +63,7 @@ pub struct CountChrom {
 }
 impl CountChrom {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &CountChrom
     ) -> anyhow::Result<()> {
@@ -159,8 +160,6 @@ impl CountChrom {
 
     
 }
-
-
 
 
 

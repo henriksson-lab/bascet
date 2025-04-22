@@ -19,9 +19,10 @@ pub struct ExtractStreamCMD {
 
 }
 impl ExtractStreamCMD {
-    pub fn try_execute(&mut self) -> Result<()> {
 
-        //This is an interactive terminal to navigate Bascet-ZIP content; could generalize to any container later
+    /// Run the commandline option. 
+    /// This is an interactive terminal to navigate Bascet-ZIP content; could generalize to any container later
+    pub fn try_execute(&mut self) -> Result<()> {
 
         //Tell version info etc. Final line is "ready" or "error"
         println!("version_major:1");
@@ -56,13 +57,11 @@ impl ExtractStreamCMD {
 
 
 pub struct ExtractStream {
-
     curfile: Option<(String, ZipArchive<BufReader<File>>)>
-
 }
 impl ExtractStream {
 
-
+    /// Set which file is currently open
     pub fn open(&mut self, path_in: &String) -> Result<()> {
 
         let file = File::open(path_in);
@@ -79,7 +78,7 @@ impl ExtractStream {
         }
     }
 
-
+    /// Run the terminal
     pub fn run(&mut self) -> Result<()> {
 
         loop {
@@ -214,4 +213,3 @@ impl ExtractStream {
 
     }
 }
- //   pub fn try_execute(&mut self) -> Result<()> {

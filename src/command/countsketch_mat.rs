@@ -47,6 +47,8 @@ pub struct CountsketchCMD {
     
 }
 impl CountsketchCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         
         //Read optional list of cells
@@ -90,7 +92,7 @@ pub struct CountsketchMat {
 }
 impl CountsketchMat {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Arc<CountsketchMat>
     ) -> anyhow::Result<()> {

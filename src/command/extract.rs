@@ -32,6 +32,9 @@ pub struct ExtractCMD {
 }
 
 impl ExtractCMD {
+
+    /// Run the commandline option.
+    /// This one enables the extraction of a single file from a Bascet ZIP archive
     pub fn try_execute(&mut self) -> Result<()> {
 
         //Just unzip list of files from zip. This way we can be sure to support fancier compression methods and be sure to be compatible with R
@@ -39,7 +42,7 @@ impl ExtractCMD {
 
         let file = File::open(&self.path_in).expect("Failed to open bascet shard");
         let bufreader_shard = BufReader::new(file);
-        let mut zip_shard =    ZipArchive::new(bufreader_shard).unwrap();
+        let mut zip_shard = ZipArchive::new(bufreader_shard).unwrap();
 
         let zip_fname = format!("{}/{}",self.cell_id, self.fname);
 
@@ -54,9 +57,6 @@ impl ExtractCMD {
             let mut bufreader_found = BufReader::new(&mut entry);
             std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
         }
-
-        //Example call in Zorn
-        //        unzip(name_of_zip, files=extract_files, exdir=tname.dir) ### 666 cannot operate on our rust files. 
 
         log::info!("Extract has finished succesfully");
         Ok(())
