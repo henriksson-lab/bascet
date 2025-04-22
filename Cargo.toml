@@ -6,7 +6,6 @@ license = "MIT"
 description = "Bascet is a tool to preprocess single-cell data, handling barcode detection, trimming, QC, and managing the execution of custom tools for each cell"
 homepage = "https://henriksson-lab.github.io/zorn/"
 repository = "https://github.com/henriksson-lab/bascet"
-keywords = ["bioinformatics", "genomics", "sequence analysis"]
 readme = "README.md"
 include = ["/src", "Cargo.toml","Dockerfile","README.md"]
 
