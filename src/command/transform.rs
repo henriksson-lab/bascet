@@ -42,6 +42,8 @@ pub struct TransformCMD {
     
 }
 impl TransformCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
 
         if self.path_in.is_empty() {
@@ -81,9 +83,9 @@ impl TransformCMD {
 
 
 
-
-//Convert from [X] -> [Y], with selection of cells. this enables splitting, merging and subsetting in one command.
-//However, this is not quite enough to Shardify, as this requires synchronization between readers
+/// Algorithm:
+/// Convert from [X] -> [Y], with selection of cells. this enables splitting, merging and subsetting in one command.
+/// Note that this operation cannot shardify, as this requires readers to synchronize and merge data
 pub struct TransformFile { 
     pub path_in: Vec<std::path::PathBuf>,
     //pub path_tmp: std::path::PathBuf,
@@ -93,7 +95,7 @@ pub struct TransformFile {
 }
 impl TransformFile {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Arc<TransformFile>
     ) -> anyhow::Result<()> {
@@ -193,7 +195,7 @@ impl TransformFile {
 pub fn create_random_readers(
     params: &Arc<TransformFile>,
     path_in: &Vec<std::path::PathBuf>,
-    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>
+    tx_data: &Sender<Option<ListReadWithBarcode>>
 ) -> anyhow::Result<()>{
 
 
@@ -203,7 +205,6 @@ pub fn create_random_readers(
 
     // Set up channel for telling readers which cells to select
     let (tx_readcell, rx_readcell) = crossbeam::channel::bounded::<Option<CellID>>(n_input);
-    let (tx_readcell, rx_readcell) = (Arc::new(tx_readcell), Arc::new(rx_readcell));
 
     //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
     let include_cells = get_list_of_all_cells(&params);
@@ -258,7 +259,7 @@ pub fn create_random_readers(
 
 pub fn create_stream_readers(
     path_in: &Vec<std::path::PathBuf>,
-    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>
+    tx_data: &Sender<Option<ListReadWithBarcode>>
 ) -> anyhow::Result<()>{
 
     //Set up thread pools
@@ -316,12 +317,12 @@ pub fn create_stream_readers(
 fn create_writer_thread<W>(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    rx_data: &Arc<Receiver<Option<ListReadWithBarcode>>>,
+    rx_data: &Receiver<Option<ListReadWithBarcode>>,
     constructor: &Arc<impl ConstructFromPath<W>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where W: ReadPairWriter  {
 
     let outfile = outfile.clone();
-    let rx_data = Arc::clone(rx_data);
+    let rx_data = rx_data.clone();
     let constructor = Arc::clone(&constructor);
 
     thread_pool.execute(move || {
@@ -386,14 +387,14 @@ fn get_list_of_all_cells(
 fn create_random_reader_thread<R>(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    rx_readcell: &Arc<Receiver<Option<CellID>>>,
-    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>,
+    rx_readcell: &Receiver<Option<CellID>>,
+    tx_data: &Sender<Option<ListReadWithBarcode>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R: ReadPairReader+ShardCellDictionary {
 
     let infile = infile.clone();
-    let rx_readcell = Arc::clone(rx_readcell);
-    let tx_data = Arc::clone(tx_data);
+    let rx_readcell = rx_readcell.clone();
+    let tx_data = tx_data.clone();
     let constructor = Arc::clone(&constructor);
 
     thread_pool.execute(move || {
@@ -431,12 +432,12 @@ fn create_random_reader_thread<R>(
 pub fn create_stream_reader_thread<R>(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    tx_data: &Arc<Sender<Option<ListReadWithBarcode>>>,
+    tx_data: &Sender<Option<ListReadWithBarcode>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R: StreamingReadPairReader {
 
     let infile = infile.clone();
-    let tx_data = Arc::clone(tx_data);
+    let tx_data = tx_data.clone();
     let constructor = Arc::clone(&constructor);
     thread_pool.execute(move || {
         // Open input file

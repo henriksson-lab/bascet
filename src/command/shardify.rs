@@ -7,32 +7,28 @@ use std::fs::File;
 use anyhow::Result;
 use clap::Args;
 
-
 use std::io::{BufWriter, Write};
 
 use crossbeam::channel::Sender;
 use crossbeam::channel::Receiver;
 
-
 use crate::fileformat::read_cell_list_file;
-
 use crate::fileformat::CellID;
 use crate::fileformat::ReadPair;
-
 use crate::fileformat::TirpBascetShardReader;
 use crate::fileformat::ShardCellDictionary;
 use crate::fileformat::ReadPairReader;
-
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 
 
-
-
+type ListReadPair = Arc<Vec<ReadPair>>;
+type MergedListReadWithBarcode = Arc<(CellID,Vec<ListReadPair>)>;
 
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
+/// Commandline option: Take parsed reads and organize them as shards
 
 #[derive(Args)]
 pub struct ShardifyCMD {
@@ -55,6 +51,8 @@ pub struct ShardifyCMD {
 
 }
 impl ShardifyCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
 
         //Read optional list of cells
@@ -85,7 +83,7 @@ impl ShardifyCMD {
 
 
 
-
+/// Algorithm: Take parsed reads and organize them as shards
 #[derive(Clone,Debug)]
 pub struct Shardify {
     pub path_in: Vec<std::path::PathBuf>,
@@ -93,9 +91,10 @@ pub struct Shardify {
     pub path_out: Vec<std::path::PathBuf>,
 
     pub include_cells: Option<Vec<CellID>>,
-
 }
 impl Shardify {
+
+    /// Run the algorithm
     pub fn run(
         params: Arc<Shardify>
     ) -> anyhow::Result<()> {
@@ -139,12 +138,10 @@ impl Shardify {
         //Create queue: reads going to main thread, for concatenation
         //Limit how many chunks can be in pipe
         let (tx_write_seq, rx_write_seq) = crossbeam::channel::unbounded::<ListReadPair>();  
-        let (tx_write_seq, rx_write_seq) = (Arc::new(tx_write_seq), Arc::new(rx_write_seq));
 
         //Create queue: concatenated reads going to writers
         //Limit how many chunks can be in pipe
         let (tx_write_cat, rx_write_cat) = crossbeam::channel::bounded::<Option<MergedListReadWithBarcode>>(30);  
-        let (tx_write_cat, rx_write_cat) = (Arc::new(tx_write_cat), Arc::new(rx_write_cat));
 
         //Start writer threads, one per shard requested
         let thread_pool_write = threadpool::ThreadPool::new(params.path_out.len());
@@ -158,7 +155,6 @@ impl Shardify {
 
         //Create queue: cellid's to be read. we will use this as a broadcaster, one cellid at a time
         let (tx_request_cell, rx_request_cell) = crossbeam::channel::unbounded::<Option<CellID>>();  
-        let (tx_request_cell, rx_request_cell) = (Arc::new(tx_request_cell), Arc::new(rx_request_cell));
 
         //Prepare reader threads, one per input file
         let thread_pool_read = threadpool::ThreadPool::new(params.path_in.len());  
@@ -223,23 +219,15 @@ impl Shardify {
 
 
 
-
-
-
-
-type ListReadPair = Arc<Vec<ReadPair>>;
-type MergedListReadWithBarcode = Arc<(CellID,Vec<ListReadPair>)>;
-
-
 //////////////// Writer to TIRP format, taking multiple blocks of reads for the same cell
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    rx: &Arc<Receiver<Option<MergedListReadWithBarcode>>>
+    rx: &Receiver<Option<MergedListReadWithBarcode>>
 ) -> anyhow::Result<()> {
 
     let outfile = outfile.clone();
-    let rx=Arc::clone(rx);
+    let rx=rx.clone();
     let outfile_keep = outfile.clone();
 
     thread_pool.execute(move || {
@@ -290,7 +278,7 @@ fn create_writer_thread(
         //Write histogram
         debug!("Writing histogram");
         let hist_path = tirp::get_histogram_path_for_tirp(&outfile);
-        hist.write(&hist_path).expect("Failed to write histogram");
+        hist.write_file(&hist_path).expect("Failed to write histogram");
 
         //// Index the final file with tabix  
         println!("Indexing final output file");
@@ -318,14 +306,13 @@ fn create_writer_thread(
 fn create_reader_thread(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    rx_get_cellid: &Arc<Receiver<Option<CellID>>>,
-    tx_send_reads: &Arc<Sender<ListReadPair>>
-
+    rx_get_cellid: &Receiver<Option<CellID>>,
+    tx_send_reads: &Sender<ListReadPair>
 ) -> anyhow::Result<()> {
 
     let infile = infile.clone();
-    let tx_send_reads=Arc::clone(tx_send_reads);
-    let rx_get_cellid=Arc::clone(rx_get_cellid);
+    let tx_send_reads=tx_send_reads.clone();
+    let rx_get_cellid=rx_get_cellid.clone();
 
     thread_pool.execute(move || {
 
@@ -347,7 +334,4 @@ fn create_reader_thread(
     });
     Ok(())
 }
-
-
-
 

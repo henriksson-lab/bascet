@@ -1,14 +1,14 @@
 use log::debug;
 use log::info;
 use std::process::Command;
-//use anyhow::Result;
 use anyhow::bail;
 use semver::{Version, VersionReq};
 
 
 
 
-
+///////////////////////////////
+/// Check if KMC is installed
 pub fn check_kmc_tools() -> anyhow::Result<()> {
     debug!("Checking for kmc_tools");
     if let Ok(_output)  = Command::new("kmc_tools").output() {
@@ -19,6 +19,8 @@ pub fn check_kmc_tools() -> anyhow::Result<()> {
     }
 }
 
+///////////////////////////////
+/// Check if TABIX is installed
 pub fn check_tabix() -> anyhow::Result<()> {
     debug!("Checking for tabix");
     if let Ok(_output)  = Command::new("tabix").output() {
@@ -31,6 +33,8 @@ pub fn check_tabix() -> anyhow::Result<()> {
 
 
 
+///////////////////////////////
+/// Check if BGZIP is installed
 pub fn check_bgzip() -> anyhow::Result<()> {
     debug!("Checking for bgzip");
     if let Ok(_output)  = Command::new("bgzip").output() {
@@ -43,7 +47,8 @@ pub fn check_bgzip() -> anyhow::Result<()> {
 
 
 
-#[allow(dead_code)]
+///////////////////////////////
+/// Check if samtools is installed
 pub fn check_samtools() -> anyhow::Result<()> {
     debug!("Checking for the correct samtools");
     let req_samtools_version = VersionReq::parse(">=1.18").unwrap();
@@ -66,4 +71,3 @@ pub fn check_samtools() -> anyhow::Result<()> {
         bail!("This software requires Samtools >= 1.18");
     }
 }
-

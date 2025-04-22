@@ -7,14 +7,14 @@ use zip::read::ZipArchive;
 use log::debug;
 use anyhow::bail;
 
-
 use super::shard::ShardRandomFileExtractor;
 use super::shard::CellID;
 use super::ConstructFromPath;
 use super::ShardCellDictionary;
 
 
-
+///////////////////////////////
+/// Factory of ZIP-readers, as shards
 #[derive(Debug,Clone)]
 pub struct ZipBascetShardReaderFactory {
 }
@@ -30,7 +30,8 @@ impl ConstructFromPath<ZipBascetShardReader> for ZipBascetShardReaderFactory {
 }
 
 
-
+///////////////////////////////
+/// A reader of ZIP-files as shards
 pub struct ZipBascetShardReader {
 
     pub files_for_cell: HashMap::<CellID,Vec<String>>,
@@ -39,7 +40,11 @@ pub struct ZipBascetShardReader {
 }
 impl ZipBascetShardReader {
 
-    pub fn new(fname: &PathBuf) -> anyhow::Result<ZipBascetShardReader> {
+    ///////////////////////////////
+    /// Constructor of ZIP-file readers
+    pub fn new(
+        fname: &PathBuf
+    ) -> anyhow::Result<ZipBascetShardReader> {
 
         let file = File::open(fname).expect("Failed to open bascet shard");
         let bufreader_shard = BufReader::new(file);
@@ -78,10 +83,8 @@ impl ZipBascetShardReader {
     }
 
 }
-
-
-
 impl ShardCellDictionary for ZipBascetShardReader {
+
 
     fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
         let ret = self.files_for_cell.keys().map(|s| s.to_string()).collect::<Vec<String>>();
@@ -94,7 +97,6 @@ impl ShardCellDictionary for ZipBascetShardReader {
 
 
 }
-
 impl ShardRandomFileExtractor for ZipBascetShardReader {
 
     fn get_files_for_cell(
@@ -186,8 +188,6 @@ impl ShardRandomFileExtractor for ZipBascetShardReader {
         }
         Ok(true)
     }
-
-
 
 
 }

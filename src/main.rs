@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand};
 
 use bascet::command;
 
-
+///////////////////////////////
+/// Parser for commandline options, top level
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
@@ -12,6 +13,8 @@ struct Cli {
     command: Commands,
 }
 
+///////////////////////////////
+/// Possible subcommands to parse
 #[derive(Subcommand)]
 enum Commands {
     Getraw(command::GetRawCMD),
@@ -32,6 +35,8 @@ enum Commands {
     ExtractStream(command::ExtractStreamCMD),    
 }
 
+///////////////////////////////
+/// Entry point into the software
 fn main() -> ExitCode {
     let cli = Cli::parse();
     

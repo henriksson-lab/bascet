@@ -19,7 +19,8 @@ use super::parse_compression_mode;
 
 
 
-
+///////////////////////////////
+/// A mapcell function, in the form of a bash script
 #[derive(Clone, Debug)]  
 pub struct MapCellFunctionShellScript {
     script_file: PathBuf,
@@ -47,20 +48,7 @@ impl MapCellFunctionShellScript {
         let path_script=path_script.canonicalize().expect("Failed to get full temp script path");
 
         let path_script_s = &path_script.clone().into_os_string().into_string().unwrap();
-        /* 
-        //Make the script executable
-        process::Command::new("chmod")
-            .arg("u+x")
-            .arg(&path_script_s)
-            .output()
-            .expect("Failed to get output from chmod");
-
-        //Ugly hack: To avoid running the script before ready. another way is to keep trying to run it until OK
-        thread::sleep(time::Duration::from_millis(1000));
-        */
-
-        //Return script
-        println!("Extracted preset script to {:?} and set chmod", &path_script_s);
+        log::info!("Extracted preset script to {:?}", &path_script_s);
 
         //Figure out script metadata
         let api_version = get_script_api_version(&path_script)?;
@@ -95,25 +83,30 @@ impl MapCellFunctionShellScript {
 
 
 }
+impl Drop for MapCellFunctionShellScript {
 
-impl Drop for MapCellFunctionShellScript{
+    ///////////////////////////////
+    /// Handle deallocation - ensure the generated temporary script file is removed when it happens
     fn drop(&mut self) {
         _ = std::fs::remove_file(&self.script_file);
     }
 }
-
 impl fmt::Display for MapCellFunctionShellScript {
+
+    ///////////////////////////////
+    /// Format as string
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Script API version: {}",self.api_version).unwrap();
         writeln!(f,"Script expects files: {:?}", self.expect_files).unwrap();
         writeln!(f,"Script file missing mode: {}", self.missing_file_mode).unwrap();
         Ok(())
     }
-}
 
+}
 impl MapCellFunction for MapCellFunctionShellScript {
 
-
+    ///////////////////////////////
+    /// Run the mapcell script
     fn invoke(
         &self,
         input_dir: &PathBuf,
@@ -136,14 +129,6 @@ impl MapCellFunction for MapCellFunctionShellScript {
             .output()
             .expect(format!("Could not spawn process in mapcell script {:?}", &path_script).as_str());
 
-
-//randomly occurs
-//            Could not spawn process in mapcell script "/pfs/proj/nobackup/fs/projnb10/hpc2nstor2024-027/atrandi/v2_wgs_novaseq3/_temp_script.64315.sh": Os { code: 2, kind: NotFound, message: "No such file or directory" }
-//run bash instead on script??
-//crashes minhash and skesa
-//sometimes ExecutableFileBusy
-
-
         let run_output_string = String::from_utf8(run_output.stdout).expect("utf8 error");
         let run_output_string = run_output_string.trim();
         let run_stderr_string = String::from_utf8(run_output.stderr).expect("utf8 error");
@@ -151,10 +136,6 @@ impl MapCellFunction for MapCellFunctionShellScript {
         //Check if script ran fine
         let last_line = run_output_string.split("\n").last(); //can this ever fail?
         let success = if let Some(last_line) = last_line { last_line=="MAPCELL-OK" } else { false };
-
-     //   println!("last line");
-   //     println!("{:?}",last_line);
-        //debug!("last scrip init line {:?}", last_line);
 
         Ok((success, format!("{}\n{}", run_output_string, run_stderr_string)))
     }  
@@ -209,7 +190,8 @@ impl MapCellFunction for MapCellFunctionShellScript {
 
 
 
-
+///////////////////////////////
+/// Get how many threads the script recommends
 fn get_recommend_threads(path_script: &impl AsRef<Path>) -> anyhow::Result<usize> {
     let run_output = process::Command::new("bash")
         .arg(path_script.as_ref())
@@ -221,6 +203,8 @@ fn get_recommend_threads(path_script: &impl AsRef<Path>) -> anyhow::Result<usize
 }
 
 
+///////////////////////////////
+/// Get which files the mapcell script expects as input
 pub fn get_script_expect_files(path_script: &impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
     let run_output = process::Command::new("bash")
         .arg(path_script.as_ref())
@@ -235,7 +219,8 @@ pub fn get_script_expect_files(path_script: &impl AsRef<Path>) -> anyhow::Result
 }
 
 
-
+///////////////////////////////
+/// Get how to handle missing files
 fn get_missing_file_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<MissingFileMode> {
     let run_output = process::Command::new("bash")
         .arg(path_script.as_ref())
@@ -248,7 +233,8 @@ fn get_missing_file_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<Missi
 }
 
 
-
+///////////////////////////////
+/// Get the policy for compressing output files
 fn get_compression_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<CompressionMode> {
     let run_output = process::Command::new("bash")
         .arg(path_script.as_ref())
@@ -261,8 +247,8 @@ fn get_compression_mode(path_script: &impl AsRef<Path>) -> anyhow::Result<Compre
 }
 
 
-
-//// Get API version. This is the first call so a lot of checks to help user debug
+///////////////////////////////
+/// Get API version. This is the first call so a lot of checks to help user debug
 fn get_script_api_version(path_script: &impl AsRef<Path>) -> anyhow::Result<String> {
     let run_output = process::Command::new("bash")
         .arg(path_script.as_ref())
@@ -295,7 +281,8 @@ fn get_script_api_version(path_script: &impl AsRef<Path>) -> anyhow::Result<Stri
 
 
 
-
+///////////////////////////////
+/// Given a path, return the absolute path of it
 pub fn to_absolute_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     let path = path.as_ref();
 

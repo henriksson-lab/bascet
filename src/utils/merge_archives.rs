@@ -4,7 +4,10 @@ use std::{
 };
 
 use zip::{ZipArchive, ZipWriter};
+use std::ffi::OsString;
 
+///////////////////////////////
+/// Merge a list of ZIP archives
 pub fn merge_archives<P>(destination: &P, sources: &Vec<P>) -> anyhow::Result<()>
 where
     P: AsRef<std::path::Path>,
@@ -27,8 +30,8 @@ where
     Ok(())
 }
 
-use std::ffi::OsString;
 
+///////////////////////////////
 /// Take multiple zip-files, and merge into a new one. Then delete the source zip files
 pub fn merge_archives_and_delete<P>(destination: &P, sources: &Vec<P>) -> anyhow::Result<()>
 where
@@ -72,8 +75,6 @@ where
     Ok(())
 }
 
-
+// Possible option:
 // https://linux.die.net/man/1/zipmerge
 // usage: zipmerge [-DhIikSsV] target-zip zip...
-
-// have we lost any threads on the way?

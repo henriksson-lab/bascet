@@ -15,12 +15,10 @@ use crate::fileformat::{CellID, ReadPair};
 type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
 
 
-
-
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 
-
+/// Commandline option: Check FASTQ for occurences of given list of KMERs
 #[derive(Args)]
 pub struct QueryFqCMD {
     // Input bascet or gascet
@@ -45,6 +43,8 @@ pub struct QueryFqCMD {
     
 }
 impl QueryFqCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
 
         let params = QueryFq {
@@ -65,7 +65,7 @@ impl QueryFqCMD {
 }
 
 
-
+/// Algorithm: Check FASTQ for occurences of given list of KMERs
 pub struct QueryFq {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
@@ -75,12 +75,10 @@ pub struct QueryFq {
 }
 impl QueryFq {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Arc<QueryFq>
     ) -> anyhow::Result<()> {
-
-
 
         //Prepare matrix that we will store into
         let mut mm = SparseCountMatrix::new();
@@ -95,8 +93,6 @@ impl QueryFq {
                 panic!("Failed to create temporary directory");
             };  
         }
-
-
 
         //Below reads list of features to include. Set up a map: KMER => column in matrix.
         //Also figure out what kmer size to use.
@@ -142,7 +138,7 @@ impl QueryFq {
         //Set up counters
         let features_reference = Arc::new(features_reference);
         for _ in 0..n_output {
-            setup_matrix_counter(
+            start_matrix_counter_threads(
                 &Arc::clone(&features_reference),
                 kmer_size,
                 params.max_reads,
@@ -181,19 +177,19 @@ impl QueryFq {
 
 
 
-
-pub fn setup_matrix_counter(
+/// Prepare threads for counting KMERs in sequences
+fn start_matrix_counter_threads(
     features_reference: &Arc<BTreeMap<Vec<u8>, usize>>, //Map from feature to index
     kmer_size: usize,
     max_reads: usize,
     mm: &Arc<Mutex<SparseCountMatrix>>,
     thread_pool: &threadpool::ThreadPool,
-    rx_data: &Arc<Receiver<Option<ListReadWithBarcode>>>,
+    rx_data: &Receiver<Option<ListReadWithBarcode>>,
 ) -> anyhow::Result<()> {
 
     let features_reference = Arc::clone(features_reference);
     let mm = Arc::clone(mm);
-    let rx_data = Arc::clone(rx_data);
+    let rx_data = rx_data.clone();
 
     thread_pool.execute(move || {
         println!("Starting KMER counter process");
@@ -253,8 +249,8 @@ pub fn setup_matrix_counter(
 }
 
 
-
-pub fn count_from_seq(
+/// Get KMER counts from a sequence
+fn count_from_seq(
     features_reference: &BTreeMap<Vec<u8>, usize>, //Map from feature to index
     features_count: &mut BTreeMap<Vec<u8>, usize>, //Map from feature to count
     seq: &Vec<u8>,
@@ -283,7 +279,7 @@ pub fn count_from_seq(
 
 /// Implementation is taken from https://doi.org/10.1101/082214
 /// This function handles ATCG
-pub fn revcomp(seq: &[u8]) -> Vec<u8> {
+fn revcomp(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()
         .map(|c| if c & 2 != 0 { c ^ 4 } else { c ^ 21 })

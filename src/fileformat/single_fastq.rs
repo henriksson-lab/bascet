@@ -10,7 +10,8 @@ use crate::fileformat::ReadPairWriter;
 use super::ConstructFromPath;
 
 
-
+/////////////////////////////// 
+/// Factory of FASTQ writers, given paths
 #[derive(Debug,Clone)]
 pub struct BascetSingleFastqWriterFactory {
 }
@@ -27,12 +28,15 @@ impl ConstructFromPath<BascetSingleFastqWriter> for BascetSingleFastqWriterFacto
 
 
 
-
+/////////////////////////////// 
+/// A writer of single FASTQ files
 pub struct BascetSingleFastqWriter {
     pub writer: BGZFMultiThreadWriter<File>
 }
 impl BascetSingleFastqWriter {
 
+    /////////////////////////////// 
+    /// Create a new writer of a single FASTQ file
     fn new(path: &PathBuf) -> anyhow::Result<BascetSingleFastqWriter>{
 
         println!("starting writer for single FASTQ {:?}", path);
@@ -46,11 +50,9 @@ impl BascetSingleFastqWriter {
     }
 
 }
-
-
 impl ReadPairWriter for BascetSingleFastqWriter {
 
-
+    
     fn write_reads_for_cell(&mut self, cell_id:&CellID, list_reads: &Arc<Vec<ReadPair>>) {
         let mut read_num = 0;
         for rp in list_reads.iter() {
@@ -91,7 +93,8 @@ impl ReadPairWriter for BascetSingleFastqWriter {
 
 
 
-////////// Write one FASTQ read
+/////////////////////////////// 
+/// Write one FASTQ read
 fn write_single_fastq_read<W: std::io::Write>(
     writer: &mut W,
     head: &Vec<u8>,
@@ -109,7 +112,8 @@ fn write_single_fastq_read<W: std::io::Write>(
 }
 
 
-//// Format FASTQ read names
+/////////////////////////////// 
+/// Format FASTQ read names
 fn make_fastq_readname(
     read_num: u32, 
     cell_id: &CellID, 
@@ -124,5 +128,3 @@ fn make_fastq_readname(
         illumna_read_index);
     name.as_bytes().to_vec()  //TODO best if we can avoid making a String
 }
-
-

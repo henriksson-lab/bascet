@@ -81,6 +81,8 @@ pub struct MapCellCMD {
 
 
 impl MapCellCMD {
+
+    /// Run the map-cell commandline option
     pub fn try_execute(&mut self) -> Result<()> {
 
         if self.show_presets {
@@ -163,9 +165,9 @@ pub struct MapCell {
     pub keep_files: bool
 
 }
-
 impl MapCell {
 
+    /// Run the algorithm
     pub fn run(
         params: MapCell
     ) -> anyhow::Result<()> {
@@ -191,8 +193,7 @@ impl MapCell {
     
         //Queue of cells that have been extracted
         let (tx_loaded_cell, rx_loaded_cell) = crossbeam::channel::bounded::<Option<String>>(read_queue_size);
-        let (tx_loaded_cell, rx_loaded_cell) = (Arc::new(tx_loaded_cell), Arc::new(rx_loaded_cell));
-
+ 
         //Create all writers. these also take care of running mapcell
         let thread_pool_writers = threadpool::ThreadPool::new(params.threads_write);
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
@@ -311,16 +312,17 @@ impl MapCell {
 
 
 
-//////////////////////////////////// Reader for random I/O shard files
+//////////////////////////////////// 
+/// Reader for random I/O shard files
 fn create_random_shard_reader<R>(
     params_io: &Arc<MapCell>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
-    tx: &Arc<Sender<Option<String>>>,
+    tx: &Sender<Option<String>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R:ShardRandomFileExtractor {
 
-    let tx = Arc::clone(tx);
+    let tx = tx.clone();
 
     let params_io = Arc::clone(&params_io);
     let mapcell_script = Arc::clone(mapcell_script);
@@ -387,16 +389,17 @@ fn create_random_shard_reader<R>(
 
 
 
-//////////////////////////////////// Reader for streaming I/O shard files
+//////////////////////////////////// 
+/// Reader for streaming I/O shard files
 fn create_streaming_shard_reader<R>(
     params_io: &Arc<MapCell>,
     thread_pool: &threadpool::ThreadPool,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
-    tx: &Arc<Sender<Option<String>>>,
+    tx: &Sender<Option<String>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
 ) -> anyhow::Result<()> where R:ShardStreamingFileExtractor {
 
-    let tx = Arc::clone(tx);
+    let tx = tx.clone();
 
     let params_io = Arc::clone(&params_io);
     let mapcell_script = Arc::clone(mapcell_script);
@@ -459,17 +462,18 @@ fn create_streaming_shard_reader<R>(
 
 
 
-///////////////////////////// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
+///////////////////////////// 
+/// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
 fn create_writer(
     params_io: &Arc<MapCell>,
     zip_file: &PathBuf,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     thread_pool: &threadpool::ThreadPool,
-    rx: &Arc<Receiver<Option<String>>>
+    rx: &Receiver<Option<String>>
 ) -> anyhow::Result<()> {
     let params_io = Arc::clone(&params_io);
     let mapcell_script = Arc::clone(mapcell_script);
-    let rx = Arc::clone(rx);
+    let rx = rx.clone();
     let zip_file = zip_file.clone();
     thread_pool.execute(move || {
 
@@ -520,7 +524,7 @@ fn create_writer(
             }
 
             //Check what files we got out from executing the script
-            let list_output_files = recurse_files(&path_output_dir).expect("failed to list output files");
+            let list_output_files = get_list_files_recursively(&path_output_dir).expect("failed to list output files");
 
             //////// Add all files in output to the zip file
             //chop off params_io.path_tmp from each path, to get name in zip. not sure how safe this approach is for different OS'
@@ -573,8 +577,10 @@ fn create_writer(
 }
 
 
-
-fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
+/// From a path, list all files that exist beneath recursively
+fn get_list_files_recursively(
+    path: impl AsRef<Path>
+) -> std::io::Result<Vec<PathBuf>> {
     let mut buf = vec![];
     let entries = fs::read_dir(path)?;
 
@@ -583,7 +589,7 @@ fn recurse_files(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
         let meta = entry.metadata()?;
 
         if meta.is_dir() {
-            let mut subdir = recurse_files(entry.path())?;
+            let mut subdir = get_list_files_recursively(entry.path())?;
             buf.append(&mut subdir);
         }
 

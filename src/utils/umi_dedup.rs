@@ -26,6 +26,7 @@
 use std::collections::HashSet;
 
 
+///////////////////////////////
 /// Given a list of sequenced UMIs, figure out how many 
 /// 
 /// For now: dummy, assuming no errors in sequencing

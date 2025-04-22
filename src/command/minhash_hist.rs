@@ -19,15 +19,10 @@ use crate::fileformat::read_cell_list_file;
 
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
-pub const DEFAULT_THREADS_READ: usize = 1;
-pub const DEFAULT_THREADS_WRITE: usize = 10;
-pub const DEFAULT_THREADS_WORK: usize = 1;
 
 
 
-
-
-
+/// Commandline option: Generate a histogram of minhashes
 #[derive(Args)]
 pub struct MinhashHistCMD {
     // Input bascet or gascet
@@ -48,6 +43,8 @@ pub struct MinhashHistCMD {
     
 }
 impl MinhashHistCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         
         //Read optional list of cells
@@ -81,7 +78,7 @@ impl MinhashHistCMD {
 
 
 
-
+/// Algorithm: Generate a histogram of minhashes
 pub struct MinhashHist {
     pub path_input: Vec<std::path::PathBuf>,
     pub path_tmp: std::path::PathBuf,
@@ -90,7 +87,7 @@ pub struct MinhashHist {
 }
 impl MinhashHist {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Arc<MinhashHist>
     ) -> anyhow::Result<()> {
@@ -185,7 +182,7 @@ impl MinhashHist {
 
         //Sort the KMERs; we assume that they are few enough that we can do it in memory for speed
         println!("Counting minhashes");
-        let hist = count_element_function(all_kmer);
+        let hist = make_histogram(all_kmer);
 
         //Write out histogram
         println!("Storing histogram");
@@ -207,8 +204,8 @@ impl MinhashHist {
 
 
 
-
-fn count_element_function<I>(it: I) -> HashMap<I::Item, usize>
+/// From an iterator, generate a histogram of element occurences
+fn make_histogram<I>(it: I) -> HashMap<I::Item, usize>
 where
     I: IntoIterator,
     I::Item: Eq + core::hash::Hash,

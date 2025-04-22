@@ -1,13 +1,5 @@
 
 
-
-
-/*
-
-Need to find and trim from truseq adapter at minimum. then, opposite side len cannot be longer than bc side
-
-*/
-
 /*
 https://github.com/Daniel-Liu-c0deb0t/block-aligner
 */
@@ -36,9 +28,9 @@ This function is not enabled by default, specify -c or --correction to enable it
 
 
 
-
+///////////////////////////////
+/// Reverse complement ATCG
 /// Implementation is taken from https://doi.org/10.1101/082214
-/// This function handles ATCG
 pub fn revcomp(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()
@@ -46,9 +38,9 @@ pub fn revcomp(seq: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-
+///////////////////////////////
+/// Reverse complement ATCGN
 /// Using the trick from https://doi.org/10.1101/082214 , extended to handle N
-/// This function handles ATCGN
 pub fn revcomp_n(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()
