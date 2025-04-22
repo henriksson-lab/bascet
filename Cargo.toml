@@ -10,6 +10,7 @@ keywords = ["bioinformatics", "genomics", "sequence analysis", "single-cell anal
 readme = "README.md"
 include = ["/src", "Cargo.toml","Dockerfile","README.md"]
 
+
 [dependencies]
 anyhow = "1.0.93"
 bgzip = "0.3.1"
