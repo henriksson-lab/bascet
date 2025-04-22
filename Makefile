@@ -19,15 +19,19 @@ docker:
 
 docker_upload: docker
 	docker save -o docker_image/bascet.tar henriksson-lab/bascet
-	scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/
-	#hpc2n:~/mystore/
+	# scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/  #it landed without og+r permission using scp!
+	# scp docker_image/bascet.tar hpc2n:~/mystore/
+	# cp docker_image/bascet.tar /corgi/public_http/public/bascet/
+
+	# http://beagle.henlab.org/public/bascet/bascet.tar
 
 
 docker_load:
-	#
-	docker load -i docker/bascet.tar
+	#just as an example
+	docker load -i docker_image/bascet.tar
 
-
+publish_test:
+	cargo publish --dry-run
 
 
 
