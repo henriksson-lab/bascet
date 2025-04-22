@@ -4,6 +4,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -20,6 +21,9 @@ use noodles_gff as gff;
 
 use crate::utils::dedup_umi;
 use super::determine_thread_counts_1;
+
+use sprs::{CsMat, TriMat};
+
 
    
 type Cellid = Vec<u8>;
@@ -142,7 +146,7 @@ impl CountFeature {
 
 
 
-    pub fn process_bam(
+    fn process_bam(
         &mut self,
         //params: &CountFeature,
         gff: &mut GenomeCounter
@@ -218,20 +222,17 @@ impl CountFeature {
 
 
 
-
+    /// Start all deduplication threads and make them ready for processing
     pub fn start_dedupers(
         &mut self
     ) {
-
-        // Start worker threads.
-        // Limit how many chunks can be in the air at the same time, as writers must be able to keep up with the reader
         for tidx in 0..self.num_threads {
             let rx = self.rx.clone();
+            let finished_genes = Arc::clone(&self.finished_genes);
 
             println!("Starting deduper thread {}",tidx);
 
-            let finished_genes = Arc::clone(&self.finished_genes);
-
+            
             self.thread_pool_work.execute(move || {
 
                 while let Ok(Some(gene)) = rx.recv() {
@@ -244,13 +245,16 @@ impl CountFeature {
                     let mut data = finished_genes.lock().unwrap();
                     data.push((gene, cnt));                    
                 }
+                println!("Ending deduper thread {}",tidx);
             });
+
+            
         }
     }
 
 
     /// End deduplication threads
-    pub fn end_dedupers(&self) {
+    fn end_dedupers(&self) {
         // Send termination signals to workers, then wait for them to complete
         for _ in 0..self.num_threads {
             let _ = self.tx.send(None);
@@ -260,41 +264,86 @@ impl CountFeature {
 
 
 
+    /// Write count matrix to disk
+    fn write_matrix(
+        &self
+    ) -> anyhow::Result<()> {
 
-    pub fn write_matrix(&self) {
+        //Operate on the finished counts from all threads
+        let finished_genes = self.finished_genes.lock().unwrap();
 
-        //Gather a list of all cells
+        let mut set_cellid = HashSet::new();        
+
+        let mut cur_gene_index = 0;
+        let mut map_gene_index = HashMap::new();
+
+        //Gather genes and cell names
+        for (g,map) in finished_genes.iter() {
+            //Give matrix index for genes
+            map_gene_index.insert(g.gene_id.to_vec(), cur_gene_index);
+            cur_gene_index += 1;
+
+            //Collect cell names
+            for cell_id in map.keys() {
+                set_cellid.insert(cell_id);
+            }
+        }
+
+        //Give matrix index for cell names
+        let mut cur_cellid_index = 0;
+        let mut map_cellid_index = HashMap::new();
+        for cell_id in set_cellid {
+            map_cellid_index.insert(cell_id, cur_cellid_index);
+            cur_cellid_index += 1;
+        }
+
+        //Proceed to fill in matrix in triplet format.
+        //matrix is indexed as [gene,cell] 
+        let mut trimat = TriMat::new((cur_gene_index, cur_cellid_index));
+        for (gene,map) in finished_genes.iter() {
+            for (cell_id, cnt) in map {
+                let g = map_gene_index.get(&gene.gene_name).unwrap();
+                let c = map_cellid_index.get(&cell_id).unwrap();
+
+                trimat.add_triplet(*g, *c, *cnt);
+            }
+        }
+
+        // This matrix type does not allow computations, and must to
+        // converted to a compatible sparse type, using for example
+        let compressed_mat: CsMat<_> = trimat.to_csr();
 
 
+        //TODO store the matrix in a better way
+        sprs::io::write_matrix_market(&self.path_out, &compressed_mat)?;
 
-
-
+        anyhow::Ok(())
     }
 
 
 
 
 
-
+    /// Run the feature counting algorithm
     pub fn run(
         &mut self,
     ) -> anyhow::Result<()> {
     
-        let mut gff = GenomeCounter::read_file(&self)?;
+        //Set up counter data structure
+        let mut gc = GenomeCounter::read_file(&self)?;
 
         //Start multithreaded deduplicators
         self.start_dedupers();
 
         //Read file
         //TODO: check if BAM is sorted
-        self.process_bam(&mut gff)?;
+        self.process_bam(&mut gc)?;
 
-        //Signal that we are done
+        //Signal that we are done reading the file
         self.end_dedupers();
 
-        //Write matrix
-        self.write_matrix();
-
+        //Write matrix to disk
+        self.write_matrix()?;
 
         Ok(())
     }
@@ -332,8 +381,8 @@ pub struct GeneCounter {
     pub gene_end: i64,
     pub gene_strand: Strand,
 
-    pub gene_id: String,
-    pub gene_name: String,
+    pub gene_id: Vec<u8>,
+    pub gene_name: Vec<u8>,
 
     pub counters: HashMap<Cellid, CellCounter>,
 
@@ -543,8 +592,8 @@ impl GenomeCounter {
                         gene_end: record.end().get() as i64,
                         gene_strand: record.strand(),
             
-                        gene_id: attr_id,
-                        gene_name: attr_name,
+                        gene_id: attr_id.as_bytes().to_vec(),
+                        gene_name: attr_name.as_bytes().to_vec(),
 
                         counters: HashMap::new(),
                     };

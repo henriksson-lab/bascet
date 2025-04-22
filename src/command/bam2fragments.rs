@@ -33,15 +33,16 @@ pub struct Bam2FragmentsCMD {
        
 }
 impl Bam2FragmentsCMD {
-    pub fn try_execute(&mut self) -> Result<()> {
 
+    /// Run the commandline option
+    pub fn try_execute(&mut self) -> Result<()> {
 
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
         println!("Using threads {}",num_threads_total);
 
         //TODO Can check that input file is sorted via header
 
-        Bam2Fragments::run(& Bam2Fragments {
+        Bam2Fragments::run(&Bam2Fragments {
             path_input: self.path_in.clone(),
             path_tmp: self.path_tmp.clone(),
             path_output: self.path_out.clone(),
@@ -53,11 +54,6 @@ impl Bam2FragmentsCMD {
         Ok(())
     }
 }
-
-
-
-
-
 
 
 /**
@@ -77,7 +73,7 @@ pub struct Bam2Fragments {
 }
 impl Bam2Fragments {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Bam2Fragments
     ) -> anyhow::Result<()> {

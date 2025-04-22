@@ -87,6 +87,9 @@ pub struct GetRawCMD {
 
 }
 impl GetRawCMD {
+
+    /// Run the commandline option.
+    /// This one takes raw FASTQ files, figures out the barcodes, and trims the reads
     pub fn try_execute(&mut self) -> Result<()> {
 
         crate::fileformat::verify_input_fq_file(&self.path_forward)?;
@@ -175,8 +178,8 @@ pub struct RecordPair {
 
 
 
-
-///// loop for a writer thread, sending output to a Writer
+////////////////
+/// loop for a writer thread, sending output to a Writer
 pub fn loop_tirp_writer<W>(  
     rx: &Arc<Receiver<Option<ListReadWithBarcode>>>,
     hist: &mut shard::BarcodeHistogram,
@@ -214,7 +217,8 @@ pub fn loop_tirp_writer<W>(
 
 
 
-//////////////// Writer to TIRP format, sorting on the fly
+//////////////// 
+/// Writer to TIRP format, sorting on the fly
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -292,7 +296,8 @@ fn create_writer_thread(
 
 
 
-
+////////////////
+/// 
 pub struct GetRaw {
     pub path_tmp: std::path::PathBuf,
 
@@ -505,7 +510,8 @@ pub fn sum_and_store_histogram(
 
 
 
-////////// read the reads, send to next threads
+////////// 
+/// read the reads, send to next threads
 fn read_all_reads(
     forward_file: &mut FastqReader<Box<dyn Read>>,
     reverse_file: &mut FastqReader<Box<dyn Read>>,
@@ -556,13 +562,13 @@ fn read_all_reads(
 
 
 /// Concatenate or merge sort files, then process them with bgzip
-// sort --merge  some_sorted.pregascet.0 some_sorted.pregascet.1 ... | bgzip -c /dev/stdin > test.gascet.0.gz    
-//
-// we could also skip bgsort but it should be fast; we need to recompress it later otherwise. but it is a huge gain in ratio and need for temporary space!
-// also, output file is ready for use unless merging with other shards is needed
-//
-//  later index: tabix -p bed test.gascet.0.gz   
-// able to get a cell: tabix out_complete.0.gascet.gz A1_H5_D9_H12 | head
+/// sort --merge  some_sorted.pregascet.0 some_sorted.pregascet.1 ... | bgzip -c /dev/stdin > test.gascet.0.gz    
+///
+/// we could also skip bgsort but it should be fast; we need to recompress it later otherwise. but it is a huge gain in ratio and need for temporary space!
+/// also, output file is ready for use unless merging with other shards is needed
+///
+///  later index: tabix -p bed test.gascet.0.gz   
+/// able to get a cell: tabix out_complete.0.gascet.gz A1_H5_D9_H12 | head
 pub fn catsort_files(
     list_inputfiles: &Vec<PathBuf>, 
     path_final: &PathBuf, 
@@ -626,7 +632,7 @@ pub fn catsort_files(
 
 
 
-
+/// Open a FASTQ file
 pub fn open_fastq(file_handle: &PathBuf) -> anyhow::Result<FastqReader<Box<dyn std::io::Read>>> {
 
     let opened_handle = File::open(file_handle).

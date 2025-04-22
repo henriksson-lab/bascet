@@ -25,7 +25,6 @@ pub const DEFAULT_THREADS_WORK: usize = 1;
 #[derive(Args)]
 pub struct FeaturiseKmcCMD {
 
-
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
@@ -56,6 +55,8 @@ pub struct FeaturiseKmcCMD {
     
 }
 impl FeaturiseKmcCMD {
+
+    /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
 
 
@@ -113,7 +114,7 @@ pub struct FeaturiseKMC {
 }
 impl FeaturiseKMC {
 
-
+    /// Run the algorithm
     pub fn run(
         params: &Arc<FeaturiseParamsKMC>
     ) -> anyhow::Result<()> {
