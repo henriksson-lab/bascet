@@ -77,6 +77,11 @@ pub struct GetRawCMD {
     #[arg(long = "no-sort")]
     pub no_sort: bool,  
 
+    // Optional: Error tolerance in barcode detection
+    #[arg(long = "barcode-tol", value_parser)]
+    pub barcode_error_tol: Option<usize>,
+
+
     // Optional: How many threads to use. Need better way of specifying? TODO
     #[arg(long, value_parser = clap::value_parser!(usize))]
     threads_work: Option<usize>,
@@ -116,7 +121,7 @@ impl GetRawCMD {
             path_output_complete: self.path_output_complete.clone(),            
             path_output_incomplete: self.path_output_incomplete.clone(),            
             libname: libname,
-            //barcode_file: self.barcode_file.clone(),            
+            //barcode_file: self.barcode_file.clone(),     
             sort: !self.no_sort,            
             threads_reader: num_threads_reader,
         };
@@ -125,12 +130,16 @@ impl GetRawCMD {
         if self.chemistry == "atrandi_wgs" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
-                &mut AtrandiWGSChemistry::new()
+                &mut AtrandiWGSChemistry::new(
+                    self.barcode_error_tol
+                )
             );
         } else if self.chemistry == "atrandi_rnaseq" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
-                &mut AtrandiRNAseqChemistry::new()
+                &mut AtrandiRNAseqChemistry::new(
+
+                )
             );
         } else if self.chemistry == "petriseq" {
             let _ = GetRaw::getraw(
@@ -346,7 +355,10 @@ impl GetRaw {
         let mut reverse_file = open_fastq(&params.path_reverse).unwrap();
 
         // Find probable barcode starts and ends
-        barcodes.prepare(&mut forward_file, &mut reverse_file).expect("Failed to detect barcode setup from reads");
+        barcodes.prepare(
+            &mut forward_file, 
+            &mut reverse_file
+        ).expect("Failed to detect barcode setup from reads");
         let mut forward_file = open_fastq(&params.path_forward).unwrap(); // reopen the file to read from beginning
         let mut reverse_file = open_fastq(&params.path_reverse).unwrap(); // reopen the file to read from beginning
 
