@@ -21,20 +21,27 @@ pub struct AtrandiWGSChemistry {
     num_reads_fail: usize,
     num_adapt_trim1: usize,
     //num_adapt_trim2: usize
+
+    barcode_error_tol: i32
 }
 impl AtrandiWGSChemistry {
 
-    pub fn new() -> AtrandiWGSChemistry {
+    pub fn new(
+        barcode_error_tol: Option<usize>,
+    ) -> AtrandiWGSChemistry {
 
         //Read the barcodes relevant for atrandi
         let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
         let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
+
+        let barcode_error_tol = barcode_error_tol.unwrap_or(1);
 
         AtrandiWGSChemistry {
             barcode: barcode,
             num_reads_pass: 0,
             num_reads_fail: 0,
             num_adapt_trim1: 0,
+            barcode_error_tol: barcode_error_tol as i32
             //num_adapt_trim2: 0
         }
     }
@@ -42,7 +49,7 @@ impl AtrandiWGSChemistry {
 }
 impl Chemistry for AtrandiWGSChemistry {
 
-    ////// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
+    /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
     fn prepare(
         &mut self,
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
@@ -61,7 +68,7 @@ impl Chemistry for AtrandiWGSChemistry {
 
 
     
-    ////////// Detect barcode, and trim if ok
+    /// Detect barcode, and trim if ok
     fn detect_barcode_and_trim(
         &mut self,
         r1_seq: &[u8],
@@ -71,11 +78,10 @@ impl Chemistry for AtrandiWGSChemistry {
     ) -> (bool, CellID, ReadPair) {
 
         //Detect barcode, which for atrandi barcode is in R2
-        let total_distance_cutoff = 1; // appears that we can be strict
         let (isok, bc) = self.barcode.detect_barcode(
             r2_seq,
             false,
-            total_distance_cutoff
+            self.barcode_error_tol
         );
 
         if isok {
