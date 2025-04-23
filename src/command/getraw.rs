@@ -190,7 +190,8 @@ pub struct RecordPair {
 ////////////////
 /// loop for a writer thread, sending output to a Writer
 pub fn loop_tirp_writer<W>(  
-    rx: &Arc<Receiver<Option<ListReadWithBarcode>>>,
+    writer_name: String,
+    rx: &Receiver<Option<ListReadWithBarcode>>,
     hist: &mut shard::BarcodeHistogram,
     writer: W 
 ) where W:Write {
@@ -211,7 +212,7 @@ pub fn loop_tirp_writer<W>(
             hist.inc(&cell_id);
 
             if n_written%100000 == 0 {
-                println!("#reads written to outfile: {:?}", n_written);
+                println!("#reads written to {} outfile: {:?}", writer_name, n_written);
             }
             n_written = n_written + 1;
         }
@@ -229,12 +230,13 @@ pub fn loop_tirp_writer<W>(
 //////////////// 
 /// Writer to TIRP format, sorting on the fly
 fn create_writer_thread(
+    writer_name: String,
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     list_hist: &Arc<Mutex<Vec<shard::BarcodeHistogram>>>,
     sort: bool,
     tempdir: &PathBuf
-) -> anyhow::Result<Arc<Sender<Option<ListReadWithBarcode>>>> {
+) -> anyhow::Result<Sender<Option<ListReadWithBarcode>>> {
 
     let outfile = outfile.clone();
 
@@ -243,7 +245,6 @@ fn create_writer_thread(
     //Create input read queue
     //Limit how many chunks can be in pipe
     let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
-    let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
     thread_pool.execute(move || {
         // Open output file
@@ -267,7 +268,7 @@ fn create_writer_thread(
             let mut stdin = process.stdin.as_mut().unwrap();
 
             debug!("sorter process ready");
-            loop_tirp_writer(&rx, &mut hist, &mut stdin);
+            loop_tirp_writer(writer_name, &rx, &mut hist, &mut stdin);
 
             //Wait for process to finish
             debug!("Waiting for sorter process to exit");
@@ -280,7 +281,7 @@ fn create_writer_thread(
             debug!("starting non-sorted write loop");
 
             let mut writer=BufWriter::new(file_output);  //TODO  put in a buffered writer in loop. no need to do twice
-            loop_tirp_writer(&rx, &mut hist, &mut writer);
+            loop_tirp_writer(writer_name, &rx, &mut hist, &mut writer);
             _ = writer.flush();
 
         }
@@ -371,13 +372,16 @@ impl GetRaw {
 
         let thread_pool_write = threadpool::ThreadPool::new(2);
         let tx_writer_complete = create_writer_thread(
+            "complete".to_string(),
             &path_temp_complete_sorted, 
             &thread_pool_write, 
             &list_hist_complete,
             true,
             &params.path_tmp).
             expect("Failed to get writer threads");
+            
         let tx_writer_incomplete = create_writer_thread(
+            "incomplete".to_string(),
             &path_temp_incomplete_sorted, 
             &thread_pool_write,
             &list_hist_incomplete,
@@ -389,11 +393,10 @@ impl GetRaw {
         // Limit how many chunks can be in the air at the same time, as writers must be able to keep up with the reader
         let thread_pool_work = threadpool::ThreadPool::new(params.threads_reader);
         let (tx, rx) = crossbeam::channel::bounded::<Option<ListRecordPair>>(100);   
-        let (tx, rx) = (Arc::new(tx), Arc::new(rx));        
         for tidx in 0..params.threads_reader {
-            let rx = Arc::clone(&rx);
-            let tx_writer_complete=Arc::clone(&tx_writer_complete);
-            let tx_writer_incomplete=Arc::clone(&tx_writer_incomplete);
+            let rx = rx.clone();
+            let tx_writer_complete=tx_writer_complete.clone();
+            let tx_writer_incomplete=tx_writer_incomplete.clone();
 
             println!("Starting worker thread {}",tidx);
 
@@ -527,7 +530,7 @@ pub fn sum_and_store_histogram(
 fn read_all_reads(
     forward_file: &mut FastqReader<Box<dyn Read>>,
     reverse_file: &mut FastqReader<Box<dyn Read>>,
-    tx: &Arc<Sender<Option<ListRecordPair>>>
+    tx: &Sender<Option<ListRecordPair>>
 ){
     let mut num_read = 0;
     loop {
