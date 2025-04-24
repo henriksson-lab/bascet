@@ -119,6 +119,13 @@ impl MapCellFunction for MapCellFunctionShellScript {
         let output_dir = to_absolute_path(&output_dir).expect("Could not get absolute directory for output"); 
         let path_script = to_absolute_path(&self.script_file).expect("Could not get absolute directory for script"); 
         
+
+        //TODO: if it fails, pause for 5 sec, then try again
+        /* 
+        loop {
+
+        }*/
+
         //Invoke command
         let run_output = process::Command::new("bash")  // do we need path?
             .current_dir(&output_dir)

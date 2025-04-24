@@ -76,6 +76,12 @@ impl Chemistry for AtrandiRNAseqChemistry {
             let umi_len = 8;
             let bc_len = 8+4+8+4+8+4+8;
 
+
+            //Read should always start with:
+            //AAGCAGTGGTATCAACGCAGAGT[A/T]
+            //if A, then we are from the TSO direction
+            //if T, then we are from the polyA direction
+
             //Initial part of R1 (gDNA) is always fine
             //TODO R1 must be trimmed as it might go into R2 barcodes; requires aligment with R2
             let r1_from=0;

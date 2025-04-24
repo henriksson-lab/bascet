@@ -231,7 +231,15 @@ impl StreamingReadPairReader for PairedFastqStreamingReadPairReader {
             while let Some(r1) = self.forward_file.next() {
     
                 let r1 = r1.expect("Error reading record r1");
-                let r2 = self.reverse_file.next().unwrap().expect("Error reading record r2");
+                let some_r2 = self.reverse_file.next();
+
+                if some_r2.is_none() {
+                    println!("R1 id: {}", String::from_utf8_lossy(r1.head()));
+                    println!("R1 seq: {}", String::from_utf8_lossy(r1.seq()));
+                    anyhow::bail!("No R2 for R1");
+                }
+                
+                let r2 = some_r2.unwrap().expect("Error reading record r2");
             
                 let (cell_id, umi) = bam::readname_to_cell_umi(r1.head());
 
