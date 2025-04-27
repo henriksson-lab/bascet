@@ -1,5 +1,7 @@
 
 use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use rust_htslib::htslib::uint;
@@ -69,10 +71,6 @@ impl SparseMatrixAnnDataWriter {
             *i
         } else {
             let i = self.cur_num_feature;
-
-            //println!("create feature {}",i);
-            
-
             self.feature_to_index.insert(id.to_vec(), i);
             self.cur_num_feature+=1;
             i
@@ -174,13 +172,47 @@ impl SparseMatrixAnnDataWriter {
     }
 
 
+
+
+    pub fn compress_feature_column(
+        &mut self,
+        prefix: &str
+    ) -> anyhow::Result<()> {
+
+        //Get all unique feature IDs 
+        let mut set_taxid = HashSet::new();
+        for (feature,_cell,_cnt) in &self.entries {
+            set_taxid.insert(*feature);
+        }
+
+        //Assign feature IDs
+        let mut map_taxid_featureid = HashMap::new();
+        for f in set_taxid {
+            let feature_name = format!("{}{}",prefix,f);
+//            let fid = self.get_or_create_feature(feature_name.as_bytes());
+
+            let fid = self.cur_num_feature;
+            self.feature_to_index.insert(feature_name.as_bytes().to_vec(), fid);
+            self.cur_num_feature+=1;
+
+            map_taxid_featureid.insert(f, fid);
+        }
+
+        //Remap all feature IDs to new space
+        for (feature,_cell,_cnt) in self.entries.iter_mut() {
+            *feature = *map_taxid_featureid.get(feature).expect("Error in feature remapping");
+        }
+
+        Ok(())
+    }
+
+
     /**
      * Sort content and store as andata object
      */
     pub fn save_to_anndata(
         &mut self, 
-        p: &PathBuf,
-        has_feature_names: bool
+        p: &PathBuf
     ) -> anyhow::Result<()> {
 
         /*
@@ -247,16 +279,14 @@ impl SparseMatrixAnnDataWriter {
 
 
         //Store the names of the features, if present
-        if has_feature_names {
-            let list_feature_names = gather_map_to_index(&self.feature_to_index, self.cur_num_feature as usize);
-            let group = file.create_group("var")?; 
-            let builder = group.new_dataset_builder();
-            let _ = builder.
-                with_data(list_feature_names.as_slice()).
-                create("_index")?;
+        let list_feature_names = gather_map_to_index(&self.feature_to_index, self.cur_num_feature as usize);
+        let group = file.create_group("var")?; 
+        let builder = group.new_dataset_builder();
+        let _ = builder.
+            with_data(list_feature_names.as_slice()).
+            create("_index")?;
 
-            println!("Features {:?}", list_feature_names);
-        } 
+        //println!("Features {:?}", list_feature_names);
 
         //Store the names of the cells. Map to an array first
         let list_cell_names = gather_map_to_index(&self.cell_to_index, self.cur_num_cell as usize);

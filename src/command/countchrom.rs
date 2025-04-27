@@ -104,7 +104,7 @@ impl CountChrom {
             //Check if the read mapped
             let flags = record.flags();
             if flags & 0x4 ==0 {
-                //Count mapping read
+                //Count this as a mapping read
 
                 let header = bam.header();
                 let chr = header.tid2name(record.tid() as u32);
@@ -166,8 +166,7 @@ impl CountChrom {
 
         //Save count matrix
         cnt_mat.save_to_anndata(
-            &params.path_out,
-            true
+            &params.path_out
         ).unwrap();
 
         Ok(())

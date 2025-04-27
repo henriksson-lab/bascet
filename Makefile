@@ -72,13 +72,13 @@ test_pipe_sam_add_tags:
 
 
 test_countf:
-	rm -Rf temp; cargo +nightly run countfeature -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.hdf5 -g counttest/all.gff3
+	rm -Rf temp; cargo +nightly run countfeature -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.1.h5 -g counttest/all.gff3
 
 test_countchrom:
-	rm -Rf temp; cargo +nightly run countchrom -i counttest/aligned.1.bam -o counttest/cnt_feature.hdf5 
+	rm -Rf temp; cargo +nightly run countchrom -i counttest/aligned.1.bam -o counttest/cnt_feature.1.h5 
 
 test_kraken:
-	rm -Rf temp; cargo +nightly run kraken -i testdata/kraken_out.1.kraken_out -o testdata/kraken_count.hdf5
+	rm -Rf temp; cargo +nightly run kraken -i testdata/kraken_out.1.kraken_out -o testdata/kraken_count.1.h5
 
 test_bam2fragments:
 	rm -Rf temp; cargo +nightly run bam2fragments -i testdata/sorted_aligned.1.bam -o testdata/fragments.1.tsv.gz
