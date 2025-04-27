@@ -16,6 +16,9 @@ pub mod cell_list_file;
 mod detect_fileformat;
 pub mod uuencode;
 
+pub mod new_anndata;
+
+
 ////// Re-exports
 pub use shard::CellID;
 pub use shard::ReadPair;
