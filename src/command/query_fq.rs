@@ -237,12 +237,17 @@ fn start_matrix_counter_threads(
             //Add counts to the matrix
             for (feature, cnt) in features_count {
                 let feature_index = features_reference.get(&feature).unwrap();
-                mm.add_value_at_index(cell_index, *feature_index, cnt as u32);  
+                mm.add_value_at_index(
+                    *feature_index, 
+                    cell_index,
+                    cnt as u32);  
             }
 
-            if cell_index % 100 == 0 {
-                print!("Processed cells: {}",cell_index);
+            if cell_index % 10 == 0 {
+                println!("Counted KMERs from cells: {}",cell_index);
             }
+
+            //TODO: could add metadata about the total number of reads, even if not all are processed
 
         }
         println!("Shutting down KMER counter");
