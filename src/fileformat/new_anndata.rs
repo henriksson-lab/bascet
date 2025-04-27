@@ -160,6 +160,19 @@ impl SparseMatrixAnnDataWriter {
     }
 
 
+
+    /**
+     * For a given cell, add counts for a set of cells
+     */
+    pub fn add_value_at_index(
+        &mut self, 
+        feature_index: u32,
+        cell_index: u32, 
+        cnt: u32
+    ) {
+        self.entries.push((feature_index, cell_index, cnt)); 
+    }
+
     /**
      * For a given cell, add unclassified counts
      */

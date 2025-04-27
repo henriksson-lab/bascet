@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
-use crate::fileformat::SparseCountMatrix;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
 
 use anyhow::Result;
 //use anyhow::bail;
@@ -116,7 +116,7 @@ impl QueryKmc {
 
 
         //Prepare matrix that we will store into
-        let mut mm = SparseCountMatrix::new();
+        let mut mm = SparseMatrixAnnDataWriter::new();
 
         //crate::utils::check_kmc_tools().unwrap();
 
@@ -135,15 +135,15 @@ impl QueryKmc {
 
         //Below reads list of features to include. Set up a map: KMER => column in matrix.
         //Also figure out what kmer size to use
-        let mut features_reference: HashMap<String, usize> = HashMap::new();
+        let mut features_reference: HashMap<String, u32> = HashMap::new();
         let file_features_ref = File::open(&params.path_features).unwrap();
         let bufreader_features_ref = BufReader::new(&file_features_ref);
         let mut kmer_size = 0;
 
         for (feature_index, rline) in bufreader_features_ref.lines().enumerate() {  //////////// should be a plain list of features
             if let Ok(feature) = rline { ////// when is this false??
-                features_reference.insert(feature.to_string(), feature_index);
-                mm.add_feature(&feature.to_string());
+                features_reference.insert(feature.to_string(), feature_index as u32);
+                mm.get_or_create_feature(&feature.to_string().as_bytes()); //////// TODO check that this still works
 
                 //Detect kmer size. should be the same for all entries, not checked
                 kmer_size = feature.len();
@@ -174,7 +174,7 @@ impl QueryKmc {
             println!("doing cell {}", cell_id);
 
             //Add cell ID to matrix and get its matrix position
-            let cell_index = mm.add_cell(&cell_id);
+            let cell_index = mm.get_or_create_cell(&cell_id.as_bytes());
 
             //Check if a KMC database is present for this cell, otherwise exclude it
             let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
@@ -219,9 +219,9 @@ impl QueryKmc {
 
 
 pub fn count_from_dump(
-    cell_index: usize,
-    features_reference: &HashMap<String, usize>,
-    mm: &mut SparseCountMatrix,
+    cell_index: u32,
+    features_reference: &HashMap<String, u32>,
+    mm: &mut SparseMatrixAnnDataWriter,
     reader: &mut BufReader<impl Read>
 ){
     for (_feature_index, rline) in reader.lines().enumerate() {
@@ -235,7 +235,7 @@ pub fn count_from_dump(
                 let cnt = splitter.next().expect("Could not parse KMER count from cell db").
                     parse::<u32>().expect("Count for kmer is not a u32");
 
-                mm.add_value(cell_index, *feature_index, cnt);  
+                mm.add_value_at_index(cell_index, *feature_index, cnt);  
             }
         } else {
             println!("line failed");

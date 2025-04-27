@@ -7,7 +7,7 @@ pub mod cram;
 pub mod single_fastq;
 pub mod paired_fastq;
 pub mod list_fastq;
-pub mod count_matrix;
+//pub mod count_matrix;
 pub mod bam;
 
 ////// Utility
@@ -42,7 +42,7 @@ pub use detect_fileformat::detect_shard_format;
 pub use detect_fileformat::get_suitable_file_extractor;
 
 
-pub use count_matrix::SparseCountMatrix;
+//pub use count_matrix::SparseCountMatrix;
 
 //Readers
 pub use zip::ZipBascetShardReader;
