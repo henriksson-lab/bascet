@@ -88,7 +88,7 @@ impl Kraken {
                 //Figure out what cell this is
                 let readname= splitter_line.next().unwrap();
                 let mut splitter_cellid = readname.split(":");
-                let cellid = Some(splitter_cellid.next().unwrap().to_string()); //.unwrap().to_string()
+                let cellid = Some(splitter_cellid.next().unwrap().to_string());
 
                 //If this is a new cell, then store everything we have so far in the count matrix
                 if last_cellid != cellid {
@@ -143,11 +143,14 @@ impl Kraken {
 //        C       BASCET_D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
 
 
+        //Compress KRAKEN taxonomy to generate normal column names etc; this makes the output more compatible
+        //with regular count matrices
+        mm.compress_feature_column("taxid_")?;
+
         //Save the final count matrix
         println!("Storing count table to {}", params.path_output.display());
         mm.save_to_anndata(
-            &params.path_output,
-            false
+            &params.path_output
         ).expect("Failed to save to HDF5 file");
 
         //TODO delete temp files
