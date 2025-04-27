@@ -241,15 +241,15 @@ impl SparseMatrixAnnDataWriter {
         //Store the matrix size
         let builder = group.new_dataset_builder();
         let _ = builder.with_data(&[
-            n_rows,
-            n_cols
+            n_rows, //num cells
+            n_cols  //num features
         ].as_slice()).create("shape")?;    
 
 
         //Store the names of the features, if present
         if has_feature_names {
             let list_feature_names = gather_map_to_index(&self.feature_to_index, self.cur_num_feature as usize);
-            let group = file.create_group("obs")?; 
+            let group = file.create_group("var")?; 
             let builder = group.new_dataset_builder();
             let _ = builder.
                 with_data(list_feature_names.as_slice()).
@@ -260,7 +260,7 @@ impl SparseMatrixAnnDataWriter {
 
         //Store the names of the cells. Map to an array first
         let list_cell_names = gather_map_to_index(&self.cell_to_index, self.cur_num_cell as usize);
-        let group = file.create_group("var")?; 
+        let group = file.create_group("obs")?; 
         let builder = group.new_dataset_builder();
         let _ = builder.
             with_data(list_cell_names.as_slice()).
