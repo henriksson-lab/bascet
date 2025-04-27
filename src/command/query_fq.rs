@@ -9,7 +9,7 @@ use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::fileformat::SparseCountMatrix;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
 use crate::fileformat::{CellID, ReadPair};
 
 type ListReadWithBarcode = Arc<(CellID,Arc<Vec<ReadPair>>)>;
@@ -81,7 +81,7 @@ impl QueryFq {
     ) -> anyhow::Result<()> {
 
         //Prepare matrix that we will store into
-        let mut mm = SparseCountMatrix::new();
+        let mut mm = SparseMatrixAnnDataWriter::new();
 
         //Need to create temp dir
         if params.path_tmp.exists() {
@@ -97,7 +97,7 @@ impl QueryFq {
         //Below reads list of features to include. Set up a map: KMER => column in matrix.
         //Also figure out what kmer size to use.
         //Ensure order of KMER in dictionary is the same as the order of columns in matrix
-        let mut features_reference: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
+        let mut features_reference: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
         let file_features_ref = File::open(&params.path_features).unwrap();
         let bufreader_features_ref = BufReader::new(&file_features_ref);
         let mut kmer_size = 0;
@@ -116,7 +116,7 @@ impl QueryFq {
 
             //Get feature index
             let sfeature = String::from_utf8_lossy(feature.as_slice());
-            let feature_index = mm.add_feature(&sfeature.to_string());
+            let feature_index = mm.get_or_create_feature(&sfeature.to_string().as_bytes());
             features_reference.insert(feature, feature_index);
         }
 
@@ -133,7 +133,7 @@ impl QueryFq {
         let thread_pool_write = threadpool::ThreadPool::new(n_output); 
         let (tx_data, rx_data) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(n_output*2);
         let (tx_data, rx_data) = (Arc::new(tx_data), Arc::new(rx_data));
-        let mm: Arc<Mutex<SparseCountMatrix>> = Arc::new(Mutex::new(mm));
+        let mm: Arc<Mutex<SparseMatrixAnnDataWriter>> = Arc::new(Mutex::new(mm));
 
         //Set up counters
         let features_reference = Arc::new(features_reference);
@@ -165,7 +165,7 @@ impl QueryFq {
 
         //Save the final count matrix
         println!("Storing count table to {}", params.path_output.display());
-        let mm=mm.lock().unwrap();
+        let mut mm=mm.lock().unwrap();
         mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
 
 
@@ -179,10 +179,10 @@ impl QueryFq {
 
 /// Prepare threads for counting KMERs in sequences
 fn start_matrix_counter_threads(
-    features_reference: &Arc<BTreeMap<Vec<u8>, usize>>, //Map from feature to index
+    features_reference: &Arc<BTreeMap<Vec<u8>, u32>>, //Map from feature to index
     kmer_size: usize,
     max_reads: usize,
-    mm: &Arc<Mutex<SparseCountMatrix>>,
+    mm: &Arc<Mutex<SparseMatrixAnnDataWriter>>,
     thread_pool: &threadpool::ThreadPool,
     rx_data: &Receiver<Option<ListReadWithBarcode>>,
 ) -> anyhow::Result<()> {
@@ -200,7 +200,7 @@ fn start_matrix_counter_threads(
             let list_reads = &dat.1;
 
             //A common place to count KMERs
-            let mut features_count: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
+            let mut features_count: BTreeMap<Vec<u8>, usize> = BTreeMap::new();  /////// could store feature_id as key instead
 
             let mut cur_line = 0;
             for rp in list_reads.iter() {
@@ -232,13 +232,12 @@ fn start_matrix_counter_threads(
             let mut mm=mm.lock().unwrap();
 
             //Add cell ID to matrix and get its matrix position
-            let cell_index = mm.add_cell(&cell_id);
+            let cell_index = mm.get_or_create_cell(&cell_id.as_bytes());
 
-            //Add counts to the matrix.
-            //The order is guaranteed to be correct given the sorting of entries
+            //Add counts to the matrix
             for (feature, cnt) in features_count {
                 let feature_index = features_reference.get(&feature).unwrap();
-                mm.add_value(cell_index, *feature_index, cnt as u32);  
+                mm.add_value_at_index(cell_index, *feature_index, cnt as u32);  
             }
 
             if cell_index % 100 == 0 {
@@ -255,7 +254,7 @@ fn start_matrix_counter_threads(
 
 /// Get KMER counts from a sequence
 fn count_from_seq(
-    features_reference: &BTreeMap<Vec<u8>, usize>, //Map from feature to index
+    features_reference: &BTreeMap<Vec<u8>, u32>, //Map from feature to index
     features_count: &mut BTreeMap<Vec<u8>, usize>, //Map from feature to count
     seq: &Vec<u8>,
     kmer_size: usize
