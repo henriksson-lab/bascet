@@ -241,6 +241,10 @@ fn start_matrix_counter_threads(
                 mm.add_value(cell_index, *feature_index, cnt as u32);  
             }
 
+            if cell_index % 100 == 0 {
+                print!("Processed cells: {}",cell_index);
+            }
+
         }
         println!("Shutting down KMER counter");
     });
