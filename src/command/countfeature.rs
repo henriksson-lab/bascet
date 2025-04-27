@@ -302,7 +302,7 @@ impl CountFeature {
         let mut trimat = TriMat::new((cur_gene_index, cur_cellid_index));
         for (gene,map) in finished_genes.iter() {
             for (cell_id, cnt) in map {
-                let g = map_gene_index.get(&gene.gene_name).unwrap();
+                let g = map_gene_index.get(&gene.gene_id).unwrap();
                 let c = map_cellid_index.get(&cell_id).unwrap();
 
                 trimat.add_triplet(*g, *c, *cnt);
@@ -566,13 +566,15 @@ impl GenomeCounter {
             //Only insert records that the user have chosen; typically genes
             if record.ty() == params.use_feature {
 
+                /*
                 println!(
                     "{}\t{}\t{}",
                     record.reference_sequence_name(),
                     record.start(),
                     record.end(),
                 );
-
+ */
+                
                 let attr = record.attributes();
                 let attr_id = attr.get(b"ID");
 

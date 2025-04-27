@@ -71,14 +71,19 @@ test_pipe_sam_add_tags:
 
 
 
-test_countf:
+test_countfeature2:
 	rm -Rf temp; cargo +nightly run countfeature -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.1.h5 -g counttest/all.gff3
+
+test_countfeature:
+	rm -Rf temp; cargo +nightly run countfeature -i counttest/aligned.1.bam -o counttest/cnt_al.1.h5 -g counttest/all.gff3
 
 test_countchrom:
 	rm -Rf temp; cargo +nightly run countchrom -i counttest/aligned.1.bam -o counttest/cnt_feature.1.h5 
 
+
 test_kraken:
-	rm -Rf temp; cargo +nightly run kraken -i testdata/kraken_out.1.kraken_out -o testdata/kraken_count.1.h5
+	#rm -Rf temp; cargo +nightly run kraken -i testdata/kraken_out.1.kraken_out -o testdata/kraken_count.1.h5
+	rm -Rf temp; cargo +nightly run kraken -i testkraken/subkraken.kraken_out -o testkraken/kraken_count.1.h5
 
 test_bam2fragments:
 	rm -Rf temp; cargo +nightly run bam2fragments -i testdata/sorted_aligned.1.bam -o testdata/fragments.1.tsv.gz
@@ -99,8 +104,8 @@ test_minhash_fq:
 	#rm -Rf temp; cargo +nightly run mapcell -i miseqdata/filtered.1.tirp.gz -o miseqdata/minhash.1.zip -s _minhash_fq # --show-script-output --keep-files 
 
 test_query_fq:
-	rm -Rf temp; cargo +nightly run query-fq -i miseqdata/filtered.1.tirp.gz   -o miseqdata/counts.h5ad -f miseqdata/chosen_features.txt
-
+	#rm -Rf temp; cargo +nightly run query-fq -i miseqdata/filtered.1.tirp.gz   -o miseqdata/counts.h5ad -f miseqdata/chosen_features.txt
+	rm -Rf temp; cargo +nightly run query-fq -i testquery/new.tirp.gz   -o  testquery/counts.h5ad -f testquery/use_kmers.txt
 
 
 test_minhashhist:

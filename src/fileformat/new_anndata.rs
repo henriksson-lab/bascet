@@ -216,6 +216,9 @@ impl SparseMatrixAnnDataWriter {
             *feature = *map_taxid_featureid.get(feature).expect("Error in feature remapping");
         }
 
+        //row < self.rows /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sprs-0.11.3/src/sparse/triplet.rs
+
+
         Ok(())
     }
 
@@ -243,12 +246,13 @@ impl SparseMatrixAnnDataWriter {
                 }
             }
         }
+        println!("Size of count matrix: {}x{}  (cells x features)", n_rows, n_cols);
 
         //Add all entries to this matrix
         let mut trimat = TriMat::new((n_rows as usize, n_cols as usize));
         for (feature,cell,cnt) in &self.entries {
             trimat.add_triplet(
-                *cell as usize, 
+                *cell as usize,  ////////////// too few cells when storing queryFq matrix
                 *feature as usize, 
                 *cnt
             );
@@ -256,8 +260,6 @@ impl SparseMatrixAnnDataWriter {
 
         //Convert matrix to Csr format
         let csr_mat: CsMat<_> = trimat.to_csr();
-
-
 
         log::info!("Saving count matrix");
 
