@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::collections::BTreeMap;
-use hdf5::File as H5File;
 use anyhow::Result;
 use clap::Args;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
+use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
 
 
 
@@ -65,7 +65,7 @@ impl Kraken {
     ) -> anyhow::Result<()> {
 
         //Prepare matrix that we will store into
-        let mut mm = KrakenCountMatrix::new();
+        let mut mm = SparseMatrixAnnDataWriter::new();
 
         //Open input file
         let file_in = File::open(&params.path_input).unwrap();
@@ -73,6 +73,8 @@ impl Kraken {
 
         //Counter for how many times each taxid has been seen for one cell
         let mut taxid_counter= BTreeMap::new();
+        //let mut map_unclassified_counter= BTreeMap::new();
+        let mut unclassified_counter = 0;
 
         //Loop through all reads; group by cell
         let mut last_cellid = None;
@@ -80,33 +82,46 @@ impl Kraken {
             if let Ok(line) = rline { ////// when is this false??
 
                 //Divide the row
-                let mut splitter = line.split("\t");
-                let is_categorized= splitter.next().unwrap();
+                let mut splitter_line = line.split("\t");
+                let is_categorized= splitter_line.next().unwrap();
 
+                //Figure out what cell this is
+                let readname= splitter_line.next().unwrap();
+                let mut splitter_cellid = readname.split(":");
+                let cellid = Some(splitter_cellid.next().unwrap().to_string()); //.unwrap().to_string()
+
+                //If this is a new cell, then store everything we have so far in the count matrix
+                if last_cellid != cellid {
+                    //Store if there is a previous cell. Could skip this "if", if we read first line before starting. TODO
+                    if let Some(last_cellid_s) = last_cellid {
+
+                        let cell_index = mm.get_or_create_cell(last_cellid_s.as_bytes());
+
+                        //Add taxid counts for last cell
+                        mm.add_cell_counts_per_feature_index(cell_index, &mut taxid_counter);
+                        //mm.add_feature_counts(cell_index, &mut taxid_counter);
+                        //map_unclassified_counter.insert(last_cellid_s.clone(), unclassified_counter);
+                        mm.add_unclassified(cell_index, unclassified_counter);
+
+                        //Reset counters
+                        taxid_counter.clear();
+                        unclassified_counter = 0;
+                    }
+                    //Move to track the next cell
+                    last_cellid = cellid;
+                }
 
                 if is_categorized=="C" {
-                    let readname= splitter.next().unwrap();
-                    let taxid: usize= splitter.next().unwrap().parse().expect("Failed to parse taxon id");
+                    //Classified read
+                    let taxid_s = splitter_line.next().unwrap();
+                    let taxid: u32= taxid_s.parse().expect(format!{"Failed to parse taxon id: -{}-", line}.as_str());
     
-                    //Figure out what cell this is
-                    let mut splitter = readname.split(":");
-                    let cellid = Some(splitter.next().unwrap().to_string());
-
-                    //If this is a new cell, then store everything we have so far in the count matrix
-                    if last_cellid != cellid {
-                        //Store if there is a previous cell. Could skip this "if", if we read first line before starting. TODO
-                        if let Some(last_cellid_s) = last_cellid {
-                            //Add taxid counts for last cell
-                            mm.add_taxids(&last_cellid_s, &mut taxid_counter);
-                            taxid_counter.clear();
-                        }
-                        //Move to track the next cell
-                        last_cellid = cellid;
-                    }
-    
-                    //Count this taxon id
-                    let values = taxid_counter.entry(taxid).or_insert(0);
+                    //Count this taxon id. Note, we count to taxonomyID+1 as 0 is also in use (top level)
+                    let values = taxid_counter.entry(taxid+1).or_insert(0);
                     *values += 1;
+                } else if is_categorized=="U" {
+                    //Unclassified read. Keep track of how many
+                    unclassified_counter += 1;
                 }
             } else {
                 anyhow::bail!("Failed to read one line of input");
@@ -115,7 +130,13 @@ impl Kraken {
 
         //Need to also add counts for the last cell
         if let Some(last_cellid_s) = last_cellid {
-            mm.add_taxids(&last_cellid_s, &mut taxid_counter);
+            let cell_index = mm.get_or_create_cell(last_cellid_s.as_bytes());
+            mm.add_cell_counts_per_feature_index(
+                cell_index, 
+                &mut taxid_counter
+            );
+
+            mm.add_unclassified(cell_index, unclassified_counter);
         }
 
 
@@ -124,7 +145,10 @@ impl Kraken {
 
         //Save the final count matrix
         println!("Storing count table to {}", params.path_output.display());
-        mm.save_to_anndata(&params.path_output).expect("Failed to save to HDF5 file");
+        mm.save_to_anndata(
+            &params.path_output,
+            false
+        ).expect("Failed to save to HDF5 file");
 
         //TODO delete temp files
         println!("Cleaning up temp files");
@@ -134,7 +158,12 @@ impl Kraken {
     }
 }
 
+/*
 
+ Note: column 1 = taxid 0
+ rust sprs counts from 0
+ 
+*/
 
 
 
@@ -176,7 +205,34 @@ Note that paired read data will contain a "|:|" token in this list to indicate t
 
 
 
+/*
 
+
+TODO store taxid + 1, to avoid use of 0 index
+
+#############################
+
+#############################
+#############################
+#############################
+#############################
+#############################
+#############################
+#############################
+#############################
+#############################
+#############################
+#############################
+
+
+
+
+*/
+
+
+
+
+/*
 
 
 /// Specialized count matrix for Kraken taxid counting per cell. As taxid is numeric, there is no need to assign column names
@@ -299,3 +355,6 @@ fn vec_to_h5_string(list: &[String]) -> Vec<hdf5::types::VarLenUnicode> {
     list.iter().map(|f| f.parse().unwrap()).collect()
 }
 
+
+
+ */
