@@ -18,6 +18,8 @@ pub mod uuencode;
 
 pub mod new_anndata;
 
+pub mod iterate_shard_reader;
+
 
 ////// Re-exports
 pub use shard::CellID;

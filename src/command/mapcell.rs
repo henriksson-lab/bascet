@@ -9,23 +9,14 @@ use clap::Args;
 
 use anyhow::bail;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-use log::info;
 use zip::ZipWriter;
 
 use crate::command::threadcount::determine_thread_counts_mapcell;
-use crate::fileformat::tirp::TirpBascetShardReaderFactory;
-use crate::fileformat::zip::ZipBascetShardReaderFactory;
-use crate::fileformat::TirpStreamingShardReaderFactory;
+use crate::fileformat::iterate_shard_reader;
+use crate::mapcell::mapcell_script::extract_needed_files_to_directory;
 use crate::utils;
 
-use crate::fileformat;
 use crate::fileformat::ShardFileExtractor;
-use crate::fileformat::ShardRandomFileExtractor;
-use crate::fileformat::ShardStreamingFileExtractor;
-use crate::fileformat::ConstructFromPath;
-use crate::fileformat::detect_shard_format;
-use crate::fileformat::DetectedFileformat;
 
 use crate::mapcell::CompressionMode;
 use crate::mapcell::MissingFileMode;
@@ -173,7 +164,6 @@ impl MapCell {
         params: MapCell
     ) -> anyhow::Result<()> {
 
-
         //Need to create temp dir
         if params.path_tmp.exists() {
             //todo delete temp dir after run
@@ -195,7 +185,9 @@ impl MapCell {
         //Queue of cells that have been extracted
         let (tx_loaded_cell, rx_loaded_cell) = crossbeam::channel::bounded::<Option<String>>(read_queue_size);
  
-        //Create all writers. these also take care of running mapcell
+        
+
+        //Create all writers. these also take care of running the mapcell function on extracted files
         let thread_pool_writers = threadpool::ThreadPool::new(params.threads_write);
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
         for tidx in 0..params.threads_write {
@@ -208,85 +200,32 @@ impl MapCell {
                 &thread_pool_writers,
                 &rx_loaded_cell
             );
-
             list_out_zipfiles.push(file_zip);
         }
 
-        //Figure out how to read the data
-        let input_shard_type = detect_shard_format(&params.path_in);
+        let clone_tx_loaded_cell = tx_loaded_cell.clone();
+        let clone_params = Arc::clone(&params);
 
-        println!("Input file: {:?}",params.path_in);
+        //Function to apply to each cell that is being read
+        let process_cell_fn  = 
+        move |(cell_id, shard):(String, &mut Box<&mut dyn ShardFileExtractor>)| {
 
-        let perform_streaming=input_shard_type == DetectedFileformat::TIRP;
+            extract_needed_files_to_directory(
+                &clone_params.path_tmp,
+                &Arc::clone(&clone_params.script),
+                &clone_tx_loaded_cell,
+                cell_id,
+                shard            
+            );
+        };
+        let process_cell_fn = Arc::new(process_cell_fn);
 
-        if perform_streaming {
-            ////////////////////////////////// Streaming reading of input
-            println!("Reading will be streamed");
-
-            //Create all streaming readers. Detect what we need from the file extension.
-            //The readers will start immediately
-            let thread_pool_readers = threadpool::ThreadPool::new(params.threads_read);
-            if input_shard_type == DetectedFileformat::TIRP {
-                println!("Detected input as TIRP");
-                for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
-                    _ = create_streaming_shard_reader(
-                        &params,
-                        &thread_pool_readers,
-                        &Arc::clone(&params.script),
-                        &tx_loaded_cell,
-                        &Arc::new(TirpStreamingShardReaderFactory::new())
-                    );
-                }
-            } else {
-                bail!("Cannot tell the type of the input format"); /////////////////////////// TODO add support for BAM etc as a shardreader
-            }
-
-            //Wait for all reader threads to complete
-            thread_pool_readers.join();
-            println!("Streaming readers have finished")
-
-        } else {
-            ////////////////////////////////// Random reading of input
-            println!("Reading will be random (this can be slow depending on file format)");
-
-//            panic!("this need to be rewritten; let readers stream on their own")
-
-            let thread_pool_readers = threadpool::ThreadPool::new(params.threads_read);
-
-            //Create all random readers. Detect what we need from the file extension
-            //let reader_thread_group = ThreadGroup::new(params.threads_read);
-            let input_shard_type = detect_shard_format(&params.path_in);
-            if input_shard_type == DetectedFileformat::TIRP {
-                println!("Detected input as TIRP");
-                for _tidx in 0..params.threads_read {  /////////// option #2: keep list of files separately from list of readers
-                    _ = create_random_shard_reader(
-                        &params,
-                        &thread_pool_readers,
-                        &Arc::clone(&params.script),
-                        &tx_loaded_cell,
-                        &Arc::new(TirpBascetShardReaderFactory::new())
-                    );
-                }
-            } else if input_shard_type == DetectedFileformat::ZIP {
-                println!("Detected input as ZIP");
-                // note from julian: readers alter the ZIP file? at least make separate readers. start with just 1
-                for _tidx in 0..params.threads_read {
-                    _ = create_random_shard_reader(
-                        &params,
-                        &thread_pool_readers,
-                        &Arc::clone(&params.script),
-                        &tx_loaded_cell,
-                        &Arc::new(ZipBascetShardReaderFactory::new())
-                    );
-                }
-            } else {
-                bail!("Cannot tell the type of the input format");
-            }
-
-            //Wait for all reader threads to complete
-            thread_pool_readers.join();
-            println!("Random I/O readers have finished")
-        }
+        //Iterate over all cells, in threads, using suitable readers
+        iterate_shard_reader::iterate_shard_reader_multithreaded(
+            params.threads_read,
+            &params.path_in,
+            &process_cell_fn
+        )?;
 
 
         //Terminate all writers. Then wait for all threads to finish
@@ -310,153 +249,6 @@ impl MapCell {
         Ok(())
     }
 }
-
-
-
-//////////////////////////////////// 
-/// Reader for random I/O shard files
-fn create_random_shard_reader<R>(
-    params_io: &Arc<MapCell>,
-    thread_pool: &threadpool::ThreadPool,
-    mapcell_script: &Arc<Box<dyn MapCellFunction>>,
-    tx: &Sender<Option<String>>,
-    constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
-) -> anyhow::Result<()> where R:ShardRandomFileExtractor+ShardFileExtractor {
-
-    let tx = tx.clone();
-
-    let params_io = Arc::clone(&params_io);
-    let mapcell_script = Arc::clone(mapcell_script);
-
-    let constructor = Arc::clone(constructor);
-
-    thread_pool.execute(move || {
-        println!("Reader started");
-
-        let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
-
-        //Tell readers to go through all cells, then terminate all readers
-        let list_cells = fileformat::try_get_cells_in_file(&params_io.path_in).expect("Could not get list of cells from input file");
-        let list_cells = if let Some(list_cells) = list_cells {
-            list_cells
-        } else {
-            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
-        };
-
-        // TODO: each reader manages its own list of cells
-        let mut num_cells_processed = 0;
-        for cell_id in list_cells { //  let Ok(Some(cell_id)) = rx.recv()
-            info!("request to read {}",cell_id);
-            shard.set_current_cell(&cell_id);
-
-            if num_cells_processed%10 ==0 {
-                println!("processed {} cells, now at {}",num_cells_processed, cell_id);
-            }
-
-            let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
-            fs::create_dir(&path_cell_dir).unwrap();
-
-            let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
-            let success = shard.extract_to_outdir(
-                &mapcell_script.get_expect_files(),
-                fail_if_missing,
-                &path_cell_dir
-            ).expect("error during extraction");
-
-            if success {
-                //Inform writer that the cell is ready for processing
-                _ = tx.send(Some(cell_id));
-            } else {
-                let missing_file_mode = mapcell_script.get_missing_file_mode();
-
-                if missing_file_mode==MissingFileMode::Fail {
-                    panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
-                } 
-                if missing_file_mode==MissingFileMode::Ignore {
-                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell());
-                }
-            }
-
-            num_cells_processed += 1;
-        }
-        println!("Reader ended; read a total of {} cells", num_cells_processed);
-    });
-    Ok(())
-}
-
-
-
-
-
-
-
-//////////////////////////////////// 
-/// Reader for streaming I/O shard files
-fn create_streaming_shard_reader<R>(
-    params_io: &Arc<MapCell>,
-    thread_pool: &threadpool::ThreadPool,
-    mapcell_script: &Arc<Box<dyn MapCellFunction>>,
-    tx: &Sender<Option<String>>,
-    constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
-) -> anyhow::Result<()> where R:ShardStreamingFileExtractor+ShardFileExtractor {
-
-    let tx = tx.clone();
-
-    let params_io = Arc::clone(&params_io);
-    let mapcell_script = Arc::clone(mapcell_script);
-
-    //let thread_group = Arc::clone(thread_group);
-    let constructor = Arc::clone(constructor);
-
-    thread_pool.execute(move || {
-        println!("Reader started");
-
-        let mut shard = constructor.new_from_path(&params_io.path_in).expect("Failed to create bascet reader");
-
-        let mut num_cells_processed = 0;
-        while let Ok(Some(cell_id)) = shard.next_cell() {
-
-            //println!("Starting extraction of {}", num_cells_processed);
-
-            if num_cells_processed%10 ==0 {
-                println!("processed {} cells, now at {}",num_cells_processed, cell_id);
-            }
-
-            let path_cell_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
-            let _ = fs::create_dir(&path_cell_dir);  
-
-            let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
-            let success = shard.extract_to_outdir(
-                &mapcell_script.get_expect_files(),
-                fail_if_missing,
-                &path_cell_dir
-            ).expect("error during extraction");
-
-            //println!("Done extraction of {}", num_cells_processed);
-
-            if success {
-                //Inform writer that the cell is ready for processing
-                _ = tx.send(Some(cell_id));
-            } else {
-                let missing_file_mode = mapcell_script.get_missing_file_mode();
-
-                if missing_file_mode==MissingFileMode::Fail {
-                    panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
-                } 
-                if missing_file_mode==MissingFileMode::Ignore {
-                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell());
-                } 
-            }
-            num_cells_processed+=1;
-        }
-        println!("Reader ended; read a total of {} cells", num_cells_processed);
-    });
-    Ok(())
-}
-
-
-
-
 
 
 
@@ -576,6 +368,11 @@ fn create_writer(
 
     Ok(())
 }
+
+
+
+
+
 
 
 /// From a path, list all files that exist beneath recursively
