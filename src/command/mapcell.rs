@@ -20,6 +20,7 @@ use crate::fileformat::TirpStreamingShardReaderFactory;
 use crate::utils;
 
 use crate::fileformat;
+use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ShardStreamingFileExtractor;
 use crate::fileformat::ConstructFromPath;
@@ -320,7 +321,7 @@ fn create_random_shard_reader<R>(
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     tx: &Sender<Option<String>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
-) -> anyhow::Result<()> where R:ShardRandomFileExtractor {
+) -> anyhow::Result<()> where R:ShardRandomFileExtractor+ShardFileExtractor {
 
     let tx = tx.clone();
 
@@ -346,6 +347,7 @@ fn create_random_shard_reader<R>(
         let mut num_cells_processed = 0;
         for cell_id in list_cells { //  let Ok(Some(cell_id)) = rx.recv()
             info!("request to read {}",cell_id);
+            shard.set_current_cell(&cell_id);
 
             if num_cells_processed%10 ==0 {
                 println!("processed {} cells, now at {}",num_cells_processed, cell_id);
@@ -356,7 +358,6 @@ fn create_random_shard_reader<R>(
 
             let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
             let success = shard.extract_to_outdir(
-                &cell_id, 
                 &mapcell_script.get_expect_files(),
                 fail_if_missing,
                 &path_cell_dir
@@ -372,7 +373,7 @@ fn create_random_shard_reader<R>(
                     panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
                 } 
                 if missing_file_mode==MissingFileMode::Ignore {
-                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell(&cell_id));
+                    println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell());
                 }
             }
 
@@ -397,7 +398,7 @@ fn create_streaming_shard_reader<R>(
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
     tx: &Sender<Option<String>>,
     constructor: &Arc<impl ConstructFromPath<R>+Send+ 'static+Sync>
-) -> anyhow::Result<()> where R:ShardStreamingFileExtractor {
+) -> anyhow::Result<()> where R:ShardStreamingFileExtractor+ShardFileExtractor {
 
     let tx = tx.clone();
 

@@ -16,6 +16,7 @@ use super::ConstructFromPath;
 use super::ReadPairWriter;
 use super::ShardRandomFileExtractor;
 use super::ShardStreamingFileExtractor;
+use super::ShardFileExtractor;
 use super::ReadPair;
 use super::CellID;
 use super::ReadPairReader;
@@ -52,7 +53,8 @@ impl ConstructFromPath<TirpBascetShardReader> for TirpBascetShardReaderFactory {
 ///////////////////////////////
 /// A reader of TIRPs as shards
 pub struct TirpBascetShardReader {
-    tabix_reader: TabixReader     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    tabix_reader: TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    current_cell: CellID
 }
 impl TirpBascetShardReader {
 
@@ -70,7 +72,8 @@ impl TirpBascetShardReader {
             .expect(&format!("Could not open {:?}", fname));
 
         let dat = TirpBascetShardReader {
-            tabix_reader: tbx_reader
+            tabix_reader: tbx_reader,
+            current_cell: "".to_string()
         };
         Ok(dat)
     }
@@ -119,7 +122,20 @@ impl ShardCellDictionary for TirpBascetShardReader {
 impl ShardRandomFileExtractor for TirpBascetShardReader {
 
 
-    fn get_files_for_cell(&mut self, _cell_id: &CellID) -> anyhow::Result<Vec<String>>{
+    /////////////////////////////// 
+    /// Set cell to work with
+    fn set_current_cell (
+        &mut self,
+        cell_id: &CellID
+    ) {
+        self.current_cell=cell_id.clone();
+    }
+
+}
+impl ShardFileExtractor for TirpBascetShardReader {
+
+
+    fn get_files_for_cell(&mut self) -> anyhow::Result<Vec<String>>{
         println!("request files for cell in TIRP, but this is not implemented");
         Ok(Vec::new())
     }
@@ -127,7 +143,6 @@ impl ShardRandomFileExtractor for TirpBascetShardReader {
 
     fn extract_as(
         &mut self, 
-        _cell_id: &String, 
         _file_name: &String,
         _path_outfile: &PathBuf
     ) -> anyhow::Result<()>{
@@ -142,15 +157,14 @@ impl ShardRandomFileExtractor for TirpBascetShardReader {
 
     fn extract_to_outdir (
         &mut self, 
-        cell_id: &String, 
         needed_files: &Vec<String>,
         _fail_if_missing: bool,
         out_directory: &PathBuf
     ) -> anyhow::Result<bool>{
+        let cell_id = &self.current_cell;
 
         let mut valid_files_to_request: HashSet<&str> = HashSet::new();
         valid_files_to_request.extend(["r1.fq","r2.fq"].iter());  /////////////////////// TODO support fasta as well
-
 
         let mut get_fastq = false ;
 
@@ -540,7 +554,7 @@ impl TirpStreamingShardExtractor{
     }
 
 }
-impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make it for any readpairstreamer. TODO generalize this
+impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  
 
     ///////////////////////////////
     /// Move to the next cell in the stream
@@ -564,6 +578,58 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
         cellid
     }
 
+    
+}
+impl ShardFileExtractor for TirpStreamingShardExtractor {  /// can make it for any readpairstreamer. TODO generalize this
+
+
+
+    /////////////////////////////// 
+    /// Extract requested file
+    fn extract_as(
+        &mut self, 
+        file_name: &String,
+        path_outfile: &PathBuf
+    ) -> anyhow::Result<()> {
+
+        if file_name=="r1.fq" {
+            if let Some(rp) = &self.last_read {
+                
+                let f=File::create(path_outfile).expect("Could not open r1.fq file for writing");
+                let mut writer=BufWriter::new(f);
+
+                for one_read in rp.1.iter() {
+                    writer.write_all(b"@x")?;
+                    //writer.write_all(head.as_slice())?;  //no name of read needed
+                    writer.write_all(b"\n")?;
+                    writer.write_all(one_read.r1.as_slice())?;
+                    writer.write_all(b"\n+\n")?;
+                    writer.write_all(&one_read.q1.as_slice())?;
+                    writer.write_all(b"\n")?;
+                }
+            }
+            anyhow::Ok(())
+        } else if file_name=="r2.fq" {
+            if let Some(rp) = &self.last_read {
+                let f=File::create(path_outfile).expect("Could not open r2.fq file for writing");
+                let mut writer=BufWriter::new(f);
+
+                for one_read in rp.1.iter() {
+                    writer.write_all(b"@x")?;
+                    //writer.write_all(head.as_slice())?;  //no name of read needed
+                    writer.write_all(b"\n")?;
+                    writer.write_all(one_read.r2.as_slice())?;
+                    writer.write_all(b"\n+\n")?;
+                    writer.write_all(&one_read.q2.as_slice())?;
+                    writer.write_all(b"\n")?;
+                }
+            }
+            anyhow::Ok(())
+        } else {
+            anyhow::bail!("File not present")
+        }
+    }
+
 
     fn extract_to_outdir (
         &mut self, 
@@ -573,39 +639,12 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {  /// can make
     ) -> anyhow::Result<bool> {
 
         for f in needed_files {
-            if f=="r1.fq" {
-                if let Some(rp) = &self.last_read {
-                    let p = out_directory.join("r1.fq");
-                    let f=File::create(p).expect("Could not open r1.fq file for writing");
-                    let mut writer=BufWriter::new(f);
+            let res = self.extract_as(
+                &f,
+                &out_directory.join(&f)
+            );
 
-                    for one_read in rp.1.iter() {
-                        writer.write_all(b"@x")?;
-                        //writer.write_all(head.as_slice())?;  //no name of read needed
-                        writer.write_all(b"\n")?;
-                        writer.write_all(one_read.r1.as_slice())?;
-                        writer.write_all(b"\n+\n")?;
-                        writer.write_all(&one_read.q1.as_slice())?;
-                        writer.write_all(b"\n")?;
-                    }
-                }
-            } else if f=="r2.fq" {
-                if let Some(rp) = &self.last_read {
-                    let p = out_directory.join("r2.fq");
-                    let f=File::create(p).expect("Could not open r2.fq file for writing");
-                    let mut writer=BufWriter::new(f);
-
-                    for one_read in rp.1.iter() {
-                        writer.write_all(b"@x")?;
-                        //writer.write_all(head.as_slice())?;  //no name of read needed
-                        writer.write_all(b"\n")?;
-                        writer.write_all(one_read.r2.as_slice())?;
-                        writer.write_all(b"\n+\n")?;
-                        writer.write_all(&one_read.q2.as_slice())?;
-                        writer.write_all(b"\n")?;
-                    }
-                }
-            } else {
+            if res.is_err() {
                 if fail_if_missing {
                     return Ok(false)
                 }

@@ -32,6 +32,7 @@ pub use shard::ShardCellDictionary;
 pub use shard::ConstructFromPath;
 pub use shard::ShardRandomFileExtractor;
 pub use shard::ShardStreamingFileExtractor;
+pub use shard::ShardFileExtractor;
 pub use shard::try_get_cells_in_file;
 
 pub use cell_list_file::read_cell_list_file;

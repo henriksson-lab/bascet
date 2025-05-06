@@ -91,14 +91,6 @@ echo "USE_THREADS  = ${USE_THREADS}"
 fastqc -o ./ -t ${USE_THREADS} ${INPUT_DIR}/r1.fq ${INPUT_DIR}/r2.fq
 #head ${INPUT_DIR}/contig.fa > firstpart.txt
 
-#Only keep files of interest. below gets crap output from unzip mixed in
-#unzip -c r1_fastqc.zip r1_fastqc/fastqc_data.txt > r1_fastqc_data.txt
-#unzip -c r2_fastqc.zip r2_fastqc/fastqc_data.txt > r2_fastqc_data.txt
-
-#unzip -c r1_fastqc.zip r1_fastqc/summary.txt > r1_summary.txt
-#unzip -c r2_fastqc.zip r2_fastqc/summary.txt > r2_summary.txt
-
-
 #Only keep files of interest
 unzip r1_fastqc.zip r1_fastqc/fastqc_data.txt
 unzip r2_fastqc.zip r2_fastqc/fastqc_data.txt

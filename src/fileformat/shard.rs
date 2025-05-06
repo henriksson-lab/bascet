@@ -106,34 +106,15 @@ pub trait ShardCellDictionary {
 }
 
 /////////////////////////////// 
-/// Common shard reader trait  -- random I/O
+/// Common shard reader trait
 pub trait ShardRandomFileExtractor { 
 
     /////////////////////////////// 
-    /// Extract requested files to a directory
-    fn extract_to_outdir (
-        &mut self, 
-        cell_id: &CellID, 
-        needed_files: &Vec<String>,
-        fail_if_missing: bool,
-        out_directory: &PathBuf
-    ) -> anyhow::Result<bool>;
-
-    /////////////////////////////// 
-    /// Return a list of files associated with given cell
-    fn get_files_for_cell(
-        &mut self, 
+    /// Set cell to work with
+    fn set_current_cell (
+        &mut self,
         cell_id: &CellID
-    ) -> anyhow::Result<Vec<String>>;
-
-    /////////////////////////////// 
-    /// Extract specified file to path
-    fn extract_as(
-        &mut self, 
-        cell_id: &String, 
-        file_name: &String,
-        path_outfile: &PathBuf
-    ) -> anyhow::Result<()>;
+    );
 
 }
 
@@ -147,6 +128,22 @@ pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to 
     fn next_cell (
         &mut self, 
     ) -> anyhow::Result<Option<CellID>>;
+
+
+}
+
+
+/////////////////////////////// 
+/// Common shard reader trait   -- streaming I/O
+pub trait ShardFileExtractor  { //Or CellFileExtractor, make common to above
+
+    /////////////////////////////// 
+    /// Extract requested file
+    fn extract_as(
+        &mut self, 
+        file_name: &String,
+        path_outfile: &PathBuf
+    ) -> anyhow::Result<()>;
 
     /////////////////////////////// 
     /// Extract requested files to a directory
@@ -162,10 +159,7 @@ pub trait ShardStreamingFileExtractor  { //Or CellFileExtractor, make common to 
     fn get_files_for_cell(
         &mut self
     ) -> anyhow::Result<Vec<String>>;
-
 }
-
-
 
 
 
@@ -195,38 +189,50 @@ impl ShardCellDictionary for DynShardReader {
 }
 impl ShardRandomFileExtractor for DynShardReader {
 
+    /////////////////////////////// 
+    /// Set cell to work with
+    fn set_current_cell (
+        &mut self,
+        cell_id: &CellID
+    ) {
+        match self {
+            DynShardReader::TirpBascetShardReader(r) => r.set_current_cell(&cell_id),
+            DynShardReader::ZipBascetShardReader(r) => r.set_current_cell(&cell_id),
+        }
+    }
+
+}
+impl ShardFileExtractor for DynShardReader {
+
     fn extract_to_outdir (
         &mut self, 
-        cell_id: &CellID, 
         needed_files: &Vec<String>,
         fail_if_missing: bool,
         out_directory: &PathBuf
     ) -> anyhow::Result<bool> {
         match self {
-            DynShardReader::TirpBascetShardReader(r) => r.extract_to_outdir(&cell_id, &needed_files, fail_if_missing, &out_directory),
-            DynShardReader::ZipBascetShardReader(r) => r.extract_to_outdir(&cell_id, &needed_files, fail_if_missing, &out_directory),
+            DynShardReader::TirpBascetShardReader(r) => r.extract_to_outdir(&needed_files, fail_if_missing, &out_directory),
+            DynShardReader::ZipBascetShardReader(r) => r.extract_to_outdir(&needed_files, fail_if_missing, &out_directory),
         }
     }
 
     fn get_files_for_cell(
-        &mut self, 
-        cell_id: &CellID
+        &mut self
     ) -> anyhow::Result<Vec<String>> {
         match self {
-            DynShardReader::TirpBascetShardReader(r) => r.get_files_for_cell(&cell_id),
-            DynShardReader::ZipBascetShardReader(r) => r.get_files_for_cell(&cell_id)
+            DynShardReader::TirpBascetShardReader(r) => r.get_files_for_cell(),
+            DynShardReader::ZipBascetShardReader(r) => r.get_files_for_cell()
         }
     }
 
     fn extract_as(
         &mut self, 
-        cell_id: &String, 
         file_name: &String,
         path_outfile: &PathBuf
     ) -> anyhow::Result<()> {
         match self {
-            DynShardReader::TirpBascetShardReader(r) => r.extract_as(&cell_id, &file_name, &path_outfile),
-            DynShardReader::ZipBascetShardReader(r) => r.extract_as(&cell_id, &file_name, &path_outfile),
+            DynShardReader::TirpBascetShardReader(r) => r.extract_as(&file_name, &path_outfile),
+            DynShardReader::ZipBascetShardReader(r) => r.extract_as(&file_name, &path_outfile),
         }
     }
 

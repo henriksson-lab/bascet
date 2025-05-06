@@ -7,6 +7,7 @@ use itertools::Itertools;
 use anyhow::Result;
 
 use crate::fileformat::CellID;
+use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
@@ -152,9 +153,10 @@ impl FeaturiseKMC {
         let mut cur_file_id = 0;
         let mut dbs_to_merge: Vec<(PathBuf, String)> = Vec::new();
         for cell_id in list_cells {
+            file_input.set_current_cell(&cell_id);
 
             //Check if a KMC database is present for this cell, otherwise exclude it
-            let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
+            let list_files = file_input.get_files_for_cell().expect("Could not get list of files for cell");
             let f1="kmc.kmc_suf".to_string();
             let f2="kmc.kmc_pre".to_string();
             if list_files.contains(&f1) && list_files.contains(&f2) {
@@ -166,8 +168,8 @@ impl FeaturiseKMC {
                 let path_f2 = params.path_tmp.join(format!("cell_{}.kmc_pre", cur_file_id).to_string());
 
                 //Extract the files
-                file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
-                file_input.extract_as(&cell_id, &f2, &path_f2).unwrap();
+                file_input.extract_as(&f1, &path_f1).unwrap();
+                file_input.extract_as(&f2, &path_f2).unwrap();
 
                 //Add this db to the list of all db's to merge later
                 // NOTE: '-' is a unary operator in kmc complex scripts. cannot be part of name
