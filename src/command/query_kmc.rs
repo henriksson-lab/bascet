@@ -7,6 +7,7 @@ use std::io::BufReader;
 use std::collections::HashMap;
 
 
+use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
@@ -173,11 +174,13 @@ impl QueryKmc {
 
             println!("doing cell {}", cell_id);
 
+            file_input.set_current_cell(&cell_id);
+
             //Add cell ID to matrix and get its matrix position
             let cell_index = mm.get_or_create_cell(&cell_id.as_bytes());
 
             //Check if a KMC database is present for this cell, otherwise exclude it
-            let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell");
+            let list_files = file_input.get_files_for_cell().expect("Could not get list of files for cell");
 
             let f1="kmc_dump.txt".to_string();
             if list_files.contains(&f1) {
@@ -186,7 +189,7 @@ impl QueryKmc {
 
                 //Extract the files
                 let path_f1 = params.path_tmp.join(format!("cell_{}.kmc_dump.txt", cell_id).to_string());
-                file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
+                file_input.extract_as(&f1, &path_f1).unwrap();
 
                 //Extract counts from KMC database already here
                 //TODO maybe for now get the dump.txt file and scan it directly... later, C++ api for kmc should be the fastest option!!!

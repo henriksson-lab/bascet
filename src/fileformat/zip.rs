@@ -7,6 +7,7 @@ use zip::read::ZipArchive;
 use log::debug;
 use anyhow::bail;
 
+use super::shard::ShardFileExtractor;
 use super::shard::ShardRandomFileExtractor;
 use super::shard::CellID;
 use super::ConstructFromPath;
@@ -35,7 +36,8 @@ impl ConstructFromPath<ZipBascetShardReader> for ZipBascetShardReaderFactory {
 pub struct ZipBascetShardReader {
 
     pub files_for_cell: HashMap::<CellID,Vec<String>>,
-    zip_shard: ZipArchive<BufReader<File>>
+    zip_shard: ZipArchive<BufReader<File>>,
+    current_cell: CellID
 
 }
 impl ZipBascetShardReader {
@@ -77,7 +79,8 @@ impl ZipBascetShardReader {
 
         Ok(ZipBascetShardReader {
             files_for_cell: files_for_cell,
-            zip_shard: zip_shard
+            zip_shard: zip_shard,
+            current_cell: "".to_string()
 
         })
     }
@@ -97,27 +100,25 @@ impl ShardCellDictionary for ZipBascetShardReader {
 
 
 }
-impl ShardRandomFileExtractor for ZipBascetShardReader {
-
+impl ShardFileExtractor for ZipBascetShardReader {
     fn get_files_for_cell(
         &mut self, 
-        cell_id: &CellID
     ) -> anyhow::Result<Vec<String>>{
-        if let Some(flist) = self.files_for_cell.get(cell_id) {
+        if let Some(flist) = self.files_for_cell.get(&self.current_cell) {
             Ok(flist.clone())
         } else {
-            bail!("Cell {:?} not in bascet", &cell_id)
+            bail!("Cell {:?} not in bascet", &self.current_cell)
         }
     }
 
 
     fn extract_as(
         &mut self, 
-        cell_id: &String, 
         file_name: &String,
         path_outfile: &PathBuf
     ) -> anyhow::Result<()>{
 
+        let cell_id = &self.current_cell;
         let zip_fname = format!("{cell_id}/{file_name}");
         let mut entry = self.zip_shard.by_name(&zip_fname).expect("File is missing in zip");
 
@@ -137,11 +138,12 @@ impl ShardRandomFileExtractor for ZipBascetShardReader {
 
     fn extract_to_outdir (
         &mut self, 
-        cell_id: &String, 
         needed_files: &Vec<String>,
         fail_if_missing: bool,
         out_directory: &PathBuf
     ) -> anyhow::Result<bool>{
+
+        let cell_id = &self.current_cell;
 
         let list_files_for_cell = self.files_for_cell.get(cell_id).expect("expected cell to exist");
 
@@ -188,6 +190,16 @@ impl ShardRandomFileExtractor for ZipBascetShardReader {
         }
         Ok(true)
     }
+}
+impl ShardRandomFileExtractor for ZipBascetShardReader {
 
+    /////////////////////////////// 
+    /// Set cell to work with
+    fn set_current_cell (
+        &mut self,
+        cell_id: &CellID
+    ) {
+        self.current_cell=cell_id.clone();
+    }
 
 }

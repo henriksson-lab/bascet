@@ -10,6 +10,7 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::fileformat::CellID;
+use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::shard::ShardCellDictionary;
@@ -29,7 +30,7 @@ pub const DEFAULT_THREADS_WORK: usize = 1;
 
 #[derive(Args)]
 pub struct CountsketchCMD {
-    // Input bascet or gascet
+    // Input bascets
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]  //
     pub path_in: Vec<PathBuf>,
 
@@ -108,6 +109,7 @@ impl CountsketchMat {
             };  
         }
 
+
         //Detect which cells to gather
         let list_cells = if let Some(p) = &params.include_cells {
             p.clone()
@@ -146,7 +148,7 @@ impl CountsketchMat {
                 filter(|&s| hash_list_cells.contains(s)).
                 collect::<Vec<&String>>();
 
-            // Unzip all cell-specific min-hash specific databases
+            // Get reads for each cell
             for cell_id in cells_for_file {
 
                 if cur_file_id%1000 == 0 {
@@ -158,12 +160,13 @@ impl CountsketchMat {
                     //Check if a minhash is present for this cell, otherwise exclude it.
                     //If processing multiple input files, there is a good chance the cell will not be there.
                     //Support streaming of sorts? subset to cells in this file?
-                    let list_files = file_input.get_files_for_cell(&cell_id).expect("Could not get list of files for cell"); //////////// TODO may fail if we scan all files in each input file
+                    file_input.set_current_cell(&cell_id);
+                    let list_files = file_input.get_files_for_cell().expect("Could not get list of files for cell"); //////////// TODO may fail if we scan all files in each input file
                     let f1="countsketch.txt".to_string();
                     if list_files.contains(&f1) {
 
                         let path_f1 = params.path_tmp.join(format!("cell_{}.countsketch.txt", cur_file_id).to_string());
-                        file_input.extract_as(&cell_id, &f1, &path_f1).unwrap();
+                        file_input.extract_as(&f1, &path_f1).unwrap();
 
                         //Print which cell we are in
                         write!(bw, "{}", cell_id).unwrap();
