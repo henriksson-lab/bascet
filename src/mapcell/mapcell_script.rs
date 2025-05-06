@@ -7,7 +7,8 @@ use std::io;
 use std::io::Read;
 use std::fmt;
 use rand::Rng;
-
+use std::sync::Arc;
+use crossbeam::channel::Sender;
 use path_clean::PathClean;
 
 use super::MapCellFunction;
@@ -17,6 +18,8 @@ use super::CompressionMode;
 use super::parse_missing_file_mode;
 use super::parse_compression_mode;
 
+
+use crate::fileformat::ShardFileExtractor;
 
 
 ///////////////////////////////
@@ -186,6 +189,19 @@ impl MapCellFunction for MapCellFunctionShellScript {
         }
     }
 
+    /*    
+    //////////////////////////////////// 
+    /// Reader for streaming I/O shard files
+    pub fn process_shard_cell_via_directory<R>(
+        &self,
+        path_tmp: &PathBuf,
+        tx: &Sender<Option<String>>,
+        cell_id: String,
+        shard: &mut R
+    ) where R:ShardFileExtractor {
+    }
+
+ */
 
 
 
@@ -300,5 +316,45 @@ pub fn to_absolute_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     }.clean();
 
     Ok(absolute_path)
+}
+
+
+
+
+////////////////////////////////////
+/// Put all files needed in a directory
+pub fn extract_needed_files_to_directory( 
+    path_tmp: &PathBuf,
+    mapcell_script: &Arc<Box<dyn MapCellFunction>>,
+    tx: &Sender<Option<String>>,
+    cell_id: String,
+    shard: &mut Box<&mut dyn ShardFileExtractor> 
+) { 
+
+    let path_cell_dir = path_tmp.join(format!("cell-{}", cell_id));
+    let _ = std::fs::create_dir(&path_cell_dir);  
+
+    let fail_if_missing = mapcell_script.get_missing_file_mode() != MissingFileMode::Ignore;
+    let success = shard.extract_to_outdir(
+        &mapcell_script.get_expect_files(),
+        fail_if_missing,
+        &path_cell_dir
+    ).expect("error during extraction");
+
+    //println!("Done extraction of {}", num_cells_processed);
+
+    if success {
+        //Inform writer that the cell is ready for processing
+        _ = tx.send(Some(cell_id));
+    } else {
+        let missing_file_mode = mapcell_script.get_missing_file_mode();
+
+        if missing_file_mode==MissingFileMode::Fail {
+            panic!("Failed extraction of {}; shutting down process, keeping temp files for inspection", cell_id);
+        } 
+        if missing_file_mode==MissingFileMode::Ignore {
+            println!("Did not find all expected files for '{}', ignoring. Files present: {:?}", cell_id, shard.get_files_for_cell());
+        } 
+    }
 }
 
