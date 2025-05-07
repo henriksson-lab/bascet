@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::bail;
 use log::info;
@@ -61,6 +62,17 @@ pub fn iterate_shard_reader_multithreaded(
         ////////////////////////////////// Random reading of input
         println!("Reading will be random (this can be slow depending on file format)");
 
+        //Figure out what cells there are to process - get all of them by default
+        let list_cells = fileformat::try_get_cells_in_file(&path_in).expect("Could not get list of cells from input file");
+        let list_cells = if let Some(list_cells) = list_cells {
+            list_cells
+        } else {
+            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
+            //Could revert to streaming here
+        };
+        let list_cells = list_cells.clone();
+        let mut list_cells = Arc::new(Mutex::new(list_cells));        
+
 //            panic!("this need to be rewritten; let readers stream on their own")
 
         let thread_pool_readers = threadpool::ThreadPool::new(threads_read);
@@ -74,8 +86,9 @@ pub fn iterate_shard_reader_multithreaded(
                 _ = create_random_shard_reader(
                     &path_in,
                     &thread_pool_readers,
-                    &Arc::new(TirpBascetShardReaderFactory::new()),
-                    &run_func
+                    &Arc::new(TirpBascetShardReaderFactory::new()), ////////////////////////////////////////////////////// bug! decide on a subset of cells before entering, or make a mutex list
+                    &run_func,
+                    &mut list_cells
                 );
             }
         } else if input_shard_type == DetectedFileformat::ZIP {
@@ -85,8 +98,9 @@ pub fn iterate_shard_reader_multithreaded(
                 _ = create_random_shard_reader(
                     &path_in,
                     &thread_pool_readers,
-                    &Arc::new(ZipBascetShardReaderFactory::new()),
-                    &run_func
+                    &Arc::new(ZipBascetShardReaderFactory::new()), ////////////////////////////////////////////////////// bug! decide on a subset of cells before entering, or make a mutex list
+                    &run_func,
+                    &mut list_cells
                 );
             }
         } else {
@@ -105,17 +119,17 @@ pub fn iterate_shard_reader_multithreaded(
 //////////////////////////////////// 
 /// Reader for random I/O shard files
 fn create_random_shard_reader<R>(
-    //params_io: &Arc<MapCell>,
     path_in: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     constructor: &Arc<impl ConstructFromPath<R> + Send + 'static + Sync>,
-    run_func: &Arc<impl Fn((String, &mut Box<&mut dyn ShardFileExtractor>)) + Sync + Send + 'static>
+    run_func: &Arc<impl Fn((String, &mut Box<&mut dyn ShardFileExtractor>)) + Sync + Send + 'static>,
+    list_cells: &mut Arc<Mutex<Vec<String>>>
 ) -> anyhow::Result<()> where R:ShardRandomFileExtractor+ShardFileExtractor {
 
-    //let params_io = Arc::clone(&params_io);
     let constructor = Arc::clone(constructor);
     let run_func = Arc::clone(run_func);
     let path_in = path_in.clone();
+    let list_cells=list_cells.clone();
 
     thread_pool.execute(move || {
         println!("Reader started");
@@ -124,36 +138,34 @@ fn create_random_shard_reader<R>(
             new_from_path(&path_in).
             expect("Failed to create bascet reader");
 
-        //Tell readers to go through all cells, then terminate all readers
-        let list_cells = fileformat::try_get_cells_in_file(&path_in).expect("Could not get list of cells from input file");
-        let list_cells = if let Some(list_cells) = list_cells {
-            list_cells
-        } else {
-            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
-        };
+        //For all cells in queue
+        let mut num_cells_processed = 0;  // could have a global counter
+        loop {
+            //Try to get a cell to process from the queue
+            let cell_id = {
+                let mut list_cells = list_cells.lock().unwrap();
+                list_cells.pop().clone()
+            };
 
-        // TODO: each reader manages its own list of cells
-        let mut num_cells_processed = 0;
-        for cell_id in list_cells { 
-            info!("request to read {}",cell_id);
-            shard.set_current_cell(&cell_id);
-
-            if num_cells_processed%10 ==0 {
-                println!("processed {} cells, now at {}",num_cells_processed, cell_id);
+            //Process the cell if it exists
+            if let Some(cell_id)=cell_id {
+                info!("request to read {}",cell_id);
+                shard.set_current_cell(&cell_id);
+    
+                if num_cells_processed%10 ==0 {
+                    println!("processed {} cells, now at {}",num_cells_processed, cell_id);
+                }
+    
+                let mut shard: Box<&mut dyn ShardFileExtractor> = Box::new(&mut shard);
+                run_func((
+                    cell_id,
+                    &mut shard
+                ));
+    
+                num_cells_processed += 1;    
+            } else {
+                break;
             }
-
-            let mut shard: Box<&mut dyn ShardFileExtractor> = Box::new(&mut shard);
-            run_func((
-                cell_id,
-                &mut shard
-            ));
-
-
-
-            6666666;
-
-
-            num_cells_processed += 1;
         }
         println!("Reader ended; read a total of {} cells", num_cells_processed);
     });
