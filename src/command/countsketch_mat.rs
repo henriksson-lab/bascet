@@ -4,16 +4,15 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
 use std::io::BufRead;
-use std::collections::HashSet;
+use std::sync::Mutex;
 use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
+use crate::command::determine_thread_counts_1;
+use crate::fileformat::iterate_shard_reader;
 use crate::fileformat::CellID;
 use crate::fileformat::ShardFileExtractor;
-use crate::fileformat::ShardRandomFileExtractor;
-use crate::fileformat::ZipBascetShardReader;
-use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::read_cell_list_file;
 
 
@@ -45,6 +44,11 @@ pub struct CountsketchCMD {
     // File with a list of cells to include
     #[arg(long = "cells")]
     pub include_cells: Option<PathBuf>,
+
+    //Thread settings
+    #[arg(short = '@', value_parser = clap::value_parser!(usize))]
+    num_threads_total: Option<usize>,
+
     
 }
 impl CountsketchCMD {
@@ -52,6 +56,9 @@ impl CountsketchCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         
+        let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
+        println!("Using threads {}",num_threads_total);
+
         //Read optional list of cells
         let include_cells = if let Some(p) = &self.include_cells {
             let name_of_cells = read_cell_list_file(&p);
@@ -65,7 +72,9 @@ impl CountsketchCMD {
             path_tmp: self.path_tmp.clone(),            
             path_input: self.path_in.clone(),            
             path_output: self.path_out.clone(),  
-            include_cells: include_cells.clone(),          
+            include_cells: include_cells.clone(),         
+
+            num_threads_total: num_threads_total 
         };
 
         let _ = CountsketchMat::run(
@@ -90,6 +99,8 @@ pub struct CountsketchMat {
     pub path_output: std::path::PathBuf,
 
     pub include_cells: Option<Vec<CellID>>,
+
+    num_threads_total: usize
 }
 impl CountsketchMat {
 
@@ -110,87 +121,82 @@ impl CountsketchMat {
         }
 
 
-        //Detect which cells to gather
-        let list_cells = if let Some(p) = &params.include_cells {
-            p.clone()
-        } else {
-            let mut list_cells: Vec<String> = Vec::new();
-            for path_input in &params.path_input {
-                let mut file_input = ZipBascetShardReader::new(&path_input).expect("Failed to open input file");
-                let mut cells_for_file= file_input.get_cell_ids().expect("Failed to get content listing for input file");
-                list_cells.append(&mut cells_for_file);
-            }
-            list_cells            
-        };
-        println!("Preparing to process {} cells", list_cells.len());
-
         //Open file for output
         let f=File::create(&params.path_output).expect("Could not open CS matrix file for writing");
-        let mut bw=BufWriter::new(f);
+        let bw=BufWriter::new(f);
+
+        let clone_params = Arc::clone(params);
+
+        let bw = Mutex::new(bw);
+        let bw = Arc::new(bw);
+        //let mut cell_count = 0;
+//        let cell_count = Mutex::new(0);
+
+        //Function to apply to each cell that is being read.
+        //In this case, concatenate the content of each countsketch.txt
+        let process_cell_fn  = 
+        move |(cell_id, shard):(String, &mut Box<&mut dyn ShardFileExtractor>)| {
+
+            let list_files = shard.get_files_for_cell().expect("Could not get list of files for cell"); //////////// TODO may fail if we scan all files in each input file
+            let f1="countsketch.txt".to_string();
 
 
-        //Keep cells as a hash for quick lookup
-        let mut hash_list_cells:HashSet<String> = HashSet::new();
-        for cellid in list_cells {
-            hash_list_cells.insert(cellid.clone());
-        }
+            println!("{:?}",list_files);
+
+            if list_files.contains(&f1) {
+
+                let path_f1 = clone_params.path_tmp.join(format!("cell_{}.countsketch.txt", cell_id).to_string());
+                shard.extract_as(&f1, &path_f1).unwrap(); // TODO way of getting content directly? 
+
+                let mut bw = bw.lock().unwrap();
+
+                //Print which cell we are in
+                write!(bw, "{}", cell_id).unwrap();
+
+                //Get the content and add to list
+                let file = File::open(&path_f1).expect(&format!("Could not open extracted file for reading {}", &path_f1.display()));
+                let lines = std::io::BufReader::new(file).lines();
+                for line in lines {
+                    let line = line.unwrap();
+                    write!(bw, "\t{}", line).unwrap();
+                }
+                writeln!(bw, "").unwrap();
+
+                //Delete file when done with it
+                std::fs::remove_file(&path_f1).expect("Could not remove temp file");
+
+                //Count cells
+//                *cell_count.lock().unwrap() += 1;
+//                let mut cell_count = cell_count.lock().unwrap();
+//                *cell_count += 1;
+//                *cell_count = cell_count + 1;
+
+            } 
+
+        };
+        let process_cell_fn = Arc::new(process_cell_fn);
 
         //Process each input file
-        let mut cur_file_id = 0;
         for path_input in &params.path_input {
-            let mut file_input = ZipBascetShardReader::new(&path_input).
-                expect("Failed to open input file");
-
-            //In this particular file, which cells to extract?
-            let cells_for_file= file_input.get_cell_ids().
-                expect("Failed to get content listing for input file");
-            let cells_for_file = cells_for_file.iter().
-                filter(|&s| hash_list_cells.contains(s)).
-                collect::<Vec<&String>>();
-
-            // Get reads for each cell
-            for cell_id in cells_for_file {
-
-                if cur_file_id%1000 == 0 {
-                    println!("Processing file {}, cell {}", path_input.display(), cur_file_id);
-                }
-
-                //Need to check if cell is present, as if multiple input files, the cell might not be in this particular file
-                if file_input.has_cell(&cell_id) {
-                    //Check if a minhash is present for this cell, otherwise exclude it.
-                    //If processing multiple input files, there is a good chance the cell will not be there.
-                    //Support streaming of sorts? subset to cells in this file?
-                    file_input.set_current_cell(&cell_id);
-                    let list_files = file_input.get_files_for_cell().expect("Could not get list of files for cell"); //////////// TODO may fail if we scan all files in each input file
-                    let f1="countsketch.txt".to_string();
-                    if list_files.contains(&f1) {
-
-                        let path_f1 = params.path_tmp.join(format!("cell_{}.countsketch.txt", cur_file_id).to_string());
-                        file_input.extract_as(&f1, &path_f1).unwrap();
-
-                        //Print which cell we are in
-                        write!(bw, "{}", cell_id).unwrap();
-
-                        //Get the content and add to list
-                        let file = File::open(&path_f1)?;
-                        let lines = std::io::BufReader::new(file).lines();
-                        for line in lines {
-                            let line = line.unwrap();
-                            write!(bw, "\t{}", line).unwrap();
-                        }
-                        writeln!(bw, "").unwrap();
-
-                        //Delete file when done with it
-                        std::fs::remove_file(&path_f1)?;
-                    } 
-                    cur_file_id = cur_file_id + 1;
-                }
-            }
+            //Iterate over all cells using suitable readers
+            let path_input = path_input.clone();
+            let num_threads_total = params.num_threads_total;
+            iterate_shard_reader::iterate_shard_reader_multithreaded(
+                num_threads_total,
+                &path_input.clone(),
+                &process_cell_fn
+            )?;
         }
-        println!("Obtained CS from {} cells", cur_file_id);
+
+
+        /* 
+        let cell_count = cell_count.lock().unwrap();
+        println!("Obtained CS from {} cells", cell_count);
+*/
 
         //Delete temp folder
         fs::remove_dir_all(&params.path_tmp).unwrap();
+
 
         Ok(())
     }

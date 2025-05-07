@@ -69,10 +69,8 @@ pub struct MapCellCMD {
     #[arg(long, value_parser = clap::value_parser!(usize))]
     num_threads_mapcell: Option<usize>,
 }
-
-
-
 impl MapCellCMD {
+
 
     /// Run the map-cell commandline option
     pub fn try_execute(&mut self) -> Result<()> {
@@ -97,9 +95,6 @@ impl MapCellCMD {
         };
 
         println!("Script info: {:?}", script);
-
-        //Normally we give one thread to each mapcell script
-        //let num_threads_mapcell = self.num_threads_mapcell.unwrap_or(1);
 
         //Note: we always have two extra writer threads, because reading is expected to be the slow part. not an ideal implementation!
         let (num_threads_read, num_threads_write, num_threads_mapcell) = determine_thread_counts_mapcell(

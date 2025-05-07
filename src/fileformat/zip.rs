@@ -48,7 +48,7 @@ impl ZipBascetShardReader {
         fname: &PathBuf
     ) -> anyhow::Result<ZipBascetShardReader> {
 
-        let file = File::open(fname).expect("Failed to open bascet shard");
+        let file = File::open(fname).expect(&format!("Failed to open bascet shard {}", &fname.display()));
         let bufreader_shard = BufReader::new(file);
         let zip_shard =    ZipArchive::new(bufreader_shard).unwrap();
 
@@ -130,6 +130,11 @@ impl ShardFileExtractor for ZipBascetShardReader {
             let mut bufwriter_out = BufWriter::new(&file_out);
             let mut bufreader_found = BufReader::new(&mut entry);
             std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
+
+            println!("Copied! {}",path_outfile.display());
+
+        } else {
+            panic!("Unable to extract {} as unclear what it is", file_name);
         }
 
         Ok(())
