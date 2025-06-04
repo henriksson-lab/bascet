@@ -92,10 +92,12 @@ impl Chemistry for TenxChemistry {
 
         //Detect barcode, which for parse is in R2 ...? TODO
         let total_distance_cutoff = 1;
+        let part_distance_cutoff = 1;
         let (isok, bc) = self.barcode.detect_barcode(
             r2_seq,
             false,
-            total_distance_cutoff
+            total_distance_cutoff,
+            part_distance_cutoff
         );
 
         if isok {

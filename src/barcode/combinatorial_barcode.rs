@@ -192,13 +192,17 @@ impl CombinatorialBarcode {
         &mut self,
         seq: &[u8],
         abort_early: bool,
-        total_distance_cutoff: i32
+        total_distance_cutoff: i32,
+        part_distance_cutoff: i32
     ) -> (bool, CellID) {
         let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
         let mut total_score = 0;
         for p in &mut self.pools {
 
-            let one_bc = p.detect_barcode(seq);
+            let one_bc = p.detect_barcode(
+                seq, 
+                part_distance_cutoff as u8
+            );
             if let Some((this_bc, score)) = one_bc {
                 full_bc.push(this_bc);
                 total_score = total_score + score;
@@ -229,14 +233,19 @@ impl CombinatorialBarcode {
         bc_seq: &[u8],
         bc_qual: &[u8],
         other_seq: &[u8],
-        other_qual: &[u8]
+        other_qual: &[u8],
+        total_bc_distance_cutoff: i32,
+        local_bc_distance_cutoff: i32
     ) -> (bool, CellID, ReadPair) {
 
         let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
         let mut total_score = 0;
         for p in &mut self.pools {
 
-            let one_bc = p.detect_barcode(bc_seq);
+            let one_bc = p.detect_barcode(
+                bc_seq, 
+                local_bc_distance_cutoff as u8,
+            );
             if let Some((this_bc, score)) = one_bc {
                 full_bc.push(this_bc);
                 total_score = total_score + score;
@@ -250,7 +259,7 @@ impl CombinatorialBarcode {
                 );
             }
 
-            if total_score > 1 {
+            if total_score > total_bc_distance_cutoff {
                 // early return if mismatch too high. This saves a good % of time
                 return (
                     false,
@@ -421,7 +430,8 @@ impl CombinatorialBarcodePart {
 
     pub fn detect_barcode(
         &mut self,
-        seq: &[u8]
+        seq: &[u8],
+        max_distance: u8  // was 1
     ) -> Option<(String, i32)> { //barcode name, score
 
 
@@ -440,7 +450,7 @@ impl CombinatorialBarcodePart {
         //Find candidate hits. Scan each barcode, in all positions 
         let mut all_hits: Vec<(String, i32)> = Vec::new();  //barcode name, start, score
         for barcode in self.barcode_list.iter_mut() {
-            let hits = barcode.seek_one(seq, 1); //// returns: barcode name, sequence, start, score
+            let hits = barcode.seek_one(seq, max_distance); //// returns: barcode name, sequence, start, score
             if let Some((name, _start, score)) = hits {
                 if score==0 {
                     //If we find a perfect hit then return early, and only this one

@@ -77,10 +77,13 @@ pub struct GetRawCMD {
     #[arg(long = "no-sort")]
     pub no_sort: bool,  
 
-    // Optional: Error tolerance in barcode detection
+    // Optional: Total error tolerance in barcode detection
     #[arg(long = "barcode-tol", value_parser)]
-    pub barcode_error_tol: Option<usize>,
+    pub total_barcode_error_tol: Option<usize>,
 
+    // Optional: Partial error tolerance in barcode detection
+    #[arg(long = "part-barcode-tol", value_parser)]
+    pub part_barcode_error_tol: Option<usize>,
 
     // Optional: How many threads to use. Need better way of specifying? TODO
     #[arg(long, value_parser = clap::value_parser!(usize))]
@@ -131,7 +134,8 @@ impl GetRawCMD {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut AtrandiWGSChemistry::new(
-                    self.barcode_error_tol
+                    self.total_barcode_error_tol,
+                    self.part_barcode_error_tol
                 )
             );
         } else if self.chemistry == "atrandi_rnaseq" {

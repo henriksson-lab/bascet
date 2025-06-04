@@ -169,6 +169,14 @@ test_getraw:
 		--out-complete testdata/out_complete.0.tirp.gz \
 		--out-incomplete testdata/out_incomplete.0.tirp.gz
 
+test_getraw_hard:
+	rm -Rf temp; cargo +nightly run getraw \
+		--r1 hardtest/P32705_1001_S1_L001_R1_001.fastq.gz \
+		--r2 hardtest/P32705_1001_S1_L001_R2_001.fastq.gz \
+		--out-complete hardtest/out_complete.0.tirp.gz \
+		--out-incomplete hardtest/out_incomplete.0.tirp.gz
+
+
 
 
 test_rna_3_1:

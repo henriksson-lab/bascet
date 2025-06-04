@@ -62,7 +62,9 @@ impl Chemistry for GeneralCombinatorialBarcode {
             r2_seq,
             r2_qual,
             r1_seq,
-            r1_qual
+            r1_qual,
+            1,
+            1 /////////// TODO
         )
 
         //TODO support barcodes on one side, or two? for ss3, need to support both!!

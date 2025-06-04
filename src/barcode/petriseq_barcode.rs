@@ -54,10 +54,12 @@ impl Chemistry for PetriseqChemistry {
 
         //Detect barcode, which for atrandi barcode is in R2
         let total_score_cutoff = 2; // relaxed comparison
+        let part_score_cutoff = 2;
         let (isok, bc) = self.barcode.detect_barcode(
             r1_seq, 
             true,
-             total_score_cutoff
+             total_score_cutoff,
+             part_score_cutoff
         ); //parse BC as far as possible
 
         if isok {
