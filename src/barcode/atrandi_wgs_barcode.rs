@@ -22,26 +22,31 @@ pub struct AtrandiWGSChemistry {
     num_adapt_trim1: usize,
     //num_adapt_trim2: usize
 
-    barcode_error_tol: i32
+    total_barcode_error_tol: i32,
+    part_barcode_error_tol: i32
 }
 impl AtrandiWGSChemistry {
 
     pub fn new(
-        barcode_error_tol: Option<usize>,
+        total_barcode_error_tol: Option<usize>,
+        part_barcode_error_tol: Option<usize>,
     ) -> AtrandiWGSChemistry {
 
         //Read the barcodes relevant for atrandi
         let atrandi_bcs = include_bytes!("atrandi_barcodes.tsv");
         let barcode = CombinatorialBarcode::read_barcodes(Cursor::new(atrandi_bcs));
 
-        let barcode_error_tol = barcode_error_tol.unwrap_or(1);
+        let total_barcode_error_tol = total_barcode_error_tol.unwrap_or(1);
+        let part_barcode_error_tol = part_barcode_error_tol.unwrap_or(1);
 
         AtrandiWGSChemistry {
             barcode: barcode,
             num_reads_pass: 0,
             num_reads_fail: 0,
             num_adapt_trim1: 0,
-            barcode_error_tol: barcode_error_tol as i32
+            total_barcode_error_tol: total_barcode_error_tol as i32,
+            part_barcode_error_tol: part_barcode_error_tol as i32,
+
             //num_adapt_trim2: 0
         }
     }
@@ -81,7 +86,8 @@ impl Chemistry for AtrandiWGSChemistry {
         let (isok, bc) = self.barcode.detect_barcode(
             r2_seq,
             false,
-            self.barcode_error_tol
+            self.total_barcode_error_tol, /////////////////
+            self.part_barcode_error_tol
         );
 
         if isok {
