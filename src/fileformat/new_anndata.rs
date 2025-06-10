@@ -218,7 +218,6 @@ impl SparseMatrixAnnDataWriter {
 
         //row < self.rows /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sprs-0.11.3/src/sparse/triplet.rs
 
-
         Ok(())
     }
 
@@ -310,6 +309,19 @@ impl SparseMatrixAnnDataWriter {
         let _ = builder.
             with_data(list_cell_names.as_slice()).
             create("_index")?;
+        
+        //TODO: store unmapped count, in "obs" data frame. need new builder?
+
+        //Store count of unmapped
+        let mut list_cell_unmapped: Vec<uint> = vec![0; n_rows as usize];  
+        for (cellid, cellid_int) in &self.map_cell_unclassified_count {
+            list_cell_unmapped[*cellid as usize] = *cellid_int;
+        }
+
+        let builder = group.new_dataset_builder();
+        let _ = builder.
+            with_data(list_cell_unmapped.as_slice()).
+            create("_unmapped")?;
 
 
         Ok(())
@@ -337,3 +349,6 @@ fn listu8_to_h5_string(list: &Vec<u8>) -> hdf5::types::VarLenUnicode {
     let f=String::from_utf8(list.to_vec()).unwrap();
     f.parse().unwrap()
 }
+
+
+
