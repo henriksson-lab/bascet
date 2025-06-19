@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
+use rust_htslib::bam::record::Cigar;
 use rust_htslib::htslib::uint;
 use anyhow::Result;
 use clap::Args;
@@ -21,6 +22,9 @@ pub struct CountChromCMD {
 
     #[arg(short = 'o', value_parser)]  /// Full path to file to store in
     pub path_out: PathBuf,
+
+    #[arg(value_parser, default_value = "0")]  /// Minimum M-bases to be considered
+    pub min_matching: u32,
 
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)] //Not used, but kept here for consistency with other commands
@@ -43,7 +47,8 @@ impl CountChromCMD {
         CountChrom::run(&CountChrom {
             path_in: self.path_in.clone(),
             path_out: self.path_out.clone(),
-            num_threads: num_threads_total
+            num_threads: num_threads_total,
+            min_matching: self.min_matching
         }).unwrap();
 
         log::info!("CountChrom has finished succesfully");
@@ -59,7 +64,8 @@ type Cellid = Vec<u8>;
 pub struct CountChrom { 
     pub path_in: std::path::PathBuf,
     pub path_out: std::path::PathBuf,
-    pub num_threads: usize
+    pub num_threads: usize,
+    pub min_matching: u32
 }
 impl CountChrom {
 
@@ -131,21 +137,41 @@ impl CountChrom {
                     }
                 } 
 
-                //Count this read
-                let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
-                *values += 1;
-
-                //Keep track of where we are
-                num_reads+=1;
-                if num_reads%1000000 == 0 {
-                    println!("Processed {} reads", num_reads);
+                //Get number of matching bases
+                let mut num_matching=0;
+                let cigar=record.cigar();
+                for cigar_part in cigar.iter() {
+                    if let Cigar::Match(x)=cigar_part {
+                        num_matching += x;
+                    }
                 }
+
+                //Filter out reads that don't match well enough
+                if num_matching >= params.min_matching {
+                    //Count this read as mapping
+                    let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
+                    *values += 1;
+                } else {
+                    //Count non-mapping reads
+                    let cell_index = cnt_mat.get_or_create_cell(&cell_id);
+                    *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
+                }
+
+
+
+
             } else {
                 //Count non-mapping reads
                 let cell_index = cnt_mat.get_or_create_cell(&cell_id);
                 *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
-
             }
+
+            //Keep track of where we are
+            num_reads+=1;
+            if num_reads%1000000 == 0 {
+                println!("Processed {} reads", num_reads);
+            }
+
         }
 
         //Store counts for this cell
