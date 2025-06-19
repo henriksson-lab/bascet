@@ -23,7 +23,7 @@ pub struct CountChromCMD {
     #[arg(short = 'o', value_parser)]  /// Full path to file to store in
     pub path_out: PathBuf,
 
-    #[arg(value_parser, default_value = "0")]  /// Minimum M-bases to be considered
+    #[arg(long = "min-matching", value_parser, default_value = "0")]  /// Minimum M-bases to be considered
     pub min_matching: u32,
 
     // Temp file directory
