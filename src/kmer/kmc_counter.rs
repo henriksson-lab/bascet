@@ -16,7 +16,7 @@ use threadpool::ThreadPool;
 
 
 // \t[0-9]{10}\n
-// (4 294 967 296) is max value for kmer counts, thats 10 digits :)
+// (4 294 967 296) is max value for kmer counts, thats 10 digits :)
 pub const KMC_COUNTER_MAX_DIGITS: usize = 12;
 pub const HUGE_PAGE_SIZE: usize = 2048 * 1024;
 
@@ -37,10 +37,12 @@ impl CountSketch {
         }
     }
 
+    const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
+
     // Return +1 for even numbers, and -1 for odd numbers. note that the type likely is important
     #[inline(always)]
-    fn to_plusmin_one(kmer: u32) -> i32 {
-        1 - ((kmer & 1) << 1) as i32
+    fn to_plusmin_one(kmer: u32) -> i64 {
+        PLUSMIN_LOOKUP[(kmer & 1) as usize]
     }
     
     pub fn add(&mut self, kmer: KMERandCount) {
@@ -54,7 +56,7 @@ impl CountSketch {
         let h = KMERCodec::hash_for_kmer(kmer.kmer);
         let g = KMERCodec::g_hash_for_kmer(kmer.kmer);
 
-        let sgn = CountSketch::to_plusmin_one(g) as i64;  //using last bit of hash only. suspect this can be sped up
+        let sgn = CountSketch::to_plusmin_one(g);  //using last bit of hash only. sped up a little now :)
         //println!("{} {}", h, sgn);
 
         let pos = (h as usize) % self.sketch.len();
