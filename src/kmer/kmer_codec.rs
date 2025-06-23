@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, hash::Hasher};
-
-use fasthash::FastHasher;
+use gxhash::GxHasher;
 
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
@@ -158,26 +157,23 @@ impl KMERCodec {
 
 
     #[inline(always)]
-    pub fn hash_for_kmer(kmer: u64) -> u32 {
-        //Use a fast hash function https://docs.rs/fasthash/latest/fasthash/sea/index.html
-        let mut hasher=fasthash::sea::Hasher64::new();
+    pub fn h_hash_for_kmer(kmer: u64) -> u32 {
+        let mut hasher: GxHasher = GxHasher::with_seed(0);
         hasher.write_u64(kmer);
-        let f= hasher.finish();
+        let f: u64 = hasher.finish();
 
-        let hash = f ^ (f>>32); //fit hash in u32
+        let hash: u64 = f ^ (f >> 32);
         hash as u32
     }
 
 
     #[inline(always)]
     pub fn g_hash_for_kmer(kmer: u64) -> u32 {
-
-        //https://docs.rs/fasthash/latest/fasthash/murmur3/index.html    note!!! will get different results depending on architecture. this can be a pain!
-        let mut hasher = fasthash::murmur3::Hasher32::new();
+        let mut hasher: GxHasher = GxHasher::with_seed(1);
         hasher.write_u64(kmer);
-        let f= hasher.finish();
+        let f: u64 = hasher.finish();
 
-        let hash = f ^ (f>>32); //fit hash in u32
+        let hash: u64 = f ^ (f >> 32);
         hash as u32
     }
 
@@ -216,7 +212,7 @@ impl KMERandCount {
    ) -> KMERandCount {
        Self {
            kmer: kmer,
-           hash: KMERCodec::hash_for_kmer(kmer), 
+           hash: KMERCodec::h_hash_for_kmer(kmer), 
            count: count
        }
    }

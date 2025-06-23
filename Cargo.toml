@@ -52,6 +52,6 @@ priority-queue = "2.1.1"
 ndarray = "0.16.1"
 lazy_static = "1.5.0"
 unix-named-pipe = "0.2.0"
-fasthash = "0.4.0"
 noodles = { version = "0.97.0", features = ["bam", "cram", "fastq", "sam"] }
 sprs = "0.11.3"
+gxhash = "3.5.0"

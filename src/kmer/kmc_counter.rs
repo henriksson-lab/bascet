@@ -41,7 +41,7 @@ impl CountSketch {
     // Return +1 for even numbers, and -1 for odd numbers. note that the type likely is important
     #[inline(always)]
     fn to_plusmin_one(kmer: u32) -> i64 {
-        PLUSMIN_LOOKUP[(kmer & 1) as usize]
+        Self::PLUSMIN_LOOKUP[(kmer & 1) as usize]
     }
     
     pub fn add(&mut self, kmer: KMERandCount) {
@@ -52,7 +52,7 @@ impl CountSketch {
         // python: https://pdsa.readthedocs.io/en/latest/frequency/count_sketch.html
         // MurmurHash3
 
-        let h = KMERCodec::hash_for_kmer(kmer.kmer);
+        let h = KMERCodec::h_hash_for_kmer(kmer.kmer);
         let g = KMERCodec::g_hash_for_kmer(kmer.kmer);
 
         let sgn = CountSketch::to_plusmin_one(g);  //using last bit of hash only. sped up a little now :)
