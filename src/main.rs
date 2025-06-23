@@ -52,7 +52,9 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Commands::Getraw(mut cmd) => cmd.try_execute(),
-        Commands::Mapcell(mut cmd) => cmd.try_execute(),
+
+        Commands::Mapcell(mut cmd) => cmd.try_execute(), // NOTE
+
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
