@@ -38,7 +38,6 @@ impl CountSketch {
     }
 
     const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
-
     // Return +1 for even numbers, and -1 for odd numbers. note that the type likely is important
     #[inline(always)]
     fn to_plusmin_one(kmer: u32) -> i64 {
