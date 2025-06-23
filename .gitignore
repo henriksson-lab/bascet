@@ -16,7 +16,8 @@ Cargo.lock
 *.pdb
 .Rproj.user
 
-# data dir for development
+# data dirs for development
 data
+out
 # working dir for development
 zorn
