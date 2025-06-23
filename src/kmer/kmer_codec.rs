@@ -158,11 +158,11 @@ impl KMERCodec {
 
     #[inline(always)]
     pub fn h_hash_for_kmer(kmer: u64) -> u32 {
-        let mut hasher: GxHasher = GxHasher::with_seed(0);
-        hasher.write_u64(kmer);
-        let f: u64 = hasher.finish();
-
-        let hash: u64 = f ^ (f >> 32);
+        // Use a simple alternative hash: splitmix64
+        let mut x = kmer.wrapping_add(0x9E3779B97F4A7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+        let hash = x ^ (x >> 31);
         hash as u32
     }
 
