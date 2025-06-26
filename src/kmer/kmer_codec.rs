@@ -160,17 +160,22 @@ impl KMERCodec {
 
     #[inline(always)]
     pub fn h_hash_for_kmer(kmer: u64) -> u32 {
-        let bytes = kmer.to_le_bytes();
-        murmur3_32(&mut std::io::Cursor::new(&bytes), 0).unwrap() as u32
+        let mut hasher = GxHasher::with_seed(0x00);
+        hasher.write_u64(kmer);
+
+        let f = hasher.finish();
+        (f ^ (f>>32)) as u32
     }
 
 
     #[inline(always)]
     pub fn g_hash_for_kmer(kmer: u64) -> u32 {
         // let mut hasher: GxHasher = GxHasher::with_seed(0xFF);
-        let mut hasher = SeaHasher::default();
+        let mut hasher = GxHasher::with_seed(0xFF);
         hasher.write_u64(kmer);
-        hasher.finish() as u32
+        
+        let f = hasher.finish();
+        (f ^ (f>>32)) as u32
     }
 
 
