@@ -1,7 +1,9 @@
 use std::{cmp::Ordering, hash::Hasher};
 use gxhash::GxHasher;
-use ahash::AHasher;
 use fxhash::FxHasher;
+use murmur3::murmur3_32;
+use seahash::SeaHasher;
+use twox_hash::XxHash64;
 
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
 const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
@@ -58,10 +60,8 @@ const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] = 
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
-
-
-
-
+// Lookup table for plusmin_one_hash: [1, -1] for even/odd
+const PLUSMIN_LOOKUP: [i32; 2] = [1, -1];
 
 //NOTE: all of this can probably make use of SIMD operations but I do not know how that'd work
 
@@ -160,15 +160,15 @@ impl KMERCodec {
 
     #[inline(always)]
     pub fn h_hash_for_kmer(kmer: u64) -> u32 {
-        let mut hasher = AHasher::default();
-        hasher.write_u64(kmer);
-        hasher.finish() as u32
+        let bytes = kmer.to_le_bytes();
+        murmur3_32(&mut std::io::Cursor::new(&bytes), 0).unwrap() as u32
     }
 
 
     #[inline(always)]
     pub fn g_hash_for_kmer(kmer: u64) -> u32 {
-        let mut hasher = FxHasher::default();
+        // let mut hasher: GxHasher = GxHasher::with_seed(0xFF);
+        let mut hasher = SeaHasher::default();
         hasher.write_u64(kmer);
         hasher.finish() as u32
     }
@@ -184,7 +184,8 @@ impl KMERCodec {
 
 
     pub fn plusmin_one_hash_for_kmer(kmer: u32) -> i32 {
-        1 - ((kmer & 1) << 1) as i32
+        // Lookup table: [1, -1] for even/odd - fastest method from benchmarks
+        PLUSMIN_LOOKUP[(kmer & 1) as usize]
     }
 
 
