@@ -48,7 +48,8 @@ impl ZipBascetShardReader {
         fname: &PathBuf
     ) -> anyhow::Result<ZipBascetShardReader> {
 
-        let file = File::open(fname).expect(&format!("Failed to open bascet shard {}", &fname.display()));
+        //FIXME: file paths are not expanded and symlinks not resolved. 
+        let file = File::open(fname).unwrap_or_else(|e| panic!("Failed to open bascet shard {}: {}", fname.display(), e));
         let bufreader_shard = BufReader::new(file);
         let zip_shard =    ZipArchive::new(bufreader_shard).unwrap();
 
