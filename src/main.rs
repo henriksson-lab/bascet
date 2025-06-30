@@ -38,10 +38,10 @@ enum Commands {
 ///////////////////////////////
 /// Entry point into the software
 fn main() -> ExitCode {
+    let start = std::time::Instant::now();
     let cli = Cli::parse();
     
-
-    env_logger::init();
+    // env_logger::init();
 
     //Ensure that a panic in a thread results in the entire program terminating
     let orig_hook = panic::take_hook();
@@ -75,5 +75,9 @@ fn main() -> ExitCode {
         eprintln!("Error: {}", e);
         return ExitCode::FAILURE;
     }
+
+    let duration = start.elapsed();
+    eprintln!("Total time elapsed: {:?}", duration);
+    
     return ExitCode::SUCCESS;
 }

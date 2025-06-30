@@ -46,8 +46,8 @@ fn get_preset_scripts() -> HashMap<String,MapCellFunctionConstuctor> {
     map.insert("spades".to_string(), MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("spades.sh").to_vec()));
 
     //Add all Rust scripts
-    map.insert("minhash_kmc".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_kmc::MapCellMinHashKMC{}))));
-    map.insert("minhash_fq".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_fq::MapCellMinHashFQ{}))));
+    // map.insert("minhash_kmc".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_kmc::MapCellMinHashKMC{}))));
+    // map.insert("minhash_fq".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::minhash_fq::MapCellMinHashFQ{}))));
     map.insert("countsketch_fq".to_string(), MapCellFunctionConstuctor::OtherConstructor(Arc::new(Box::new(super::countsketch_fq::MapCellCountSketchFQ{}))));
 
     map
