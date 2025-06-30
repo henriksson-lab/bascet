@@ -60,6 +60,7 @@ ahash = "0.8.12"
 twox-hash = "2.1.1"
 seahash = "4.1.0"
 murmur3 = "0.5.2"
+indicatif = { version = "0.17", features = ["rayon"] }
 
 [dev-dependencies]
 criterion = "0.5"
