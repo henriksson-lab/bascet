@@ -162,7 +162,7 @@ impl MapCell {
         //Need to create temp dir
         if params.path_tmp.exists() {
             //todo delete temp dir after run
-            bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
+            // bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
             println!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {

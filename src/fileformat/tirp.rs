@@ -403,6 +403,7 @@ pub fn get_tbi_path_for_tirp(p: &PathBuf) -> PathBuf {
 pub struct TirpStreamingReadPairReader {
     reader: BufReader<rust_htslib::bgzf::Reader>, //TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
     last_rp: Option<(Vec<u8>,ReadPair)>,
+    _pool: rust_htslib::tpool::ThreadPool,
 }
 impl TirpStreamingReadPairReader {
 
@@ -410,8 +411,10 @@ impl TirpStreamingReadPairReader {
     /// Create a new TIRP file reader
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingReadPairReader> {
 
-        let reader= rust_htslib::bgzf::Reader::from_path(&fname)
+        let pool = rust_htslib::tpool::ThreadPool::new(12).unwrap();
+        let mut reader= rust_htslib::bgzf::Reader::from_path(&fname)
             .expect(&format!("Could not open {:?}", fname));
+        _ = reader.set_thread_pool(&pool).unwrap();
 
         let mut reader = BufReader::new(reader);
 
@@ -427,7 +430,8 @@ impl TirpStreamingReadPairReader {
 
             Ok(TirpStreamingReadPairReader {
                 reader: reader,
-                last_rp: Some(last_rp)
+                last_rp: Some(last_rp),
+                _pool: pool
             })
         } else {
             //The BAM file is empty!
@@ -435,7 +439,8 @@ impl TirpStreamingReadPairReader {
 
             Ok(TirpStreamingReadPairReader {
                 reader: reader,
-                last_rp: None
+                last_rp: None,
+                _pool: pool
             })
     
         }
