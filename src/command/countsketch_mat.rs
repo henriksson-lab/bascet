@@ -55,7 +55,7 @@ impl CountsketchCMD {
 
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-        
+        println!("Running Countsketch MAT");
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
         println!("Using threads {}",num_threads_total);
 

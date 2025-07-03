@@ -174,6 +174,7 @@ impl KMERCodec {
         let f = gxhash::gxhash64(kmer, 0xFF);
         (f ^ (f >> 32)) as u32
     }
+ 
 
 
     /* 
