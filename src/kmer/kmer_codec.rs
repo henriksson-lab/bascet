@@ -10,14 +10,12 @@ const NT1_LOOKUP: [u8; (b'T' - b'A' + 1) as usize] = {
     table
 };
 
-
 const fn generate_nt4_value(a: u8, b: u8, c: u8, d: u8) -> u8 {
     (NT1_LOOKUP[(a - b'A') as usize] << 6)
         | (NT1_LOOKUP[(b - b'A') as usize] << 4)
         | (NT1_LOOKUP[(c - b'A') as usize] << 2)
         | NT1_LOOKUP[(d - b'A') as usize]
 }
-
 
 const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
     const DIM: usize = (b'T' - b'A' + 1) as usize;
@@ -26,7 +24,6 @@ const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
         + ((c - b'A') as usize * DIM * DIM)
         + ((d - b'A') as usize * DIM * DIM * DIM)
 }
-
 
 ////////////// Lookup table for NNNN where N is any of ATCG.
 ////////////// Maps compressed ATCG (usize) to 0..255 ie compresses it to a single byte
@@ -50,7 +47,8 @@ const fn generate_nt4_table() -> [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * 
     table
 }
 const NT4_DIMSIZE: usize = (b'T' - b'A' + 1) as usize;
-const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =  /////// Map compressed ATCG => single byte
+const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
+    /////// Map compressed ATCG => single byte
     generate_nt4_table();
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
@@ -113,8 +111,6 @@ impl KMERCodec {
     //     KMERandCount::new(encoded, count)
     // }
 
-
-
     //////////// Encode a kmer + count + random value ............... cannot just use as_bytes + above?
     // #[inline(always)]
     // pub unsafe fn encode_str(&self, kmer: &str, count: u32) -> KMERandCount {
@@ -151,7 +147,7 @@ impl KMERCodec {
     // #[inline(always)]
     // pub unsafe fn decode(&self, encoded: &KMERandCount) -> String {
     //     let mut sequence = Vec::with_capacity(self.kmer_size);
-    //     let mut temp = encoded.kmer; 
+    //     let mut temp = encoded.kmer;
     //     for _ in 0..self.kmer_size {
     //         let nuc = (temp & 0b11) as usize;
     //         sequence.push(NT_REVERSE[nuc]);
@@ -161,23 +157,19 @@ impl KMERCodec {
     //     String::from_utf8_unchecked(sequence)
     // }
 
-
     #[inline(always)]
     pub fn h_hash_for_kmer(kmer: &[u8]) -> u32 {
         let f = gxhash::gxhash64(kmer, 0x00);
         (f ^ (f >> 32)) as u32
     }
 
-
     #[inline(always)]
     pub fn g_hash_for_kmer(kmer: &[u8]) -> u32 {
         let f = gxhash::gxhash64(kmer, 0xFF);
         (f ^ (f >> 32)) as u32
     }
- 
 
-
-    /* 
+    /*
     // Return +1 for even numbers, and -1 for odd numbers
     #[inline(always)]
     pub fn plusmin_one_hash_for_kmer(kmer: u32) -> i32 {
@@ -190,14 +182,7 @@ impl KMERCodec {
         // Lookup table: [1, -1] for even/odd - fastest method from benchmarks
         PLUSMIN_LOOKUP[(kmer & 1) as usize]
     }
-
-
 }
-
-
-
-
-
 
 // #[derive(Clone, Copy)]
 // pub struct KMERandCount {
@@ -212,7 +197,7 @@ impl KMERCodec {
 //    ) -> KMERandCount {
 //        Self {
 //            kmer: kmer,
-//            hash: KMERCodec::h_hash_for_kmer(kmer), 
+//            hash: KMERCodec::h_hash_for_kmer(kmer),
 //            count: count
 //        }
 //    }

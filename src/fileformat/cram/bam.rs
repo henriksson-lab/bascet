@@ -1,7 +1,4 @@
-
-
-
-/* 
+/*
 
 use rust_htslib::bam::record::Aux;
 
@@ -26,9 +23,7 @@ pub fn create_new_bam(
 
 */
 
-
-
-/* 
+/*
 
 /////////////////////////////////// Writer to tagged BAM file
 fn create_writer_thread(
@@ -39,7 +34,7 @@ fn create_writer_thread(
     let outfile = outfile.clone();
 
     //Limit how many chunks can be in pipe
-    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);  
+    let (tx, rx) = crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(100);
     let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
     thread_pool.execute(move || {
@@ -67,12 +62,10 @@ fn create_writer_thread(
                 n_written = n_written + 1;
             }
 
-            
+
         }
     });
     Ok(tx)
 }
 
 */
-
-

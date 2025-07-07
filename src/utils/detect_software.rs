@@ -1,17 +1,14 @@
+use anyhow::bail;
 use log::debug;
 use log::info;
-use std::process::Command;
-use anyhow::bail;
 use semver::{Version, VersionReq};
-
-
-
+use std::process::Command;
 
 ///////////////////////////////
 /// Check if KMC is installed
 pub fn check_kmc_tools() -> anyhow::Result<()> {
     debug!("Checking for kmc_tools");
-    if let Ok(_output)  = Command::new("kmc_tools").output() {
+    if let Ok(_output) = Command::new("kmc_tools").output() {
         info!("Found kmc_tools");
         Ok(())
     } else {
@@ -23,7 +20,7 @@ pub fn check_kmc_tools() -> anyhow::Result<()> {
 /// Check if TABIX is installed
 pub fn check_tabix() -> anyhow::Result<()> {
     debug!("Checking for tabix");
-    if let Ok(_output)  = Command::new("tabix").output() {
+    if let Ok(_output) = Command::new("tabix").output() {
         info!("Found tabix");
         Ok(())
     } else {
@@ -31,13 +28,11 @@ pub fn check_tabix() -> anyhow::Result<()> {
     }
 }
 
-
-
 ///////////////////////////////
 /// Check if BGZIP is installed
 pub fn check_bgzip() -> anyhow::Result<()> {
     debug!("Checking for bgzip");
-    if let Ok(_output)  = Command::new("bgzip").output() {
+    if let Ok(_output) = Command::new("bgzip").output() {
         info!("Found bgzip");
         Ok(())
     } else {
@@ -45,14 +40,15 @@ pub fn check_bgzip() -> anyhow::Result<()> {
     }
 }
 
-
-
 ///////////////////////////////
 /// Check if samtools is installed
 pub fn check_samtools() -> anyhow::Result<()> {
     debug!("Checking for the correct samtools");
     let req_samtools_version = VersionReq::parse(">=1.18").unwrap();
-    let samtools = Command::new("samtools").arg("version").output().expect("Samtools is either not installed or not in PATH");
+    let samtools = Command::new("samtools")
+        .arg("version")
+        .output()
+        .expect("Samtools is either not installed or not in PATH");
     let samtools_version = String::from_utf8_lossy(
         samtools
             .stdout

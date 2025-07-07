@@ -2,18 +2,12 @@ use fs2::FileExt;
 use memmap2::MmapOptions;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
-use std::{
-    cmp::min,
-    fs::File,
-    sync::Arc,
-    usize,
-};
+use std::{cmp::min, fs::File, sync::Arc, usize};
 
 // use super::kmer_codec::KMERandCount;
 use super::{BoundedHeap, BoundedMinHeap, KMERCodec};
 
 use threadpool::ThreadPool;
-
 
 // \t[0-9]{10}\n
 // (4 294 967 296) is max value for kmer counts, thats 10 digits :)
@@ -21,41 +15,37 @@ pub const KMC_COUNTER_MAX_DIGITS: usize = 12;
 pub const HUGE_PAGE_SIZE: usize = 2048 * 1024;
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
-
 pub struct CountSketch {
     pub sketch: Vec<i64>,
-    pub total: i64
+    pub total: i64,
 }
 impl CountSketch {
     pub fn new(size: usize) -> CountSketch {
         CountSketch {
             sketch: vec![0; size],
-            total: 0
+            total: 0,
         }
     }
 
     pub fn add(&mut self, kmer: &[u8]) {
-
         // https://wangshusen.github.io/code/countsketch.html inspo
         // in R: https://www.rdocumentation.org/packages/aroma.light/versions/3.2.0/topics/wpca
         // https://docs.rs/streaming_algorithms/latest/streaming_algorithms/  mincounthash code
         // python: https://pdsa.readthedocs.io/en/latest/frequency/count_sketch.html
         // MurmurHash3
- 
+
         let h = KMERCodec::h_hash_for_kmer(kmer);
         let g = KMERCodec::g_hash_for_kmer(kmer);
 
-        let sgn = KMERCodec::plusmin_one(g);  //using last bit of hash only. sped up a little now :)
-        //println!("{} {}", h, sgn);
+        let sgn = KMERCodec::plusmin_one(g); //using last bit of hash only. sped up a little now :)
+                                             //println!("{} {}", h, sgn);
 
         let pos = (h as usize) % self.sketch.len();
         self.sketch[pos] += sgn;
 
         self.total += 1;
     }
-
-} 
-
+}
 
 pub struct KmerCounter {
     pub path_kmcdump: std::path::PathBuf,
@@ -63,21 +53,17 @@ pub struct KmerCounter {
     pub features_nmin: usize,
 }
 impl KmerCounter {
-
-
-
     pub fn get_countsketch_fq(
         path_read_r1: std::path::PathBuf,
         path_read_r2: std::path::PathBuf,
         kmer_size: usize,
         sketch_size: usize,
-        max_reads: usize
+        max_reads: usize,
     ) -> anyhow::Result<CountSketch> {
-
         //Decide on KMER encoding
         let codec = KMERCodec::new(kmer_size);
 
-        let mut sketch=CountSketch::new(sketch_size);
+        let mut sketch = CountSketch::new(sketch_size);
 
         //Process both R1 and R2
         KmerCounter::get_countsketch_fq_one(path_read_r1, &mut sketch, &codec, max_reads)?;
@@ -88,23 +74,20 @@ impl KmerCounter {
         Ok(sketch)
     }
 
-
-
-
     pub fn get_countsketch_fq_one(
         path_read: std::path::PathBuf,
         sketch: &mut CountSketch,
         codec: &KMERCodec,
-        max_reads: usize
+        max_reads: usize,
     ) -> anyhow::Result<()> {
         // let start = std::time::Instant::now();
 
         // Pre-allocate buffers
         let file = File::open(&path_read)?;
         let mut reader = BufReader::with_capacity(1024 * 1024, file); // 1MB buffer
-        let mut line_buf = Vec::with_capacity(2^16);
-        let mut encoded_buf = Vec::with_capacity(2^16);
-        
+        let mut line_buf = Vec::with_capacity(2 ^ 16);
+        let mut encoded_buf = Vec::with_capacity(2 ^ 16);
+
         let mut cur_reads = 0;
         while cur_reads < max_reads {
             // Skip header (line 1)
@@ -121,7 +104,7 @@ impl KmerCounter {
             if line_buf.ends_with(&[b'\n']) {
                 line_buf.pop();
             }
-            
+
             // Process sequence
             encoded_buf.clear();
             encoded_buf.extend(line_buf.iter().map(|&b| KMERCodec::ENCODE[b as usize]));
@@ -144,11 +127,6 @@ impl KmerCounter {
 
         Ok(())
     }
-
-
-
-
-
 
     // pub fn get_minhash_fq(
     //     path_read_r1: std::path::PathBuf,
@@ -204,11 +182,6 @@ impl KmerCounter {
     //     Ok(())
     // }
 
-
-
-
-
-
     // pub fn get_minhash_kmcdump_parallel(
     //     params: &KmerCounter,
     //     n_workers: usize
@@ -216,7 +189,6 @@ impl KmerCounter {
     //     //Spinning up workers for every new file can be pricey... could put this in params or something, to hide it. future work
 
     //     let params= Arc::new(params);
-
 
     //     //Create all thread states
     //     let threads_buffer_size = (HUGE_PAGE_SIZE / n_workers) - (params.kmer_size + KMC_COUNTER_MAX_DIGITS);
@@ -236,7 +208,7 @@ impl KmerCounter {
     //     //Set up a channel to gather minheaps at end
     //     let (tx_minheap, rx_minheap) = crossbeam::channel::bounded(n_workers);
     //     let (tx_minheap, rx_minheap) = (Arc::new(tx_minheap), Arc::new(rx_minheap));
-        
+
     //     //Start all workers
     //     let thread_pool = ThreadPool::new(n_workers);
     //     for _tidx in 0..n_workers {
@@ -297,21 +269,13 @@ impl KmerCounter {
     //     Ok(final_min_heap)
     // }
 
-
-
-
-
-
     // pub fn detect_kmcdump_kmer_size(p: &PathBuf) -> anyhow::Result<usize> {
     //     let f = File::open(p).expect("Could not open file");
     //     let mut reader = BufReader::new(f);
     //     let mut buf = Vec::new();
-    //     reader.read_until(b'\t', &mut buf).expect("Could not parse first KMER from KMC dump file"); 
+    //     reader.read_until(b'\t', &mut buf).expect("Could not parse first KMER from KMC dump file");
     //     Ok(buf.len()-1)  // Subtract -1 because \t is included in the string
     // }
-
-
-
 
     // pub fn extract_kmcdump_single_thread (
     //     params: &KmerCounter
@@ -334,48 +298,35 @@ impl KmerCounter {
 
     //         let encoded = unsafe {
     //             codec.encode(kmer.as_bytes(), count)
-    //         };    
+    //         };
     //         let _ = min_heap.push(encoded);
     //     }
 
     //     Ok(min_heap)
     // }
 
-
-
-
-
-    
-    pub fn store_countsketch_seq(
-        _kmer_size: usize, 
-        sketch: &CountSketch,
-        p: &PathBuf
-    ){
+    pub fn store_countsketch_seq(_kmer_size: usize, sketch: &CountSketch, p: &PathBuf) {
         //Open file for writing
-        let f=File::create(p).expect("Could not open file for writing");
-        let mut bw=BufWriter::new(f);
+        let f = File::create(p).expect("Could not open file for writing");
+        let mut bw = BufWriter::new(f);
 
         //Write total number of counts
-        writeln!(bw, "{}", sketch.total).unwrap();    
+        writeln!(bw, "{}", sketch.total).unwrap();
 
         //Write each sketch entry
         for e in &sketch.sketch {
-            writeln!(bw, "{}", e).unwrap();    
+            writeln!(bw, "{}", e).unwrap();
         }
     }
 
-
-
-    
     // pub fn store_minhash_seq(
-    //     kmer_size: usize, 
+    //     kmer_size: usize,
     //     minhash: &mut BoundedMinHeap<&[u8]>,
     //     p: &PathBuf
     // ){
     //     //Open file for writing
     //     let f=File::create(p).expect("Could not open file for writing");
     //     let mut bw=BufWriter::new(f);
-
 
     //     //Write just kmer sequences. First get them and presort them.
     //     //By sorting them, compression will be more efficient, and merging them across cells will be much faster
@@ -391,15 +342,13 @@ impl KmerCounter {
     //     //Sort and write them out
     //     list_string.sort();
     //     for kmer_string in list_string {
-    //         writeln!(bw, "{}", &kmer_string).unwrap();    
+    //         writeln!(bw, "{}", &kmer_string).unwrap();
     //     }
 
     // }
 
-
-
     // pub fn store_minhash_all(
-    //     kmer_size: usize, 
+    //     kmer_size: usize,
     //     minhash: &mut BoundedMinHeap<KMERandCount>,
     //     p: &PathBuf
     // ){
@@ -407,23 +356,17 @@ impl KmerCounter {
     //     let f=File::create(p).expect("Could not open file for writing");
     //     let mut bw=BufWriter::new(f);
 
-
     //     //Write kmer & count. Hopefully this iterates from min to max
     //     let codec = KMERCodec::new(kmer_size);
 
     //     while let Some(h) = minhash.pop_min() {
     //         unsafe {
     //             let kmer_string = codec.decode(&h);
-    //             writeln!(bw, "{}\t{}\t{}\t{}", &kmer_string, &h.count,   &h.kmer, &h.hash).unwrap();    
+    //             writeln!(bw, "{}\t{}\t{}\t{}", &kmer_string, &h.count,   &h.kmer, &h.hash).unwrap();
     //         }
     //     }
     // }
-
 }
-
-
-
-
 
 // #[inline(always)]
 // fn find_chunk_start(chunk: &[u8], raw_start: usize, ovlp_size: usize) -> usize {
@@ -445,8 +388,6 @@ impl KmerCounter {
 //     }
 //     raw_end
 // }
-
-
 
 // ///////// Parse the count of kmers from KMC database. Counting has already been done
 // #[inline(always)]
@@ -488,7 +429,6 @@ impl KmerCounter {
 
 //     result
 // }
-
 
 // ////////// For a chunk of data, extract KMERs
 // #[inline(always)]

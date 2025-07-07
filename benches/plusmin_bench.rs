@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 const N: usize = 100_000; // Number of random kmers
 
@@ -28,7 +28,11 @@ fn bench_plusmin_one_hash_arithmetic(c: &mut Criterion) {
         b.iter(|| {
             let mut sum = 0i32;
             for &kmer in &kmers {
-                sum = sum.wrapping_add(if (black_box(kmer) as u32 & 1) == 0 { 1 } else { -1 });
+                sum = sum.wrapping_add(if (black_box(kmer) as u32 & 1) == 0 {
+                    1
+                } else {
+                    -1
+                });
             }
             black_box(sum)
         })
@@ -187,7 +191,7 @@ fn bench_plusmin_one_hash_sign_bit_alt(c: &mut Criterion) {
 criterion_group!(
     name = plusmin_benchmarks;
     config = Criterion::default();
-    targets = 
+    targets =
         bench_plusmin_one_hash_original,
         bench_plusmin_one_hash_arithmetic,
         bench_plusmin_one_hash_subtraction,
@@ -201,4 +205,4 @@ criterion_group!(
         bench_plusmin_one_hash_sign_bit,
         bench_plusmin_one_hash_sign_bit_alt
 );
-criterion_main!(plusmin_benchmarks); 
+criterion_main!(plusmin_benchmarks);

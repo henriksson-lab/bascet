@@ -1,21 +1,18 @@
-use std::sync::Arc;
-use std::fs::File;
-use std::path::PathBuf;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::collections::BTreeMap;
 use anyhow::Result;
 use clap::Args;
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
 
-
-
 #[derive(Args)]
 pub struct KrakenCMD {
-
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
@@ -27,29 +24,23 @@ pub struct KrakenCMD {
     // Output bascet
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
     pub path_out: PathBuf,
-    
 }
 impl KrakenCMD {
-
     /// Run the commandline option.
     /// This one takes a KRAKEN output-file, and outputs a taxonomy count matrix
     pub fn try_execute(&mut self) -> Result<()> {
-
         let params = Kraken {
-            path_tmp: self.path_tmp.clone(),            
-            path_input: self.path_in.clone(),            
-            path_output: self.path_out.clone(),   
+            path_tmp: self.path_tmp.clone(),
+            path_input: self.path_in.clone(),
+            path_output: self.path_out.clone(),
         };
 
-        let _ = Kraken::run(
-            &Arc::new(params)
-        );
+        let _ = Kraken::run(&Arc::new(params));
 
         log::info!("Kraken has finished succesfully");
         Ok(())
     }
 }
-
 
 /// KRAKEN count matrix constructor.
 pub struct Kraken {
@@ -58,12 +49,8 @@ pub struct Kraken {
     pub path_output: std::path::PathBuf,
 }
 impl Kraken {
-
     /// Run the algorithm
-    pub fn run(
-        params: &Arc<Kraken>
-    ) -> anyhow::Result<()> {
-
+    pub fn run(params: &Arc<Kraken>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
         let mut mm = SparseMatrixAnnDataWriter::new();
 
@@ -72,21 +59,23 @@ impl Kraken {
         let bufreader = BufReader::new(&file_in);
 
         //Counter for how many times each taxid has been seen for one cell
-        let mut taxid_counter= BTreeMap::new();
+        let mut taxid_counter = BTreeMap::new();
         //let mut map_unclassified_counter= BTreeMap::new();
         let mut unclassified_counter = 0;
 
         //Loop through all reads; group by cell
         let mut last_cellid = None;
-        for (_index, rline) in bufreader.lines().enumerate() {  //////////// should be a plain list of features
-            if let Ok(line) = rline { ////// when is this false??
+        for (_index, rline) in bufreader.lines().enumerate() {
+            //////////// should be a plain list of features
+            if let Ok(line) = rline {
+                ////// when is this false??
 
                 //Divide the row
                 let mut splitter_line = line.split("\t");
-                let is_categorized= splitter_line.next().unwrap();
+                let is_categorized = splitter_line.next().unwrap();
 
                 //Figure out what cell this is
-                let readname= splitter_line.next().unwrap();
+                let readname = splitter_line.next().unwrap();
                 let mut splitter_cellid = readname.split(":");
                 let cellid = Some(splitter_cellid.next().unwrap().to_string());
 
@@ -94,7 +83,6 @@ impl Kraken {
                 if last_cellid != cellid {
                     //Store if there is a previous cell. Could skip this "if", if we read first line before starting. TODO
                     if let Some(last_cellid_s) = last_cellid {
-
                         let cell_index = mm.get_or_create_cell(last_cellid_s.as_bytes());
 
                         //Add taxid counts for last cell
@@ -111,15 +99,17 @@ impl Kraken {
                     last_cellid = cellid;
                 }
 
-                if is_categorized=="C" {
+                if is_categorized == "C" {
                     //Classified read
                     let taxid_s = splitter_line.next().unwrap();
-                    let taxid: u32= taxid_s.parse().expect(format!{"Failed to parse taxon id: -{}-", line}.as_str());
-    
+                    let taxid: u32 = taxid_s
+                        .parse()
+                        .expect(format! {"Failed to parse taxon id: -{}-", line}.as_str());
+
                     //Count this taxon id. Note, we count to taxonomyID+1 as 0 is also in use (top level)
-                    let values = taxid_counter.entry(taxid+1).or_insert(0);
+                    let values = taxid_counter.entry(taxid + 1).or_insert(0);
                     *values += 1;
-                } else if is_categorized=="U" {
+                } else if is_categorized == "U" {
                     //Unclassified read. Keep track of how many
                     unclassified_counter += 1;
                 }
@@ -131,17 +121,12 @@ impl Kraken {
         //Need to also add counts for the last cell
         if let Some(last_cellid_s) = last_cellid {
             let cell_index = mm.get_or_create_cell(last_cellid_s.as_bytes());
-            mm.add_cell_counts_per_feature_index(
-                cell_index, 
-                &mut taxid_counter
-            );
+            mm.add_cell_counts_per_feature_index(cell_index, &mut taxid_counter);
 
             mm.add_unclassified(cell_index, unclassified_counter);
         }
 
-
-//        C       BASCET_D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
-
+        //        C       BASCET_D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
 
         //Compress KRAKEN taxonomy to generate normal column names etc; this makes the output more compatible
         //with regular count matrices
@@ -149,9 +134,8 @@ impl Kraken {
 
         //Save the final count matrix
         println!("Storing count table to {}", params.path_output.display());
-        mm.save_to_anndata(
-            &params.path_output
-        ).expect("Failed to save to HDF5 file");
+        mm.save_to_anndata(&params.path_output)
+            .expect("Failed to save to HDF5 file");
 
         //TODO delete temp files
         println!("Cleaning up temp files");
@@ -165,10 +149,8 @@ impl Kraken {
 
  Note: column 1 = taxid 0
  rust sprs counts from 0
- 
+
 */
-
-
 
 /*
 
@@ -182,7 +164,7 @@ C       BASCET_D2_F5_H7_C10::903        2026187 257     86661:33 2026187:4 86661
 C       BASCET_D2_F5_H7_C10::904        86661   257     86661:94 A:129
 C       BASCET_D2_F5_H7_C10::904        86661   257     86661:94 A:129
 C       BASCET_D2_F5_H7_C10::905        1386    257     1386:75 0:19 A:129
-C       BASCET_D2_F5_H7_C10::905        1386    257     0:3 1386:76 0:15 A:129 
+C       BASCET_D2_F5_H7_C10::905        1386    257     0:3 1386:76 0:15 A:129
 
 https://software.cqls.oregonstate.edu/updates/docs/kraken2/MANUAL.html#standard-kraken-output-format
 
@@ -201,12 +183,6 @@ the last 3 k-mers mapped to taxonomy ID #562
 Note that paired read data will contain a "|:|" token in this list to indicate the end of one read and the beginning of another.
 
 */
-
-
-
-
-
-
 
 /*
 
@@ -231,9 +207,6 @@ TODO store taxid + 1, to avoid use of 0 index
 
 
 */
-
-
-
 
 /*
 
@@ -263,9 +236,9 @@ impl KrakenCountMatrix {
     }
 
     pub fn add_value(
-        &mut self, 
-        cell: usize, 
-        feature: usize, 
+        &mut self,
+        cell: usize,
+        feature: usize,
         value: u32
     ) {
         self.entries.push((cell as u32, feature as u32, value));
@@ -277,7 +250,7 @@ impl KrakenCountMatrix {
 
 
     pub fn add_taxids(
-        &mut self, 
+        &mut self,
         cell: &String,
         taxid_counter: &mut BTreeMap<usize, u32>
     ) {
@@ -291,12 +264,12 @@ impl KrakenCountMatrix {
 
     /// Save matrix as anndata-like hdf5-file
     pub fn save_to_anndata(&self, p: &PathBuf) -> anyhow::Result<()> {
-        
+
         //Delete output file if it exists already; HDF5 library complains otherwise
         if p.exists() {
             std::fs::remove_file(&p).expect("Failed to delete previous output file");
         }
-        
+
         let file = H5File::create(p)?; // open for writing
 
         //Extract separate vectors
@@ -305,7 +278,7 @@ impl KrakenCountMatrix {
         let csr_rows: Vec<u32> = self.entries.iter().map(|(row,_col,_data)| *row).collect(); //must be compressed
 
         //Figure out where rows start in this list        ////////// This assumes that we added counts, cell by cell. otherwise sort the array before!!
-        let mut ind_ptr:Vec<u32> = Vec::new(); 
+        let mut ind_ptr:Vec<u32> = Vec::new();
         ind_ptr.push(0);
         for i in 1..(csr_rows.len()) {
             if csr_rows[i] != csr_rows[i-1] {
@@ -318,32 +291,32 @@ impl KrakenCountMatrix {
 
 
         //Store the sparse matrix here
-        let group = file.create_group("X")?; 
+        let group = file.create_group("X")?;
         let builder = group.new_dataset_builder();
         let _ = builder.with_data(&csr_data.as_slice()).create("data")?;    //Data
         let builder = group.new_dataset_builder();
         let _ = builder.with_data(&csr_cols.as_slice()).create("indices")?; // Columns
         let builder = group.new_dataset_builder();
         let _ = builder.with_data(&ind_ptr.as_slice()).create("indptr")?;  // Rows
-        
+
 
 
         //Store the matrix size
         let n_rows = self.cells.len();
         let n_cols = self.max_taxid+1;  //Note +1; because taxid 0 means unclassified. in R, all taxid will be shifted by 1!!
         let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&[n_rows,n_cols].as_slice()).create("shape")?;    
+        let _ = builder.with_data(&[n_rows,n_cols].as_slice()).create("shape")?;
 
 
         //Store the names of the cells
         let list_cell_names = vec_to_h5_string(self.cells.as_slice());
-        let group = file.create_group("obs")?; 
+        let group = file.create_group("obs")?;
         let builder = group.new_dataset_builder();
         let _ = builder.
             with_data(list_cell_names.as_slice()).
             create("_index")?;
 
-        //Names of features are not stored; taxid are numeric already        
+        //Names of features are not stored; taxid are numeric already
 
         Ok(())
 
