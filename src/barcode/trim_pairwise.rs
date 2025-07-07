@@ -1,5 +1,3 @@
-
-
 /*
 https://github.com/Daniel-Liu-c0deb0t/block-aligner
 */
@@ -9,24 +7,22 @@ https://www.biorxiv.org/content/10.1101/082214v2
 */
 
 /*
- * 
+ *
  * FASTP is MIT-license
- * 
+ *
  * How FASTP does paired trimming. this is not enabled by default! so likely why the code can be quite
  * slow
  * https://github.com/OpenGene/fastp/blob/master/src/overlapanalysis.cpp
- * 
- * 
+ *
+ *
  */
 
- /*
+/*
  base correction for PE data
-fastp perform overlap analysis for PE data, which try to find an overlap of each pair of reads. If an proper overlap is found, it can correct mismatched base pairs in overlapped regions of paired end reads, if one base is with high quality while the other is with ultra low quality. If a base is corrected, the quality of its paired base will be assigned to it so that they will share the same quality.  
+fastp perform overlap analysis for PE data, which try to find an overlap of each pair of reads. If an proper overlap is found, it can correct mismatched base pairs in overlapped regions of paired end reads, if one base is with high quality while the other is with ultra low quality. If a base is corrected, the quality of its paired base will be assigned to it so that they will share the same quality.
 
 This function is not enabled by default, specify -c or --correction to enable it. This function is based on overlapping detection, which has adjustable parameters overlap_len_require (default 30), overlap_diff_limit (default 5) and overlap_diff_percent_limit (default 20%). Please note that the reads should meet these three conditions simultaneously.
   */
-
-
 
 ///////////////////////////////
 /// Reverse complement ATCG
@@ -44,17 +40,19 @@ pub fn revcomp(seq: &[u8]) -> Vec<u8> {
 pub fn revcomp_n(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()
-        .map(|c| if c & 2 != 0 {
-            if c & 8 != 0 {
-                //N
-                b'N'
+        .map(|c| {
+            if c & 2 != 0 {
+                if c & 8 != 0 {
+                    //N
+                    b'N'
+                } else {
+                    //G or C
+                    c ^ 4
+                }
             } else {
-                //G or C
-                c ^ 4 
+                //A or T
+                c ^ 21
             }
-        } else { 
-            //A or T
-            c ^ 21 
         })
         .collect()
 }
@@ -65,7 +63,6 @@ pub fn revcomp_n(seq: &[u8]) -> Vec<u8> {
 // A hex 41 bin 01000001
 // T hex 54 bin 01010100
 // N hex 4e bin 01001110  //4th bit is set to 1 ; 2nd bit is 1
-
 
 #[cfg(test)]
 mod tests {
@@ -81,10 +78,9 @@ mod tests {
 
     #[test]
     fn test_revcomp_n() {
-
         let seq = b"ATGCTTCCAGNAA";
         let actual = revcomp_n(seq);
         let expected = b"TTNCTGGAAGCAT";
-        assert_eq!(actual, expected)  
+        assert_eq!(actual, expected)
     }
 }

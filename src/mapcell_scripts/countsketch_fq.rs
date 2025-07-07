@@ -1,29 +1,24 @@
-
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 
 use crate::mapcell::CompressionMode;
-use crate::mapcell::MissingFileMode;
 use crate::mapcell::MapCellFunction;
+use crate::mapcell::MissingFileMode;
 
 use crate::kmer::kmc_counter::KmerCounter;
 
-
-#[derive(Clone, Debug)] 
-pub struct MapCellCountSketchFQ {
-}
+#[derive(Clone, Debug)]
+pub struct MapCellCountSketchFQ {}
 impl MapCellFunction for MapCellCountSketchFQ {
-
     fn invoke(
         &self,
         input_dir: &PathBuf,
         output_dir: &PathBuf,
-        _num_threads: usize
+        _num_threads: usize,
     ) -> anyhow::Result<(bool, String)> {
-
         //Define files
-        let input_file_r1 = input_dir.join("r1.fq"); 
-        let input_file_r2 = input_dir.join("r2.fq"); 
+        let input_file_r1 = input_dir.join("r1.fq");
+        let input_file_r2 = input_dir.join("r2.fq");
         let output_file = output_dir.join("countsketch.txt");
 
         //Parse parameters
@@ -35,7 +30,7 @@ impl MapCellFunction for MapCellCountSketchFQ {
         log::debug!("Chosen sketch size: {}", sketch_size);
         log::debug!("Chosen max reads: {}", max_reads);
 
-/*      println!("Chosen KMER size: {}", kmer_size);
+        /*      println!("Chosen KMER size: {}", kmer_size);
         println!("Chosen sketch size: {}", sketch_size);
         println!("Chosen max reads: {}", max_reads); */
 
@@ -45,17 +40,14 @@ impl MapCellFunction for MapCellCountSketchFQ {
             input_file_r2,
             kmer_size,
             sketch_size,
-            max_reads
-        ).expect("Could not get countsketch");
+            max_reads,
+        )
+        .expect("Could not get countsketch");
 
-        KmerCounter::store_countsketch_seq(
-            kmer_size,
-            &mut sketch,
-            &output_file
-        );
-            
+        KmerCounter::store_countsketch_seq(kmer_size, &mut sketch, &output_file);
+
         Ok((true, String::from("")))
-    }  
+    }
 
     fn get_missing_file_mode(&self) -> MissingFileMode {
         MissingFileMode::Skip
@@ -67,11 +59,10 @@ impl MapCellFunction for MapCellCountSketchFQ {
 
     fn get_expect_files(&self) -> Vec<String> {
         let mut expect = Vec::new();
-        expect.push("r1.fq".to_string()); 
-        expect.push("r2.fq".to_string()); 
+        expect.push("r1.fq".to_string());
+        expect.push("r2.fq".to_string());
         expect
     }
-
 
     fn get_recommend_threads(&self) -> usize {
         1
@@ -83,8 +74,6 @@ impl MapCellFunction for MapCellCountSketchFQ {
         true
     }
 }
-
-
 
 fn get_param_num(key: &str) -> Option<usize> {
     let val = env::var(key);
@@ -99,4 +88,3 @@ fn get_param_num(key: &str) -> Option<usize> {
         None
     }
 }
-

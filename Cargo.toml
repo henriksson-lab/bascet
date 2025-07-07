@@ -61,6 +61,11 @@ twox-hash = "2.1.1"
 seahash = "4.1.0"
 murmur3 = "0.5.2"
 indicatif = { version = "0.17", features = ["rayon"] }
+shellexpand = "3.1.1"
+slog = "2.7.0"
+slog-term = "2.9.1"
+slog-async = "2.8.0"
+slog-scope = "4.4.0"
 
 [dev-dependencies]
 criterion = "0.5"

@@ -21,3 +21,6 @@ data
 out
 # working dir for development
 zorn
+
+# bascet log
+latest.log

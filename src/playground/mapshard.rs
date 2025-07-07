@@ -1,29 +1,18 @@
-
 use unix_named_pipe;
-
 
 use std::path::PathBuf;
 
 // Play ground for using named pipes
 
-
-
 pub fn test(p: PathBuf) {
-
-
-
-
     unix_named_pipe::create(&p, None).expect("could not create fifo");
-
 
     // https://en.wikipedia.org/wiki/Named_pipe
 
-
     // mkfifo pipe
 
-
     /*
-    
+
     //Pipe appears to reach end once writing process is done.
     //Reader and writer can be attached in any order
 
@@ -40,17 +29,15 @@ pub fn test(p: PathBuf) {
     5. wait for writer to finish
     6. wait for bwa to finish
     7. optional: wait for reader to finish
-    
+
      */
 
+    /*
 
-     /*
-     
-     
-     we can use pipes for some
-     
-     
-     
-      */
 
+    we can use pipes for some
+
+
+
+     */
 }

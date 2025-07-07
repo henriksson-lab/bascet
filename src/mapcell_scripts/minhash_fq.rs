@@ -1,4 +1,3 @@
-
 // use std::path::PathBuf;
 // use std::env;
 
@@ -8,8 +7,7 @@
 
 // use crate::kmer::kmc_counter::KmerCounter;
 
-
-// #[derive(Clone, Debug)] 
+// #[derive(Clone, Debug)]
 // pub struct MapCellMinHashFQ {
 // }
 // impl MapCellFunction for MapCellMinHashFQ {
@@ -22,8 +20,8 @@
 //     ) -> anyhow::Result<(bool, String)> {
 
 //         //Define files
-//         let input_file_r1 = input_dir.join("r1.fq"); 
-//         let input_file_r2 = input_dir.join("r2.fq"); 
+//         let input_file_r1 = input_dir.join("r1.fq");
+//         let input_file_r2 = input_dir.join("r2.fq");
 //         let output_file = output_dir.join("minhash.txt");
 
 //         //Parse parameters
@@ -48,9 +46,9 @@
 //             &mut min_hash,
 //             &output_file
 //         );
-            
+
 //         Ok((true, String::from("")))
-//     }  
+//     }
 
 //     fn get_missing_file_mode(&self) -> MissingFileMode {
 //         MissingFileMode::Skip
@@ -62,8 +60,8 @@
 
 //     fn get_expect_files(&self) -> Vec<String> {
 //         let mut expect = Vec::new();
-//         expect.push("r1.fq".to_string()); 
-//         expect.push("r2.fq".to_string()); 
+//         expect.push("r1.fq".to_string());
+//         expect.push("r2.fq".to_string());
 //         expect
 //     }
 
@@ -71,16 +69,12 @@
 //         1
 //     }
 
-
 //     fn preflight_check(&self) -> bool {
 //         // KMER_SIZE must be set
 //         //get_param_kmer_size().is_some()
 //         true
 //     }
 // }
-
-
-
 
 // fn get_param_kmer_size() -> Option<usize> {
 //     let key = "KMER_SIZE";
@@ -92,8 +86,6 @@
 //     }
 // }
 
-
-
 // fn get_param_num_minhash() -> Option<usize> {
 //     let key = "NUM_MINHASH";
 //     let val = env::var(key);
@@ -103,9 +95,6 @@
 //         None
 //     }
 // }
-
-
-
 
 // fn get_param_max_reads() -> Option<usize> {
 //     let key = "MAX_READS";
