@@ -2,8 +2,8 @@
 pub struct ReadPair {
     pub r1: Vec<u8>,
     pub r2: Vec<u8>,
-    pub q1: Option<Vec<u8>>,
-    pub q2: Option<Vec<u8>>,
+    pub q1: Vec<u8>,
+    pub q2: Vec<u8>,
     pub umi: Vec<u8>,
 }
 

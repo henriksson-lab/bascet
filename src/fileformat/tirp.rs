@@ -587,15 +587,15 @@ impl ConstructFromPath<BascetTIRPWriter> for BascetTIRPWriterFactory {
 pub struct BascetTIRPWriter {
     pub path: PathBuf,
     //    pub writer: BufWriter<File>
-    pub writer: BGZFMultiThreadWriter<File>,
+    pub writer: BGZFMultiThreadWriter<BufWriter<File>>,
 }
 impl BascetTIRPWriter {
     fn new(path: &PathBuf) -> anyhow::Result<BascetTIRPWriter> {
         println!("starting writer for TIRP {}", path.display());
 
         let f = File::create(path).unwrap();
-        //let writer=BufWriter::new(f);  //TODO  put in a buffered writer in loop. no need to do twice
-        let writer = BGZFMultiThreadWriter::new(f, Compression::default());
+        let bw = BufWriter::new(f); //TODO  put in a buffered writer in loop. no need to do twice
+        let writer = BGZFMultiThreadWriter::new(bw, Compression::default());
 
         Ok(BascetTIRPWriter {
             path: path.clone(),

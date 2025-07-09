@@ -1,6 +1,6 @@
 mod detect_software;
-mod expand_and_resolve_path;
 mod merge_archives;
+mod path_utils;
 mod umi_dedup;
 
 pub use merge_archives::merge_archives;
@@ -13,4 +13,4 @@ pub use detect_software::check_tabix;
 
 pub use umi_dedup::dedup_umi;
 
-pub use expand_and_resolve_path::expand_and_resolve_path;
+pub use path_utils::expand_and_resolve;

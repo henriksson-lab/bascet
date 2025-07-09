@@ -1,7 +1,9 @@
-mod error;
+mod commands;
 mod config;
+mod error;
 mod log;
 
-pub use error::ErrorMode;
+pub use commands::*;
 pub use config::*;
+pub use error::*;
 pub use log::*;
