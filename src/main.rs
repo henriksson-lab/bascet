@@ -1,6 +1,10 @@
-use bascet::{command, runtime};
+use bascet::{
+    command,
+    io::{BascetRead, TIRP},
+    log_critical, log_info, runtime,
+};
 use clap::{Parser, Subcommand};
-use std::{process::ExitCode};
+use std::{fmt, panic, process::ExitCode};
 
 ///////////////////////////////
 /// Parser for commandline options, top level
@@ -8,8 +12,8 @@ use std::{process::ExitCode};
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
-    
+    command: runtime::Commands,
+
     #[arg(long, default_value = "skip")]
     error_mode: runtime::ErrorMode,
 
@@ -24,69 +28,63 @@ struct Cli {
 }
 
 ///////////////////////////////
-/// Possible subcommands to parse
-#[derive(Subcommand)]
-enum Commands {
-    Getraw(command::GetRawCMD),
-    Mapcell(command::MapCellCMD),
-    Extract(command::ExtractCMD),
-    Shardify(command::ShardifyCMD),
-    Transform(command::TransformCMD),
-    Featurise(command::FeaturiseKmcCMD),
-    MinhashHist(command::MinhashHistCMD),
-    QueryKmc(command::QueryKmcCMD),
-    QueryFq(command::QueryFqCMD),
-    Bam2fragments(command::Bam2FragmentsCMD),
-    Kraken(command::KrakenCMD),
-    Countchrom(command::CountChromCMD),
-    Countfeature(command::CountFeatureCMD),
-    PipeSamAddTags(command::PipeSamAddTagsCMD),
-    Countsketch(command::countsketch_mat::CountsketchCMD),
-    ExtractStream(command::ExtractStreamCMD),
-}
-
-///////////////////////////////
 /// Entry point into the software
 fn main() -> ExitCode {
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 
     let _config = runtime::CONFIG.set(runtime::Config {
-        error_mode: cli.error_mode.clone(),
-        log_level: cli.log_level.clone(),
-        log_mode: cli.log_mode.clone(),
-        log_path: cli.log_path.clone()
+        error_mode: cli.error_mode,
+        log_level: cli.log_level,
+        log_mode: cli.log_mode,
+        log_path: cli.log_path.clone(),
     });
 
     let _logger = runtime::setup_global_logger(
         runtime::CONFIG.get().unwrap().log_level,
         runtime::CONFIG.get().unwrap().log_mode,
-        runtime::CONFIG.get().unwrap().log_path.clone()
-    );
-    
-    // Now you can use slog_scope::info!, error!, etc. anywhere
-    slog_scope::info!(
-        "Application starting"; 
-        "Log Level" => ?cli.log_level,
-        "Error Handling Mode" => ?cli.error_mode
+        runtime::CONFIG.get().unwrap().log_path.clone(),
     );
 
-    // let tirp_path = std::path::PathBuf::from("./data/filtered.1.tirp.gz");
-    // let file = bascet::io::File::new(tirp_path).unwrap();
-    // let mut reader =
-    //     bascet::io::TirpDefaultReader::from_file(&file).expect("Failed to open TIRP file");
-    // let cell_ids = reader.list_cells();
-    // println!("TIRP cell IDs: {:?}", cell_ids);
+    // Ensure that a panic in a thread results in the entire program terminating
+    // Also make sure to flush logger
+    let panic_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        let msg = format!("\n\n{}\n", panic_info).replace('\n', "\n\t");
+        slog_scope::crit!("Application panic!"; "error" => %msg);
 
-    
-    // env_logger::init();
+        log_info!(
+            "Exiting";
+            "took" => ?start.elapsed()
+        );
 
-    // //Ensure that a panic in a thread results in the entire program terminating
-    // let orig_hook = panic::take_hook();
-    // panic::set_hook(Box::new(move |panic_info| {
-    //     orig_hook(panic_info);
-    //     std::process::exit(1);
-    // }));
+        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+            if let Some(async_guard) = guard.take() {
+                drop(async_guard); // Waits for all logs to flush
+            }
+        }
+
+        panic_hook(panic_info);
+        std::process::exit(1);
+    }));
+
+    log_info!("================================================");
+    log_info!("Running Bascet"; "v" => env!("CARGO_PKG_VERSION"));
+    log_info!(""; "Command" => ?cli.command, "Error Handling Mode" => %cli.error_mode);
+    log_info!(""; "Log Mode" => %cli.log_mode, "Log Level" => %cli.log_level);
+
+    match cli.log_mode {
+        runtime::LogMode::Both | runtime::LogMode::Path => {
+            log_info!(""; "Log Path" => cli.log_path.display());
+        }
+        _ => {}
+    }
+    log_info!("================================================");
+    let path = "./data/filtered.1.tirp.gz";
+    let tirp_file = TIRP::File::new(path).unwrap();
+    let mut tirp_reader = TIRP::DefaultReader::from_file(&tirp_file);
+    let len = tirp_reader.read_cell("cell004").len();
+    log_info!(""; "data" => ?len);
 
     // let result = match cli.command {
     //     Commands::Getraw(mut cmd) => cmd.try_execute(),
@@ -114,20 +112,15 @@ fn main() -> ExitCode {
     //     return ExitCode::FAILURE;
     // }
 
-    // let duration = start.elapsed();
-    // eprintln!("Total time elapsed: {:?}", duration);
-
-    // 
-    // eprintln!("Total time elapsed: {:?}", duration);
-
-    // return ExitCode::SUCCESS;
-
-    let duration = start.elapsed();
-
-    slog_scope::info!(
-        "Application exiting"; 
-        "took" => ?duration
+    if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+        if let Some(async_guard) = guard.take() {
+            drop(async_guard); // Waits for all logs to flush
+        }
+    }
+    log_info!(
+        "Exiting";
+        "took" => ?start.elapsed()
     );
-    
+
     return ExitCode::SUCCESS;
 }

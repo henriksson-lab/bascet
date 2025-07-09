@@ -11,7 +11,7 @@ pub struct Config {
     pub error_mode: runtime::ErrorMode,
     pub log_level: runtime::LogLevel,
     pub log_mode: runtime::LogMode,
-    pub log_path: std::path::PathBuf
+    pub log_path: std::path::PathBuf,
 }
 
 impl Config {
