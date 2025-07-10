@@ -18,6 +18,14 @@ pub trait BascetWrite {
 }
 
 pub trait BascetStream {
-    fn next(&mut self) -> Option<crate::io::stream::Cell>;
+    fn set_reader_threads(&mut self, n_threads: usize);
+    fn set_worker_threads(&mut self, n_threads: usize);
+
+    fn next(&mut self) -> Option<impl BascetStreamToken>;
+    fn work<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce() -> R;
 }
+
+pub trait BascetStreamToken {}
 pub trait BascetExtract {}
