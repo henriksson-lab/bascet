@@ -1,3 +1,4 @@
+mod command_to_string;
 mod detect_software;
 mod merge_archives;
 mod path_utils;
@@ -14,3 +15,5 @@ pub use detect_software::check_tabix;
 pub use umi_dedup::dedup_umi;
 
 pub use path_utils::expand_and_resolve;
+
+pub use command_to_string::command_to_string;

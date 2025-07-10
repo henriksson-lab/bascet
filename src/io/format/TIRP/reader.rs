@@ -21,7 +21,7 @@ impl<R> Reader<R> {
 }
 
 impl DefaultReader {
-    pub fn from_file(file: &crate::io::File) -> Self {
+    pub fn from_tirp(file: &crate::io::File) -> Self {
         let tabix_reader = log_critical!(
             tbx::Reader::from_path(file.file_path()),
             "[TIRP Reader] Failed to initialise reader"

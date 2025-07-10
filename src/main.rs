@@ -1,7 +1,7 @@
 use bascet::{
     command,
     io::{BascetRead, TIRP},
-    log_critical, log_info, runtime,
+    log_critical, log_error, log_info, runtime,
 };
 use clap::{Parser, Subcommand};
 use std::{fmt, panic, process::ExitCode};
@@ -30,6 +30,22 @@ struct Cli {
 ///////////////////////////////
 /// Entry point into the software
 fn main() -> ExitCode {
+    // This runs at the end of main, even if panicking or otherwise exited
+    // will NOT run if std::process::exit(..) is called
+    let start = std::time::Instant::now();
+    scopeguard::defer! {
+        log_info!(
+            "Exiting";
+            "took" => ?start.elapsed()
+        );
+
+        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+            if let Some(async_guard) = guard.take() {
+                drop(async_guard); // Waits for all logs to flush
+            }
+        }
+    }
+
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 
@@ -47,22 +63,11 @@ fn main() -> ExitCode {
     );
 
     // Ensure that a panic in a thread results in the entire program terminating
-    // Also make sure to flush logger
     let panic_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
+        // nicer formatting
         let msg = format!("\n\n{}\n", panic_info).replace('\n', "\n\t");
-        slog_scope::crit!("Application panic!"; "error" => %msg);
-
-        log_info!(
-            "Exiting";
-            "took" => ?start.elapsed()
-        );
-
-        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
-            if let Some(async_guard) = guard.take() {
-                drop(async_guard); // Waits for all logs to flush
-            }
-        }
+        slog_scope::crit!(""; "panicked" => %msg);
 
         panic_hook(panic_info);
         std::process::exit(1);
@@ -80,8 +85,18 @@ fn main() -> ExitCode {
         _ => {}
     }
     log_info!("================================================");
-    let path = "./data/filtered.1.tirp.gz";
-    let tirp_file = TIRP::File::new(path).unwrap();
+    let path = "./data/filtered.1.tirp.gz.tbi";
+    let tirp_file = match TIRP::File::new(path) {
+        Ok(f) => f,
+        Err(e) => match &e {
+            TIRP::Error::FileNotFound { .. } => log_critical!("{e}"),
+            TIRP::Error::FileNotValid { .. } => {
+                log_error!("{e}");
+                panic!()
+            }
+            _ => todo!(),
+        },
+    };
     let mut tirp_reader = TIRP::DefaultReader::from_file(&tirp_file);
     let len = tirp_reader.read_cell("cell004").len();
     log_info!(""; "data" => ?len);
@@ -111,16 +126,6 @@ fn main() -> ExitCode {
     //     eprintln!("Error: {}", e);
     //     return ExitCode::FAILURE;
     // }
-
-    if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
-        if let Some(async_guard) = guard.take() {
-            drop(async_guard); // Waits for all logs to flush
-        }
-    }
-    log_info!(
-        "Exiting";
-        "took" => ?start.elapsed()
-    );
 
     return ExitCode::SUCCESS;
 }

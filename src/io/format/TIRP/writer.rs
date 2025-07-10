@@ -31,7 +31,7 @@ where
 }
 
 impl DefaultWriter {
-    pub fn from_file(file: &crate::io::File) -> Self {
+    pub fn from_tirp(file: &crate::io::File) -> Self {
         let file = log_critical!(
             file.file_open(),
             "[TIRP Writer] Could not open destination file"
