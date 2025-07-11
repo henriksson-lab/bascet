@@ -126,7 +126,9 @@ pub fn setup_global_logger(
     };
 
     let drain = slog::LevelFilter::new(drain, log_level.0).fuse();
-    let (drain, guard) = slog_async::Async::new(drain).build_with_guard();
+    let (drain, guard) = slog_async::Async::new(drain)
+        .chan_size(10000)
+        .build_with_guard();
     let drain = drain.fuse();
     // set global guard
     *ASYNC_GUARD.lock().unwrap() = Some(guard);

@@ -27,6 +27,12 @@ pub enum Error {
         "Failed trying to execute utility '{utility}'. Make sure it is in your $PATH and you have execution permissions."
     )]
     UtilityNotExecutable { utility: String },
+
+    #[error("Failed parsing {}{}", context, Error::format_msg_as_detail(msg))]
+    ParseError {
+        context: String,
+        msg: Option<String>,
+    },
 }
 
 impl Error {

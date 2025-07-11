@@ -8,7 +8,7 @@ use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use crate::{
     common::{self, ReadPair},
     io::{BascetFile, BascetWrite},
-    log_critical, log_error, log_trace,
+    log_critical, log_trace,
 };
 
 pub type DefaultWriter =
@@ -45,7 +45,7 @@ impl DefaultWriter {
 }
 
 impl BascetWrite for DefaultWriter {
-    fn write_cell(&mut self, cell_id: &str, reads: &Arc<Vec<ReadPair>>) {
+    fn write_cell(&mut self, cell_id: &str, reads: &Vec<ReadPair>) {
         log_trace!("[TIRP Writer] Writing"; "cell" => ?cell_id);
 
         for rp in reads.iter() {
