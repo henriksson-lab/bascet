@@ -1,7 +1,5 @@
 use bascet::{
-    command,
-    io::{BascetRead, BascetStream, StreamToken, TIRP},
-    log_critical, log_error, log_info, runtime,
+    command, io::{BascetRead, BascetStream, StreamToken, TIRP}, kmer::{kmc_counter::CountSketch, KMERCodec}, log_critical, log_error, log_info, runtime
 };
 use clap::{Parser, Subcommand};
 use std::{fmt, panic, process::ExitCode};
@@ -83,11 +81,33 @@ fn main() -> ExitCode {
         Err((_, f)) => f,
     };
     let mut tirp_stream = TIRP::DefaultStream::from_tirp(&tirp_file);
+
+    #[derive(Clone)]
+    struct state {
+        kmer_size: usize,
+        sketch: CountSketch
+    }
+    let mut tirp_states = state {
+        kmer_size: 31,
+        sketch: CountSketch::new(100)
+    };
     tirp_stream.set_reader_threads(6);
     tirp_stream.set_worker_threads(6);
-    tirp_stream.par_map(|token| match token {
-        StreamToken::Memory { cell_id, reads } => (),
-        StreamToken::Disk { cell_id, path } => todo!(),
+    tirp_stream.par_map(tirp_states, |token, tirp_states| match token {
+        StreamToken::Memory { cell_id, reads } => {
+            for rp in reads {
+                let encoded: Vec<u8> = rp.r1.iter().map(|&b| KMERCodec::ENCODE[b as usize]).collect();
+                for window in encoded.windows(tirp_states.kmer_size) {
+                    tirp_states.sketch.add(window);
+                }
+
+                let encoded: Vec<u8> = rp.r2.iter().map(|&b| KMERCodec::ENCODE[b as usize]).collect();
+                for window in encoded.windows(tirp_states.kmer_size) {
+                    tirp_states.sketch.add(window);
+                }
+            }
+        },
+        _ => todo!(),
     });
 
     // let result = match cli.command {

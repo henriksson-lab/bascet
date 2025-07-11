@@ -182,28 +182,78 @@ impl BascetStream for DefaultStream {
         }
     }
 
-    fn par_map<F, R>(&mut self, f: F) -> Vec<R>
+    // fn par_map<F, R>(&mut self, f: F) -> Vec<R>
+    // where
+    //     F: Fn(StreamToken) -> R + Send + Sync + 'static,
+    //     R: Send + 'static,
+    // {
+    //     let n_workers = self.worker_threadpool.max_count();
+    //     let (wtx, wrx) = channel::bounded::<Option<StreamToken>>(128);
+    //     let (rtx, rrx) = channel::bounded::<Vec<R>>(n_workers);
+
+    //     let f = Arc::new(f);
+    //     for _ in 0..n_workers {
+    //         let rx = wrx.clone();
+    //         let rtx = rtx.clone();
+    //         let f = Arc::clone(&f);
+
+    //         self.worker_threadpool.execute(move || {
+    //             let mut thread_results = Vec::new();
+    //             while let Ok(Some(token)) = rx.recv() {
+    //                 let result = f(token);
+    //                 thread_results.push(result);
+    //             }
+    //             // Send this thread's results back to the main thread
+    //             let _ = rtx.send(thread_results);
+    //         });
+    //     }
+
+    //     // Feed tokens to workers
+    //     while let Ok(Some(token)) = self.next() {
+    //         let _ = wtx.send(Some(token));
+    //     }
+
+    //     // Signal workers to stop
+    //     for _ in 0..n_workers {
+    //         let _ = wtx.send(None);
+    //     }
+
+    //     // Wait for workers to finish
+    //     self.worker_threadpool.join();
+
+    //     // Collect all results from each thread
+    //     let mut results = Vec::new();
+    //     for _ in 0..n_workers {
+    //         if let Ok(mut thread_vec) = rrx.recv() {
+    //             results.append(&mut thread_vec);
+    //         }
+    //     }
+    //     results
+    // }
+
+    fn par_map<F, R, S>(&mut self, state: S, f: F) -> Vec<R>
     where
-        F: Fn(StreamToken) -> R + Send + Sync + 'static,
+        F: Fn(StreamToken, &mut S) -> R + Send + Sync + 'static,
         R: Send + 'static,
+        S: Clone + Send + 'static,
     {
         let n_workers = self.worker_threadpool.max_count();
-        let (wtx, wrx) = channel::bounded::<Option<StreamToken>>(128);
-        let (rtx, rrx) = channel::bounded::<Vec<R>>(n_workers);
+        let (wtx, wrx) = crossbeam::channel::bounded::<Option<StreamToken>>(128);
+        let (rtx, rrx) = crossbeam::channel::bounded::<Vec<R>>(n_workers);
 
         let f = Arc::new(f);
         for _ in 0..n_workers {
             let rx = wrx.clone();
             let rtx = rtx.clone();
+            let mut thread_state = state.clone(); // Each thread gets its own deep copy!
             let f = Arc::clone(&f);
 
             self.worker_threadpool.execute(move || {
                 let mut thread_results = Vec::new();
                 while let Ok(Some(token)) = rx.recv() {
-                    let result = f(token);
+                    let result = f(token, &mut thread_state);
                     thread_results.push(result);
                 }
-                // Send this thread's results back to the main thread
                 let _ = rtx.send(thread_results);
             });
         }
@@ -218,10 +268,8 @@ impl BascetStream for DefaultStream {
             let _ = wtx.send(None);
         }
 
-        // Wait for workers to finish
         self.worker_threadpool.join();
 
-        // Collect all results from each thread
         let mut results = Vec::new();
         for _ in 0..n_workers {
             if let Ok(mut thread_vec) = rrx.recv() {

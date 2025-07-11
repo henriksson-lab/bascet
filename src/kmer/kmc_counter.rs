@@ -15,6 +15,7 @@ pub const KMC_COUNTER_MAX_DIGITS: usize = 12;
 pub const HUGE_PAGE_SIZE: usize = 2048 * 1024;
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
+#[derive(Clone)]
 pub struct CountSketch {
     pub sketch: Vec<i64>,
     pub total: i64,
