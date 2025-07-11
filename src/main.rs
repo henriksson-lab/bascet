@@ -1,6 +1,6 @@
 use bascet::{
     command,
-    io::{BascetRead, TIRP},
+    io::{BascetRead, BascetStream, StreamToken, TIRP},
     log_critical, log_error, log_info, runtime,
 };
 use clap::{Parser, Subcommand};
@@ -30,22 +30,6 @@ struct Cli {
 ///////////////////////////////
 /// Entry point into the software
 fn main() -> ExitCode {
-    // This runs at the end of main, even if panicking or otherwise exited
-    // will NOT run if std::process::exit(..) is called
-    let start = std::time::Instant::now();
-    scopeguard::defer! {
-        log_info!(
-            "Exiting";
-            "took" => ?start.elapsed()
-        );
-
-        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
-            if let Some(async_guard) = guard.take() {
-                drop(async_guard); // Waits for all logs to flush
-            }
-        }
-    }
-
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 
@@ -69,6 +53,14 @@ fn main() -> ExitCode {
         let msg = format!("\n\n{}\n", panic_info).replace('\n', "\n\t");
         slog_scope::crit!(""; "panicked" => %msg);
 
+        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+            if let Some(async_guard) = guard.take() {
+                drop(async_guard); // Waits for all logs to flush
+            }
+        }
+
+        println!("Exiting, took: {:#?}", start.elapsed());
+
         panic_hook(panic_info);
         std::process::exit(1);
     }));
@@ -85,21 +77,18 @@ fn main() -> ExitCode {
         _ => {}
     }
     log_info!("================================================");
-    let path = "./data/filtered.1.tirp.gz.tbi";
+    let path = "./data/filtered.1.tirp.gz";
     let tirp_file = match TIRP::File::new(path) {
         Ok(f) => f,
-        Err(e) => match &e {
-            TIRP::Error::FileNotFound { .. } => log_critical!("{e}"),
-            TIRP::Error::FileNotValid { .. } => {
-                log_error!("{e}");
-                panic!()
-            }
-            _ => todo!(),
-        },
+        Err((_, f)) => f,
     };
-    let mut tirp_reader = TIRP::DefaultReader::from_file(&tirp_file);
-    let len = tirp_reader.read_cell("cell004").len();
-    log_info!(""; "data" => ?len);
+    let mut tirp_stream = TIRP::DefaultStream::from_tirp(&tirp_file);
+    tirp_stream.set_reader_threads(6);
+    tirp_stream.set_worker_threads(6);
+    tirp_stream.par_map(|token| match token {
+        StreamToken::Memory { cell_id, reads } => (),
+        StreamToken::Disk { cell_id, path } => todo!(),
+    });
 
     // let result = match cli.command {
     //     Commands::Getraw(mut cmd) => cmd.try_execute(),
@@ -126,6 +115,14 @@ fn main() -> ExitCode {
     //     eprintln!("Error: {}", e);
     //     return ExitCode::FAILURE;
     // }
+
+    if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+        if let Some(async_guard) = guard.take() {
+            drop(async_guard); // Waits for all logs to flush
+        }
+    }
+
+    println!("Exiting, took: {:#?}", start.elapsed());
 
     return ExitCode::SUCCESS;
 }

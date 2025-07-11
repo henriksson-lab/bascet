@@ -10,7 +10,7 @@ pub struct File {
 }
 
 impl File {
-    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, TIRP::Error> {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, (TIRP::Error, Self)> {
         let path = match expand_and_resolve(&path) {
             Ok(p) => p,
             Err(_) => path.as_ref().to_path_buf(),
@@ -18,7 +18,7 @@ impl File {
 
         let _ = match Self::file_validate(&path) {
             Ok(_) => (),
-            Err(e) => return Err(e),
+            Err(e) => return Err((e, Self { path: path })),
         };
 
         Ok(Self { path: path })

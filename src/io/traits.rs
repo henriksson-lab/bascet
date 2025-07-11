@@ -11,20 +11,24 @@ pub trait BascetRead {
     fn get_cells(&self) -> Vec<String>;
 
     // Retrieve all records for a cell.
-    fn read_cell(&mut self, cell: &str) -> std::sync::Arc<Vec<crate::common::ReadPair>>;
+    fn read_cell(&mut self, cell: &str) -> Vec<crate::common::ReadPair>;
 }
 pub trait BascetWrite {
-    fn write_cell(&mut self, cell_id: &str, reads: &std::sync::Arc<Vec<crate::common::ReadPair>>);
+    fn write_cell(&mut self, cell_id: &str, reads: &Vec<crate::common::ReadPair>);
 }
 
-pub trait BascetStream {
+pub trait BascetStream: Sized {
+    type Token: BascetStreamToken;
+
     fn set_reader_threads(&mut self, n_threads: usize);
     fn set_worker_threads(&mut self, n_threads: usize);
 
-    fn next(&mut self) -> Option<impl BascetStreamToken>;
-    fn work<F, R>(&mut self, f: F) -> R
+    fn next(&mut self) -> anyhow::Result<Option<Self::Token>>;
+
+    fn par_map<F, R>(&mut self, f: F) -> Vec<R>
     where
-        F: FnOnce() -> R;
+        F: Fn(Self::Token) -> R + Send + Sync + 'static,
+        R: Send + 'static;
 }
 
 pub trait BascetStreamToken {}
