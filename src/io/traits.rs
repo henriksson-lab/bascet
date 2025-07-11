@@ -25,10 +25,11 @@ pub trait BascetStream: Sized {
 
     fn next(&mut self) -> anyhow::Result<Option<Self::Token>>;
 
-    fn par_map<F, R>(&mut self, f: F) -> Vec<R>
+    fn par_map<F, R, S>(&mut self, state: S, f: F) -> Vec<R>
     where
-        F: Fn(Self::Token) -> R + Send + Sync + 'static,
-        R: Send + 'static;
+        F: Fn(Self::Token, &mut S) -> R + Send + Sync + 'static,
+        R: Send + 'static,
+        S: Clone + Send + 'static;
 }
 
 pub trait BascetStreamToken {}
