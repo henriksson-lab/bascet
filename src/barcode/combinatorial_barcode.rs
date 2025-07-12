@@ -48,7 +48,6 @@ impl MyersBarcode {
         // use Myers' algorithm to find the barcodes in a read
         // Ref: Myers, G. (1999). A fast bit-vector algorithm for approximate string
         // matching based on dynamic programming. Journal of the ACM (JACM) 46, 395–415.
-        //let mut hits: Vec<(&String, Vec<u8>, usize, i32)> = Vec::new();
         let mut aln = Alignment::default();
         let mut matches = self.pattern.find_all_lazy(record, max_distance);
 
@@ -82,24 +81,30 @@ impl MyersBarcode {
 #[derive(Clone, Debug)]
 pub struct CombinatorialBarcode {
 
-    //Maps name of pool to index in array (used using building only)
-    map_name_to_index: HashMap<String,usize>,
+    //Maps name of pool to index in array (used during building only)
+    map_poolname_to_index: HashMap<String,usize>,
 
     //Each barcode set in the combination
     pools: Vec<CombinatorialBarcodePart>,
 
     //How much to trim from this read
-    pub trim_bcread_len: usize
+    pub trim_bcread_len: usize,
+
+    //Location of the UMI
+    pub umi_from: usize,
+    pub umi_to: usize,
 
 }
 impl CombinatorialBarcode {
 
     pub fn new() -> CombinatorialBarcode {
 
-        CombinatorialBarcode{
-            map_name_to_index: HashMap::new(),
+        CombinatorialBarcode {
+            map_poolname_to_index: HashMap::new(),
             pools: vec![],
-            trim_bcread_len: 0
+            trim_bcread_len: 0,
+            umi_from: 0,
+            umi_to: 0
         }
     }
 
@@ -107,6 +112,18 @@ impl CombinatorialBarcode {
         self.pools.len()
     }
 
+
+    pub fn add_pool(
+        &mut self,
+        poolname: &str,
+        pool: CombinatorialBarcodePart
+    ) {
+        let pool_index = self.pools.len();
+        self.map_poolname_to_index.insert(poolname.to_string(), pool_index);
+        self.pools.push(pool);
+    }
+
+    
     pub fn add_bc(
         &mut self,
         name: &str,
@@ -115,16 +132,11 @@ impl CombinatorialBarcode {
     )  {
 
         //Create new pool if needed
-        if !(self.map_name_to_index.contains_key(poolname)) {
-            let mut pool = CombinatorialBarcodePart::new();
-            pool.bc_length = sequence.len();
-
-            let pool_index = self.pools.len();
-            self.map_name_to_index.insert(poolname.to_string(), pool_index);
-            self.pools.push(pool);
+        if !(self.map_poolname_to_index.contains_key(poolname)) {
+            self.add_pool(poolname, CombinatorialBarcodePart::new());
         }
 
-        let pool_index = self.map_name_to_index.get(poolname).expect("bc index fail");
+        let pool_index = self.map_poolname_to_index.get(poolname).expect("bc index fail");
         let pool: &mut CombinatorialBarcodePart = self.pools.get_mut(*pool_index).expect("get pool fail");
         pool.add_bc(name, sequence);
     }
@@ -141,30 +153,56 @@ impl CombinatorialBarcode {
         Ok(())
     }
 
-
-    fn scan_startpos(
+    ///////////////////////////////
+    /// For each round of barcode, check location along all read
+    pub fn scan_oneread_barcode_boundaries(
         &mut self,
         seq: &[u8]
     ) {
         for p in &mut self.pools {
-            p.scan_startpos(seq);
+            p.scan_oneread_barcode_boundaries(seq);
         }
     }
 
 
-    pub fn find_probable_barcode_boundaries( /////////////////////////////////////////// TODO: sort barcodes such that innermost BC is searched first. thus we can give up early possibly
+
+
+
+    pub fn scan_reads_barcode_boundaries( 
         &mut self,
         fastq_file: &mut FastqReader<Box<impl std::io::Read + ?Sized>>,
         n_reads: u32,
     ) -> anyhow::Result<()> {
 
-        // Generate histogram of probable barcode start through iterating over the first n reads
-        //let mut all_hits: Vec<(u32, usize, usize, i32)> = Vec::new();
+        //Generate histogram of probable barcode start through iterating over the first n reads
         for _ in 0..n_reads {
             let record = fastq_file.next().unwrap();
             let record = record.expect("Error reading record for checking barcode position; input file too short");
-            self.scan_startpos(&record.seq());
+            self.scan_oneread_barcode_boundaries(&record.seq());
         }
+
+        Ok(())
+    }
+
+
+    ///////////////////////////////
+    /// How many possible barcode matches where there during detection?
+    pub fn count_detect_barcode_matches(
+        &mut self
+    )  -> usize {
+
+        // Sum matches from each barcode round
+        let mut cnt: usize = 0;
+        for p in &mut self.pools {
+            cnt += p.count_detect_barcode_matches();
+        }
+        cnt
+    }
+
+
+    pub fn decide_barcode_boundaries( 
+        &mut self
+    ) -> anyhow::Result<()> {
 
         //Pick the locations of all barcodes
         _ = self.pick_startpos();
@@ -186,7 +224,25 @@ impl CombinatorialBarcode {
 
 
     ///////////////////////////////
+    /// Given a read, try figure out where the barcodes are located
+    /// TODO: sort barcodes such that innermost BC is searched first. thus we can give up early possibly
+    pub fn find_probable_barcode_boundaries( 
+        &mut self,
+        fastq_file: &mut FastqReader<Box<impl std::io::Read + ?Sized>>,
+        n_reads: u32,
+    ) -> anyhow::Result<()> {
+
+        self.scan_reads_barcode_boundaries(fastq_file, n_reads)?;
+        self.decide_barcode_boundaries()?;
+
+        Ok(())
+    }
+
+    ///////////////////////////////
     /// Detect barcode only
+    /// 
+    /// TODO extract UMI
+    /// 
     #[inline(always)]
     pub fn detect_barcode(
         &mut self,
@@ -197,6 +253,10 @@ impl CombinatorialBarcode {
     ) -> (bool, CellID) {
         let mut full_bc: Vec<String> = Vec::with_capacity(self.num_pools());
         let mut total_score = 0;
+
+        //println!("------");
+
+        //Loop across each barcode round
         for p in &mut self.pools {
 
             let one_bc = p.detect_barcode(
@@ -207,11 +267,17 @@ impl CombinatorialBarcode {
                 full_bc.push(this_bc);
                 total_score = total_score + score;
             } else if abort_early {
+                //println!("------ abort, part_distance_cutoff");
+
                 //If we cannot decode a barcode, abort early. This saves a good % of time
                 return (false, bcvec_to_string(&full_bc));
             }
+
+            //println!("{} {}", p.quick_testpos, total_score);
+
             // early return if mismatch too high. This saves a good % of time
             if total_score > total_distance_cutoff {
+                //println!("------ abort, total_distance_cutoff");
                 return (false, bcvec_to_string(&full_bc));
             }
 
@@ -219,6 +285,7 @@ impl CombinatorialBarcode {
         if !abort_early && full_bc.len()!= self.pools.len() {
             //Barcode was incomplete. This can only happen if early abortion not set. 
             //Adding it as a condition to help compiler remove this test when the function is inlined
+            //println!("------ abort, incomplete");
             return (false, bcvec_to_string(&full_bc));
         }
 
@@ -288,7 +355,8 @@ impl CombinatorialBarcode {
 
 
     
-
+    ///////////////////////////////
+    /// Read list of barcodes from a TSV file
     pub fn read_barcodes(src: impl Read) -> CombinatorialBarcode {
 
         let mut cb: CombinatorialBarcode = CombinatorialBarcode::new();
@@ -315,7 +383,8 @@ impl CombinatorialBarcode {
 }
 
 
-
+///////////////////////////////
+/// Convert list of barcode names to cellID
 fn bcvec_to_string(cell_id: &Vec<String>) -> CellID {
     //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
     //should support some type of uuencodeing
@@ -343,7 +412,7 @@ pub struct CombinatorialBarcodePart {
 }
 impl CombinatorialBarcodePart {
 
-    fn new() -> CombinatorialBarcodePart {
+    pub fn new() -> CombinatorialBarcodePart {
         CombinatorialBarcodePart {
             barcode_list: vec![],
             seq2barcode: HashMap::new(),
@@ -355,6 +424,8 @@ impl CombinatorialBarcodePart {
         }
     }
 
+    ///////////////////////////////
+    /// Add a barcode to this round
     pub fn add_bc(
         &mut self,
         bcname: &str,
@@ -363,12 +434,13 @@ impl CombinatorialBarcodePart {
         let bc = MyersBarcode::new(bcname, sequence);
         self.seq2barcode.insert(sequence.to_string().clone(), self.barcode_list.len());
         self.barcode_list.push(bc);
+        self.bc_length = sequence.len();
     }
 
-
-    // Find where this barcode might be located in a read.
-    // Stores it internal histogram
-    fn scan_startpos(
+    ///////////////////////////////
+    /// Find where this barcode might be located in a read.
+    /// Stores location in the internal histogram
+    fn scan_oneread_barcode_boundaries(
         &mut self,
         seq: &[u8]
     ) {
@@ -382,18 +454,34 @@ impl CombinatorialBarcodePart {
             }
         }
 
-        //Return first hit that is the best one
+        //Take the first hit that is the best one, and add to startpos histogram
         let all_hits = all_hits.iter().min_set_by_key(|&(_, dist)| dist);
         if all_hits.len() > 0 {
             for (start, _score) in all_hits {
                 self.histogram_startpos.push(*start);
+                //println!("Found match {}", self.histogram_startpos.len());
+                
             }
         }
     }
 
 
     
-    //From histogram, decide where to start. This can fail if no barcode fitted at all
+
+    ///////////////////////////////
+    /// Get how many matches were found
+    pub fn count_detect_barcode_matches(
+        &mut self
+    )  -> usize {
+        println!("mathces bottom {}", self.histogram_startpos.len());
+        self.histogram_startpos.len()
+    }
+
+    ///////////////////////////////
+    /// From histogram, decide where to start. This can fail if no barcode fitted at all.
+    /// 
+    /// Note that the histogram is cleared after this function call
+    /// 
     fn pick_startpos(
         &mut self
     ) -> anyhow::Result<()> {
