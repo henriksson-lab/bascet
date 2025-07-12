@@ -20,6 +20,7 @@ use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
 
 use crate::barcode::Chemistry;
+use crate::barcode::ParseBioChemistry3;
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
@@ -142,7 +143,6 @@ impl GetRawCMD {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut AtrandiRNAseqChemistry::new(
-
                 )
             );
         } else if self.chemistry == "petriseq" {
@@ -161,9 +161,13 @@ impl GetRawCMD {
             }
         } else if self.chemistry == "10x" {
             panic!("not implemented");
-        } else if self.chemistry == "parsebio" {
-            panic!("not implemented");
-
+        } else if self.chemistry == "pb_rnaseq" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut ParseBioChemistry3::new(
+                    //TODO: option to be more specific
+                )
+            );
         } else {
             bail!("Unidentified chemistry");
         }

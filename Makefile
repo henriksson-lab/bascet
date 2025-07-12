@@ -45,12 +45,28 @@ stream:
 	cargo +nightly run extract-stream
 	#cargo +nightly run extract-stream -i testdata/minhash.0.zip
 
+
 #########
-######### test of RNAseq
+######### test of parse RNAseq
 #########
 
 
-test_raw_rna:
+test_raw_parse_rna:
+        rm -Rf temp; cargo +nightly run getraw --chemistry=pb_rnaseq  \
+                --r1 testparse/parse_R1_001.fastq.gz \
+                --r2 testparse/parse_R2_001.fastq.gz \
+                --out-complete   testparse/out_complete.0.tirp.gz \
+                --out-incomplete testparse/out_incomplete.0.tirp.gz \
+                --libname mylib
+
+
+
+#########
+######### test of atrandi RNAseq
+#########
+
+
+test_raw_atrandi_rna:
 	rm -Rf temp; cargo +nightly run getraw --chemistry=atrandi_rnaseq  \
 		--r1 testrna/part_raw/part_R1.fastq.gz \
 		--r2 testrna/part_raw/part_R2.fastq.gz \
