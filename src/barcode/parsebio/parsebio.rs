@@ -1,5 +1,7 @@
-use crate::barcode::CombinatorialBarcode;
-use crate::barcode::CombinatorialBarcodePart;
+use crate::barcode::combinatorial_barcode_8bp::str_to_barcode_8bp;
+use crate::barcode::parsebio::HotEncodeATCGN;
+use crate::barcode::CombinatorialBarcode8bp;
+use crate::barcode::CombinatorialBarcodePart8bp;
 use crate::barcode::Chemistry;
 use seq_io::fastq::Reader as FastqReader;
 
@@ -10,6 +12,7 @@ use seq_io::fastq::Record as FastqRecord;
 
 use flate2::read::GzDecoder;
 
+use core::panic;
 use std::collections::HashMap;
 use std::io::Read;
 use std::io::Cursor;
@@ -18,7 +21,7 @@ use std::io::Cursor;
 
 #[derive(Clone)]
 pub struct ParseBioChemistry3 {
-    barcode: CombinatorialBarcode
+    barcode: CombinatorialBarcode8bp
 }
 
 impl Chemistry for ParseBioChemistry3 {
@@ -33,6 +36,15 @@ impl Chemistry for ParseBioChemistry3 {
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>
     ) -> anyhow::Result<()> {
+
+        /*
+        let a=str_to_barcode_8bp("ATCGGGGG");
+        let b=str_to_barcode_8bp("TTCGGGNN");
+        let score=HotEncodeATCGN::bitwise_hamming_distance_u32(a,b);
+        println!("{}", score);
+        panic!("asdasd");
+         */
+
 
         println!("Loading parse barcodes");
 
@@ -66,7 +78,7 @@ impl Chemistry for ParseBioChemistry3 {
 
                 let total_distance_cutoff = 4;
                 let part_distance_cutoff = 1;
-                let (isok, _bc) = bcs.detect_barcode(
+                let (isok, _bc, _score) = bcs.detect_barcode(
                     record.seq(),
                     false,
                     total_distance_cutoff,
@@ -101,10 +113,9 @@ impl Chemistry for ParseBioChemistry3 {
 
         //There will always be at least one chemistry to pick
         let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
-
-
         
         println!("Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}", best_chem_name, best_chem_score);
+        //panic!("test");
         self.barcode = map_round_bcs.get(best_chem_name.as_str()).unwrap().clone();
 
         Ok(())
@@ -125,12 +136,17 @@ impl Chemistry for ParseBioChemistry3 {
         //Detect barcode, which for parse is in R2
         let total_distance_cutoff = 4;
         let part_distance_cutoff = 1;
-        let (isok, bc) = self.barcode.detect_barcode(
+        let (isok, bc, _match_score) = self.barcode.detect_barcode(
             r2_seq,
             false,
             total_distance_cutoff,
             part_distance_cutoff
         );
+
+        //println!("Total score {}", match_score);
+        //if match_score>0 {
+        //    println!("{}\t{}", match_score, String::from_utf8_lossy(r2_seq));
+        //}
 
         if isok {
 
@@ -170,13 +186,13 @@ impl ParseBioChemistry3 {
     /// Create chemistry. Detect barcodes later
     pub fn new() -> ParseBioChemistry3 {
         ParseBioChemistry3 {
-            barcode: CombinatorialBarcode::new()
+            barcode: CombinatorialBarcode8bp::new()
         }
     }
 
     ///////////////////////////////
     /// Load separate barcode positions. These must be aggregated into full chemistries later
-    pub fn load_all_separate_bcs() -> HashMap<String, CombinatorialBarcodePart> {
+    pub fn load_all_separate_bcs() -> HashMap<String, CombinatorialBarcodePart8bp> {
 
         let mut map_round_bcs = HashMap::new();
 
@@ -237,9 +253,9 @@ impl ParseBioChemistry3 {
     /// Read all barcodes for one round
     pub fn read_onepos_barcodes_pb(
         src: impl Read
-    ) -> CombinatorialBarcodePart {
+    ) -> CombinatorialBarcodePart8bp {
 
-        let mut cb = CombinatorialBarcodePart::new();
+        let mut cb = CombinatorialBarcodePart8bp::new();
 
         let mut reader = csv::ReaderBuilder::new()
             .delimiter(b',')
@@ -265,7 +281,7 @@ impl ParseBioChemistry3 {
     /// 
     pub fn read_barcodes_pb(
         src: impl Read
-    ) -> HashMap<String,CombinatorialBarcode> {
+    ) -> HashMap<String,CombinatorialBarcode8bp> {
 
         //Get barcodes for each position
         let map_round_bcs = ParseBioChemistry3::load_all_separate_bcs();
@@ -281,10 +297,11 @@ impl ParseBioChemistry3 {
 
             let chemname = format!("{} {}",record.kit, record.chem);
 
-            let mut bc_setup = CombinatorialBarcode::new();
+            let mut bc_setup = CombinatorialBarcode8bp::new();
 
             let mut bc1 = map_round_bcs.get(&record.bc1).expect("Could not find file for bc1").clone();
             bc1.quick_testpos = record.bc1pos;
+            bc1.all_test_pos.push(record.bc1pos);
             bc_setup.add_pool(
                 "bc1",
                 bc1
@@ -292,6 +309,7 @@ impl ParseBioChemistry3 {
 
             let mut bc2=map_round_bcs.get(&record.bc2).expect("Could not find file for bc2").clone();
             bc2.quick_testpos = record.bc2pos;
+            bc2.all_test_pos.push(record.bc2pos);
             bc_setup.add_pool(
                 "bc2",
                 bc2
@@ -299,12 +317,16 @@ impl ParseBioChemistry3 {
 
             let mut bc3=map_round_bcs.get(&record.bc3).expect("Could not find file for bc3").clone();
             bc3.quick_testpos = record.bc3pos;
+            bc3.all_test_pos.push(record.bc3pos);
             bc_setup.add_pool(
                 "bc3",
                 bc3
             );
 
-            //Set during detection; but could provide this anyway
+
+            //Below is in a bit of the wrong position, since information used in this class!
+
+            //How much to trim
             bc_setup.trim_bcread_len = record.trim2;
 
             //UMI position, if any
