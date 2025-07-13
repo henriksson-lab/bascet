@@ -525,7 +525,14 @@ impl CombinatorialBarcodePart {
 
         //perform optimistic search first!
         let optimistic_seq = &seq[self.quick_testpos..(self.quick_testpos+self.bc_length)];
-        let optimistic_seq = String::from_utf8(optimistic_seq.to_vec()).expect("weird bc");   // seems evil
+        let optimistic_seq = unsafe {
+            //This has to be fast. Pray that we don't get weird strings as input
+            String::from_utf8_unchecked(optimistic_seq.to_vec())
+
+
+            //We can work with plain u8 if we get rid of meyers algorithm
+
+        };
 
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
             let bc = self.barcode_list.get(i).expect("wtf");
@@ -533,6 +540,14 @@ impl CombinatorialBarcodePart {
         } else {
             debug!("not a precise match {:?}",optimistic_seq);
         }
+
+
+        //Simply scan 
+
+
+        //return None;
+        ////////////////////////////////// Performance test. below stinks
+
 
         //--------------- todo; maybe scan the primary range first? can order vector for this to happen
         //Find candidate hits. Scan each barcode, in all positions 
