@@ -1,5 +1,3 @@
-use crate::barcode::combinatorial_barcode_8bp::str_to_barcode_8bp;
-use crate::barcode::parsebio::HotEncodeATCGN;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
 use crate::barcode::Chemistry;
@@ -12,7 +10,6 @@ use seq_io::fastq::Record as FastqRecord;
 
 use flate2::read::GzDecoder;
 
-use core::panic;
 use std::collections::HashMap;
 use std::io::Read;
 use std::io::Cursor;
