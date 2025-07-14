@@ -57,31 +57,23 @@ impl Chemistry for TenxRNAChemistry {
         //For each barcode system, try to match it to reads. then decide which barcode system to use.
         //This code is a bit complicated because we wish to compare the same reads for all chemistry options
         let mut map_chem_match_cnt = HashMap::new();
-        let n_reads = 5000;
-        for _ in 0..n_reads {
-
+        let n_reads = 100;
+        for _cur_read_i in 0..n_reads {
 
             //Parse bio barcode is in R2
             let record = fastq_file_r1.next().unwrap();
             let record = record.expect("Error reading record for checking barcode position; input file too short");
 
             for (chem_name, bcs) in &map_round_bcs {
-                //let prt=std::str::from_utf8(record.seq()).unwrap();
-                //println!("{:?}",prt);
-                //bcs.scan_oneread_barcode_boundaries(&record.seq());
 
-                let mut bcs=bcs.clone(); //ugly hack. remove the meyer algorithm to solve the problem
-
-                let total_distance_cutoff = 4;
-                let part_distance_cutoff = 1;
-                let (isok, _bc, _score) = bcs.detect_barcode(
+                let (isok, _bcm, _score) = bcs.detect_barcode(
                     record.seq(),
-                    false,
-                    total_distance_cutoff,
-                    part_distance_cutoff
+                    true,
+                    1,
+                    1
                 );
 
-                //Count reads. Ensure entry is created
+                //Count reads. Ensure entry for this chemistry is created
                 let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
                 if isok {
                     *e += 1;
@@ -98,7 +90,7 @@ impl Chemistry for TenxRNAChemistry {
 
             let cnt=*map_chem_match_cnt.get(chem_name).unwrap();
             let this_frac = F::from(cnt)  / F::from(n_reads);
-            println!("PB chemistry {}\tNormalized score: {:.4}", chem_name, this_frac);
+            println!("Chemistry: {}\tNormalized score: {:.4}", chem_name, this_frac);
             map_chem_match_frac.insert(chem_name.clone(), this_frac);
         }
 
@@ -234,20 +226,18 @@ impl TenxRNAChemistry {
         let mut cb = CombinatorialBarcodePart16bp::new();
         let reader = BufReader::new(src);
 
-        println!("Reading one");
         let mut cnt=0;
         for line in reader.lines() {
             let line = line.expect("Could not read barcode file line");
-            //println!("{}",line);
             cb.add_bc(
                 line.as_str(),
                 line.as_str()
             );
             cnt += 1;
 
-            if cnt%10000 == 0 {
-                println!("{}", cnt)
-            }
+        }
+        if cnt%100000 == 0 {
+            println!("Read barcode system with count: {}", cnt)
         }
 
         cb

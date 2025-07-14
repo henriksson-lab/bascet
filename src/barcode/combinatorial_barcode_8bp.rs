@@ -89,7 +89,7 @@ impl CombinatorialBarcode8bp {
     /// Detect barcode only
     #[inline(always)]
     pub fn detect_barcode(
-        &mut self,
+        &self,
         read_seq: &[u8],
         abort_early: bool,
         total_distance_cutoff: u32,
@@ -100,7 +100,7 @@ impl CombinatorialBarcode8bp {
 
 
         //Loop across each barcode round
-        for p in &mut self.pools {
+        for p in &self.pools {
 
             //Detect this round BC
             let (this_bc, score) = p.detect_barcode(
@@ -218,7 +218,7 @@ impl CombinatorialBarcodePart8bp {
 
 
     pub fn detect_barcode(
-        &mut self,
+        &self,
         read_seq: &[u8],
     ) -> (usize, u32) { //barcode index, score
 
