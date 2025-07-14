@@ -116,38 +116,14 @@ impl HotEncodeATCGN {
     pub fn encode_16bp(bytes: &[u8]) -> u64 { //; 16
         
         //This code contains no unsafe blocks but assumes that the rust compiler is able to optimize 
-
-        /* 
-        this appears to have the same performance as below
-        */
-        let idx1 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[0], bytes[1]])};
-        let idx2 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[2], bytes[3]])};
-        let idx3 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[4], bytes[5]])};
-        let idx4 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[6], bytes[7]])};
-        let idx5 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[8], bytes[9]])};
-        let idx6 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[10], bytes[11]])};
-        let idx7 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[12], bytes[13]])};
-        let idx8 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[14], bytes[15]])};
-        
-        /* 
-        let sub1 = [bytes[0], bytes[1]];
-        let sub2 = [bytes[2], bytes[3]];
-        let sub3 = [bytes[4], bytes[5]];
-        let sub4 = [bytes[6], bytes[7]];
-        let sub5 = [bytes[8], bytes[9]];
-        let sub6 = [bytes[10], bytes[11]];
-        let sub7 = [bytes[12], bytes[13]];
-        let sub8 = [bytes[14], bytes[15]];
-
-        let idx1 = concat_u8_u16(&sub1);
-        let idx2 = concat_u8_u16(&sub2);
-        let idx3 = concat_u8_u16(&sub3);
-        let idx4 = concat_u8_u16(&sub4);
-        let idx5 = concat_u8_u16(&sub5);
-        let idx6 = concat_u8_u16(&sub6);
-        let idx7 = concat_u8_u16(&sub7);
-        let idx8 = concat_u8_u16(&sub8);
-        */
+        let idx1 = u16::from_ne_bytes([bytes[0], bytes[1]]);
+        let idx2 = u16::from_ne_bytes([bytes[2], bytes[3]]);
+        let idx3 = u16::from_ne_bytes([bytes[4], bytes[5]]);
+        let idx4 = u16::from_ne_bytes([bytes[6], bytes[7]]);
+        let idx5 = u16::from_ne_bytes([bytes[8], bytes[9]]);
+        let idx6 = u16::from_ne_bytes([bytes[10], bytes[11]]);
+        let idx7 = u16::from_ne_bytes([bytes[12], bytes[13]]);
+        let idx8 = u16::from_ne_bytes([bytes[14], bytes[15]]);
 
 
         let mut lookup = [0,0,0,0, 0,0,0,0 as u8];
@@ -162,19 +138,7 @@ impl HotEncodeATCGN {
         lookup[7] = NT2_LOOKUP[idx8 as usize];
 
         //Convert 8bp into u64. not faster than below
-        let ret = unsafe {std::mem::transmute::<[u8; 8], u64>(lookup)};
-
-/* 
-        let ret = 
-            u64::from(lookup[0]) | 
-            (u64::from(lookup[1])<<8) | 
-            (u64::from(lookup[2])<<16) | 
-            (u64::from(lookup[3])<<24) | 
-            (u64::from(lookup[4])<<32) | 
-            (u64::from(lookup[5])<<40) |
-            (u64::from(lookup[6])<<48) | 
-            (u64::from(lookup[7])<<56);       
-            */
+        let ret = u64::from_ne_bytes(lookup);
 
         ret
     }
