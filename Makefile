@@ -62,6 +62,20 @@ test_raw_parse_rna:
 
 
 #########
+######### test of 10x RNAseq
+#########
+
+
+test_raw_10x_rna:
+	rm -Rf temp; cargo +nightly run getraw --chemistry=10xrna  \
+		--r1 test10x/part_R1_001.fastq.gz \
+		--r2 test10x/part_R2_001.fastq.gz \
+		--out-complete   test10x/out_complete.0.tirp.gz \
+		--out-incomplete test10x/out_incomplete.0.tirp.gz \
+		--libname mylib
+
+
+#########
 ######### test of atrandi RNAseq
 #########
 

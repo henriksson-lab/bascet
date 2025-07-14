@@ -21,6 +21,7 @@ use seq_io::fastq::Record as FastqRecord;
 
 use crate::barcode::Chemistry;
 use crate::barcode::ParseBioChemistry3;
+use crate::barcode::TenxRNAChemistry;
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
@@ -159,8 +160,12 @@ impl GetRawCMD {
             } else {
                 bail!("Barcode file not specified");
             }
-        } else if self.chemistry == "10x" {
-            panic!("not implemented");
+        } else if self.chemistry == "10xrna" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut TenxRNAChemistry::new(
+                )
+            );
         } else if self.chemistry == "pb_rnaseq" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),

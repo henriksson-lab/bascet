@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use std::io::Read;
 
 use crate::fileformat::shard::CellID;
-
-
 use crate::barcode::parsebio::HotEncodeATCGN;
 
 ///////////////////////////////
@@ -19,7 +17,6 @@ pub fn str_to_barcode_8bp(
     ];
     HotEncodeATCGN::encode_8bp(&bytes)
 }
-
 
 
 ///////////////////////////////
@@ -148,59 +145,6 @@ impl CombinatorialBarcode8bp {
         parts_cellid.join("_")
     }
 
-
-/* 
-    ///////////////////////////////
-    /// Detect barcode, and trim if ok --------------- remove this function? TODO
-    #[inline(always)]
-    pub fn detect_barcode_and_trim(
-        &mut self,
-        bc_seq: &[u8],
-        bc_qual: &[u8],
-        other_seq: &[u8],
-        other_qual: &[u8],
-        total_bc_distance_cutoff: u32,
-        local_bc_distance_cutoff: u32
-    ) -> (bool, CellID, ReadPair) {
-
-
-        let (bc_ok, cellid, _match_score) = self.detect_barcode(
-            bc_seq,
-            true,
-            total_bc_distance_cutoff,
-            local_bc_distance_cutoff
-        );
-
-        //Return read trimmed if BC ok, otherwise not
-        let rp = if bc_ok {
-            ReadPair {
-                r1: bc_seq[self.trim_bcread_len..].to_vec(), 
-                r2: other_seq.to_vec(), 
-                q1: bc_qual[self.trim_bcread_len..].to_vec(), 
-                q2: other_qual.to_vec(), 
-                umi: bc_seq[self.umi_from..self.umi_to].to_vec()
-            }
-        } else {
-            ReadPair {
-                r1: bc_seq.to_vec(),
-                r2: other_seq.to_vec(), 
-                q1: bc_qual.to_vec(), 
-                q2: other_qual.to_vec(), 
-                umi: bc_seq.to_vec()
-            }
-        };
-
-        return (
-            bc_ok,
-            cellid,
-            rp
-        )        
-
-    }
-    */
-
-
-
     
     ///////////////////////////////
     /// Read list of barcodes from a TSV file
@@ -228,11 +172,6 @@ impl CombinatorialBarcode8bp {
     }
 
 }
-
-
-
-
-
 
 
 ///////////////////////////////
@@ -295,13 +234,10 @@ impl CombinatorialBarcodePart8bp {
         let optimistic_seq = HotEncodeATCGN::encode_8bp(&optimistic_seq);
 
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
-            //it might be possible to avoid clone with some lifetime info. or return index
-            //let bc_name = self.barcode_name_list.get(i).expect("wtf");
             return (i,0);
         } else {
             debug!("not a precise match {:?}",optimistic_seq);
         }
-
 
         //Find candidate hits. Scan each barcode, in all positions 
         let mut all_hits: Vec<(usize, u32)> = Vec::new();  //encoded barcode index, score
