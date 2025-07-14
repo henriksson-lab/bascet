@@ -1,3 +1,3 @@
 pub mod tenx;
 
-pub use tenx::TenxChemistry;
+pub use tenx::TenxRNAChemistry;

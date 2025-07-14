@@ -9,5 +9,7 @@ pub use detect_software::check_bgzip;
 pub use detect_software::check_tabix;
 pub use detect_software::check_samtools;
 pub use detect_software::check_kmc_tools;
+pub use detect_software::get_bascet_datadir;
 
 pub use umi_dedup::dedup_umi;
+

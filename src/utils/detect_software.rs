@@ -6,6 +6,21 @@ use semver::{Version, VersionReq};
 
 
 
+use std::path::PathBuf;
+use std::env;
+
+///////////////////////////////
+/// Get directory where all Bascet data files are stored. These are kept separate
+pub fn get_bascet_datadir() -> PathBuf {
+    let env_bascet_data = env::var("BASCET_DATA");
+    if let Ok(v) = env_bascet_data {
+        PathBuf::from(v)
+    } else {
+        //Use default directory if no path set. This is for developers primarily
+        PathBuf::from("./data/")
+    }
+}
+
 
 ///////////////////////////////
 /// Check if KMC is installed
