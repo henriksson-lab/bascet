@@ -196,7 +196,7 @@ impl TenxRNAChemistry {
 
         map_round_bcs.insert(
             "737k-arc-v1_rna.txt.gz".to_string(), 
-            TenxRNAChemistry::read_barcodes(GzDecoder::new(Cursor::new(include_bytes!("737k-arc-v1_rna.txt.gz"))))
+            TenxRNAChemistry::read_barcodes(GzDecoder::new(Cursor::new(include_bytes!("737K-arc-v1_rna.txt.gz"))))
         );
 
         map_round_bcs.insert(
@@ -206,7 +206,7 @@ impl TenxRNAChemistry {
 
         map_round_bcs.insert(
             "737k-august-2016.txt.gz".to_string(), 
-            TenxRNAChemistry::read_barcodes(GzDecoder::new(Cursor::new(include_bytes!("737k-august-2016.txt.gz"))))
+            TenxRNAChemistry::read_barcodes(GzDecoder::new(Cursor::new(include_bytes!("737K-august-2016.txt.gz"))))
         );
 
         map_round_bcs

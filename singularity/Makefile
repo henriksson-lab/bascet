@@ -5,9 +5,10 @@ deps:
 
 bascet:
 	sudo singularity build --force bascet.sif bascet.def
+	md5sum bascet.sif > bascet.md5
 
 upload:
-	cp bascet.sif /corgi/public_http/public/bascet/
+	cp bascet.sif bascet.md5 /corgi/public_http/public/bascet/
 
 example_run:
 	singularity exec bascet.sif metaquast contigs.fa
