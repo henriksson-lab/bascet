@@ -5,7 +5,9 @@ T 54     01010100   84
 C 43     01000011   67
 G 47     01000111   71
 N 4e     01001110   78
-         00011111
+         00011111  ############## possible bitmask to reduce size
+
+
 */
 
 //could apply this to reduce the table from 65kb to 12kb. but this likely requires some unsafe casting
@@ -117,7 +119,7 @@ impl HotEncodeATCGN {
 
         /* 
         this appears to have the same performance as below
-
+        */
         let idx1 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[0], bytes[1]])};
         let idx2 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[2], bytes[3]])};
         let idx3 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[4], bytes[5]])};
@@ -126,8 +128,8 @@ impl HotEncodeATCGN {
         let idx6 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[10], bytes[11]])};
         let idx7 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[12], bytes[13]])};
         let idx8 = unsafe {std::mem::transmute::<[u8; 2], u16>([bytes[14], bytes[15]])};
-        */
         
+        /* 
         let sub1 = [bytes[0], bytes[1]];
         let sub2 = [bytes[2], bytes[3]];
         let sub3 = [bytes[4], bytes[5]];
@@ -145,6 +147,7 @@ impl HotEncodeATCGN {
         let idx6 = concat_u8_u16(&sub6);
         let idx7 = concat_u8_u16(&sub7);
         let idx8 = concat_u8_u16(&sub8);
+        */
 
 
         let mut lookup = [0,0,0,0, 0,0,0,0 as u8];
@@ -158,7 +161,7 @@ impl HotEncodeATCGN {
         lookup[6] = NT2_LOOKUP[idx7 as usize];
         lookup[7] = NT2_LOOKUP[idx8 as usize];
 
-
+        //Convert 8bp into u64. not faster than below
         let ret = unsafe {std::mem::transmute::<[u8; 8], u64>(lookup)};
 
 /* 

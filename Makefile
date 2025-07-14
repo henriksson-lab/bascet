@@ -1,5 +1,5 @@
 all:
-	cargo +nightly build
+	cargo +nightly build --profile=release
 
 test:
 	cargo +nightly test
@@ -52,11 +52,7 @@ stream:
 
 
 test_raw_parse_rna:
-        rm -Rf temp; cargo +nightly run getraw --chemistry=pb_rnaseq  \
-                --r1 testparse/parse_R1_001.fastq.gz \
-                --r2 testparse/parse_R2_001.fastq.gz \
-                --out-complete   testparse/out_complete.0.tirp.gz \
-                --out-incomplete testparse/out_incomplete.0.tirp.gz \
+        rm -Rf temp; cargo +nightly run --profile=release getraw --chemistry=pb_rnaseq --r1 testparse/parse_R1_001.fastq.gz --r2 testparse/parse_R2_001.fastq.gz --out-complete   testparse/out_complete.0.tirp.gz --out-incomplete testparse/out_incomplete.0.tirp.gz \
                 --libname mylib
 
 
@@ -67,11 +63,7 @@ test_raw_parse_rna:
 
 
 test_raw_10x_rna:
-	rm -Rf temp; cargo +nightly run getraw --chemistry=10xrna  \
-		--r1 test10x/part_R1_001.fastq.gz \
-		--r2 test10x/part_R2_001.fastq.gz \
-		--out-complete   test10x/out_complete.0.tirp.gz \
-		--out-incomplete test10x/out_incomplete.0.tirp.gz \
+	rm -Rf temp; cargo +nightly run --profile=release getraw --chemistry=10xrna --r1 test10x/part_R1_001.fastq.gz --r2 test10x/part_R2_001.fastq.gz --out-complete   test10x/out_complete.0.tirp.gz --out-incomplete test10x/out_incomplete.0.tirp.gz \
 		--libname mylib
 
 

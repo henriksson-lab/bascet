@@ -9,6 +9,10 @@ repository = "https://github.com/henriksson-lab/bascet"
 readme = "README.md"
 include = ["/src", "Cargo.toml","Dockerfile","README.md"]
 
+[profile.dev]
+opt-level = 3
+#overflow-checks = false 
+
 [dependencies]
 anyhow = "1.0.93"
 bgzip = "0.3.1"

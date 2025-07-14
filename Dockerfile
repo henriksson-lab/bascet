@@ -40,7 +40,7 @@ COPY src /src/bascet/src
 COPY Cargo.toml /src/bascet/Cargo.toml
 WORKDIR /src/bascet
 #RUN cd /src/bascet
-RUN cargo +nightly build
-RUN cp /src/bascet/target/debug/bascet /bin/bascet
+RUN cargo +nightly build --profile=release
+RUN cp /src/bascet/target/release/bascet /bin/bascet
 RUN rm -Rf /src/bascet
 CMD exec "$@"

@@ -94,7 +94,7 @@ impl CombinatorialBarcode16bp {
     /// Detect barcode only
     #[inline(always)]
     pub fn detect_barcode(
-        &mut self,
+        &self,
         read_seq: &[u8],
         abort_early: bool,
         total_distance_cutoff: u32,
@@ -105,7 +105,7 @@ impl CombinatorialBarcode16bp {
 
 
         //Loop across each barcode round
-        for p in &mut self.pools {
+        for p in &self.pools {
 
             //Detect this round BC
             let (this_bc, score) = p.detect_barcode(
@@ -133,6 +133,39 @@ impl CombinatorialBarcode16bp {
 
     }
 
+
+
+    ///////////////////////////////
+    /// Detect barcode only.
+    /// 
+    /// This version only searches for exact matches, ensuring high speed. To be used to see what chemistry is present
+    /// 
+    #[inline(always)]
+    pub fn detect_exact_barcode(
+        &self,
+        read_seq: &[u8],
+    ) -> (bool, CellID) {
+        let mut full_bc_index: Vec<usize> = Vec::with_capacity(self.num_pools());
+
+        //Loop across each barcode round
+        for p in &self.pools {
+
+            //Detect this round BC
+            let (this_bc, score) = p.detect_barcode(
+                read_seq
+            );
+            full_bc_index.push(this_bc);
+
+            //If we cannot decode a barcode, abort early. This saves a good % of time
+            if score > 0 {
+                return (false, self.bcidvec_to_string(&full_bc_index));
+            }            
+        }
+
+        let cellid = self.bcidvec_to_string(&full_bc_index);        
+        return (true, cellid);
+
+    }
 
 
 
@@ -223,21 +256,15 @@ impl CombinatorialBarcodePart16bp {
 
 
     pub fn detect_barcode(
-        &mut self,
+        &self,
         read_seq: &[u8],
     ) -> (usize, u32) { //barcode index, score
 
-        let bc_length = 8;
+        let bc_length = 16;
 
         //perform optimistic search first!
         //Extract the barcode
-        let bytes = &read_seq[self.quick_testpos..(self.quick_testpos + bc_length)];
-        let optimistic_seq = [
-            bytes[0], bytes[1], bytes[2], bytes[3], 
-            bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15],
-        ];
+        let optimistic_seq = &read_seq[self.quick_testpos..(self.quick_testpos + bc_length)];
         let optimistic_seq = HotEncodeATCGN::encode_16bp(&optimistic_seq);
 
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
@@ -251,13 +278,7 @@ impl CombinatorialBarcodePart16bp {
         for current_pos in self.all_test_pos.iter() {
 
             //Extract the barcode for one position
-            let bytes = &read_seq[self.quick_testpos..(current_pos + bc_length)];
-            let optimistic_seq = [
-                bytes[0], bytes[1], bytes[2], bytes[3], 
-                bytes[4], bytes[5], bytes[6], bytes[7],
-                bytes[8], bytes[9], bytes[10], bytes[11],
-                bytes[12], bytes[13], bytes[14], bytes[15],
-            ];
+            let optimistic_seq = &read_seq[self.quick_testpos..(current_pos + bc_length)];
             let current_seq = HotEncodeATCGN::encode_16bp(&optimistic_seq);
 
             //Find best matching barcode

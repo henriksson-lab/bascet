@@ -67,11 +67,6 @@ impl Chemistry for ParseBioChemistry3 {
             let record = record.expect("Error reading record for checking barcode position; input file too short");
 
             for (chem_name, bcs) in &map_round_bcs {
-                //let prt=std::str::from_utf8(record.seq()).unwrap();
-                //println!("{:?}",prt);
-                //bcs.scan_oneread_barcode_boundaries(&record.seq());
-
-                let mut bcs=bcs.clone(); //ugly hack. remove the meyer algorithm to solve the problem
 
                 let total_distance_cutoff = 4;
                 let part_distance_cutoff = 1;
@@ -99,7 +94,7 @@ impl Chemistry for ParseBioChemistry3 {
 
             let cnt=*map_chem_match_cnt.get(chem_name).unwrap();
             let this_frac = F::from(cnt)  / F::from(n_reads);
-            println!("PB chemistry {}\tNormalized score: {:.4}", chem_name, this_frac);
+            println!("Chemistry: {}\tNormalized score: {:.4}", chem_name, this_frac);
             map_chem_match_frac.insert(chem_name.clone(), this_frac);
         }
 
