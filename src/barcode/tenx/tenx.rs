@@ -49,7 +49,7 @@ impl Chemistry for TenxRNAChemistry {
             Cursor::new(include_bytes!("10x_chemistry_def.csv"))
         );
 
-        //TODO enable user to select one specifically
+        //TODO enable user to select a chemistry specifically
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
         println!("Searching for best barcode match");
