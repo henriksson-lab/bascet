@@ -19,7 +19,7 @@ use rust_htslib::bam::record::Record as BamRecord;
 use noodles_gff::feature::record::Strand;
 use noodles_gff as gff;
 
-use crate::utils::dedup_umi;
+use crate::umi::umi_dedup::UMIcounter;
 use super::determine_thread_counts_1;
 
 use sprs::{CsMat, TriMat};
@@ -396,7 +396,7 @@ impl GeneCounter {
         //For each cell
         for (cellid, counter) in self.counters.iter() {
             //Perform UMI deduplication and counting
-            let cnt = dedup_umi(&counter.umis);
+            let cnt = UMIcounter::dedup_umi(&counter.umis);
             map_cell_count.insert(cellid.clone(), cnt);
 
         }
