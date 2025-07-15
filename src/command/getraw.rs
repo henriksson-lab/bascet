@@ -177,7 +177,7 @@ impl GetRawCMD {
             bail!("Unidentified chemistry");
         }
 
-        log::info!("GetRaw has finished succesfully");
+        println!("GetRaw has finished successfully");
         Ok(())
     }
 }
@@ -353,6 +353,7 @@ impl GetRaw {
         //Need to create temp dir
         if params.path_tmp.exists() {
             //todo delete temp dir after run
+            println!("for debugging");
             anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
             println!("Using tempdir {}", params.path_tmp.display());
