@@ -19,6 +19,8 @@ docker:
 
 docker_upload: docker
 	docker save -o docker_image/bascet.tar henriksson-lab/bascet
+	md5sum bascet.tar > bascet.md5
+
 	# scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/  #it landed without og+r permission using scp!
 	# scp docker_image/bascet.tar hpc2n:~/mystore/
 	# cp docker_image/bascet.tar /corgi/public_http/public/bascet/

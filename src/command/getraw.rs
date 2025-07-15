@@ -160,13 +160,13 @@ impl GetRawCMD {
             } else {
                 bail!("Barcode file not specified");
             }
-        } else if self.chemistry == "10xrna" {
+        } else if self.chemistry == "10xrna" || self.chemistry == "10x_rna" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut TenxRNAChemistry::new(
                 )
             );
-        } else if self.chemistry == "pb_rnaseq" {
+        } else if self.chemistry == "pb_rnaseq" || self.chemistry == "pb_rna" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut ParseBioChemistry3::new(
