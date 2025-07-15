@@ -158,15 +158,13 @@ impl KMERCodec {
     // }
 
     #[inline(always)]
-    pub fn h_hash_for_kmer(kmer: &[u8]) -> u32 {
-        let f = gxhash::gxhash64(kmer, 0x00);
-        (f ^ (f >> 32)) as u32
+    pub fn h_hash_for_kmer(kmer: &[u8]) -> u64 {
+        gxhash::gxhash64(kmer, 0x00)
     }
 
     #[inline(always)]
-    pub fn g_hash_for_kmer(kmer: &[u8]) -> u32 {
-        let f = gxhash::gxhash64(kmer, 0xFF);
-        (f ^ (f >> 32)) as u32
+    pub fn g_hash_for_kmer(kmer: &[u8]) -> u64 {
+        gxhash::gxhash64(kmer, 0xFF)
     }
 
     /*
@@ -178,9 +176,9 @@ impl KMERCodec {
     */
 
     #[inline(always)]
-    pub fn plusmin_one(kmer: u32) -> i64 {
+    pub fn plusmin_one(hash: u64) -> i64 {
         // Lookup table: [1, -1] for even/odd - fastest method from benchmarks
-        PLUSMIN_LOOKUP[(kmer & 1) as usize]
+        PLUSMIN_LOOKUP[(hash & 1) as usize]
     }
 }
 
