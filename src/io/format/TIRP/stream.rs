@@ -1,13 +1,15 @@
-use std::{cell, sync::Arc};
+use std::{
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+};
 
-use crossbeam::channel;
+use itertools::Itertools;
 use rust_htslib::htslib;
 
 use crate::{
     common::{self},
     io::{BascetFile, BascetStream, BascetStreamToken, TIRP},
     log_info,
-    runtime::CONFIG,
 };
 
 pub struct Stream {
@@ -17,7 +19,6 @@ pub struct Stream {
     inner_pos: usize,
     inner_valid_bytes: usize,
 
-    counter: std::sync::atomic::AtomicUsize,
     worker_threadpool: threadpool::ThreadPool,
 }
 
@@ -25,7 +26,7 @@ pub struct Stream {
 pub enum StreamToken {
     Memory {
         cell_id: Vec<u8>,
-        reads: Vec<common::ReadPair>,
+        reads: Vec<Vec<u8>>,
     },
     Disk {
         cell_id: Vec<u8>,
@@ -68,7 +69,6 @@ impl DefaultStream {
                 inner_pos: 0,
                 inner_valid_bytes: 0,
 
-                counter: std::sync::atomic::AtomicUsize::new(0),
                 worker_threadpool: threadpool::ThreadPool::new(1),
             }
         }
@@ -103,13 +103,13 @@ impl BascetStream for DefaultStream {
     type Token = StreamToken;
 
     fn next(&mut self) -> anyhow::Result<Option<Self::Token>> {
-        let mut reads = Vec::new();
+        let mut reads = Vec::with_capacity(1000);
         let mut last_id: Option<Vec<u8>> = None;
 
         loop {
             // Find next line in buffer
             // println!("Iterate! pos => {}/{} [len: {}]", self.inner_pos, self.inner_valid_bytes, self.inner_buf.len());
-            let next = self.inner_buf[self.inner_pos..self.inner_valid_bytes]
+            let next = &self.inner_buf[self.inner_pos..self.inner_valid_bytes]
                 .iter()
                 .position(|&b| b == common::U8_CHAR_NEWLINE);
 
@@ -121,24 +121,21 @@ impl BascetStream for DefaultStream {
                     self.inner_pos += cursor + 1;
                     continue;
                 }
-                // println!("Line: {:?}", String::from_utf8_lossy(line));
-                if let Ok((rp, cell_id)) = TIRP::parse_readpair(line) {
-                    // println!("cell: {}", String::from_utf8_lossy(&cell_id));
+                if let Some(tab_pos) = line.iter().position(|&b| b == b'\t') {
+                    let cell_id = &line[..tab_pos];
                     match &last_id {
                         None => {
-                            last_id = Some(cell_id);
-                            reads.push(rp);
+                            last_id = Some(cell_id.to_vec());
+                            reads.push(line.to_vec());
                         }
-                        Some(last) if *last == cell_id => {
-                            // println!("Appending");
-                            reads.push(rp);
+                        Some(last) if last == cell_id => {
+                            reads.push(line.to_vec());
                         }
                         Some(_) => {
-                            // println!("Returning. Reads.len: {}", reads.len());
                             // New cell found, return current batch
                             return Ok(Some(StreamToken::Memory {
-                                cell_id: cell_id,
-                                reads,
+                                cell_id: last_id.unwrap().to_vec(),
+                                reads: reads.to_vec(),
                             }));
                         }
                     }
@@ -148,8 +145,6 @@ impl BascetStream for DefaultStream {
                 // Save the partial line before reading a new chunk
                 let mut partial_line =
                     self.inner_buf[self.inner_pos..self.inner_valid_bytes].to_vec();
-                // println!("Fetching new page! pos => {}/{}", self.inner_pos, self.inner_valid_bytes);
-                // println!("Partial: {}", String::from_utf8_lossy(&partial_line));
                 match self.read_chunk() {
                     Ok(Some(_)) => {
                         // Prepend the partial line to the new buffer if not empty
@@ -159,14 +154,12 @@ impl BascetStream for DefaultStream {
                             self.inner_buf = partial_line;
                             self.inner_valid_bytes = self.inner_buf.len();
                         }
-                        self.inner_pos = 0;
-                        // Continue loop
                     }
                     Ok(None) => {
                         // EOF
                         return if !reads.is_empty() {
                             Ok(Some(StreamToken::Memory {
-                                cell_id: last_id.unwrap(),
+                                cell_id: last_id.unwrap().to_vec(),
                                 reads,
                             }))
                         } else {
@@ -182,30 +175,40 @@ impl BascetStream for DefaultStream {
         }
     }
 
-    fn par_map<F, R, S>(&mut self, state: S, f: F) -> Vec<R>
+    fn par_map<F, R, G, L>(&mut self, global_state: G, local_states: Vec<L>, f: F) -> (Vec<R>, G, Vec<L>)
     where
-        F: Fn(StreamToken, &mut S) -> R + Send + Sync + 'static,
+        F: Fn(StreamToken, &G, &mut L) -> R + Send + Sync + 'static,
         R: Send + 'static,
-        S: Clone + Send + 'static,
+        G: std::fmt::Debug + Send + Sync + 'static,
+        L: Send + 'static,
     {
         let n_workers = self.worker_threadpool.max_count();
         let (wtx, wrx) = crossbeam::channel::bounded::<Option<StreamToken>>(128);
-        let (rtx, rrx) = crossbeam::channel::bounded::<Vec<R>>(n_workers);
+        let (rtx, rrx) = crossbeam::channel::bounded::<(Vec<R>, L)>(n_workers);
+
+        let global_state = Arc::new(global_state);
+        let mut local_states = local_states.into_iter();
 
         let f = Arc::new(f);
         for _ in 0..n_workers {
             let rx = wrx.clone();
             let rtx = rtx.clone();
-            let mut thread_state = state.clone(); // Each thread gets its own deep copy!
+
             let f = Arc::clone(&f);
+            let g = Arc::clone(&global_state);
+
+            let mut local_state = match local_states.next() {
+                Some(state) => state,
+                None => panic!("no local state available"),
+            };
 
             self.worker_threadpool.execute(move || {
                 let mut thread_results = Vec::new();
                 while let Ok(Some(token)) = rx.recv() {
-                    let result = f(token, &mut thread_state);
+                    let result = f(token, g.as_ref(), &mut local_state);
                     thread_results.push(result);
                 }
-                let _ = rtx.send(thread_results);
+                let _ = rtx.send((thread_results, local_state));
             });
         }
 
@@ -222,12 +225,15 @@ impl BascetStream for DefaultStream {
         self.worker_threadpool.join();
 
         let mut results = Vec::new();
+        let mut local_states = Vec::new();
         for _ in 0..n_workers {
-            if let Ok(mut thread_vec) = rrx.recv() {
+            if let Ok((mut thread_vec, local_state)) = rrx.recv() {
                 results.append(&mut thread_vec);
+                local_states.push(local_state);
             }
         }
-        results
+
+        (results, Arc::try_unwrap(global_state).unwrap(), local_states)
     }
 
     fn set_reader_threads(&mut self, n_threads: usize) {

@@ -15,7 +15,7 @@ pub const KMC_COUNTER_MAX_DIGITS: usize = 12;
 pub const HUGE_PAGE_SIZE: usize = 2048 * 1024;
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CountSketch {
     pub sketch: Vec<i64>,
     pub total: i64,
@@ -39,12 +39,16 @@ impl CountSketch {
         let g = KMERCodec::g_hash_for_kmer(kmer);
 
         let sgn = KMERCodec::plusmin_one(g); //using last bit of hash only. sped up a little now :)
-                                             //println!("{} {}", h, sgn);
 
         let pos = (h as usize) % self.sketch.len();
         self.sketch[pos] += sgn;
 
         self.total += 1;
+    }
+
+    pub fn reset(&mut self) {
+        self.sketch.fill(0);
+        self.total = 0;
     }
 }
 
@@ -306,7 +310,7 @@ impl KmerCounter {
     //     Ok(min_heap)
     // }
 
-    pub fn store_countsketch_seq(_kmer_size: usize, sketch: &CountSketch, p: &PathBuf) {
+    pub fn store_countsketch_seq(sketch: &CountSketch, p: &PathBuf) {
         //Open file for writing
         let f = File::create(p).expect("Could not open file for writing");
         let mut bw = BufWriter::new(f);

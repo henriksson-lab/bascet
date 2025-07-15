@@ -44,7 +44,7 @@ impl MapCellFunction for MapCellCountSketchFQ {
         )
         .expect("Could not get countsketch");
 
-        KmerCounter::store_countsketch_seq(kmer_size, &mut sketch, &output_file);
+        KmerCounter::store_countsketch_seq(&mut sketch, &output_file);
 
         Ok((true, String::from("")))
     }

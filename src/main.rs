@@ -1,8 +1,14 @@
 use bascet::{
-    command, io::{BascetRead, BascetStream, StreamToken, TIRP}, kmer::{kmc_counter::CountSketch, KMERCodec}, log_critical, log_error, log_info, runtime
+    command,
+    io::{parse_readpair, BascetRead, BascetStream, StreamToken, TIRP},
+    kmer::{kmc_counter::{CountSketch, KmerCounter}, KMERCodec},
+    log_critical, log_error, log_info, runtime,
 };
 use clap::{Parser, Subcommand};
-use std::{fmt, panic, process::ExitCode};
+use itertools::Itertools;
+use std::{
+    fmt, fs::File, io::{BufWriter, Write}, panic, path::Path, process::ExitCode, sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex}
+};
 
 ///////////////////////////////
 /// Parser for commandline options, top level
@@ -75,40 +81,82 @@ fn main() -> ExitCode {
         _ => {}
     }
     log_info!("================================================");
-    let path = "./data/filtered.1.tirp.gz";
-    let tirp_file = match TIRP::File::new(path) {
-        Ok(f) => f,
-        Err((_, f)) => f,
-    };
-    let mut tirp_stream = TIRP::DefaultStream::from_tirp(&tirp_file);
 
-    #[derive(Clone)]
-    struct state {
-        kmer_size: usize,
-        sketch: CountSketch
+    for i in 1..=20 {
+        let input_path = format!("./data/filtered.{}.tirp.gz", i);
+        let output_path = format!("./out/countsketch.{}.txt", i - 1);
+        log_info!("Processing"; "input" => &input_path, "output" => &output_path);
+
+        let tirp_file = match TIRP::File::new(&input_path) {
+            Ok(f) => f,
+            Err((_, f)) => f,
+        };
+        let mut tirp_stream = TIRP::DefaultStream::from_tirp(&tirp_file);
+
+        #[derive(Clone, Debug)]
+        struct LocalState {
+            sketch: CountSketch
+        }
+
+        #[derive(Debug)]
+        struct GlobalState {
+            kmer_size: AtomicUsize,
+            buf_writer: Arc<Mutex<BufWriter<File>>>
+        }
+        unsafe impl Send for GlobalState {}
+        unsafe impl Sync for GlobalState {}
+
+        let global_state = GlobalState {
+            kmer_size: AtomicUsize::from(31),
+            buf_writer: Arc::new(Mutex::new(BufWriter::new(File::create(&output_path).unwrap())))
+        };
+        let local_states = (0..4)
+            .map(|_| LocalState {
+                sketch: CountSketch::new(100),
+            })
+            .collect_vec();
+
+        tirp_stream.set_reader_threads(8);
+        tirp_stream.set_worker_threads(4);
+        let (_result, _global_state, _local_states) = tirp_stream.par_map(
+            global_state,
+            local_states,
+            |token, global, local| match token {
+                StreamToken::Memory { cell_id, reads } => {
+                    let k = global.kmer_size.load(Ordering::Relaxed);
+                    let mut sketch = &mut local.sketch;
+                    sketch.reset();
+
+                    for unparsed_rp in reads.iter() {
+                        let rp = parse_readpair(&unparsed_rp).unwrap();
+                        for window in rp.r1.windows(k) {
+                            sketch.add(window);
+                        }
+
+                        for window in rp.r2.windows(k) {
+                            sketch.add(window);
+                        }
+                    }
+                    let mut result = cell_id.clone();
+                    result.push(b'\t');
+                    result.extend_from_slice(&reads.len().to_string().as_bytes());
+                    result.push(b'\t');
+                    for (i, &value) in sketch.sketch.iter().enumerate() {
+                        if i > 0 {
+                            result.push(b'\t');
+                        }
+                        result.extend_from_slice(value.to_string().as_bytes());
+                    }
+                    result.push(b'\n');
+
+                    if let Ok(mut buf_writer) = global.buf_writer.try_lock() {
+                        let _ = buf_writer.write_all(&result);
+                    }
+                }
+                _ => todo!(),
+            },
+        );
     }
-    let mut tirp_states = state {
-        kmer_size: 31,
-        sketch: CountSketch::new(100)
-    };
-    tirp_stream.set_reader_threads(6);
-    tirp_stream.set_worker_threads(6);
-    tirp_stream.par_map(tirp_states, |token, tirp_states| match token {
-        StreamToken::Memory { cell_id, reads } => {
-            for rp in reads {
-                let encoded: Vec<u8> = rp.r1.iter().map(|&b| KMERCodec::ENCODE[b as usize]).collect();
-                for window in encoded.windows(tirp_states.kmer_size) {
-                    tirp_states.sketch.add(window);
-                }
-
-                let encoded: Vec<u8> = rp.r2.iter().map(|&b| KMERCodec::ENCODE[b as usize]).collect();
-                for window in encoded.windows(tirp_states.kmer_size) {
-                    tirp_states.sketch.add(window);
-                }
-            }
-        },
-        _ => todo!(),
-    });
 
     // let result = match cli.command {
     //     Commands::Getraw(mut cmd) => cmd.try_execute(),

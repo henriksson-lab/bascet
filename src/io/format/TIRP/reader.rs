@@ -48,6 +48,7 @@ impl BascetRead for DefaultReader {
     }
 
     fn read_cell(&mut self, cell_id: &str) -> Vec<ReadPair> {
+        todo!();
         //Get tabix id for the cell
         let tid = match log_error!(
             self.inner.tid(&cell_id),
@@ -75,7 +76,7 @@ impl BascetRead for DefaultReader {
             match self.inner.read(&mut record) {
                 Ok(true) => {
                     match TIRP::parse_readpair(&record) {
-                        Ok((rp, _)) => reads.push(rp),
+                        Ok(rp) => reads.push(rp),
                         Err(e) => {
                             log::error!("[TIRP Reader] Failed to parse readpair: {:?}", e);
                         }
