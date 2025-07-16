@@ -44,7 +44,6 @@ pub struct ShardifyCMD {
     #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
     pub path_out: Vec<PathBuf>,
 
-
     // File with a list of cells to include
     #[arg(long = "cells")]
     pub include_cells: Option<PathBuf>,
@@ -94,7 +93,18 @@ pub struct Shardify {
 }
 impl Shardify {
 
-    /// Run the algorithm
+
+
+
+
+
+//    TirpStreamingReadPairReader
+
+
+
+
+
+    /// Run the algorithm -- randomized access mode
     pub fn run(
         params: Arc<Shardify>
     ) -> anyhow::Result<()> {
@@ -114,12 +124,15 @@ impl Shardify {
 
 
         //Open up readers for all input tabix files
+        println!("opening input files");
         let mut list_input_files: Vec<TirpBascetShardReader> = Vec::new();
         for p in params.path_in.iter() {
+            println!("{}",p.display());
             list_input_files.push(TirpBascetShardReader::new(&p).expect("Unable to open input file"));
         }
 
         //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
+        println!("getting list of cells");
         let include_cells = if let Some(p) = &params.include_cells {
             p.clone()
         } else {
@@ -130,6 +143,7 @@ impl Shardify {
             let all_cells: Vec<CellID> = all_cells.iter().cloned().collect();
             all_cells
         };
+        println!("Read # cells: {}",include_cells.len());
 
         //Ensure that the cells are sorted. This likely increases the read locality
         let mut include_cells = include_cells.clone();
@@ -157,6 +171,7 @@ impl Shardify {
         let (tx_request_cell, rx_request_cell) = crossbeam::channel::unbounded::<Option<CellID>>();  
 
         //Prepare reader threads, one per input file
+        println!("Starting reader threads");
         let thread_pool_read = threadpool::ThreadPool::new(params.path_in.len());  
         for p in params.path_in.iter() {
             let _ = create_reader_thread(
@@ -168,7 +183,7 @@ impl Shardify {
         }
 
         //Loop through all the cells that we want
-        debug!("Starting to write output");
+        println!("Starting to write output");
         let n_input = params.path_in.len();
         let n_output = params.path_out.len();
         for cellid in include_cells {
@@ -335,3 +350,29 @@ fn create_reader_thread(
     Ok(())
 }
 
+
+
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn performance_tirp() {
+
+
+
+        //Random reading of first 10 cells vs 
+
+
+        //assert_eq!(cnt, 2);
+
+    }
+
+
+
+}

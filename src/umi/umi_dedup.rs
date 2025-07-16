@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::collections::HashMap;
 
 use super::KMER2bit;
@@ -87,21 +86,6 @@ impl UMIcounter {
     }
 
 
-
-
-    ///////////////////////////////
-    /// Given a list of sequenced UMIs, figure out how many  --------------- get rid of this one later?
-    /// 
-    /// For now: dummy, assuming no errors in sequencing
-    pub fn dedup_umi(umis: &Vec<Vec<u8>>) -> usize {
-
-        let mut unique_umi = HashSet::new();
-        for umi in umis {
-            unique_umi.insert(umi);
-        }
-
-        unique_umi.len()
-    }
 
 }
 
