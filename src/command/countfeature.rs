@@ -108,7 +108,7 @@ pub struct CountFeature {
     ///List of genes that have been finally counted
     finished_genes: Arc<Mutex<Vec<(
         GeneCounter,
-        BTreeMap<Vec<u8>, usize>
+        BTreeMap<Vec<u8>, u32>
     )>>>,
 
 }
@@ -238,7 +238,7 @@ impl CountFeature {
                 while let Ok(Some(gene)) = rx.recv() {
 
                     //Deduplicate
-                    let cnt = gene.get_counts();  // t
+                    let cnt = gene.get_counts(); 
 
 
                     //Put into matrix
@@ -388,15 +388,20 @@ pub struct GeneCounter {
 
 }
 impl GeneCounter {
-    fn get_counts(&self) -> BTreeMap<Vec<u8>, usize> { //
+    fn get_counts(&self) -> BTreeMap<Vec<u8>, u32> { 
         // type inference lets us omit an explicit type signature (which
         // would be `BTreeMap<&str, &str>` in this example).
-        let mut map_cell_count: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
+        let mut map_cell_count: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
 
         //For each cell
         for (cellid, counter) in self.counters.iter() {
+
+
             //Perform UMI deduplication and counting
-            let cnt = UMIcounter::dedup_umi(&counter.umis);
+            let mut prep_data = UMIcounter::prepare_from_str(&counter.umis);
+            let cnt = UMIcounter::directional_algorithm(&mut prep_data, 1);
+            
+            //let cnt = UMIcounter::dedup_umi(&counter.umis);
             map_cell_count.insert(cellid.clone(), cnt);
 
         }
