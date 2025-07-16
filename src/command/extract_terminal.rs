@@ -4,12 +4,14 @@ use clap::Args;
 use itertools::Itertools;
 use std::io;
 use std::fs::File;
+use std::path;
 use std::path::PathBuf;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::BufRead;
 use zip::read::ZipArchive;
 
+use crate::fileformat::ZipBascetShardReader;
 use crate::fileformat::TirpBascetShardReader;
 use crate::fileformat::ShardCellDictionary;
 
@@ -66,6 +68,22 @@ pub struct ExtractStream {
 }
 impl ExtractStream {
 
+
+    fn print_listcellsanyfile(tabix_reader: &mut impl ShardCellDictionary) {
+
+        let cellids = tabix_reader.get_cell_ids();
+        if let Ok(cellids) = cellids {
+            println!("{}", cellids.len());
+            for id in cellids {
+                println!("{}", id);
+            }
+        } else {
+            println!("error could not list cells in file provided as argument");
+        }
+    }
+
+
+
     /// Set which file is currently open
     pub fn open(&mut self, path_in: &String) -> Result<()> {
 
@@ -98,29 +116,34 @@ impl ExtractStream {
                 println!("Available commands: exit ls showtext extract_to");
                 println!("Note that this system is optimized for streaming data to Zorn, and not for being user friendly to terminal users!");
 
-            } else if buffer=="lstabix" {
-                /////////////////////////////// lstabix /////////////////////////////// --- list cells in a tabix file
+            } else if buffer=="listcellsanyfile" {
+                /////////////////////////////// listcellsanyfile /////////////////////////////// --- list cells in a tabix file, zip file, or any. by design, takes an argument
 
                 let mut splitter=buffer.split_whitespace();
                 splitter.next();
                 let path_in = splitter.next().expect("error Did not get file name");
 
-                let mut tabix_reader = TirpBascetShardReader::new(&PathBuf::from(path_in));
-                if let Ok(tabix_reader) = &mut tabix_reader {
+                if path_in.ends_with(".tirp.gz") {
 
-                    let cellids = tabix_reader.get_cell_ids();
-                    if let Ok(cellids) = cellids {
-                        println!("{}", cellids.len());
-                        for id in cellids {
-                            println!("{}", id);
-                        }
+                    let mut reader = TirpBascetShardReader::new(&PathBuf::from(path_in));
+                    if let Ok(reader) = &mut reader {
+                        ExtractStream::print_listcellsanyfile(reader);
                     } else {
                         println!("error could not list cells in file provided as argument");
                     }
+
+                } else if path_in.ends_with(".zip") {
+
+                    let mut reader = ZipBascetShardReader::new(&PathBuf::from(path_in));
+                    if let Ok(reader) = &mut reader {
+                        ExtractStream::print_listcellsanyfile(reader);
+                    } else {
+                        println!("error could not open file provided as argument {}", path_in);
+                    }
+
                 } else {
-                    println!("error could not open file provided as argument");
+                        println!("error unknown file type {}", path_in);
                 }
-                
 
             } else if buffer=="ls" {
 
