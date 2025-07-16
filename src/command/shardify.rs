@@ -97,9 +97,12 @@ impl Shardify {
 
 
 
+    //If there are many input files then it is better to implement
+    //    TirpStreamingReadPairReader
+    //and just filter out irrelevant files
 
-//    TirpStreamingReadPairReader
-
+    //zorn should optimize which TIRPs go where at early stage. avoid sending files everywhere such that reading can be kept fairly
+    //local
 
 
 
@@ -128,7 +131,8 @@ impl Shardify {
         let mut list_input_files: Vec<TirpBascetShardReader> = Vec::new();
         for p in params.path_in.iter() {
             println!("{}",p.display());
-            list_input_files.push(TirpBascetShardReader::new(&p).expect("Unable to open input file"));
+            let reader = TirpBascetShardReader::new(&p).expect("Unable to open input file");
+            list_input_files.push(reader);
         }
 
         //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?

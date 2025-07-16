@@ -4,12 +4,17 @@ use clap::Args;
 use itertools::Itertools;
 use std::io;
 use std::fs::File;
+use std::path::PathBuf;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::BufRead;
 use zip::read::ZipArchive;
 
+use crate::fileformat::TirpBascetShardReader;
+use crate::fileformat::ShardCellDictionary;
+
 pub const DEFAULT_PATH_TEMP: &str = "temp";
+
 
 
 #[derive(Args)]
@@ -92,9 +97,34 @@ impl ExtractStream {
                 /////////////////////////////// help
                 println!("Available commands: exit ls showtext extract_to");
                 println!("Note that this system is optimized for streaming data to Zorn, and not for being user friendly to terminal users!");
+
+            } else if buffer=="lstabix" {
+                /////////////////////////////// lstabix /////////////////////////////// --- list cells in a tabix file
+
+                let mut splitter=buffer.split_whitespace();
+                splitter.next();
+                let path_in = splitter.next().expect("error Did not get file name");
+
+                let mut tabix_reader = TirpBascetShardReader::new(&PathBuf::from(path_in));
+                if let Ok(tabix_reader) = &mut tabix_reader {
+
+                    let cellids = tabix_reader.get_cell_ids();
+                    if let Ok(cellids) = cellids {
+                        println!("{}", cellids.len());
+                        for id in cellids {
+                            println!("{}", id);
+                        }
+                    } else {
+                        println!("error could not list cells in file provided as argument");
+                    }
+                } else {
+                    println!("error could not open file provided as argument");
+                }
+                
+
             } else if buffer=="ls" {
 
-                /////////////////////////////// ls
+                /////////////////////////////// ls /////////////////////////////// --- list files in currently open file
                 if let Some((_, zip_shard)) = &self.curfile {
                     let list_files = zip_shard.file_names().collect_vec();
                     println!("{}", list_files.len());
@@ -111,7 +141,7 @@ impl ExtractStream {
                 /////////////////////////////// open ///////////////////////////////
                 let mut splitter=buffer.split_whitespace();
                 splitter.next();
-                let path_in = splitter.next().expect("Did not get file name");
+                let path_in = splitter.next().expect("error Did not get file name");
 
                 //Only open file if it is different from the currently open file
                 if let Some((f,_)) = &self.curfile {
@@ -127,7 +157,7 @@ impl ExtractStream {
                 //Attempt to open new file
                 let res = self.open(&path_in.to_string());
                 if res.is_err() {
-                    println!("error could not open file provided as argument");
+                    println!("error Could not open file provided as argument");
                 } else {
                     println!("ok");
                 }
@@ -138,7 +168,7 @@ impl ExtractStream {
                 if let Some((_, zip_shard)) = &mut self.curfile {
                     let mut splitter=buffer.split_whitespace();
                     splitter.next();
-                    let zip_entry_name = splitter.next().expect("Did not get zip entry name");
+                    let zip_entry_name = splitter.next().expect("error Did not get zip entry name");
     
                     let entry = zip_shard.by_name(&zip_entry_name);
                     if let Ok(entry) = entry {
@@ -173,8 +203,8 @@ impl ExtractStream {
 
                     let mut splitter=buffer.split_whitespace();
                     splitter.next();
-                    let zip_entry_name = splitter.next().expect("Did not get zip entry name");
-                    let path_outfile = splitter.next().expect("Did not get out file name");
+                    let zip_entry_name = splitter.next().expect("error Did not get zip entry name");
+                    let path_outfile = splitter.next().expect("error Did not get out file name");
 
                     //let fname=&buffer[b"showtext ".len()..];
                     let mut entry = zip_shard.by_name(&zip_entry_name);
@@ -186,14 +216,14 @@ impl ExtractStream {
                             std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
                             println!("ok");
                         } else {
-                            println!("error not a file");
+                            println!("error Not a file");
                         }
                     } else {
-                        println!("error missing -{}-", zip_entry_name);
+                        println!("error Missing -{}-", zip_entry_name);
                     }
 
                 } else {
-                    println!("error no file open");
+                    println!("error No file open");
                 }
 
             } else if buffer=="exit" {
@@ -203,7 +233,7 @@ impl ExtractStream {
             } else {
 
                 /////////////////////////////// anything else ///////////////////////////////
-                println!("error unknown command -{}-", buffer);
+                println!("error Unknown command -{}-", buffer);
             }
         }
         println!("exiting");            

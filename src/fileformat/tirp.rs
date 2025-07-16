@@ -53,7 +53,7 @@ impl ConstructFromPath<TirpBascetShardReader> for TirpBascetShardReaderFactory {
 ///////////////////////////////
 /// A reader of TIRPs as shards
 pub struct TirpBascetShardReader {
-    tabix_reader: TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    pub tabix_reader: TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
     current_cell: CellID
 }
 impl TirpBascetShardReader {
