@@ -1,6 +1,6 @@
 use crate::{
-    io::{BascetFile, TIRP},
-    log_debug, log_trace,
+    io::format,
+    io::BascetFile,
     utils::{command_to_string, expand_and_resolve},
 };
 use std::process::Command;
@@ -10,7 +10,7 @@ pub struct File {
 }
 
 impl File {
-    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, (TIRP::Error, Self)> {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, format::Error> {
         let path = match expand_and_resolve(&path) {
             Ok(p) => p,
             Err(_) => path.as_ref().to_path_buf(),
@@ -18,13 +18,14 @@ impl File {
 
         let _ = match Self::file_validate(&path) {
             Ok(_) => (),
-            Err(e) => return Err((e, Self { path: path })),
+            Err(e) => return Err(e),
         };
 
         Ok(Self { path: path })
     }
 
-    /// TABIX-index TIRP file
+    // /// TABIX-index tirp file
+    // NOTE: probably better to generate the index when generating shards?
     pub fn index(&self) -> Result<(), impl std::error::Error> {
         let mut process = Command::new("tabix");
         let process = process.arg("-p").arg("bed").arg(&self.path);
@@ -34,31 +35,34 @@ impl File {
                 true => Ok(()),
                 false => {
                     let msg = format!("error code: {:?}", out.status.code());
-                    Err(TIRP::Error::UtilityExecutionError {
+                    Err(format::Error::UtilityExecutionError {
                         utility: format!("{:?}", process.get_program()),
                         cmd: command_to_string(&process),
                         msg: Some(msg),
                     })
                 }
             },
-            Err(_) => Err(TIRP::Error::UtilityNotExecutable {
+            Err(_) => Err(format::Error::UtilityNotExecutable {
                 utility: format!("{:?}", process.get_program()),
             }),
         };
     }
 }
 
+#[allow(refining_impl_trait)]
 impl BascetFile for File {
-    fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), TIRP::Error> {
+    const VALID_EXT: Option<&'static str> = Some("tirp");
+
+    fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), format::Error> {
         let fpath = path.as_ref();
 
         // 1. File exists and is a regular file
         if !fpath.exists() {
-            return Err(TIRP::Error::FileNotFound {
+            return Err(format::Error::FileNotFound {
                 path: fpath.to_path_buf(),
             });
         } else if !fpath.is_file() {
-            return Err(TIRP::Error::FileNotValid {
+            return Err(format::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("directory found instead".into()),
             });
@@ -71,9 +75,9 @@ impl BascetFile for File {
             .and_then(|s| s.to_str())
             .map_or(false, |s| s.ends_with("tirp"));
 
-        let ext_ok = (fext == Some("gz") && sext_ok) || fext == Some("tirp");
+        let ext_ok = (fext == Self::VALID_EXT && sext_ok) || fext == Self::VALID_EXT;
         if !ext_ok {
-            return Err(TIRP::Error::FileNotValid {
+            return Err(format::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("file extension is not tirp or tirp.gz".into()),
             });
@@ -83,14 +87,14 @@ impl BascetFile for File {
         let meta = match std::fs::metadata(&fpath) {
             Ok(m) => m,
             Err(_) => {
-                return Err(TIRP::Error::FileNotValid {
+                return Err(format::Error::FileNotValid {
                     path: fpath.to_path_buf(),
                     msg: Some("metadata could not be fetched".into()),
                 })
             }
         };
         if meta.len() == 0 {
-            return Err(TIRP::Error::FileNotValid {
+            return Err(format::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("file is 0 bytes".into()),
             });
@@ -104,11 +108,11 @@ impl BascetFile for File {
 
         // 1. File exists and is a regular file
         if !ipath.exists() {
-            return Err(TIRP::Error::FileNotFound {
+            return Err(format::Error::FileNotFound {
                 path: ipath.to_path_buf(),
             });
         } else if !ipath.is_file() {
-            return Err(TIRP::Error::FileNotValid {
+            return Err(format::Error::FileNotValid {
                 path: ipath.to_path_buf(),
                 msg: Some("directory found instead".into()),
             });
@@ -118,7 +122,7 @@ impl BascetFile for File {
         let fext = ipath.extension().and_then(|e| e.to_str());
         let ext_ok = fext == Some("tbi");
         if !ext_ok {
-            return Err(TIRP::Error::FileNotValid {
+            return Err(format::Error::FileNotValid {
                 path: ipath.to_path_buf(),
                 msg: Some("file extension is not tbi".into()),
             });
@@ -128,14 +132,14 @@ impl BascetFile for File {
         let meta = match std::fs::metadata(&ipath) {
             Ok(m) => m,
             Err(_) => {
-                return Err(TIRP::Error::FileNotValid {
+                return Err(format::Error::FileNotValid {
                     path: ipath.to_path_buf(),
                     msg: Some("metadata could not be fetched".into()),
                 })
             }
         };
         if meta.len() == 0 {
-            return Err(TIRP::Error::FileNotValid {
+            return Err(format::Error::FileNotValid {
                 path: ipath.to_path_buf(),
                 msg: Some("file is 0 bytes".into()),
             });

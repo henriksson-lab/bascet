@@ -1,9 +1,9 @@
 use crate::{
     common::{self, ReadPair},
-    io::TIRP,
+    io::{format, tirp},
 };
 
-pub fn parse_readpair(buf_record: &[u8]) -> Result<ReadPair, TIRP::Error> {
+pub fn parse_readpair(buf_record: &[u8]) -> Result<ReadPair, format::Error> {
     let parts: Vec<&[u8]> = buf_record.split(|&b| b == common::U8_CHAR_TAB).collect();
     let id = parts[0];
     let r1 = parts[3];
@@ -13,13 +13,13 @@ pub fn parse_readpair(buf_record: &[u8]) -> Result<ReadPair, TIRP::Error> {
     let umi = parts[7];
 
     if r1.len() != q1.len() {
-        return Err(TIRP::Error::ParseError {
+        return Err(format::Error::ParseError {
             context: "readpair".into(),
             msg: Some("r1 and q1 are of different length".into()),
         });
     }
     if r2.len() != q2.len() {
-        return Err(TIRP::Error::ParseError {
+        return Err(format::Error::ParseError {
             context: "readpair".into(),
             msg: Some("r2 and q2 are of different length".into()),
         });
