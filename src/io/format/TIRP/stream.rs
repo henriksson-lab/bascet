@@ -1,14 +1,12 @@
-use std::{
-    ops::DerefMut,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
-use itertools::Itertools;
 use rust_htslib::htslib;
 
 use crate::{
     common::{self},
-    io::{BascetFile, BascetStream, BascetStreamToken, TIRP},
+    io::detect::AutoToken,
+    io::format::tirp,
+    io::{BascetFile, BascetStream, BascetStreamToken},
     log_info,
 };
 
@@ -24,29 +22,19 @@ pub struct Stream {
 
 #[derive(Debug)]
 pub enum StreamToken {
-    Memory {
+    Full {
         cell_id: Vec<u8>,
         reads: Vec<Vec<u8>>,
     },
-    Disk {
+    Partial {
         cell_id: Vec<u8>,
-        path: std::path::PathBuf,
+        reads: Vec<Vec<u8>>,
     },
 }
 impl BascetStreamToken for StreamToken {}
 
 impl Stream {
-    // pub fn new(inner: R) -> Self {
-    //     Self {
-
-    //     }
-    // }
-}
-
-pub type DefaultStream = Stream;
-
-impl DefaultStream {
-    pub fn from_tirp(file: &TIRP::File) -> Self {
+    pub fn new(file: &tirp::File) -> Self {
         let path = file.file_path();
 
         unsafe {
@@ -99,10 +87,8 @@ impl DefaultStream {
     }
 }
 
-impl BascetStream for DefaultStream {
-    type Token = StreamToken;
-
-    fn next(&mut self) -> anyhow::Result<Option<Self::Token>> {
+impl BascetStream for Stream {
+    fn next(&mut self) -> anyhow::Result<Option<AutoToken>> {
         let mut reads = Vec::with_capacity(1000);
         let mut last_id: Option<Vec<u8>> = None;
 
@@ -133,10 +119,11 @@ impl BascetStream for DefaultStream {
                         }
                         Some(_) => {
                             // New cell found, return current batch
-                            return Ok(Some(StreamToken::Memory {
+                            let token = AutoToken::tirp(StreamToken::Full {
                                 cell_id: last_id.unwrap().to_vec(),
                                 reads: reads.to_vec(),
-                            }));
+                            });
+                            return Ok(Some(token));
                         }
                     }
                 }
@@ -158,10 +145,11 @@ impl BascetStream for DefaultStream {
                     Ok(None) => {
                         // EOF
                         return if !reads.is_empty() {
-                            Ok(Some(StreamToken::Memory {
+                            let token = AutoToken::tirp(StreamToken::Full {
                                 cell_id: last_id.unwrap().to_vec(),
-                                reads,
-                            }))
+                                reads: reads.to_vec(),
+                            });
+                            return Ok(Some(token));
                         } else {
                             Ok(None)
                         };
@@ -175,15 +163,20 @@ impl BascetStream for DefaultStream {
         }
     }
 
-    fn par_map<F, R, G, L>(&mut self, global_state: G, local_states: Vec<L>, f: F) -> (Vec<R>, G, Vec<L>)
+    fn par_map<F, R, G, L>(
+        &mut self,
+        global_state: G,
+        local_states: Vec<L>,
+        f: F,
+    ) -> (Vec<R>, G, Vec<L>)
     where
-        F: Fn(StreamToken, &G, &mut L) -> R + Send + Sync + 'static,
+        F: Fn(AutoToken, &G, &mut L) -> R + Send + Sync + 'static,
         R: Send + 'static,
         G: std::fmt::Debug + Send + Sync + 'static,
         L: Send + 'static,
     {
         let n_workers = self.worker_threadpool.max_count();
-        let (wtx, wrx) = crossbeam::channel::bounded::<Option<StreamToken>>(128);
+        let (wtx, wrx) = crossbeam::channel::bounded::<Option<AutoToken>>(128);
         let (rtx, rrx) = crossbeam::channel::bounded::<(Vec<R>, L)>(n_workers);
 
         let global_state = Arc::new(global_state);
@@ -233,7 +226,11 @@ impl BascetStream for DefaultStream {
             }
         }
 
-        (results, Arc::try_unwrap(global_state).unwrap(), local_states)
+        (
+            results,
+            Arc::try_unwrap(global_state).unwrap(),
+            local_states,
+        )
     }
 
     fn set_reader_threads(&mut self, n_threads: usize) {

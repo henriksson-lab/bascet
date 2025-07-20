@@ -1,11 +1,10 @@
-use std::sync::Arc;
-
 use rust_htslib::tbx::{self, Read};
 
 use crate::{
-    common::{self, ReadPair},
-    io::{BascetFile, BascetRead, TIRP},
-    log_critical, log_error, log_warning,
+    common::ReadPair,
+    io::format::tirp,
+    io::{BascetFile, BascetRead},
+    log_critical, log_error,
 };
 
 pub type DefaultReader = Reader<rust_htslib::tbx::Reader>;
@@ -21,7 +20,7 @@ impl<R> Reader<R> {
 }
 
 impl DefaultReader {
-    pub fn from_tirp(file: &crate::io::File) -> Self {
+    pub fn from_tirp(file: &tirp::File) -> Self {
         let tabix_reader = log_critical!(
             tbx::Reader::from_path(file.file_path()),
             "[TIRP Reader] Failed to initialise reader"
@@ -49,6 +48,7 @@ impl BascetRead for DefaultReader {
 
     fn read_cell(&mut self, cell_id: &str) -> Vec<ReadPair> {
         todo!();
+
         //Get tabix id for the cell
         let tid = match log_error!(
             self.inner.tid(&cell_id),
@@ -75,7 +75,7 @@ impl BascetRead for DefaultReader {
         loop {
             match self.inner.read(&mut record) {
                 Ok(true) => {
-                    match TIRP::parse_readpair(&record) {
+                    match tirp::parse_readpair(&record) {
                         Ok(rp) => reads.push(rp),
                         Err(e) => {
                             log::error!("[TIRP Reader] Failed to parse readpair: {:?}", e);

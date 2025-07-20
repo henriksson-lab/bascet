@@ -1,12 +1,10 @@
-use std::{
-    io::{BufWriter, Write},
-    sync::Arc,
-};
+use std::io::{BufWriter, Write};
 
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 
 use crate::{
     common::{self, ReadPair},
+    io::format::tirp,
     io::{BascetFile, BascetWrite},
     log_critical, log_trace,
 };
@@ -31,7 +29,7 @@ where
 }
 
 impl DefaultWriter {
-    pub fn from_tirp(file: &crate::io::File) -> Self {
+    pub fn from_tirp(file: &tirp::File) -> Self {
         let file = log_critical!(
             file.file_open(),
             "[TIRP Writer] Could not open destination file"

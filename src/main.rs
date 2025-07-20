@@ -1,13 +1,25 @@
 use bascet::{
     command,
-    io::{parse_readpair, BascetRead, BascetStream, StreamToken, TIRP},
-    kmer::{kmc_counter::{CountSketch, KmerCounter}, KMERCodec},
+    io::{detect::{self, AutoToken}, format, parse_readpair, tirp, BascetFile, BascetRead, BascetStream, StreamToken},
+    kmer::{
+        kmc_counter::{CountSketch, KmerCounter},
+        KMERCodec,
+    },
     log_critical, log_error, log_info, runtime,
 };
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
 use std::{
-    fmt, fs::File, io::{BufWriter, Write}, panic, path::Path, process::ExitCode, sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex}
+    fmt,
+    fs::File,
+    io::{BufWriter, Write},
+    panic,
+    path::{Path, PathBuf},
+    process::ExitCode,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 
 ///////////////////////////////
@@ -83,32 +95,29 @@ fn main() -> ExitCode {
     log_info!("================================================");
 
     for i in 1..=20 {
-        let input_path = format!("./data/filtered.{}.tirp.gz", i);
+        // let input_path = format!("./data/assembled/skesa.{}.zip", i);
+        let input_path = format!("./data/reads/filtered.{}.tirp.gz", i);
         let output_path = format!("./out/countsketch.{}.txt", i - 1);
         log_info!("Processing"; "input" => &input_path, "output" => &output_path);
 
-        let tirp_file = match TIRP::File::new(&input_path) {
-            Ok(f) => f,
-            Err((_, f)) => f,
-        };
-        let mut tirp_stream = TIRP::DefaultStream::from_tirp(&tirp_file);
-
         #[derive(Clone, Debug)]
         struct LocalState {
-            sketch: CountSketch
+            sketch: CountSketch,
         }
 
         #[derive(Debug)]
         struct GlobalState {
-            kmer_size: AtomicUsize,
-            buf_writer: Arc<Mutex<BufWriter<File>>>
+            kmer_size: Arc<usize>,
+            buf_writer: Arc<Mutex<BufWriter<File>>>,
         }
         unsafe impl Send for GlobalState {}
         unsafe impl Sync for GlobalState {}
 
         let global_state = GlobalState {
-            kmer_size: AtomicUsize::from(31),
-            buf_writer: Arc::new(Mutex::new(BufWriter::new(File::create(&output_path).unwrap())))
+            kmer_size: Arc::new(31),
+            buf_writer: Arc::new(Mutex::new(BufWriter::new(
+                File::create(&output_path).unwrap(),
+            ))),
         };
         let local_states = (0..4)
             .map(|_| LocalState {
@@ -116,27 +125,30 @@ fn main() -> ExitCode {
             })
             .collect_vec();
 
+        let file = format::detect::which_file(&input_path);
+        let mut tirp_stream = format::detect::which_stream(file);
         tirp_stream.set_reader_threads(8);
         tirp_stream.set_worker_threads(4);
-        let (_result, _global_state, _local_states) = tirp_stream.par_map(
+        tirp_stream.par_map(
             global_state,
             local_states,
             |token, global, local| match token {
-                StreamToken::Memory { cell_id, reads } => {
-                    let k = global.kmer_size.load(Ordering::Relaxed);
-                    let mut sketch = &mut local.sketch;
+                AutoToken::tirp(StreamToken::Full { cell_id, reads }) => {
+                    let k = Arc::clone(&global.kmer_size);
+                    let sketch = &mut local.sketch;
                     sketch.reset();
 
                     for unparsed_rp in reads.iter() {
                         let rp = parse_readpair(&unparsed_rp).unwrap();
-                        for window in rp.r1.windows(k) {
+                        for window in rp.r1.windows(*k) {
                             sketch.add(window);
                         }
 
-                        for window in rp.r2.windows(k) {
+                        for window in rp.r2.windows(*k) {
                             sketch.add(window);
                         }
                     }
+                    // and then write to disk but thats boring code
                     let mut result = cell_id.clone();
                     result.push(b'\t');
                     result.extend_from_slice(&reads.len().to_string().as_bytes());
