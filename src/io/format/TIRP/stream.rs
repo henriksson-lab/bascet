@@ -4,13 +4,12 @@ use rust_htslib::htslib;
 
 use crate::{
     common::{self},
-    io::detect::AutoToken,
     io::format::tirp,
     io::{BascetFile, BascetStream, BascetStreamToken},
     log_info,
 };
 
-pub struct Stream {
+pub struct Stream<T, I, P> {
     hts_file: *mut htslib::htsFile,
 
     inner_buf: Vec<u8>,
@@ -18,22 +17,13 @@ pub struct Stream {
     inner_valid_bytes: usize,
 
     worker_threadpool: threadpool::ThreadPool,
+
+    _markerT: std::marker::PhantomData<T>,
+    _markerI: std::marker::PhantomData<I>,
+    _markerP: std::marker::PhantomData<P>,
 }
 
-#[derive(Debug)]
-pub enum StreamToken {
-    Full {
-        cell_id: Vec<u8>,
-        reads: Vec<Vec<u8>>,
-    },
-    Partial {
-        cell_id: Vec<u8>,
-        reads: Vec<Vec<u8>>,
-    },
-}
-impl BascetStreamToken for StreamToken {}
-
-impl Stream {
+impl<T, I, P> Stream<T, I, P> {
     pub fn new(file: &tirp::File) -> Self {
         let path = file.file_path();
 
@@ -46,7 +36,7 @@ impl Stream {
                 panic!("hts null");
             }
 
-            Stream {
+            Stream::<T, I, P> {
                 hts_file,
                 // hts_buf: htslib::kstring_t {
                 //     l: 0,
@@ -58,6 +48,10 @@ impl Stream {
                 inner_valid_bytes: 0,
 
                 worker_threadpool: threadpool::ThreadPool::new(1),
+
+                _markerT: std::marker::PhantomData,
+                _markerI: std::marker::PhantomData,
+                _markerP: std::marker::PhantomData,
             }
         }
     }
@@ -87,8 +81,23 @@ impl Stream {
     }
 }
 
-impl BascetStream for Stream {
-    fn next(&mut self) -> anyhow::Result<Option<AutoToken>> {
+impl<T, I, P> Drop for Stream<T, I, P> {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.hts_file.is_null() {
+                htslib::hts_close(self.hts_file);
+            }
+        }
+    }
+}
+
+impl<T, I, P> BascetStream<T, I, P> for Stream<T, I, P>
+where
+    T: BascetStreamToken<I, P> + Send + 'static,
+    I: From<Vec<u8>>,
+    P: From<Vec<Vec<u8>>>,
+{
+    fn next(&mut self) -> anyhow::Result<Option<T>> {
         let mut reads = Vec::with_capacity(1000);
         let mut last_id: Option<Vec<u8>> = None;
 
@@ -107,23 +116,20 @@ impl BascetStream for Stream {
                     self.inner_pos += cursor + 1;
                     continue;
                 }
-                if let Some(tab_pos) = line.iter().position(|&b| b == b'\t') {
+                if let Some(tab_pos) = line.iter().position(|&b| b == common::U8_CHAR_TAB) {
                     let cell_id = &line[..tab_pos];
                     match &last_id {
-                        None => {
-                            last_id = Some(cell_id.to_vec());
-                            reads.push(line.to_vec());
-                        }
                         Some(last) if last == cell_id => {
                             reads.push(line.to_vec());
                         }
                         Some(_) => {
                             // New cell found, return current batch
-                            let token = AutoToken::tirp(StreamToken::Full {
-                                cell_id: last_id.unwrap().to_vec(),
-                                reads: reads.to_vec(),
-                            });
+                            let token = T::new(last_id.unwrap().into(), reads.into());
                             return Ok(Some(token));
+                        }
+                        None => {
+                            last_id = Some(cell_id.to_vec());
+                            reads.push(line.to_vec());
                         }
                     }
                 }
@@ -145,10 +151,7 @@ impl BascetStream for Stream {
                     Ok(None) => {
                         // EOF
                         return if !reads.is_empty() {
-                            let token = AutoToken::tirp(StreamToken::Full {
-                                cell_id: last_id.unwrap().to_vec(),
-                                reads: reads.to_vec(),
-                            });
+                            let token = T::new(last_id.unwrap().into(), reads.into());
                             return Ok(Some(token));
                         } else {
                             Ok(None)
@@ -168,15 +171,15 @@ impl BascetStream for Stream {
         global_state: G,
         local_states: Vec<L>,
         f: F,
-    ) -> (Vec<R>, G, Vec<L>)
+    ) -> (Vec<R>, Arc<G>, Vec<L>)
     where
-        F: Fn(AutoToken, &G, &mut L) -> R + Send + Sync + 'static,
+        F: Fn(T, &G, &mut L) -> R + Send + Sync + 'static,
         R: Send + 'static,
-        G: std::fmt::Debug + Send + Sync + 'static,
+        G: Send + Sync + 'static,
         L: Send + 'static,
     {
         let n_workers = self.worker_threadpool.max_count();
-        let (wtx, wrx) = crossbeam::channel::bounded::<Option<AutoToken>>(128);
+        let (wtx, wrx) = crossbeam::channel::bounded::<Option<T>>(128);
         let (rtx, rrx) = crossbeam::channel::bounded::<(Vec<R>, L)>(n_workers);
 
         let global_state = Arc::new(global_state);
@@ -226,11 +229,7 @@ impl BascetStream for Stream {
             }
         }
 
-        (
-            results,
-            Arc::try_unwrap(global_state).unwrap(),
-            local_states,
-        )
+        (results, global_state, local_states)
     }
 
     fn set_reader_threads(&mut self, n_threads: usize) {

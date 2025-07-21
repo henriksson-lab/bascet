@@ -261,7 +261,7 @@ fn create_writer(
         let zip_file = File::create(zip_file).unwrap();  //////// called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
         let buf_writer = BufWriter::new(zip_file);
         let mut zip_writer = ZipWriter::new(buf_writer);
-        
+
         //Handle each cell, for which files have now been extracted
         while let Ok(Some(cell_id)) = rx.recv() {
 
@@ -269,10 +269,10 @@ fn create_writer(
 
             //////// Run the script on the input, creating files in output
             let path_input_dir = params_io.path_tmp.join(format!("cell-{}", cell_id));
-            let _ = fs::create_dir(&path_input_dir);  
+            let _ = fs::create_dir(&path_input_dir);
 
             let path_output_dir = params_io.path_tmp.join(format!("output-{}", cell_id));
-            let _ = fs::create_dir(&path_output_dir);  
+            let _ = fs::create_dir(&path_output_dir);
 
             println!("Writer for '{}', running script", cell_id);
             let (success, script_output) = mapcell_script.invoke(
@@ -299,7 +299,7 @@ fn create_writer(
                 let path_logfile = path_output_dir.join("_mapcell.log");
                 let log_file = File::create(&path_logfile).unwrap();
                 let mut buf_writer = BufWriter::new(log_file);
-                let _ = std::io::copy(&mut script_output.as_bytes(), &mut buf_writer).unwrap();   
+                let _ = std::io::copy(&mut script_output.as_bytes(), &mut buf_writer).unwrap();
             }
 
             //Check what files we got out from executing the script
@@ -345,7 +345,7 @@ fn create_writer(
         }
         println!("Writer got stop signal, now finishing zip");
 
-        let _ = zip_writer.finish();   
+        let _ = zip_writer.finish();
         println!("Writer exiting");
         // note from julian: included finishing the writers here before, chance that removing this fucked things up
         //      but unfortunately borrow checker didnt like that at all

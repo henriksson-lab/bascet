@@ -1,4 +1,4 @@
-use crate::io::detect::{AutoStream, AutoToken};
+use crate::io::detect::AutoCountSketchStream;
 use enum_dispatch::enum_dispatch;
 pub trait BascetFile {
     const VALID_EXT: Option<&'static str>;
@@ -72,25 +72,32 @@ pub trait BascetWrite {
 }
 
 #[enum_dispatch]
-pub trait BascetStream {
+/// T: Token, I: Token ID, P: Token Payload
+pub trait BascetStream<T, I, P>
+where
+    T: BascetStreamToken<I, P> + Send,
+{
     fn set_reader_threads(&mut self, n_threads: usize);
     fn set_worker_threads(&mut self, n_threads: usize);
+    fn next(&mut self) -> anyhow::Result<Option<T>>;
 
-    fn next(&mut self) -> anyhow::Result<Option<AutoToken>>;
-
+    /// C: Closure, R: Result, G: Global State, L: Local State
     fn par_map<C, R, G, L>(
         &mut self,
         global_state: G,
         local_states: Vec<L>,
         f: C,
-    ) -> (Vec<R>, G, Vec<L>)
+    ) -> (Vec<R>, std::sync::Arc<G>, Vec<L>)
     where
-        C: Fn(AutoToken, &G, &mut L) -> R + Send + Sync + 'static,
+        C: Fn(T, &G, &mut L) -> R + Send + Sync + 'static,
         R: Send + 'static,
-        G: std::fmt::Debug + Send + Sync + 'static,
+        G: Send + Sync + 'static,
         L: Send + Sync + 'static;
 }
 
-#[enum_dispatch]
-pub trait BascetStreamToken {}
+pub trait BascetStreamToken<I, P> {
+    fn new(id: I, payload: P) -> Self;
+    fn id(&self) -> &I;
+    fn payload(&self) -> &P;
+}
 pub trait BascetExtract {}

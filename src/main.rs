@@ -1,6 +1,10 @@
 use bascet::{
     command,
-    io::{detect::{self, AutoToken}, format, parse_readpair, tirp, BascetFile, BascetRead, BascetStream, StreamToken},
+    io::{
+        detect::{self},
+        format, parse_readpair, tirp, AutoCountSketchStream, BascetFile, BascetRead, BascetStream,
+        BascetStreamToken,
+    },
     kmer::{
         kmc_counter::{CountSketch, KmerCounter},
         KMERCodec,
@@ -9,6 +13,7 @@ use bascet::{
 };
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
+use libc::exit;
 use std::{
     fmt,
     fs::File,
@@ -125,50 +130,106 @@ fn main() -> ExitCode {
             })
             .collect_vec();
 
-        let file = format::detect::which_file(&input_path);
-        let mut tirp_stream = format::detect::which_stream(file);
+        let file = detect::which_file(&input_path).unwrap();
+        println!("{:?}", file);
+        struct CountSketchToken {
+            id: Vec<u8>,           // Fixed field name
+            payload: Vec<Vec<u8>>, // Fixed field name
+        }
+
+        impl BascetStreamToken<Vec<u8>, Vec<Vec<u8>>> for CountSketchToken {
+            fn new(id: Vec<u8>, payload: Vec<Vec<u8>>) -> Self {
+                Self { id, payload }
+            }
+
+            fn id(&self) -> &Vec<u8> {
+                &self.id
+            }
+
+            fn payload(&self) -> &Vec<Vec<u8>> {
+                &self.payload
+            }
+        }
+        let mut tirp_stream: AutoCountSketchStream<CountSketchToken, Vec<u8>, Vec<Vec<u8>>> =
+            detect::which_countsketch_stream(file).expect("Unsupported!");
         tirp_stream.set_reader_threads(8);
         tirp_stream.set_worker_threads(4);
-        tirp_stream.par_map(
-            global_state,
-            local_states,
-            |token, global, local| match token {
-                AutoToken::tirp(StreamToken::Full { cell_id, reads }) => {
-                    let k = Arc::clone(&global.kmer_size);
-                    let sketch = &mut local.sketch;
-                    sketch.reset();
+        tirp_stream.par_map(global_state, local_states, |token, global, local| {
+            let reads = token.payload;
+            let k = Arc::clone(&global.kmer_size);
+            let sketch = &mut local.sketch;
+            sketch.reset();
 
-                    for unparsed_rp in reads.iter() {
-                        let rp = parse_readpair(&unparsed_rp).unwrap();
-                        for window in rp.r1.windows(*k) {
-                            sketch.add(window);
-                        }
-
-                        for window in rp.r2.windows(*k) {
-                            sketch.add(window);
-                        }
-                    }
-                    // and then write to disk but thats boring code
-                    let mut result = cell_id.clone();
-                    result.push(b'\t');
-                    result.extend_from_slice(&reads.len().to_string().as_bytes());
-                    result.push(b'\t');
-                    for (i, &value) in sketch.sketch.iter().enumerate() {
-                        if i > 0 {
-                            result.push(b'\t');
-                        }
-                        result.extend_from_slice(value.to_string().as_bytes());
-                    }
-                    result.push(b'\n');
-
-                    if let Ok(mut buf_writer) = global.buf_writer.try_lock() {
-                        let _ = buf_writer.write_all(&result);
-                    }
+            for unparsed_rp in reads.iter() {
+                let rp = parse_readpair(&unparsed_rp).unwrap();
+                for window in rp.r1.windows(*k) {
+                    sketch.add(window);
                 }
-                _ => todo!(),
-            },
-        );
+
+                for window in rp.r2.windows(*k) {
+                    sketch.add(window);
+                }
+            }
+            // and then write to disk but thats boring code
+            let mut result = token.id.clone();
+            result.push(b'\t');
+            result.extend_from_slice(&reads.len().to_string().as_bytes());
+            result.push(b'\t');
+            for (i, &value) in sketch.sketch.iter().enumerate() {
+                if i > 0 {
+                    result.push(b'\t');
+                }
+                result.extend_from_slice(value.to_string().as_bytes());
+            }
+            result.push(b'\n');
+
+            if let Ok(mut buf_writer) = global.buf_writer.try_lock() {
+                let _ = buf_writer.write_all(&result);
+            }
+        });
     }
+    //     tirp_stream.set_reader_threads(8);
+    //     tirp_stream.set_worker_threads(4);
+    //     tirp_stream.par_map(
+    //         global_state,
+    //         local_states,
+    //         |token, global, local| match token {
+    //             AutoToken::tirp(StreamToken::Full { cell_id, reads }) => {
+    //                 let k = Arc::clone(&global.kmer_size);
+    //                 let sketch = &mut local.sketch;
+    //                 sketch.reset();
+
+    //                 for unparsed_rp in reads.iter() {
+    //                     let rp = parse_readpair(&unparsed_rp).unwrap();
+    //                     for window in rp.r1.windows(*k) {
+    //                         sketch.add(window);
+    //                     }
+
+    //                     for window in rp.r2.windows(*k) {
+    //                         sketch.add(window);
+    //                     }
+    //                 }
+    //                 // and then write to disk but thats boring code
+    //                 let mut result = cell_id.clone();
+    //                 result.push(b'\t');
+    //                 result.extend_from_slice(&reads.len().to_string().as_bytes());
+    //                 result.push(b'\t');
+    //                 for (i, &value) in sketch.sketch.iter().enumerate() {
+    //                     if i > 0 {
+    //                         result.push(b'\t');
+    //                     }
+    //                     result.extend_from_slice(value.to_string().as_bytes());
+    //                 }
+    //                 result.push(b'\n');
+
+    //                 if let Ok(mut buf_writer) = global.buf_writer.try_lock() {
+    //                     let _ = buf_writer.write_all(&result);
+    //                 }
+    //             }
+    //             _ => todo!(),
+    //         },
+    //     );
+    // }
 
     // let result = match cli.command {
     //     Commands::Getraw(mut cmd) => cmd.try_execute(),
