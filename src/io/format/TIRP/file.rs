@@ -5,6 +5,7 @@ use crate::{
 };
 use std::process::Command;
 
+#[derive(Debug)]
 pub struct File {
     path: std::path::PathBuf,
 }
@@ -51,7 +52,7 @@ impl File {
 
 #[allow(refining_impl_trait)]
 impl BascetFile for File {
-    const VALID_EXT: Option<&'static str> = Some("tirp");
+    const VALID_EXT: Option<&'static str> = Some("gz");
 
     fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), format::Error> {
         let fpath = path.as_ref();

@@ -5,6 +5,7 @@ use crate::{
 };
 use std::process::Command;
 
+#[derive(Debug)]
 pub struct File {
     path: std::path::PathBuf,
 }

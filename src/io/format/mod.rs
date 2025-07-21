@@ -1,4 +1,3 @@
-pub mod detect;
 pub mod error;
 
 pub use error::Error;
