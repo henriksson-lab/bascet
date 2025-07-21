@@ -73,9 +73,9 @@ pub trait BascetWrite {
 
 #[enum_dispatch]
 /// T: Token, I: Token ID, P: Token Payload
-pub trait BascetStream<T, I, P>
+pub trait BascetStream<T>
 where
-    T: BascetStreamToken<I, P> + Send,
+    T: BascetStreamToken + Send,
 {
     fn set_reader_threads(&mut self, n_threads: usize);
     fn set_worker_threads(&mut self, n_threads: usize);
@@ -95,9 +95,10 @@ where
         L: Send + Sync + 'static;
 }
 
-pub trait BascetStreamToken<I, P> {
-    fn new(id: I, payload: P) -> Self;
-    fn id(&self) -> &I;
-    fn payload(&self) -> &P;
+pub trait BascetStreamToken {
+    fn new<R, S>(raw_id: R, raw_payload: S) -> Self
+    where
+        R: Into<Vec<u8>>,
+        S: Into<Vec<Vec<u8>>>;
 }
 pub trait BascetExtract {}
