@@ -4,12 +4,11 @@ use rust_htslib::htslib;
 
 use crate::{
     common::{self},
-    io::format::tirp,
-    io::{BascetFile, BascetStream, BascetStreamToken},
-    log_info,
+    io::{format::tirp, BascetFile, BascetStream, BascetStreamToken},
+    log_critical, log_info,
 };
 
-pub struct Stream<T, I, P> {
+pub struct Stream<T> {
     hts_file: *mut htslib::htsFile,
 
     inner_buf: Vec<u8>,
@@ -18,12 +17,12 @@ pub struct Stream<T, I, P> {
 
     worker_threadpool: threadpool::ThreadPool,
 
-    _markerT: std::marker::PhantomData<T>,
-    _markerI: std::marker::PhantomData<I>,
-    _markerP: std::marker::PhantomData<P>,
+    _marker_t: std::marker::PhantomData<T>,
+    // _market_i: std::marker::PhantomData<I>,
+    // _marker_p: std::marker::PhantomData<P>,
 }
 
-impl<T, I, P> Stream<T, I, P> {
+impl<T> Stream<T> {
     pub fn new(file: &tirp::File) -> Self {
         let path = file.file_path();
 
@@ -33,25 +32,19 @@ impl<T, I, P> Stream<T, I, P> {
 
             let hts_file = htslib::hts_open(c_path.as_ptr(), mode.as_ptr());
             if hts_file.is_null() {
-                panic!("hts null");
+                log_critical!("hts null");
             }
 
-            Stream::<T, I, P> {
+            Stream::<T> {
                 hts_file,
-                // hts_buf: htslib::kstring_t {
-                //     l: 0,
-                //     m: 0,
-                //     s: std::ptr::null_mut(),
-                // },
+
                 inner_buf: vec![0; common::HUGE_PAGE_SIZE],
                 inner_pos: 0,
                 inner_valid_bytes: 0,
 
-                worker_threadpool: threadpool::ThreadPool::new(1),
+                worker_threadpool: threadpool::ThreadPool::new(0),
 
-                _markerT: std::marker::PhantomData,
-                _markerI: std::marker::PhantomData,
-                _markerP: std::marker::PhantomData,
+                _marker_t: std::marker::PhantomData,
             }
         }
     }
@@ -81,7 +74,7 @@ impl<T, I, P> Stream<T, I, P> {
     }
 }
 
-impl<T, I, P> Drop for Stream<T, I, P> {
+impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
         unsafe {
             if !self.hts_file.is_null() {
@@ -91,14 +84,12 @@ impl<T, I, P> Drop for Stream<T, I, P> {
     }
 }
 
-impl<T, I, P> BascetStream<T, I, P> for Stream<T, I, P>
+impl<T> BascetStream<T> for Stream<T>
 where
-    T: BascetStreamToken<I, P> + Send + 'static,
-    I: From<Vec<u8>>,
-    P: From<Vec<Vec<u8>>>,
+    T: BascetStreamToken + Send + 'static,
 {
     fn next(&mut self) -> anyhow::Result<Option<T>> {
-        let mut reads = Vec::with_capacity(1000);
+        let mut reads = Vec::<Vec<u8>>::with_capacity(1000);
         let mut last_id: Option<Vec<u8>> = None;
 
         loop {
@@ -124,7 +115,7 @@ where
                         }
                         Some(_) => {
                             // New cell found, return current batch
-                            let token = T::new(last_id.unwrap().into(), reads.into());
+                            let token = T::new(last_id.unwrap(), reads);
                             return Ok(Some(token));
                         }
                         None => {
@@ -151,7 +142,7 @@ where
                     Ok(None) => {
                         // EOF
                         return if !reads.is_empty() {
-                            let token = T::new(last_id.unwrap().into(), reads.into());
+                            let token = T::new(last_id.unwrap(), reads);
                             return Ok(Some(token));
                         } else {
                             Ok(None)

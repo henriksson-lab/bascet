@@ -8,9 +8,9 @@ macro_rules! file_valid_formats {
     ($path_expr:expr; $($module:ident),*) => {
         {
             $(
-                if let Ok(_) = crate::io::$module::File::file_validate($path_expr) {
+                if let Ok(inner) = crate::io::$module::File::new($path_expr) {
                     paste! {
-                        return Some(AutoFile::[<$module:camel>](crate::io::format::$module::File::new($path_expr).unwrap()));
+                        return Some(AutoFile::[<$module:camel>](inner));
                     }
                 }
             )*
@@ -31,7 +31,7 @@ pub fn which_file<P: AsRef<std::path::Path>>(path: P) -> Option<AutoFile> {
 
 // detect stream
 macro_rules! stream_valid_formats {
-    ($file_expr:expr; $enum_ty:ty, $T:ty, $I:ty, $P:ty; $($module:ident),*) => {
+    ($file_expr:expr; $enum_ty:ty, $T:ty; $($module:ident),*) => {
         match $file_expr {
             $(
                 paste! { AutoFile::[<$module:camel>](inner) } => Some(
@@ -45,21 +45,18 @@ macro_rules! stream_valid_formats {
     };
 }
 
-#[enum_dispatch(BascetStream<T, I, P>)]
-pub enum AutoCountSketchStream<T, I, P>
+#[enum_dispatch(BascetStream<T>)]
+pub enum AutoCountSketchStream<T>
 where
-    T: BascetStreamToken<I, P> + Send + 'static,
-    I: From<Vec<u8>>,
-    P: From<Vec<Vec<u8>>>,
+    T: BascetStreamToken + Send + 'static,
 {
-    Tirp(crate::io::tirp::Stream<T, I, P>),
+    Tirp(crate::io::tirp::Stream<T>),
+    Zip(crate::io::zip::Stream<T>)
 }
 
-pub fn which_countsketch_stream<T, I, P>(file: AutoFile) -> Option<AutoCountSketchStream<T, I, P>>
+pub fn which_countsketch_stream<T>(file: AutoFile) -> Option<AutoCountSketchStream<T>>
 where
-    T: BascetStreamToken<I, P> + Send + 'static,
-    I: From<Vec<u8>>,
-    P: From<Vec<Vec<u8>>>,
+    T: BascetStreamToken + Send + 'static,
 {
-    stream_valid_formats!(file; AutoCountSketchStream<T, I, P>, T, I, P; tirp)
+    stream_valid_formats!(file; AutoCountSketchStream<T>, T; tirp, zip)
 }

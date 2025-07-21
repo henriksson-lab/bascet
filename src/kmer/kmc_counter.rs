@@ -1,13 +1,11 @@
-use fs2::FileExt;
-use memmap2::MmapOptions;
+use gxhash::GxHasher;
+use std::hash::Hasher;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::{cmp::min, fs::File, sync::Arc, usize};
 
 // use super::kmer_codec::KMERandCount;
 use super::{BoundedHeap, BoundedMinHeap, KMERCodec};
-
-use threadpool::ThreadPool;
 
 // \t[0-9]{10}\n
 // (4 294 967 296) is max value for kmer counts, thats 10 digits :)
@@ -33,16 +31,15 @@ impl CountSketch {
         // in R: https://www.rdocumentation.org/packages/aroma.light/versions/3.2.0/topics/wpca
         // https://docs.rs/streaming_algorithms/latest/streaming_algorithms/  mincounthash code
         // python: https://pdsa.readthedocs.io/en/latest/frequency/count_sketch.html
-        // MurmurHash3
-
-        let h = KMERCodec::h_hash_for_kmer(kmer);
-        let g = KMERCodec::g_hash_for_kmer(kmer);
-
-        let sgn = KMERCodec::plusmin_one(g); //using last bit of hash only. sped up a little now :)
+        let mut hasher = GxHasher::default();
+        hasher.write(kmer);
+        let h = hasher.finish();
+        hasher.write_u8(0);
+        let g = hasher.finish();
+        let s = PLUSMIN_LOOKUP[(g & 0b0000_0001) as usize]; // last bit
 
         let pos = (h as usize) % self.sketch.len();
-        self.sketch[pos] += sgn;
-
+        self.sketch[pos] += s;
         self.total += 1;
     }
 

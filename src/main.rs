@@ -1,5 +1,6 @@
 use bascet::{
     command,
+    common::ReadPair,
     io::{
         detect::{self},
         format, parse_readpair, tirp, AutoCountSketchStream, BascetFile, BascetRead, BascetStream,
@@ -100,8 +101,8 @@ fn main() -> ExitCode {
     log_info!("================================================");
 
     for i in 1..=20 {
-        // let input_path = format!("./data/assembled/skesa.{}.zip", i);
-        let input_path = format!("./data/reads/filtered.{}.tirp.gz", i);
+        let input_path = format!("./data/assembled/skesa.{}.zip", i);
+        // let input_path = format!("./data/reads/filtered.{}.tirp.gz", i);
         let output_path = format!("./out/countsketch.{}.txt", i - 1);
         log_info!("Processing"; "input" => &input_path, "output" => &output_path);
 
@@ -131,27 +132,26 @@ fn main() -> ExitCode {
             .collect_vec();
 
         let file = detect::which_file(&input_path).unwrap();
-        println!("{:?}", file);
         struct CountSketchToken {
-            id: Vec<u8>,           // Fixed field name
-            payload: Vec<Vec<u8>>, // Fixed field name
+            id: Vec<u8>,
+            payload: Vec<Vec<u8>>,
         }
 
-        impl BascetStreamToken<Vec<u8>, Vec<Vec<u8>>> for CountSketchToken {
-            fn new(id: Vec<u8>, payload: Vec<Vec<u8>>) -> Self {
-                Self { id, payload }
-            }
-
-            fn id(&self) -> &Vec<u8> {
-                &self.id
-            }
-
-            fn payload(&self) -> &Vec<Vec<u8>> {
-                &self.payload
+        impl BascetStreamToken for CountSketchToken {
+            fn new<R, S>(id: R, payload: S) -> Self
+            where
+                R: Into<Vec<u8>>,
+                S: Into<Vec<Vec<u8>>>,
+            {
+                Self {
+                    id: id.into(),
+                    payload: payload.into(),
+                }
             }
         }
-        let mut tirp_stream: AutoCountSketchStream<CountSketchToken, Vec<u8>, Vec<Vec<u8>>> =
+        let mut tirp_stream: AutoCountSketchStream<CountSketchToken> =
             detect::which_countsketch_stream(file).expect("Unsupported!");
+
         tirp_stream.set_reader_threads(8);
         tirp_stream.set_worker_threads(4);
         tirp_stream.par_map(global_state, local_states, |token, global, local| {
