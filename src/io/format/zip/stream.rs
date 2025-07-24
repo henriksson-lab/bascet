@@ -1,11 +1,16 @@
-use std::{fs::File, io::{BufReader, Read}, sync::Arc};
+use std::{
+    fs::File,
+    io::{BufReader, Read},
+    sync::Arc,
+};
 
 use rust_htslib::htslib;
-use zip::{unstable::stream::{ZipStreamReader, ZipStreamVisitor}, ZipArchive};
+
+use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
     common::{self},
-    io::{format::tirp, BascetFile, BascetStream, BascetStreamToken},
+    io::{self, BascetFile, BascetStream, BascetStreamToken},
     log_critical, log_info,
 };
 
@@ -13,7 +18,8 @@ pub struct Stream<T> {
     inner_archive: ZipArchive<std::fs::File>,
     inner_files: Vec<String>,
     inner_files_cursor: usize,
-    inner_buffer: Vec<u8>,
+    inner_buf: Vec<u8>,
+    inner_cursor: usize,
 
     worker_threadpool: threadpool::ThreadPool,
 
@@ -21,47 +27,104 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &tirp::File) -> Self {
+    pub fn new(file: &io::zip::File) -> Self {
         let path = file.file_path();
         let file = File::open(path).unwrap();
         let archive = ZipArchive::new(file).unwrap();
-        let files: Vec<String> = archive.file_names().map(|s| String::from(s)).collect();
+        let files: Vec<String> = archive
+            .file_names()
+            .filter(|n| n.ends_with("fa"))
+            .map(|s| String::from(s))
+            .collect();
+
         Stream::<T> {
             inner_archive: archive,
             inner_files: files,
             inner_files_cursor: 0,
-            inner_buffer: vec![0u8; 0],
-            
-            worker_threadpool: threadpool::ThreadPool::new(0),
+            inner_buf: vec![0u8; 0],
+            inner_cursor: 0,
 
-            _marker_t: std::marker::PhantomData
+            worker_threadpool: threadpool::ThreadPool::new(1),
+
+            _marker_t: std::marker::PhantomData,
         }
     }
 }
 
-impl<T> Drop for Stream<T> {
-    fn drop(&mut self) {
-        todo!()
-    }
-}
+// impl<T> Drop for Stream<T> {
+//     fn drop(&mut self) {
+
+//     }
+// }
 
 impl<T> BascetStream<T> for Stream<T>
 where
     T: BascetStreamToken + Send + 'static,
 {
     fn next(&mut self) -> anyhow::Result<Option<T>> {
-        let mut reads = Vec::<Vec<u8>>::with_capacity(1000);
-        let mut last_id: Option<Vec<u8>> = None;
+        let archive = &mut self.inner_archive;
 
-        let mut file = self.inner_archive.by_name(&self.inner_files[self.inner_files_cursor]).unwrap();
+        if self.inner_files_cursor >= self.inner_files.len() {
+            return Ok(None);
+        }
+
+        // println!("{}", self.inner_files_cursor);
+        let mut file = archive
+            .by_name(&self.inner_files[self.inner_files_cursor])
+            .unwrap();
+
         self.inner_files_cursor += 1;
+        self.inner_buf.clear(); // Prevent memory growth
+        self.inner_cursor = 0;
 
-        if let Ok(bytes_read) = file.read_to_end(&mut self.inner_buffer) {
+        let mut reads = Vec::<Vec<u8>>::with_capacity(1000);
+        let path = file.get_metadata().file_name_sanitized();
+        let id = path
+            .parent()
+            .unwrap()
+            .file_stem()
+            .unwrap()
+            .as_encoded_bytes();
+
+        if let Ok(bytes_read) = file.read_to_end(&mut self.inner_buf) {
             match bytes_read {
-                0 => { return Ok(None) }
-                _ => { 
-                    println!("{}", String::from_utf8_lossy(&self.inner_buffer));
-                    return Ok(None)
+                0 => {
+                    let token = T::new(id, reads);
+                    return Ok(Some(token));
+                }
+                _ => {
+                    while let Some(next_pos) = memchr::memchr(
+                        common::U8_CHAR_FASTA_IDEN,
+                        &self.inner_buf[self.inner_cursor..],
+                    ) {
+                        // next record exists
+                        let line = match memchr::memchr(
+                            common::U8_CHAR_FASTA_IDEN,
+                            &self.inner_buf[self.inner_cursor..],
+                        ) {
+                            Some(eor) => {
+                                &self.inner_buf
+                                    [self.inner_cursor..(self.inner_cursor + eor).saturating_sub(1)]
+                            }
+                            None => &self.inner_buf[self.inner_cursor..],
+                        };
+
+                        let seq = match memchr::memchr(common::U8_CHAR_NEWLINE, line) {
+                            Some(record_seq_start) => &line[record_seq_start + 1..],
+                            None => {
+                                self.inner_cursor += next_pos + 1;
+
+                                continue;
+                            }
+                        };
+
+                        reads.push(seq.to_vec());
+
+                        self.inner_cursor += next_pos + 1;
+                    }
+
+                    let token = T::new(id, reads);
+                    return Ok(Some(token));
                 }
             }
         }
@@ -135,7 +198,7 @@ where
     }
 
     fn set_reader_threads(&mut self, n_threads: usize) {
-        todo!();
+        // todo!();
     }
 
     fn set_worker_threads(&mut self, n_threads: usize) {

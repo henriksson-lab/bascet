@@ -4,7 +4,7 @@ use rust_htslib::htslib;
 
 use crate::{
     common::{self},
-    io::{format::tirp, BascetFile, BascetStream, BascetStreamToken},
+    io::{self, BascetFile, BascetStream, BascetStreamToken},
     log_critical, log_info,
 };
 
@@ -12,7 +12,7 @@ pub struct Stream<T> {
     hts_file: *mut htslib::htsFile,
 
     inner_buf: Vec<u8>,
-    inner_pos: usize,
+    inner_cursor: usize,
     inner_valid_bytes: usize,
 
     worker_threadpool: threadpool::ThreadPool,
@@ -23,7 +23,7 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &tirp::File) -> Self {
+    pub fn new(file: &io::tirp::File) -> Self {
         let path = file.file_path();
 
         unsafe {
@@ -39,10 +39,10 @@ impl<T> Stream<T> {
                 hts_file,
 
                 inner_buf: vec![0; common::HUGE_PAGE_SIZE],
-                inner_pos: 0,
+                inner_cursor: 0,
                 inner_valid_bytes: 0,
 
-                worker_threadpool: threadpool::ThreadPool::new(0),
+                worker_threadpool: threadpool::ThreadPool::new(1),
 
                 _marker_t: std::marker::PhantomData,
             }
@@ -61,7 +61,7 @@ impl<T> Stream<T> {
             );
 
             self.inner_valid_bytes = bytes_read as usize;
-            self.inner_pos = 0;
+            self.inner_cursor = 0;
 
             if bytes_read > 0 {
                 Ok(Some(()))
@@ -89,28 +89,22 @@ where
     T: BascetStreamToken + Send + 'static,
 {
     fn next(&mut self) -> anyhow::Result<Option<T>> {
-        let mut reads = Vec::<Vec<u8>>::with_capacity(1000);
         let mut last_id: Option<Vec<u8>> = None;
+        let mut reads: Vec<Vec<u8>> = Vec::new();
 
         loop {
-            // Find next line in buffer
-            // println!("Iterate! pos => {}/{} [len: {}]", self.inner_pos, self.inner_valid_bytes, self.inner_buf.len());
-            let next = &self.inner_buf[self.inner_pos..self.inner_valid_bytes]
-                .iter()
-                .position(|&b| b == common::U8_CHAR_NEWLINE);
+            if let Some(next_pos) = memchr::memchr(
+                common::U8_CHAR_NEWLINE,
+                &self.inner_buf[self.inner_cursor..self.inner_valid_bytes],
+            ) {
+                let line = &self.inner_buf[self.inner_cursor..self.inner_cursor + next_pos];
+                // println!("{}", String::from_utf8_lossy(&line));
+                if let Some(tab_pos) = memchr::memchr(common::U8_CHAR_TAB, line) {
+                    let cid = &line[..tab_pos];
+                    // let cread = &line[tab_pos..];
 
-            // println!("Found: {:?}", next);
-            if let Some(cursor) = next {
-                // Extract line from buffer
-                let line = &self.inner_buf[self.inner_pos..self.inner_pos + cursor];
-                if line.is_empty() {
-                    self.inner_pos += cursor + 1;
-                    continue;
-                }
-                if let Some(tab_pos) = line.iter().position(|&b| b == common::U8_CHAR_TAB) {
-                    let cell_id = &line[..tab_pos];
                     match &last_id {
-                        Some(last) if last == cell_id => {
+                        Some(last) if last == cid => {
                             reads.push(line.to_vec());
                         }
                         Some(_) => {
@@ -119,16 +113,17 @@ where
                             return Ok(Some(token));
                         }
                         None => {
-                            last_id = Some(cell_id.to_vec());
+                            last_id = Some(cid.to_vec());
                             reads.push(line.to_vec());
                         }
                     }
                 }
-                self.inner_pos += cursor + 1;
+                self.inner_cursor += next_pos + 1;
             } else {
                 // Save the partial line before reading a new chunk
                 let mut partial_line =
-                    self.inner_buf[self.inner_pos..self.inner_valid_bytes].to_vec();
+                    self.inner_buf[self.inner_cursor..self.inner_valid_bytes].to_vec();
+
                 match self.read_chunk() {
                     Ok(Some(_)) => {
                         // Prepend the partial line to the new buffer if not empty
@@ -143,7 +138,7 @@ where
                         // EOF
                         return if !reads.is_empty() {
                             let token = T::new(last_id.unwrap(), reads);
-                            return Ok(Some(token));
+                            Ok(Some(token))
                         } else {
                             Ok(None)
                         };

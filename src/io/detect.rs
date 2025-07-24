@@ -8,7 +8,7 @@ macro_rules! file_valid_formats {
     ($path_expr:expr; $($module:ident),*) => {
         {
             $(
-                if let Ok(inner) = crate::io::$module::File::new($path_expr) {
+                if let Ok(inner) = crate::io::format::$module::File::new($path_expr) {
                     paste! {
                         return Some(AutoFile::[<$module:camel>](inner));
                     }
@@ -32,15 +32,17 @@ pub fn which_file<P: AsRef<std::path::Path>>(path: P) -> Option<AutoFile> {
 // detect stream
 macro_rules! stream_valid_formats {
     ($file_expr:expr; $enum_ty:ty, $T:ty; $($module:ident),*) => {
-        match $file_expr {
+        {
             $(
-                paste! { AutoFile::[<$module:camel>](inner) } => Some(
-                    paste! { <$enum_ty>::[<$module:camel>] }(
-                        crate::io::format::$module::Stream::new(&inner)
-                    )
-                ),
+                paste! {
+                    if let AutoFile::[<$module:camel>](ref file_inner) = $file_expr {
+                        return Some(<$enum_ty>::[<$module:camel>](
+                            crate::io::format::$module::Stream::<$T>::new(file_inner)
+                        ));
+                    }
+                }
             )*
-            _ => None
+            None
         }
     };
 }
@@ -50,8 +52,8 @@ pub enum AutoCountSketchStream<T>
 where
     T: BascetStreamToken + Send + 'static,
 {
-    Tirp(crate::io::tirp::Stream<T>),
-    Zip(crate::io::zip::Stream<T>)
+    Tirp(crate::io::format::tirp::Stream<T>),
+    Zip(crate::io::format::zip::Stream<T>),
 }
 
 pub fn which_countsketch_stream<T>(file: AutoFile) -> Option<AutoCountSketchStream<T>>

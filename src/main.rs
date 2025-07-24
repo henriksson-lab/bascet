@@ -101,8 +101,8 @@ fn main() -> ExitCode {
     log_info!("================================================");
 
     for i in 1..=20 {
-        let input_path = format!("./data/assembled/skesa.{}.zip", i);
-        // let input_path = format!("./data/reads/filtered.{}.tirp.gz", i);
+        // let input_path = format!("./data/assembled/skesa.{}.zip", i);
+        let input_path = format!("./data/reads/filtered.{}.tirp.gz", i);
         let output_path = format!("./out/countsketch.{}.txt", i - 1);
         log_info!("Processing"; "input" => &input_path, "output" => &output_path);
 
