@@ -10,7 +10,7 @@ use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
     common::{self},
-    io::{self, BascetFile, BascetStream, BascetStreamToken},
+    io::{self, AutoCountSketchStream, BascetFile, BascetStream, BascetStreamToken},
     log_critical, log_info,
 };
 

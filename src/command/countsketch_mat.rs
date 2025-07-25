@@ -17,18 +17,15 @@ use crate::fileformat::ShardFileExtractor;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_THREADS_READ: usize = 1;
-pub const DEFAULT_THREADS_WRITE: usize = 10;
-pub const DEFAULT_THREADS_WORK: usize = 1;
 
 #[derive(Args)]
-pub struct CountsketchCMD {
+pub struct CountsketchMatCMD {
     // Input bascets
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
-    //
+    #[arg(short = 'i', value_parser = clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
     pub path_in: Vec<PathBuf>,
 
     // Temp file directory
-    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
+    #[arg(short = 't', value_parser = clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
 
     // Output bascet
@@ -43,7 +40,7 @@ pub struct CountsketchCMD {
     #[arg(short = '@', value_parser = clap::value_parser!(usize))]
     num_threads_total: Option<usize>,
 }
-impl CountsketchCMD {
+impl CountsketchMatCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         println!("Running Countsketch MAT");

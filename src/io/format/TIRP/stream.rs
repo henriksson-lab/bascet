@@ -1,25 +1,24 @@
+use std::cmp::max;
 use std::sync::Arc;
 
 use rust_htslib::htslib;
 
 use crate::{
     common::{self},
-    io::{self, BascetFile, BascetStream, BascetStreamToken},
-    log_critical, log_info,
+    io::{
+        self, format::tirp, BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
+    },
+    log_critical,
 };
 
 pub struct Stream<T> {
     hts_file: *mut htslib::htsFile,
 
-    inner_buf: Vec<u8>,
+    inner_buf: Option<Arc<Vec<u8>>>,
+    inner_partial: Vec<u8>,
     inner_cursor: usize,
-    inner_valid_bytes: usize,
-
-    worker_threadpool: threadpool::ThreadPool,
 
     _marker_t: std::marker::PhantomData<T>,
-    // _market_i: std::marker::PhantomData<I>,
-    // _marker_p: std::marker::PhantomData<P>,
 }
 
 impl<T> Stream<T> {
@@ -38,35 +37,44 @@ impl<T> Stream<T> {
             Stream::<T> {
                 hts_file,
 
-                inner_buf: vec![0; common::HUGE_PAGE_SIZE],
+                inner_buf: None,
                 inner_cursor: 0,
-                inner_valid_bytes: 0,
-
-                worker_threadpool: threadpool::ThreadPool::new(1),
+                inner_partial: Vec::new(),
 
                 _marker_t: std::marker::PhantomData,
             }
         }
     }
 
-    fn read_chunk(&mut self) -> anyhow::Result<Option<()>> {
+    fn load_next_buf(&mut self) -> anyhow::Result<bool> {
         unsafe {
             let fp = htslib::hts_get_bgzfp(self.hts_file);
-            self.inner_buf.resize(common::HUGE_PAGE_SIZE, 0);
+            let mut buffer: Vec<u8> = vec![0; common::HUGE_PAGE_SIZE];
 
             let bytes_read = htslib::bgzf_read(
                 fp,
-                &mut self.inner_buf[0] as *mut u8 as *mut std::os::raw::c_void,
+                buffer.as_mut_ptr() as *mut std::os::raw::c_void,
                 common::HUGE_PAGE_SIZE,
             );
 
-            self.inner_valid_bytes = bytes_read as usize;
-            self.inner_cursor = 0;
-
             if bytes_read > 0 {
-                Ok(Some(()))
+                buffer.truncate(bytes_read as usize);
+
+                // Combine with any partial line from previous chunk
+                let final_data = if !self.inner_partial.is_empty() {
+                    let mut combined = self.inner_partial.clone();
+                    combined.extend_from_slice(&buffer);
+                    self.inner_partial.clear();
+                    combined
+                } else {
+                    buffer
+                };
+
+                self.inner_buf = Some(Arc::new(final_data));
+                self.inner_cursor = 0;
+                Ok(true)
             } else if bytes_read == 0 {
-                Ok(None) // EOF
+                Ok(false) // EOF
             } else {
                 Err(anyhow::anyhow!("Read error: {}", bytes_read))
             }
@@ -86,145 +94,153 @@ impl<T> Drop for Stream<T> {
 
 impl<T> BascetStream<T> for Stream<T>
 where
-    T: BascetStreamToken + Send + 'static,
+    T: BascetStreamToken + 'static,
+    T::Builder: BascetStreamTokenBuilder<Token = T>,
 {
-    fn next(&mut self) -> anyhow::Result<Option<T>> {
-        let mut last_id: Option<Vec<u8>> = None;
-        let mut reads: Vec<Vec<u8>> = Vec::new();
-
-        loop {
-            if let Some(next_pos) = memchr::memchr(
-                common::U8_CHAR_NEWLINE,
-                &self.inner_buf[self.inner_cursor..self.inner_valid_bytes],
-            ) {
-                let line = &self.inner_buf[self.inner_cursor..self.inner_cursor + next_pos];
-                // println!("{}", String::from_utf8_lossy(&line));
-                if let Some(tab_pos) = memchr::memchr(common::U8_CHAR_TAB, line) {
-                    let cid = &line[..tab_pos];
-                    // let cread = &line[tab_pos..];
-
-                    match &last_id {
-                        Some(last) if last == cid => {
-                            reads.push(line.to_vec());
-                        }
-                        Some(_) => {
-                            // New cell found, return current batch
-                            let token = T::new(last_id.unwrap(), reads);
-                            return Ok(Some(token));
-                        }
-                        None => {
-                            last_id = Some(cid.to_vec());
-                            reads.push(line.to_vec());
-                        }
-                    }
-                }
-                self.inner_cursor += next_pos + 1;
-            } else {
-                // Save the partial line before reading a new chunk
-                let mut partial_line =
-                    self.inner_buf[self.inner_cursor..self.inner_valid_bytes].to_vec();
-
-                match self.read_chunk() {
-                    Ok(Some(_)) => {
-                        // Prepend the partial line to the new buffer if not empty
-                        if !partial_line.is_empty() {
-                            partial_line
-                                .extend_from_slice(&self.inner_buf[..self.inner_valid_bytes]);
-                            self.inner_buf = partial_line;
-                            self.inner_valid_bytes = self.inner_buf.len();
-                        }
-                    }
-                    Ok(None) => {
-                        // EOF
-                        return if !reads.is_empty() {
-                            let token = T::new(last_id.unwrap(), reads);
-                            Ok(Some(token))
-                        } else {
-                            Ok(None)
-                        };
-                    }
-                    Err(e) => {
-                        log_info!("Error reading chunk"; "error" => format!("{:?}", e));
-                        return Err(e);
-                    }
-                }
-            }
-        }
-    }
-
-    fn par_map<F, R, G, L>(
-        &mut self,
-        global_state: G,
-        local_states: Vec<L>,
-        f: F,
-    ) -> (Vec<R>, Arc<G>, Vec<L>)
-    where
-        F: Fn(T, &G, &mut L) -> R + Send + Sync + 'static,
-        R: Send + 'static,
-        G: Send + Sync + 'static,
-        L: Send + 'static,
-    {
-        let n_workers = self.worker_threadpool.max_count();
-        let (wtx, wrx) = crossbeam::channel::bounded::<Option<T>>(128);
-        let (rtx, rrx) = crossbeam::channel::bounded::<(Vec<R>, L)>(n_workers);
-
-        let global_state = Arc::new(global_state);
-        let mut local_states = local_states.into_iter();
-
-        let f = Arc::new(f);
-        for _ in 0..n_workers {
-            let rx = wrx.clone();
-            let rtx = rtx.clone();
-
-            let f = Arc::clone(&f);
-            let g = Arc::clone(&global_state);
-
-            let mut local_state = match local_states.next() {
-                Some(state) => state,
-                None => panic!("no local state available"),
-            };
-
-            self.worker_threadpool.execute(move || {
-                let mut thread_results = Vec::new();
-                while let Ok(Some(token)) = rx.recv() {
-                    let result = f(token, g.as_ref(), &mut local_state);
-                    thread_results.push(result);
-                }
-                let _ = rtx.send((thread_results, local_state));
-            });
-        }
-
-        // Feed tokens to workers
-        while let Ok(Some(token)) = self.next() {
-            let _ = wtx.send(Some(token));
-        }
-
-        // Signal workers to stop
-        for _ in 0..n_workers {
-            let _ = wtx.send(None);
-        }
-
-        self.worker_threadpool.join();
-
-        let mut results = Vec::new();
-        let mut local_states = Vec::new();
-        for _ in 0..n_workers {
-            if let Ok((mut thread_vec, local_state)) = rrx.recv() {
-                results.append(&mut thread_vec);
-                local_states.push(local_state);
-            }
-        }
-
-        (results, global_state, local_states)
-    }
-
-    fn set_reader_threads(&mut self, n_threads: usize) {
+    fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
             htslib::hts_set_threads(self.hts_file, n_threads as i32);
         }
+        self
     }
 
-    fn set_worker_threads(&mut self, n_threads: usize) {
-        self.worker_threadpool.set_num_threads(n_threads);
+    fn next_cell(&mut self) -> anyhow::Result<Option<T>> {
+        let mut cell_id: Option<Vec<u8>> = None;
+        let mut builder: Option<T::Builder> = None;
+
+        loop {
+            if self.inner_buf.is_none() {
+                if !self.load_next_buf()? {
+                    // EOF - return any partial token
+                    if let Some(b) = builder.take() {
+                        return Ok(Some(b.build()));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+            }
+
+            let current_buf = self.inner_buf.as_ref().unwrap();
+
+            if let Some(next_pos) =
+                memchr::memchr(common::U8_CHAR_NEWLINE, &current_buf[self.inner_cursor..])
+            {
+                let line_start = self.inner_cursor;
+                let line_end = self.inner_cursor + next_pos;
+                let line = &current_buf[line_start..line_end];
+
+                if let Ok((id, rp)) = tirp::parse_readpair(line) {
+                    match &cell_id {
+                        Some(existing_id) if existing_id == id => {
+                            // Same cell, add read slices
+                            if let Some(b) = builder.take() {
+                                builder = Some(b.add_read_slice(rp.r1).add_read_slice(rp.r2));
+                            }
+                        }
+                        Some(_) => {
+                            // New cell found, return current token
+                            if let Some(b) = builder.take() {
+                                let token = b.build();
+                                return Ok(Some(token));
+                            }
+                        }
+                        None => {
+                            // First cell - simplified Arc handling (no RwLock needed)
+                            cell_id = Some(id.to_vec());
+
+                            let new_builder = T::builder()
+                                .add_underlying(Arc::clone(current_buf))
+                                .add_cell_slice(id)
+                                .add_read_slice(rp.r1)
+                                .add_read_slice(rp.r2);
+                            builder = Some(new_builder);
+                        }
+                    }
+                }
+                self.inner_cursor = line_end + 1;
+            } else {
+
+                let remaining_data = &current_buf[self.inner_cursor..];
+                if !remaining_data.is_empty() {
+                    self.inner_partial.extend_from_slice(remaining_data);
+                }
+                // kept alive by stream token now!
+                let _ = drop(current_buf);
+
+                self.inner_buf = None;
+                self.inner_cursor = 0;
+                continue;
+            }
+        }
     }
 }
+
+// fn par_map<F, R, G, L>(
+//     &mut self,
+//     global_state: G,
+//     local_states: Vec<L>,
+//     f: F,
+// ) -> (Vec<R>, Arc<G>, Vec<L>)
+// where
+//     F: Fn(T, &G, &mut L) -> R + Send + Sync + 'static,
+//     R: Send + 'static,
+//     G: Send + Sync + 'static,
+//     L: Send + 'static,
+// {
+//     let n_workers = self.worker_threadpool.max_count();
+//     let (wtx, wrx) = crossbeam::channel::bounded::<Option<T>>(128);
+//     let (rtx, rrx) = crossbeam::channel::bounded::<(Vec<R>, L)>(n_workers);
+
+//     let global_state = Arc::new(global_state);
+//     let mut local_states = local_states.into_iter();
+
+//     let f = Arc::new(f);
+//     for _ in 0..n_workers {
+//         let rx = wrx.clone();
+//         let rtx = rtx.clone();
+
+//         let f = Arc::clone(&f);
+//         let g = Arc::clone(&global_state);
+
+//         let mut local_state = match local_states.next() {
+//             Some(state) => state,
+//             None => panic!("no local state available"),
+//         };
+
+//         self.worker_threadpool.execute(move || {
+//             let mut thread_results = Vec::new();
+//             while let Ok(Some(token)) = rx.recv() {
+//                 let result = f(token, g.as_ref(), &mut local_state);
+//                 thread_results.push(result);
+//             }
+//             let _ = rtx.send((thread_results, local_state));
+//         });
+//     }
+
+//     // Feed tokens to workers
+//     while let Ok(Some(token)) = self.next() {
+//         let _ = wtx.send(Some(token));
+//     }
+
+//     // Signal workers to stop
+//     for _ in 0..n_workers {
+//         let _ = wtx.send(None);
+//     }
+
+//     self.worker_threadpool.join();
+
+//     let mut results = Vec::new();
+//     let mut local_states = Vec::new();
+//     for _ in 0..n_workers {
+//         if let Ok((mut thread_vec, local_state)) = rrx.recv() {
+//             results.append(&mut thread_vec);
+//             local_states.push(local_state);
+//         }
+//     }
+
+//     (results, global_state, local_states)
+// }
+
+// fn set_worker_threads(&mut self, n_threads: usize) {
+//     self.worker_threadpool.set_num_threads(n_threads);
+// }
