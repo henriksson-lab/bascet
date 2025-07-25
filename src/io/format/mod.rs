@@ -3,12 +3,12 @@ pub mod error;
 pub use error::Error;
 
 pub mod tirp;
-// pub mod zip;
+pub mod zip;
 
 pub use tirp::*;
-// pub use zip::*;
+pub use zip::*;
 
 crate::support_which_files! {
     AutoBascetFile
-    for formats [tirp]
+    for formats [tirp, zip]
 }

@@ -16,7 +16,7 @@ use std::{
 
 support_which_stream! {
     AutoStream<T: BascetStreamToken>
-    for formats [tirp]
+    for formats [tirp, zip]
 }
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
@@ -59,7 +59,7 @@ impl CountsketchCMD {
                 .set_reader_threads(n_readers);
 
             let countsketch: Vec<Arc<Mutex<CountSketch>>> = (0..n_workers)
-                .map(|_| Arc::new(Mutex::new(CountSketch::new(100))))
+                .map(|_| Arc::new(Mutex::new(CountSketch::new(128))))
                 .collect();
 
             let path = self
@@ -91,8 +91,6 @@ impl CountsketchCMD {
                             for kmer in kmers {
                                 countsketch.add(kmer);
                             }
-                        }
-                        for read in token.reads.iter() {
                             let rread: Vec<u8> = read
                                 .iter()
                                 .rev()
@@ -101,10 +99,10 @@ impl CountsketchCMD {
                                     b'T' => b'A',
                                     b'G' => b'C',
                                     b'C' => b'G',
-                                    _ => base, // Handle N or other ambiguous bases
+                                    _ => base,
                                 })
                                 .collect();
-                            
+
                             let kmers = rread.windows(31);
                             // total += kmers.len();
                             for kmer in kmers {
@@ -174,21 +172,27 @@ impl StreamTokenBuilder {
 impl BascetStreamTokenBuilder for StreamTokenBuilder {
     type Token = StreamToken;
 
-    fn cell_id(mut self, id: Vec<u8>) -> Self {
-        todo!()
-        // NOTE: Should work something like
-        // let aid = Arc::new(id);
-        // self = self.add_underlying(aid);
-        // self.cell = Some(&(aid.clone()));
-        // self
+    fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
+        let aid = Arc::new(id);
+        self.underlying.push(aid.clone());
+        self.cell = Some(unsafe { std::mem::transmute(aid.as_slice()) });
+        self
+    }
+    fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
+        let aseq = Arc::new(seq);
+        self.underlying.push(aseq.clone());
+        
+        let static_slice: &'static [u8] = unsafe { std::mem::transmute(aseq.as_slice()) };
+        self.reads.push(static_slice);
+        self
     }
 
-    fn add_cell_slice(mut self, slice: &[u8]) -> Self {
+    fn add_cell_id_slice(mut self, slice: &[u8]) -> Self {
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
         self.cell = Some(static_slice);
         self
     }
-    fn add_read_slice(mut self, slice: &[u8]) -> Self {
+    fn add_seq_slice(mut self, slice: &[u8]) -> Self {
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
         self.reads.push(static_slice);
         self

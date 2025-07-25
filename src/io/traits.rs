@@ -96,14 +96,14 @@ pub trait BascetStreamTokenBuilder: Sized {
     type Token: BascetStreamToken;
 
     // Core methods all builders must support
-    fn cell_id(self, id: Vec<u8>) -> Self;
+    fn add_cell_id_owned(self, id: Vec<u8>) -> Self;
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
-    fn add_cell_slice(self, slice: &[u8]) -> Self {
+    fn add_cell_id_slice(self, slice: &[u8]) -> Self {
         self
     }
-    fn add_read_slice(self, slice: &[u8]) -> Self {
+    fn add_seq_slice(self, slice: &[u8]) -> Self {
         self
     }
     fn add_underlying(self, other: Arc<Vec<u8>>) -> Self {

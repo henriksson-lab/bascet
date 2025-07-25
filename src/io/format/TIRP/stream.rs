@@ -153,7 +153,7 @@ where
                         Some(existing_id) if existing_id == id => {
                             // Same cell, add read slices
                             if let Some(b) = builder.take() {
-                                builder = Some(b.add_read_slice(rp.r1).add_read_slice(rp.r2));
+                                builder = Some(b.add_seq_slice(rp.r1).add_seq_slice(rp.r2));
                             }
                         }
                         Some(_) => {
@@ -169,9 +169,9 @@ where
 
                             let new_builder = T::builder()
                                 .add_underlying(Arc::clone(current_buf))
-                                .add_cell_slice(id)
-                                .add_read_slice(rp.r1)
-                                .add_read_slice(rp.r2);
+                                .add_cell_id_slice(id)
+                                .add_seq_slice(rp.r1)
+                                .add_seq_slice(rp.r2);
                             builder = Some(new_builder);
                         }
                     }
