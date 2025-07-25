@@ -2,7 +2,7 @@ use crate::{
     common,
     io::{traits::*, AutoBascetFile},
     kmer::kmc_counter::CountSketch,
-    support_which_stream,
+    log_critical, log_info, support_which_stream,
 };
 use clap::Args;
 use enum_dispatch::enum_dispatch;
@@ -47,14 +47,17 @@ pub struct CountsketchCMD {
 
 impl CountsketchCMD {
     pub fn try_execute(&mut self) -> anyhow::Result<()> {
-        for input in &self.path_in {
-            let file = AutoBascetFile::try_from_path(input).unwrap();
-            let mut stream: AutoStream<StreamToken> = AutoStream::try_from_file(file)
-                .unwrap()
-                .set_reader_threads(8);
+        let n_readers = self.threads_read.unwrap();
+        let n_workers = self.threads_work.unwrap();
 
-            let num_threads = rayon::current_num_threads();
-            let countsketch: Vec<Arc<Mutex<CountSketch>>> = (0..num_threads)
+        for input in &self.path_in {
+            log_info!("Processing"; "input" => ?input);
+            let file = AutoBascetFile::try_from_path(input).unwrap();
+            let stream: AutoStream<StreamToken> = AutoStream::try_from_file(file)
+                .unwrap()
+                .set_reader_threads(n_readers);
+
+            let countsketch: Vec<Arc<Mutex<CountSketch>>> = (0..n_workers)
                 .map(|_| Arc::new(Mutex::new(CountSketch::new(100))))
                 .collect();
 
@@ -64,40 +67,57 @@ impl CountsketchCMD {
                 .join(input.with_extension("countsketch.txt").file_name().unwrap());
 
             let file = File::create(path).unwrap();
-            let buf_writer = BufWriter::new(file);
-            let buf_writer = Arc::new(Mutex::new(buf_writer));
+            let bufwriter = BufWriter::new(file);
+            let bufwriter = Arc::new(Mutex::new(bufwriter));
 
-            while let Ok(Some(token)) = stream.next_cell() {
+            let worker_threadpool = threadpool::ThreadPool::new(n_workers);
+            let (wtx, wrx) = crossbeam::channel::bounded::<Option<StreamToken>>(128);
+
+            for thread in 0..n_workers {
+                let rx = wrx.clone();
                 let countsketch = countsketch.clone();
-                let buf_writer = buf_writer.clone();
+                let bufwriter = bufwriter.clone();
 
-                rayon::spawn(move || {
-                    let thread_idx = rayon::current_thread_index().unwrap();
-                    let mut countsketch = countsketch[thread_idx].lock().unwrap();
-                    countsketch.reset();
+                worker_threadpool.execute(move || {
+                    while let Ok(Some(token)) = rx.recv() {
+                        let mut countsketch = countsketch[thread].lock().unwrap();
+                        countsketch.reset();
 
-                    let mut total = 0;
-                    for read in token.reads.iter() {
-                        let kmers = read.windows(31);
-                        total += kmers.len();
-                        for kmer in kmers {
-                            countsketch.add(kmer);
+                        // let mut total = 0;
+                        for read in token.reads.iter() {
+                            let kmers = read.windows(31);
+                            // total += kmers.len();
+                            for kmer in kmers {
+                                countsketch.add(kmer);
+                            }
                         }
-                    }
 
-                    if let Ok(mut buf_writer) = buf_writer.try_lock() {
-                        let _ = buf_writer.write_all(token.cell);
-                        let _ = buf_writer.write_all(&[common::U8_CHAR_TAB]);
-                        let _ = buf_writer.write_all(total.to_string().as_bytes());
+                        if let Ok(mut bufwriter) = bufwriter.try_lock() {
+                            let _ = bufwriter.write_all(token.cell);
+                            let _ = bufwriter.write_all(&[common::U8_CHAR_TAB]);
+                            let _ = bufwriter.write_all(token.reads.len().to_string().as_bytes());
 
-                        for value in countsketch.sketch.iter() {
-                            let _ = buf_writer.write_all(&[common::U8_CHAR_TAB]);
-                            let _ = buf_writer.write_all(value.to_string().as_bytes());
+                            for value in countsketch.sketch.iter() {
+                                let _ = bufwriter.write_all(&[common::U8_CHAR_TAB]);
+                                let _ = bufwriter.write_all(value.to_string().as_bytes());
+                            }
+                            let _ = bufwriter.write_all(&[common::U8_CHAR_NEWLINE]);
                         }
-                        let _ = buf_writer.write_all(&[common::U8_CHAR_NEWLINE]);
                     }
                 });
             }
+
+            // Feed tokens to workers
+            for token in stream {
+                let _ = wtx.send(Some(token.unwrap()));
+            }
+
+            // Signal workers to stop
+            for _ in 0..n_workers {
+                let _ = wtx.send(None);
+            }
+
+            worker_threadpool.join();
         }
         Ok(())
     }
@@ -136,7 +156,7 @@ impl BascetStreamTokenBuilder for StreamTokenBuilder {
 
     fn cell_id(mut self, id: Vec<u8>) -> Self {
         todo!()
-        // NOTE: Should work something like this?
+        // NOTE: Should work something like
         // let aid = Arc::new(id);
         // self = self.add_underlying(aid);
         // self.cell = Some(&(aid.clone()));
@@ -144,17 +164,16 @@ impl BascetStreamTokenBuilder for StreamTokenBuilder {
     }
 
     fn add_cell_slice(mut self, slice: &[u8]) -> Self {
-        // Convert to 'static lifetime using the same approach as build()
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
         self.cell = Some(static_slice);
         self
     }
-
     fn add_read_slice(mut self, slice: &[u8]) -> Self {
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
         self.reads.push(static_slice);
         self
     }
+
     fn add_underlying(mut self, buffer: Arc<Vec<u8>>) -> Self {
         self.underlying.push(buffer);
         self
