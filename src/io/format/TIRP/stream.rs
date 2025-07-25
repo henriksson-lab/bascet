@@ -145,7 +145,7 @@ where
                             }
                         }
                         None => {
-                            // First cell - simplified Arc handling (no RwLock needed)
+                            // First cell
                             cell_id = Some(id.to_vec());
 
                             let new_builder = T::builder()
@@ -159,11 +159,11 @@ where
                 }
                 self.inner_cursor = line_end + 1;
             } else {
-
                 let remaining_data = &current_buf[self.inner_cursor..];
                 if !remaining_data.is_empty() {
                     self.inner_partial.extend_from_slice(remaining_data);
                 }
+
                 // kept alive by stream token now!
                 let _ = drop(current_buf);
 

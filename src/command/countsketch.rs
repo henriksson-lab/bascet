@@ -1,5 +1,4 @@
 use crate::{
-    command::determine_thread_counts_2,
     common,
     io::{traits::*, AutoBascetFile},
     kmer::kmc_counter::CountSketch,
@@ -7,13 +6,11 @@ use crate::{
 };
 use clap::Args;
 use enum_dispatch::enum_dispatch;
-use rayon::prelude::*;
 use std::{
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
-    str::FromStr,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
 support_which_stream! {
@@ -137,8 +134,13 @@ impl StreamTokenBuilder {
 impl BascetStreamTokenBuilder for StreamTokenBuilder {
     type Token = StreamToken;
 
-    fn cell_id(self, id: Vec<u8>) -> Self {
-        self
+    fn cell_id(mut self, id: Vec<u8>) -> Self {
+        todo!()
+        // NOTE: Should work something like this?
+        // let aid = Arc::new(id);
+        // self = self.add_underlying(aid);
+        // self.cell = Some(&(aid.clone()));
+        // self
     }
 
     fn add_cell_slice(mut self, slice: &[u8]) -> Self {
