@@ -57,26 +57,39 @@ impl<T> Stream<T> {
                 common::HUGE_PAGE_SIZE,
             );
 
-            if bytes_read > 0 {
-                buffer.truncate(bytes_read as usize);
+            match bytes_read {
+                n if n > 0 => {
+                    buffer.truncate(n as usize);
 
-                // Combine with any partial line from previous chunk
-                let final_data = if !self.inner_partial.is_empty() {
-                    let mut combined = self.inner_partial.clone();
-                    combined.extend_from_slice(&buffer);
-                    self.inner_partial.clear();
-                    combined
-                } else {
-                    buffer
-                };
+                    // Always combine with partial data (even if empty)
+                    self.inner_partial.extend_from_slice(&buffer);
 
-                self.inner_buf = Some(Arc::new(final_data));
-                self.inner_cursor = 0;
-                Ok(true)
-            } else if bytes_read == 0 {
-                Ok(false) // EOF
-            } else {
-                Err(anyhow::anyhow!("Read error: {}", bytes_read))
+                    // Find last complete line
+                    if let Some(last_newline_pos) = memchr::memrchr(b'\n', &self.inner_partial) {
+                        // Split: complete lines + remaining partial
+                        let complete_data = self.inner_partial[..=last_newline_pos].to_vec();
+                        let remaining = self.inner_partial[last_newline_pos + 1..].to_vec();
+
+                        self.inner_partial = remaining;
+                        self.inner_buf = Some(Arc::new(complete_data));
+                        self.inner_cursor = 0;
+                        Ok(true)
+                    } else {
+                        Ok(true)
+                    }
+                }
+                0 => {
+                    // EOF - return any remaining data
+                    if !self.inner_partial.is_empty() {
+                        self.inner_buf = Some(Arc::new(self.inner_partial.clone()));
+                        self.inner_partial.clear();
+                        self.inner_cursor = 0;
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                }
+                _ => Err(anyhow::anyhow!("Read error: {}", bytes_read)),
             }
         }
     }
@@ -116,6 +129,12 @@ where
                         return Ok(Some(b.build()));
                     } else {
                         return Ok(None);
+                    }
+                }
+
+                if let Some(current_buf) = &self.inner_buf {
+                    if let Some(b) = builder.take() {
+                        builder = Some(b.add_underlying(Arc::clone(current_buf)));
                     }
                 }
             }

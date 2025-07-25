@@ -26,6 +26,7 @@ impl CountSketch {
         }
     }
 
+    #[inline(always)]
     pub fn add(&mut self, kmer: &[u8]) {
         // https://wangshusen.github.io/code/countsketch.html inspo
         // in R: https://www.rdocumentation.org/packages/aroma.light/versions/3.2.0/topics/wpca
@@ -43,6 +44,7 @@ impl CountSketch {
         self.total += 1;
     }
 
+    #[inline(always)]
     pub fn reset(&mut self) {
         self.sketch.fill(0);
         self.total = 0;
