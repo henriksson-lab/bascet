@@ -4,6 +4,7 @@ use crate::{
     kmer::kmc_counter::CountSketch,
     log_critical, log_info, support_which_stream,
 };
+use bio::alphabets::dna::complement;
 use clap::Args;
 use enum_dispatch::enum_dispatch;
 use std::{
@@ -86,6 +87,25 @@ impl CountsketchCMD {
                         // let mut total = 0;
                         for read in token.reads.iter() {
                             let kmers = read.windows(31);
+                            // total += kmers.len();
+                            for kmer in kmers {
+                                countsketch.add(kmer);
+                            }
+                        }
+                        for read in token.reads.iter() {
+                            let rread: Vec<u8> = read
+                                .iter()
+                                .rev()
+                                .map(|&base| match base {
+                                    b'A' => b'T',
+                                    b'T' => b'A',
+                                    b'G' => b'C',
+                                    b'C' => b'G',
+                                    _ => base, // Handle N or other ambiguous bases
+                                })
+                                .collect();
+                            
+                            let kmers = rread.windows(31);
                             // total += kmers.len();
                             for kmer in kmers {
                                 countsketch.add(kmer);
