@@ -3,8 +3,7 @@ use crate::{
     io::{format, tirp},
 };
 
-pub fn parse_readpair(buf_record: &[u8]) -> Result<ReadPair, format::Error> {
-    
+pub fn parse_readpair(buf_record: &[u8]) -> Result<(&[u8], ReadPair), format::Error> {
     let mut start = 0;
     let mut tab_iter = memchr::memchr_iter(common::U8_CHAR_TAB, buf_record);
 
@@ -41,11 +40,14 @@ pub fn parse_readpair(buf_record: &[u8]) -> Result<ReadPair, format::Error> {
         });
     }
 
-    Ok(ReadPair {
-        r1,
-        r2,
-        q1,
-        q2,
-        umi,
-    })
+    Ok((
+        id,
+        ReadPair {
+            r1,
+            r2,
+            q1,
+            q2,
+            umi,
+        },
+    ))
 }

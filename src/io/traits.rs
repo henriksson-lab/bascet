@@ -1,7 +1,12 @@
-use crate::io::detect::AutoCountSketchStream;
+use std::sync::{Arc, RwLock};
+
+use crate::command::countsketch::AutoStream;
+use crate::io::support::*;
 use enum_dispatch::enum_dispatch;
+
 pub trait BascetFile {
     const VALID_EXT: Option<&'static str>;
+
     fn file_path(&self) -> &std::path::Path;
     fn file_open(&self) -> anyhow::Result<std::fs::File>;
 
@@ -72,33 +77,48 @@ pub trait BascetWrite {
 }
 
 #[enum_dispatch]
-/// T: Token, I: Token ID, P: Token Payload
-pub trait BascetStream<T>
+pub trait BascetStream<T>: Sized
 where
-    T: BascetStreamToken + Send,
+    T: BascetStreamToken + 'static,
+    T::Builder: BascetStreamTokenBuilder<Token = T>,
 {
-    fn set_reader_threads(&mut self, n_threads: usize);
-    fn set_worker_threads(&mut self, n_threads: usize);
-    fn next(&mut self) -> anyhow::Result<Option<T>>;
-
-    /// C: Closure, R: Result, G: Global State, L: Local State
-    fn par_map<C, R, G, L>(
-        &mut self,
-        global_state: G,
-        local_states: Vec<L>,
-        f: C,
-    ) -> (Vec<R>, std::sync::Arc<G>, Vec<L>)
-    where
-        C: Fn(T, &G, &mut L) -> R + Send + Sync + 'static,
-        R: Send + 'static,
-        G: Send + Sync + 'static,
-        L: Send + Sync + 'static;
+    fn next_cell(&mut self) -> anyhow::Result<Option<T>>;
+    fn set_reader_threads(self, n_threads: usize) -> Self {
+        self
+    }
 }
 
-pub trait BascetStreamToken {
-    fn new<R, S>(raw_id: R, raw_payload: S) -> Self
-    where
-        R: Into<Vec<u8>>,
-        S: Into<Vec<Vec<u8>>>;
+pub trait BascetStreamToken: Send {
+    type Builder: BascetStreamTokenBuilder<Token = Self>;
+    fn builder() -> Self::Builder;
+}
+pub trait BascetStreamTokenBuilder: Sized {
+    type Token: BascetStreamToken;
+
+    // Core methods all builders must support
+    fn cell_id(self, id: Vec<u8>) -> Self;
+    fn build(self) -> Self::Token;
+
+    // Optional methods with default implementations
+    fn add_cell_slice(self, slice: &[u8]) -> Self {
+        self
+    }
+    fn add_read_slice(self, slice: &[u8]) -> Self {
+        self
+    }
+    fn add_underlying(self, other: Arc<Vec<u8>>) -> Self {
+        self
+    }
+
+    fn add_sequence_owned(self, seq: Vec<u8>) -> Self {
+        self
+    }
+    fn add_quality_owned(self, scores: Vec<u8>) -> Self {
+        self
+    }
+
+    fn add_metadata(self, meta: &str) -> Self {
+        self
+    }
 }
 pub trait BascetExtract {}

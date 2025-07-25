@@ -22,7 +22,8 @@ pub enum Commands {
     Countchrom(command::CountChromCMD),
     Countfeature(command::CountFeatureCMD),
     PipeSamAddTags(command::PipeSamAddTagsCMD),
-    Countsketch(command::countsketch_mat::CountsketchCMD),
+    Countsketch(command::CountsketchCMD),
+    CountsketchMat(command::CountsketchMatCMD),
     ExtractStream(command::ExtractStreamCMD),
 }
 
@@ -45,6 +46,7 @@ impl fmt::Debug for Commands {
             Commands::PipeSamAddTags(_) => "PipeSamAddTags",
             Commands::Countsketch(_) => "Countsketch",
             Commands::ExtractStream(_) => "ExtractStream",
+            Commands::CountsketchMat(_) => "Countsketch Mat",
         };
         write!(f, "{}", cmd)
     }

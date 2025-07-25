@@ -1,6 +1,8 @@
+// Module declarations (alphabetical)
 pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
+pub mod countsketch;
 pub mod countsketch_mat;
 pub mod extract;
 pub mod extract_terminal;
@@ -17,49 +19,42 @@ pub mod snpcall;
 pub mod threadcount;
 pub mod transform;
 
-pub use extract_terminal::ExtractStreamCMD;
-
-pub use query_kmc::QueryKmc;
-pub use query_kmc::QueryKmcCMD;
-pub use query_kmc::QueryKmcParams;
-
-pub use query_fq::QueryFq;
-pub use query_fq::QueryFqCMD;
-
-pub use featurise_kmc::FeaturiseKMC;
-pub use featurise_kmc::FeaturiseKmcCMD;
-pub use featurise_kmc::FeaturiseParamsKMC;
-
-pub use minhash_hist::MinhashHist;
-pub use minhash_hist::MinhashHistCMD;
-
-pub use mapcell::MapCell;
-pub use mapcell::MapCellCMD;
-
-pub use getraw::GetRaw;
-pub use getraw::GetRawCMD;
-
-pub use shardify::Shardify;
-pub use shardify::ShardifyCMD;
-
-pub use transform::TransformCMD;
-pub use transform::TransformFile;
-
-pub use bam2fragments::Bam2Fragments;
-pub use bam2fragments::Bam2FragmentsCMD;
-
-pub use kraken::KrakenCMD;
-
-pub use countchrom::CountChrom;
-pub use countchrom::CountChromCMD;
-
-pub use countfeature::CountFeature;
-pub use countfeature::CountFeatureCMD;
-
+// BAM/SAM operations
+pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
 pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 
-pub use extract::ExtractCMD;
+// Count operations
+pub use countchrom::{CountChrom, CountChromCMD};
+pub use countfeature::{CountFeature, CountFeatureCMD};
+pub use countsketch::CountsketchCMD;
+pub use countsketch_mat::CountsketchMatCMD;
 
-pub use threadcount::determine_thread_counts_1;
-pub use threadcount::determine_thread_counts_2;
-pub use threadcount::determine_thread_counts_3;
+// Data processing operations
+pub use getraw::{GetRaw, GetRawCMD};
+pub use shardify::{Shardify, ShardifyCMD};
+pub use transform::{TransformCMD, TransformFile};
+
+// Extract operations
+pub use extract::ExtractCMD;
+pub use extract_terminal::ExtractStreamCMD;
+
+// Feature operations
+pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
+
+// Hashing operations
+pub use minhash_hist::{MinhashHist, MinhashHistCMD};
+
+// Mapping operations
+pub use mapcell::{MapCell, MapCellCMD};
+
+// Query operations
+pub use query_fq::{QueryFq, QueryFqCMD};
+pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
+
+// Taxonomic classification
+pub use kraken::KrakenCMD;
+
+// Thread management
+pub use threadcount::{
+    determine_thread_counts_1, determine_thread_counts_2, determine_thread_counts_3,
+};
