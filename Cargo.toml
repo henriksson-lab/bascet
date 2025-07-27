@@ -75,3 +75,4 @@ paste = "1.0.15"
 #TODO: im going to be brave and try latest #HACK: crucial that we use old version (1.1.1). 2.x does not work. Other versions magnitudes slower.
 zip = { version = "4.3.0", default-features = false, features = ["zstd"] }
 memchr = "2.7.5"
+rapidhash = "2.0.2"
