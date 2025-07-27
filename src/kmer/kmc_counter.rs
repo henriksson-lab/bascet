@@ -17,12 +17,16 @@ const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 pub struct CountSketch {
     pub sketch: Vec<i64>,
     pub total: i64,
+
+    // NOTE: for some reason having one hasher is a lot more expensive than creating a new one for each add????
+    // pub hasher: GxHasher,
 }
 impl CountSketch {
     pub fn new(size: usize) -> CountSketch {
         CountSketch {
             sketch: vec![0; size],
             total: 0,
+            // hasher: GxHasher::default(),
         }
     }
 
@@ -32,6 +36,10 @@ impl CountSketch {
         // in R: https://www.rdocumentation.org/packages/aroma.light/versions/3.2.0/topics/wpca
         // https://docs.rs/streaming_algorithms/latest/streaming_algorithms/  mincounthash code
         // python: https://pdsa.readthedocs.io/en/latest/frequency/count_sketch.html
+
+        // let hasher = &mut self.hasher;
+        // NOTE: gxhasher might not be very compatible. Alternatively Rapidhash (https://github.com/Nicoshev/rapidhash) could be useful?
+        // at some point a rolling hash would likely also be worth investigating?
         let mut hasher = GxHasher::default();
         hasher.write(kmer);
         let h = hasher.finish();
