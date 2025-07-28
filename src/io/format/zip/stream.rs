@@ -25,18 +25,18 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &io::zip::File) -> Result<Self, format::Error> {
+    pub fn new(file: &io::zip::File) -> Result<Self, crate::runtime::Error> {
         let path = file.file_path();
 
         let file = match File::open(path) {
             Ok(f) => f,
-            Err(_) => return Err(format::Error::file_not_found(path)),
+            Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
         };
 
         let archive = match ZipArchive::new(file) {
             Ok(a) => a,
             Err(e) => {
-                return Err(format::Error::file_not_valid(
+                return Err(crate::runtime::Error::file_not_valid(
                     path,
                     Some(format!("Failed to read zip archive: {}", e)),
                 ))
@@ -63,7 +63,7 @@ impl<T> BascetStream<T> for Stream<T>
 where
     T: BascetStreamToken + Send + 'static,
 {
-    fn next_cell(&mut self) -> Result<Option<T>, format::Error> {
+    fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
         let archive = &mut self.inner_archive;
 
         if self.inner_files_cursor >= self.inner_files.len() {
@@ -73,7 +73,7 @@ where
         let mut file = match archive.by_name(&self.inner_files[self.inner_files_cursor]) {
             Ok(f) => f,
             Err(e) => {
-                return Err(format::Error::parse_error(
+                return Err(crate::runtime::Error::parse_error(
                     "zip_archive",
                     Some(format!("Failed to read file from archive: {}", e)),
                 ))
@@ -87,7 +87,7 @@ where
         let parent = match path.parent() {
             Some(p) => p,
             None => {
-                return Err(format::Error::parse_error(
+                return Err(crate::runtime::Error::parse_error(
                     "zip_file_path",
                     Some("File has no parent directory"),
                 ))
@@ -97,7 +97,7 @@ where
         let file_stem = match parent.file_stem() {
             Some(stem) => stem,
             None => {
-                return Err(format::Error::parse_error(
+                return Err(crate::runtime::Error::parse_error(
                     "zip_file_path",
                     Some("Parent directory has no file stem"),
                 ))
@@ -142,7 +142,7 @@ where
                 }
             },
             Err(e) => {
-                return Err(format::Error::parse_error(
+                return Err(crate::runtime::Error::parse_error(
                     "zip_file_read",
                     Some(format!("Failed to read file contents: {}", e)),
                 ))

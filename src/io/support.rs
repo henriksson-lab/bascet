@@ -12,14 +12,14 @@ macro_rules! support_which_files {
             }
 
             impl $enum_name {
-                pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::io::format::Error> {
+                pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
                     let path = path.as_ref().to_path_buf();
                     $(
                         if let Ok(inner) = crate::io::format::$format::File::new(&path) {
                             return Ok($enum_name::[<$format:camel>](inner));
                         }
                     )*
-                    Err(crate::io::format::Error::file_not_valid(
+                    Err(crate::runtime::Error::file_not_valid(
                         "try_from_file",
                         Some("Unsupported file format!")
                     ))
@@ -50,7 +50,7 @@ macro_rules! support_which_stream {
             where
                 $generic: $trait_bound + 'static,
             {
-                pub fn try_from_file(file: crate::io::format::AutoBascetFile) -> Result<Self, crate::io::format::Error> {
+                pub fn try_from_file(file: crate::io::format::AutoBascetFile) -> Result<Self, crate::runtime::Error> {
                     $(
                         if let crate::io::format::AutoBascetFile::[<$format:camel>](ref file_inner) = file {
                             return Ok($enum_name::[<$format:camel>](
@@ -58,7 +58,7 @@ macro_rules! support_which_stream {
                             ));
                         }
                     )*
-                    Err(crate::io::format::Error::file_not_valid(
+                    Err(crate::runtime::Error::file_not_valid(
                         "try_from_file",
                         Some("Unsupported file format!")
                     ))

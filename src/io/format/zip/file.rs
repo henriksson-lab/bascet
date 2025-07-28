@@ -11,7 +11,7 @@ pub struct File {
 }
 
 impl File {
-    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, format::Error> {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
         let path = match expand_and_resolve(&path) {
             Ok(p) => p,
             Err(_) => path.as_ref().to_path_buf(),
