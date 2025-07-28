@@ -22,6 +22,12 @@ RUN sh ./Miniconda3-latest-Linux-x86_64.sh -p /opt/software/conda -b
 RUN /opt/software/conda/bin/conda config --add channels defaults
 RUN /opt/software/conda/bin/conda config --add channels conda-forge
 RUN /opt/software/conda/bin/conda config --add channels bioconda
+
+RUN /opt/software/conda/bin/conda tos accept --override-channels --channel conda-forge
+RUN /opt/software/conda/bin/conda tos accept --override-channels --channel bioconda
+RUN /opt/software/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+RUN /opt/software/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 RUN /opt/software/conda/bin/conda create -p /opt/software/conda_env -y abricate ariba bakta bamtools checkm-genome cellsnp-lite diamond fastani fastqc gecco genomad gtdbtk kmc kraken2 mash mlst mmseqs2 ncbi-amrfinderplus prokka quast skani skesa snippy spades star tabix trust4 vireosnp
 
 

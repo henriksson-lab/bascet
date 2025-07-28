@@ -19,7 +19,8 @@ docker:
 
 docker_upload: docker
 	docker save -o docker_image/bascet.tar henriksson-lab/bascet
-	md5sum bascet.tar > bascet.md5
+	md5sum docker_image/bascet.tar > docker_image/bascet.tar.md5
+	scp docker_image/bascet.tar docker_image/bascet.tar.md5  /corgi/public_http/public/bascet/
 
 	# scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/  #it landed without og+r permission using scp!
 	# scp docker_image/bascet.tar hpc2n:~/mystore/
@@ -54,8 +55,7 @@ stream:
 
 
 test_raw_parse_rna:
-        rm -Rf temp; cargo +nightly run --profile=release getraw --chemistry=pb_rnaseq --r1 testparse/parse_R1_001.fastq.gz --r2 testparse/parse_R2_001.fastq.gz --out-complete   testparse/out_complete.0.tirp.gz --out-incomplete testparse/out_incomplete.0.tirp.gz \
-                --libname mylib
+	rm -Rf temp; cargo +nightly run --profile=release getraw --chemistry=pb_rnaseq --r1 testparse/parse_R1_001.fastq.gz --r2 testparse/parse_R2_001.fastq.gz --out-complete   testparse/out_complete.0.tirp.gz --out-incomplete testparse/out_incomplete.0.tirp.gz --libname mylib
 
 
 
