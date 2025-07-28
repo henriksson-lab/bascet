@@ -17,7 +17,6 @@ const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 pub struct CountSketch {
     pub sketch: Vec<i64>,
     pub total: i64,
-
     // NOTE: for some reason having one hasher is a lot more expensive than creating a new one for each add????
     // pub hasher: GxHasher,
 }

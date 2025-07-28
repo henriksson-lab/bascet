@@ -172,37 +172,45 @@ impl StreamTokenBuilder {
 impl BascetStreamTokenBuilder for StreamTokenBuilder {
     type Token = StreamToken;
 
+    #[inline(always)]
     fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
         let aid = Arc::new(id);
         self.underlying.push(aid.clone());
         self.cell = Some(unsafe { std::mem::transmute(aid.as_slice()) });
         self
     }
+
+    #[inline(always)]
     fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
         let aseq = Arc::new(seq);
         self.underlying.push(aseq.clone());
-        
+
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(aseq.as_slice()) };
         self.reads.push(static_slice);
         self
     }
 
+    #[inline(always)]
     fn add_cell_id_slice(mut self, slice: &[u8]) -> Self {
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
         self.cell = Some(static_slice);
         self
     }
+
+    #[inline(always)]
     fn add_seq_slice(mut self, slice: &[u8]) -> Self {
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
         self.reads.push(static_slice);
         self
     }
 
+    #[inline(always)]
     fn add_underlying(mut self, buffer: Arc<Vec<u8>>) -> Self {
         self.underlying.push(buffer);
         self
     }
 
+    #[inline(always)]
     fn build(self) -> StreamToken {
         StreamToken {
             cell: self.cell.expect("cell is required"),
