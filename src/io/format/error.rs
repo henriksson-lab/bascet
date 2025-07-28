@@ -36,6 +36,52 @@ pub enum Error {
 }
 
 impl Error {
+    #[cold]
+    pub fn file_not_found<P: AsRef<std::path::Path>>(path: P) -> Self {
+        Error::FileNotFound {
+            path: path.as_ref().to_path_buf(),
+        }
+    }
+
+    #[cold]
+    pub fn file_not_valid<P: AsRef<std::path::Path>, M: Into<String>>(
+        path: P,
+        msg: Option<M>,
+    ) -> Self {
+        Error::FileNotValid {
+            path: path.as_ref().to_path_buf(),
+            msg: msg.map(|m| m.into()),
+        }
+    }
+
+    #[cold]
+    pub fn utility_execution_error<U: Into<String>, C: Into<String>, M: Into<String>>(
+        utility: U,
+        cmd: C,
+        msg: Option<M>,
+    ) -> Self {
+        Error::UtilityExecutionError {
+            utility: utility.into(),
+            cmd: cmd.into(),
+            msg: msg.map(|m| m.into()),
+        }
+    }
+
+    #[cold]
+    pub fn utility_not_executable<U: Into<String>>(utility: U) -> Self {
+        Error::UtilityNotExecutable {
+            utility: utility.into(),
+        }
+    }
+
+    #[cold]
+    pub fn parse_error<C: Into<String>, M: Into<String>>(context: C, msg: Option<M>) -> Self {
+        Error::ParseError {
+            context: context.into(),
+            msg: msg.map(|m| m.into()),
+        }
+    }
+
     pub fn format_msg_as_detail(msg: &Option<String>) -> String {
         match msg {
             Some(m) => format!(" ({})", m),

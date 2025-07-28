@@ -82,8 +82,8 @@ where
     T: BascetStreamToken + 'static,
     T::Builder: BascetStreamTokenBuilder<Token = T>,
 {
-    fn next_cell(&mut self) -> anyhow::Result<Option<T>>;
-    fn set_reader_threads(self, n_threads: usize) -> Self {
+    fn next_cell(&mut self) -> Result<Option<T>, crate::io::format::Error>;
+    fn set_reader_threads(self, _: usize) -> Self {
         self
     }
 }

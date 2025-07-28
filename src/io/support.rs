@@ -12,14 +12,17 @@ macro_rules! support_which_files {
             }
 
             impl $enum_name {
-                pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, &'static str> {
+                pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::io::format::Error> {
                     let path = path.as_ref().to_path_buf();
                     $(
                         if let Ok(inner) = crate::io::format::$format::File::new(&path) {
                             return Ok($enum_name::[<$format:camel>](inner));
                         }
                     )*
-                    Err("Unsupported file format!")
+                    Err(crate::io::format::Error::file_not_valid(
+                        "try_from_file",
+                        Some("Unsupported file format!")
+                    ))
                 }
             }
         }
@@ -47,15 +50,18 @@ macro_rules! support_which_stream {
             where
                 $generic: $trait_bound + 'static,
             {
-                pub fn try_from_file(file: crate::io::format::AutoBascetFile) -> Result<Self, &'static str> {
+                pub fn try_from_file(file: crate::io::format::AutoBascetFile) -> Result<Self, crate::io::format::Error> {
                     $(
                         if let crate::io::format::AutoBascetFile::[<$format:camel>](ref file_inner) = file {
                             return Ok($enum_name::[<$format:camel>](
-                                crate::io::format::$format::Stream::<$generic>::new(file_inner)
+                                crate::io::format::$format::Stream::<$generic>::new(file_inner)?
                             ));
                         }
                     )*
-                    Err("Unsupported file format!")
+                    Err(crate::io::format::Error::file_not_valid(
+                        "try_from_file",
+                        Some("Unsupported file format!")
+                    ))
                 }
             }
         }

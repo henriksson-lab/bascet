@@ -58,10 +58,6 @@ impl CountsketchCMD {
                 .unwrap()
                 .set_reader_threads(n_readers);
 
-            let countsketch: Vec<Arc<Mutex<CountSketch>>> = (0..n_workers)
-                .map(|_| Arc::new(Mutex::new(CountSketch::new(128))))
-                .collect();
-
             let path = self
                 .path_out
                 .as_path()
@@ -74,14 +70,14 @@ impl CountsketchCMD {
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
             let (wtx, wrx) = crossbeam::channel::bounded::<Option<StreamToken>>(128);
 
-            for thread in 0..n_workers {
+            for _ in 0..n_workers {
                 let rx = wrx.clone();
-                let countsketch = countsketch.clone();
                 let bufwriter = bufwriter.clone();
+                let mut countsketch = CountSketch::new(128);
+                let mut buffer: Vec<u8> = Vec::new();
 
                 worker_threadpool.execute(move || {
                     while let Ok(Some(token)) = rx.recv() {
-                        let mut countsketch = countsketch[thread].lock().unwrap();
                         countsketch.reset();
 
                         // let mut total = 0;
@@ -110,16 +106,20 @@ impl CountsketchCMD {
                             }
                         }
 
-                        if let Ok(mut bufwriter) = bufwriter.try_lock() {
-                            let _ = bufwriter.write_all(token.cell);
-                            let _ = bufwriter.write_all(&[common::U8_CHAR_TAB]);
-                            let _ = bufwriter.write_all(token.reads.len().to_string().as_bytes());
+                        buffer.clear();
+                        buffer.extend_from_slice(token.cell);
+                        buffer.push(common::U8_CHAR_TAB);
+                        buffer.extend_from_slice(token.reads.len().to_string().as_bytes());
 
-                            for value in countsketch.sketch.iter() {
-                                let _ = bufwriter.write_all(&[common::U8_CHAR_TAB]);
-                                let _ = bufwriter.write_all(value.to_string().as_bytes());
-                            }
-                            let _ = bufwriter.write_all(&[common::U8_CHAR_NEWLINE]);
+                        for value in countsketch.sketch.iter() {
+                            buffer.push(common::U8_CHAR_TAB);
+                            buffer.extend_from_slice(value.to_string().as_bytes());
+                        }
+                        buffer.push(common::U8_CHAR_NEWLINE);
+
+                        // NOTE: lock free aproaches for writing did not perform much better
+                        if let Ok(mut bufwriter) = bufwriter.try_lock() {
+                            let _ = bufwriter.write_all(&buffer);
                         }
                     }
                 });
@@ -224,8 +224,7 @@ impl<T> Iterator for AutoStream<T>
 where
     T: BascetStreamToken,
 {
-    type Item = anyhow::Result<T>;
-
+    type Item = Result<T, crate::io::format::Error>;
     fn next(&mut self) -> Option<Self::Item> {
         self.next_cell().transpose()
     }
