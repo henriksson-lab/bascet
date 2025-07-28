@@ -25,19 +25,19 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &io::tirp::File) -> Result<Self, format::Error> {
+    pub fn new(file: &io::tirp::File) -> Result<Self, crate::runtime::Error> {
         let path = file.file_path();
 
         let file = match File::open(&path) {
             Ok(f) => f,
-            Err(_) => return Err(format::Error::file_not_found(path)),
+            Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
         };
 
         unsafe {
             let path_str = match path.to_str() {
                 Some(s) => s,
                 None => {
-                    return Err(format::Error::file_not_valid(
+                    return Err(crate::runtime::Error::file_not_valid(
                         path,
                         Some("Invalid UTF-8 in path"),
                     ))
@@ -47,7 +47,7 @@ impl<T> Stream<T> {
             let c_path = match std::ffi::CString::new(path_str.as_bytes()) {
                 Ok(p) => p,
                 Err(_) => {
-                    return Err(format::Error::file_not_valid(
+                    return Err(crate::runtime::Error::file_not_valid(
                         path,
                         Some("Path contains null bytes"),
                     ))
@@ -57,7 +57,7 @@ impl<T> Stream<T> {
             let mode = match std::ffi::CString::new("r") {
                 Ok(m) => m,
                 Err(_) => {
-                    return Err(format::Error::file_not_valid(
+                    return Err(crate::runtime::Error::file_not_valid(
                         path,
                         Some("Failed to create mode string"),
                     ))
@@ -66,7 +66,7 @@ impl<T> Stream<T> {
 
             let inner_hts_file = htslib::hts_open(c_path.as_ptr(), mode.as_ptr());
             if inner_hts_file.is_null() {
-                return Err(format::Error::file_not_valid(
+                return Err(crate::runtime::Error::file_not_valid(
                     path,
                     Some("hts_open returned null"),
                 ));
@@ -83,7 +83,7 @@ impl<T> Stream<T> {
         }
     }
 
-    fn load_next_buf(&mut self) -> Result<bool, format::Error> {
+    fn load_next_buf(&mut self) -> Result<bool, crate::runtime::Error> {
         unsafe {
             let fp = htslib::hts_get_bgzfp(self.inner_hts_file);
 
@@ -116,7 +116,7 @@ impl<T> Stream<T> {
                         return Ok(true);
                     }
 
-                    return Err(format::Error::parse_error(
+                    return Err(crate::runtime::Error::parse_error(
                         "load_next_buf",
                         Some("No complete lines found in buffer - file may be corrupt or have extremely long reads")
                     ));
@@ -131,7 +131,7 @@ impl<T> Stream<T> {
                     }
                 }
                 _ => {
-                    return Err(format::Error::parse_error(
+                    return Err(crate::runtime::Error::parse_error(
                         "bgzf_read",
                         Some(format!("Read error: {}", bytes_read)),
                     ))
@@ -163,7 +163,7 @@ where
         self
     }
 
-    fn next_cell(&mut self) -> Result<Option<T>, format::Error> {
+    fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
         let mut cell_id: Option<Vec<u8>> = None;
         let mut builder: Option<T::Builder> = None;
 

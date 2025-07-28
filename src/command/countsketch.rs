@@ -1,10 +1,7 @@
 use crate::{
-    common,
-    io::{traits::*, AutoBascetFile},
-    kmer::kmc_counter::CountSketch,
-    log_critical, log_info, support_which_stream,
+    common, io::{traits::*, AutoBascetFile}, kmer::kmc_counter::CountSketch, log_critical, log_info, log_warning, support_which_stream
 };
-use bio::alphabets::dna::complement;
+
 use clap::Args;
 use enum_dispatch::enum_dispatch;
 use std::{
@@ -126,8 +123,19 @@ impl CountsketchCMD {
             }
 
             // Feed tokens to workers
-            for token in stream {
-                let _ = wtx.send(Some(token.unwrap()));
+            for token_res in stream {
+                let token = match token_res {
+                    Ok(token) => token,
+                    Err(e) => match e {
+                        crate::runtime::Error::ParseError { .. } => {
+                            log_warning!("{e}");
+
+                            continue;
+                        },
+                        _ => unreachable!()
+                    },
+                };
+                let _ = wtx.send(Some(token));
             }
 
             // Signal workers to stop
@@ -224,7 +232,7 @@ impl<T> Iterator for AutoStream<T>
 where
     T: BascetStreamToken,
 {
-    type Item = Result<T, crate::io::format::Error>;
+    type Item = Result<T, crate::runtime::Error>;
     fn next(&mut self) -> Option<Self::Item> {
         self.next_cell().transpose()
     }

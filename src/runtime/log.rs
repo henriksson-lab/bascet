@@ -7,6 +7,13 @@ use std::path::PathBuf;
 use crate::utils::expand_and_resolve;
 
 #[derive(Clone, Copy, Debug)]
+pub enum ErrorMode {
+    Suppress,
+    Skip,
+    Fail,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct LogLevel(pub slog::Level);
 impl std::str::FromStr for LogLevel {
     type Err = String;

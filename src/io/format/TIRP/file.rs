@@ -11,7 +11,7 @@ pub struct File {
 }
 
 impl File {
-    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, format::Error> {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
         let path = match expand_and_resolve(&path) {
             Ok(p) => p,
             Err(_) => path.as_ref().to_path_buf(),
@@ -36,14 +36,14 @@ impl File {
                 true => Ok(()),
                 false => {
                     let msg = format!("error code: {:?}", out.status.code());
-                    Err(format::Error::UtilityExecutionError {
+                    Err(crate::runtime::Error::UtilityExecutionError {
                         utility: format!("{:?}", process.get_program()),
                         cmd: command_to_string(&process),
                         msg: Some(msg),
                     })
                 }
             },
-            Err(_) => Err(format::Error::UtilityNotExecutable {
+            Err(_) => Err(crate::runtime::Error::UtilityNotExecutable {
                 utility: format!("{:?}", process.get_program()),
             }),
         };
@@ -53,16 +53,16 @@ impl File {
 impl BascetFile for File {
     const VALID_EXT: Option<&'static str> = Some("gz");
 
-    fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), format::Error> {
+    fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), crate::runtime::Error> {
         let fpath = path.as_ref();
 
         // 1. File exists and is a regular file
         if !fpath.exists() {
-            return Err(format::Error::FileNotFound {
+            return Err(crate::runtime::Error::FileNotFound {
                 path: fpath.to_path_buf(),
             });
         } else if !fpath.is_file() {
-            return Err(format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("directory found instead".into()),
             });
@@ -77,7 +77,7 @@ impl BascetFile for File {
 
         let ext_ok = (fext == Self::VALID_EXT && sext_ok) || fext == Self::VALID_EXT;
         if !ext_ok {
-            return Err(format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("file extension is not tirp or tirp.gz".into()),
             });
@@ -87,14 +87,14 @@ impl BascetFile for File {
         let meta = match std::fs::metadata(&fpath) {
             Ok(m) => m,
             Err(_) => {
-                return Err(format::Error::FileNotValid {
+                return Err(crate::runtime::Error::FileNotValid {
                     path: fpath.to_path_buf(),
                     msg: Some("metadata could not be fetched".into()),
                 })
             }
         };
         if meta.len() == 0 {
-            return Err(format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("file is 0 bytes".into()),
             });
@@ -108,11 +108,11 @@ impl BascetFile for File {
 
         // 1. File exists and is a regular file
         if !ipath.exists() {
-            return Err(format::Error::FileNotFound {
+            return Err(crate::runtime::Error::FileNotFound {
                 path: ipath.to_path_buf(),
             });
         } else if !ipath.is_file() {
-            return Err(format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: ipath.to_path_buf(),
                 msg: Some("directory found instead".into()),
             });
@@ -122,7 +122,7 @@ impl BascetFile for File {
         let fext = ipath.extension().and_then(|e| e.to_str());
         let ext_ok = fext == Some("tbi");
         if !ext_ok {
-            return Err(format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: ipath.to_path_buf(),
                 msg: Some("file extension is not tbi".into()),
             });
@@ -132,14 +132,14 @@ impl BascetFile for File {
         let meta = match std::fs::metadata(&ipath) {
             Ok(m) => m,
             Err(_) => {
-                return Err(format::Error::FileNotValid {
+                return Err(crate::runtime::Error::FileNotValid {
                     path: ipath.to_path_buf(),
                     msg: Some("metadata could not be fetched".into()),
                 })
             }
         };
         if meta.len() == 0 {
-            return Err(format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: ipath.to_path_buf(),
                 msg: Some("file is 0 bytes".into()),
             });

@@ -10,16 +10,16 @@ pub trait BascetFile {
     fn file_path(&self) -> &std::path::Path;
     fn file_open(&self) -> anyhow::Result<std::fs::File>;
 
-    fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), crate::io::format::Error> {
+    fn file_validate<P: AsRef<std::path::Path>>(path: P) -> Result<(), crate::runtime::Error> {
         let fpath = path.as_ref();
 
         // 1. File exists and is a regular file
         if !fpath.exists() {
-            return Err(crate::io::format::Error::FileNotFound {
+            return Err(crate::runtime::Error::FileNotFound {
                 path: fpath.to_path_buf(),
             });
         } else if !fpath.is_file() {
-            return Err(crate::io::format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("directory found instead".into()),
             });
@@ -28,7 +28,7 @@ pub trait BascetFile {
         // 2. File has the correct extension
         let fext = fpath.extension().and_then(|e| e.to_str());
         if fext != Self::VALID_EXT {
-            return Err(crate::io::format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some(
                     format!(
@@ -44,14 +44,14 @@ pub trait BascetFile {
         let meta = match std::fs::metadata(&fpath) {
             Ok(m) => m,
             Err(_) => {
-                return Err(crate::io::format::Error::FileNotValid {
+                return Err(crate::runtime::Error::FileNotValid {
                     path: fpath.to_path_buf(),
                     msg: Some("metadata could not be fetched".into()),
                 })
             }
         };
         if meta.len() == 0 {
-            return Err(crate::io::format::Error::FileNotValid {
+            return Err(crate::runtime::Error::FileNotValid {
                 path: fpath.to_path_buf(),
                 msg: Some("file is 0 bytes".into()),
             });
@@ -82,7 +82,7 @@ where
     T: BascetStreamToken + 'static,
     T::Builder: BascetStreamTokenBuilder<Token = T>,
 {
-    fn next_cell(&mut self) -> Result<Option<T>, crate::io::format::Error>;
+    fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error>;
     fn set_reader_threads(self, _: usize) -> Self {
         self
     }
