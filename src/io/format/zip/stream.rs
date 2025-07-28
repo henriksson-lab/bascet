@@ -1,16 +1,18 @@
+use rust_htslib::htslib;
 use std::{
     fs::File,
     io::{BufReader, Read},
     sync::Arc,
 };
-
-use rust_htslib::htslib;
-
 use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
     common::{self},
-    io::{self, BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder},
+    io::{
+        self,
+        format::{self},
+        BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
+    },
     log_critical, log_info,
 };
 
@@ -18,73 +20,97 @@ pub struct Stream<T> {
     inner_archive: ZipArchive<std::fs::File>,
     inner_files: Vec<String>,
     inner_files_cursor: usize,
-
-    worker_threadpool: threadpool::ThreadPool,
-
-    _marker_t: std::marker::PhantomData<T>,
+    inner_worker_threadpool: threadpool::ThreadPool,
+    _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &io::zip::File) -> Self {
+    pub fn new(file: &io::zip::File) -> Result<Self, format::Error> {
         let path = file.file_path();
-        let file = File::open(path).unwrap();
-        let archive = ZipArchive::new(file).unwrap();
+
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return Err(format::Error::file_not_found(path)),
+        };
+
+        let archive = match ZipArchive::new(file) {
+            Ok(a) => a,
+            Err(e) => {
+                return Err(format::Error::file_not_valid(
+                    path,
+                    Some(format!("Failed to read zip archive: {}", e)),
+                ))
+            }
+        };
+
         let files: Vec<String> = archive
             .file_names()
             .filter(|n| n.ends_with("fa"))
             .map(|s| String::from(s))
             .collect();
 
-        Stream::<T> {
+        Ok(Stream::<T> {
             inner_archive: archive,
             inner_files: files,
             inner_files_cursor: 0,
-
-            worker_threadpool: threadpool::ThreadPool::new(1),
-
-            _marker_t: std::marker::PhantomData,
-        }
+            inner_worker_threadpool: threadpool::ThreadPool::new(1),
+            _marker: std::marker::PhantomData,
+        })
     }
 }
-
-// impl<T> Drop for Stream<T> {
-//     fn drop(&mut self) {
-
-//     }
-// }
 
 impl<T> BascetStream<T> for Stream<T>
 where
     T: BascetStreamToken + Send + 'static,
 {
-    fn next_cell(&mut self) -> anyhow::Result<Option<T>> {
+    fn next_cell(&mut self) -> Result<Option<T>, format::Error> {
         let archive = &mut self.inner_archive;
 
         if self.inner_files_cursor >= self.inner_files.len() {
             return Ok(None);
         }
 
-        // println!("{}", self.inner_files_cursor);
-        let mut file = archive
-            .by_name(&self.inner_files[self.inner_files_cursor])
-            .unwrap();
+        let mut file = match archive.by_name(&self.inner_files[self.inner_files_cursor]) {
+            Ok(f) => f,
+            Err(e) => {
+                return Err(format::Error::parse_error(
+                    "zip_archive",
+                    Some(format!("Failed to read file from archive: {}", e)),
+                ))
+            }
+        };
 
         self.inner_files_cursor += 1;
 
         let path = file.get_metadata().file_name_sanitized();
-        let id = path
-            .parent()
-            .unwrap()
-            .file_stem()
-            .unwrap()
-            .as_encoded_bytes();
 
+        let parent = match path.parent() {
+            Some(p) => p,
+            None => {
+                return Err(format::Error::parse_error(
+                    "zip_file_path",
+                    Some("File has no parent directory"),
+                ))
+            }
+        };
+
+        let file_stem = match parent.file_stem() {
+            Some(stem) => stem,
+            None => {
+                return Err(format::Error::parse_error(
+                    "zip_file_path",
+                    Some("Parent directory has no file stem"),
+                ))
+            }
+        };
+
+        let id = file_stem.as_encoded_bytes();
         let mut builder = T::builder().add_cell_id_owned(id.to_vec());
         let mut cursor = 0;
         let mut buffer: Vec<u8> = Vec::new();
 
-        if let Ok(bytes_read) = file.read_to_end(&mut buffer) {
-            match bytes_read {
+        match file.read_to_end(&mut buffer) {
+            Ok(bytes_read) => match bytes_read {
                 0 => {
                     let token = builder.build();
                     return Ok(Some(token));
@@ -93,7 +119,6 @@ where
                     while let Some(next_pos) =
                         memchr::memchr(common::U8_CHAR_FASTA_IDEN, &buffer[cursor..])
                     {
-                        // next record exists
                         let line =
                             match memchr::memchr(common::U8_CHAR_FASTA_IDEN, &buffer[cursor..]) {
                                 Some(eor) => &buffer[cursor..(cursor + eor).saturating_sub(1)],
@@ -104,10 +129,10 @@ where
                             Some(record_seq_start) => &line[record_seq_start + 1..],
                             None => {
                                 cursor += next_pos + 1;
-
                                 continue;
                             }
                         };
+
                         builder = builder.add_sequence_owned(seq.to_vec());
                         cursor += next_pos + 1;
                     }
@@ -115,12 +140,13 @@ where
                     let token = builder.build();
                     return Ok(Some(token));
                 }
+            },
+            Err(e) => {
+                return Err(format::Error::parse_error(
+                    "zip_file_read",
+                    Some(format!("Failed to read file contents: {}", e)),
+                ))
             }
         }
-        Err(anyhow::anyhow!("Read error"))
-    }
-
-    fn set_reader_threads(mut self, n_threads: usize) -> Self {
-        self
     }
 }
