@@ -63,14 +63,12 @@ impl<T> Stream<T> {
 
                     // Always combine with partial data (even if empty)
                     self.inner_partial.extend_from_slice(&buffer);
-
                     // Find last complete line
                     if let Some(last_newline_pos) = memchr::memrchr(b'\n', &self.inner_partial) {
-                        // Split: complete lines + remaining partial
-                        let complete_data = self.inner_partial[..=last_newline_pos].to_vec();
-                        let remaining = self.inner_partial[last_newline_pos + 1..].to_vec();
-
-                        self.inner_partial = remaining;
+                        let mut complete_data = std::mem::take(&mut self.inner_partial);
+                        let split_point = last_newline_pos + 1;
+                        self.inner_partial = complete_data.split_off(split_point);
+                        complete_data.truncate(last_newline_pos + 1);
                         self.inner_buf = Some(Arc::new(complete_data));
                         self.inner_cursor = 0;
                         Ok(true)
