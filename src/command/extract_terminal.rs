@@ -4,7 +4,6 @@ use clap::Args;
 use itertools::Itertools;
 use std::io;
 use std::fs::File;
-use std::path;
 use std::path::PathBuf;
 use std::io::BufReader;
 use std::io::BufWriter;
@@ -32,8 +31,12 @@ impl ExtractStreamCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
         //Tell version info etc. Final line is "ready" or "error"
-        println!("version_major:1");
-        println!("version_minor:0");
+        println!("terminal_version:1.0");
+
+        let ver_major = env!("CARGO_PKG_VERSION_MAJOR");
+        let ver_minor = env!("CARGO_PKG_VERSION_MINOR");
+        let ver_patch = env!("CARGO_PKG_VERSION_PATCH");
+        println!("bascet_version:{}.{}.{}", ver_major, ver_minor, ver_patch);
 
         let mut stream = ExtractStream {
             curfile: None
