@@ -1,0 +1,7 @@
+kit	chem	plate_dims	bc1	bc2	bc3	ktype	ialias	umilen	trim2	bc1pos	bc2pos	bc3pos
+WT_mini	v2	1x12	n24_v4	v1	v1	normal	12	0	86	78	48	10
+WT	v2	4x12	n99_v5	v1	v1	normal	48	0	86	78	48	10
+WT_mega	v2	8x12	n198_v5	v1	v1	normal	96	0	86	78	48	10
+WT_mini	v3	1x12	n37_R1_v3_6	v1	R3_v3	normal	12	10	58	50	30	10
+WT	v3	4x12	n141_R1_v3_6	v1	R3_v3	normal	48	10	58	50	30	10
+WT_mega	v3	8x12	n299_R1_v3_6	v1	R3_v3	normal	96	10	58	50	30	10

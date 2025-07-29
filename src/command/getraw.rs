@@ -23,8 +23,14 @@ use super::determine_thread_counts_1;
 use crate::barcode::AtrandiRNAseqChemistry;
 use crate::barcode::AtrandiWGSChemistry;
 use crate::barcode::Chemistry;
+<<<<<<< HEAD
 use crate::barcode::GeneralCombinatorialBarcode;
 use crate::barcode::PetriseqChemistry;
+=======
+use crate::barcode::ParseBioChemistry3;
+use crate::barcode::TenxRNAChemistry;
+use crate::fileformat::tirp;
+>>>>>>> main
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
@@ -130,7 +136,15 @@ impl GetRawCMD {
                 ),
             );
         } else if self.chemistry == "atrandi_rnaseq" {
+<<<<<<< HEAD
             let _ = GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
+=======
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut AtrandiRNAseqChemistry::new(
+                )
+            );
+>>>>>>> main
         } else if self.chemistry == "petriseq" {
             let _ = GetRaw::getraw(Arc::new(params_io), &mut PetriseqChemistry::new());
         } else if self.chemistry == "combinatorial" {
@@ -142,15 +156,31 @@ impl GetRawCMD {
             } else {
                 bail!("Barcode file not specified");
             }
+<<<<<<< HEAD
         } else if self.chemistry == "10x" {
             panic!("not implemented");
         } else if self.chemistry == "parsebio" {
             panic!("not implemented");
+=======
+        } else if self.chemistry == "10xrna" || self.chemistry == "10x_rna" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut TenxRNAChemistry::new(
+                )
+            );
+        } else if self.chemistry == "pb_rnaseq" || self.chemistry == "pb_rna" {
+            let _ = GetRaw::getraw(
+                Arc::new(params_io),
+                &mut ParseBioChemistry3::new(
+                    //TODO: option to be more specific
+                )
+            );
+>>>>>>> main
         } else {
             bail!("Unidentified chemistry");
         }
 
-        log::info!("GetRaw has finished succesfully");
+        println!("GetRaw has finished successfully");
         Ok(())
     }
 }
@@ -294,6 +324,7 @@ impl GetRaw {
         //Need to create temp dir
         if params.path_tmp.exists() {
             //todo delete temp dir after run
+            println!("for debugging");
             anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
             println!("Using tempdir {}", params.path_tmp.display());

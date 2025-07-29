@@ -9,3 +9,5 @@ pub mod mapcell_scripts;
 pub mod playground;
 pub mod runtime;
 pub mod utils;
+pub mod kmer;
+pub mod umi;

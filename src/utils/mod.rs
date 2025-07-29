@@ -17,3 +17,5 @@ pub use umi_dedup::dedup_umi;
 pub use path_utils::expand_and_resolve;
 
 pub use command_to_string::command_to_string;
+pub use detect_software::get_bascet_datadir;
+

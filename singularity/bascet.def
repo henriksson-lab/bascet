@@ -15,9 +15,11 @@ From: deps.sif
     ### build bascet
     . "$HOME/.cargo/env"
     cd /src/bascet
+    #cargo +nightly build --profile=release
     cargo +nightly build
 
     ### link bascet to where it should be
+    #cp /src/bascet/target/release/bascet /bin/bascet
     cp /src/bascet/target/debug/bascet /bin/bascet
 
     ### cleanup
