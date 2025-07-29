@@ -1,5 +1,5 @@
 all:
-	cargo +nightly build
+	cargo +nightly build --profile=release
 
 test:
 	cargo +nightly test
@@ -19,6 +19,9 @@ docker:
 
 docker_upload: docker
 	docker save -o docker_image/bascet.tar henriksson-lab/bascet
+	md5sum docker_image/bascet.tar > docker_image/bascet.tar.md5
+	scp docker_image/bascet.tar docker_image/bascet.tar.md5  /corgi/public_http/public/bascet/
+
 	# scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/  #it landed without og+r permission using scp!
 	# scp docker_image/bascet.tar hpc2n:~/mystore/
 	# cp docker_image/bascet.tar /corgi/public_http/public/bascet/
@@ -45,12 +48,33 @@ stream:
 	cargo +nightly run extract-stream
 	#cargo +nightly run extract-stream -i testdata/minhash.0.zip
 
+
 #########
-######### test of RNAseq
+######### test of parse RNAseq
 #########
 
 
-test_raw_rna:
+test_raw_parse_rna:
+	rm -Rf temp; cargo +nightly run --profile=release getraw --chemistry=pb_rnaseq --r1 testparse/parse_R1_001.fastq.gz --r2 testparse/parse_R2_001.fastq.gz --out-complete   testparse/out_complete.0.tirp.gz --out-incomplete testparse/out_incomplete.0.tirp.gz --libname mylib
+
+
+
+#########
+######### test of 10x RNAseq
+#########
+
+
+test_raw_10x_rna:
+	rm -Rf temp; cargo +nightly run --profile=release getraw --chemistry=10xrna --r1 test10x/part_R1_001.fastq.gz --r2 test10x/part_R2_001.fastq.gz --out-complete   test10x/out_complete.0.tirp.gz --out-incomplete test10x/out_incomplete.0.tirp.gz \
+		--libname mylib
+
+
+#########
+######### test of atrandi RNAseq
+#########
+
+
+test_raw_atrandi_rna:
 	rm -Rf temp; cargo +nightly run getraw --chemistry=atrandi_rnaseq  \
 		--r1 testrna/part_raw/part_R1.fastq.gz \
 		--r2 testrna/part_raw/part_R2.fastq.gz \

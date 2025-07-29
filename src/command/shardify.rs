@@ -81,8 +81,31 @@ pub struct Shardify {
     pub include_cells: Option<Vec<CellID>>,
 }
 impl Shardify {
+<<<<<<< HEAD
     /// Run the algorithm
     pub fn run(params: Arc<Shardify>) -> anyhow::Result<()> {
+=======
+
+
+
+
+
+    //If there are many input files then it is better to implement
+    //    TirpStreamingReadPairReader
+    //and just filter out irrelevant files
+
+    //zorn should optimize which TIRPs go where at early stage. avoid sending files everywhere such that reading can be kept fairly
+    //local
+
+
+
+
+    /// Run the algorithm -- randomized access mode
+    pub fn run(
+        params: Arc<Shardify>
+    ) -> anyhow::Result<()> {
+
+>>>>>>> main
         info!("Running command: shardify");
 
         // https://github.com/zaeleus/noodles/blob/master/noodles-tabix/examples/tabix_write.rs
@@ -96,13 +119,21 @@ impl Shardify {
         }
 
         //Open up readers for all input tabix files
+        println!("opening input files");
         let mut list_input_files: Vec<TirpBascetShardReader> = Vec::new();
         for p in params.path_in.iter() {
+<<<<<<< HEAD
             list_input_files
                 .push(TirpBascetShardReader::new(&p).expect("Unable to open input file"));
+=======
+            println!("{}",p.display());
+            let reader = TirpBascetShardReader::new(&p).expect("Unable to open input file");
+            list_input_files.push(reader);
+>>>>>>> main
         }
 
         //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
+        println!("getting list of cells");
         let include_cells = if let Some(p) = &params.include_cells {
             p.clone()
         } else {
@@ -113,6 +144,7 @@ impl Shardify {
             let all_cells: Vec<CellID> = all_cells.iter().cloned().collect();
             all_cells
         };
+        println!("Read # cells: {}",include_cells.len());
 
         //Ensure that the cells are sorted. This likely increases the read locality
         let mut include_cells = include_cells.clone();
@@ -137,14 +169,19 @@ impl Shardify {
         let (tx_request_cell, rx_request_cell) = crossbeam::channel::unbounded::<Option<CellID>>();
 
         //Prepare reader threads, one per input file
+<<<<<<< HEAD
         let thread_pool_read = threadpool::ThreadPool::new(params.path_in.len());
+=======
+        println!("Starting reader threads");
+        let thread_pool_read = threadpool::ThreadPool::new(params.path_in.len());  
+>>>>>>> main
         for p in params.path_in.iter() {
             let _ = create_reader_thread(&p, &thread_pool_read, &rx_request_cell, &tx_write_seq)
                 .unwrap();
         }
 
         //Loop through all the cells that we want
-        debug!("Starting to write output");
+        println!("Starting to write output");
         let n_input = params.path_in.len();
         let n_output = params.path_out.len();
         for cellid in include_cells {
@@ -293,3 +330,33 @@ fn create_reader_thread(
     });
     Ok(())
 }
+<<<<<<< HEAD
+=======
+
+
+
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn performance_tirp() {
+
+
+
+        //Random reading of first 10 cells vs 
+
+
+        //assert_eq!(cnt, 2);
+
+    }
+
+
+
+}
+>>>>>>> main

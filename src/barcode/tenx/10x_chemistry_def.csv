@@ -1,0 +1,8 @@
+kit	bc_file	umi_start	umi_end	trim1	notes
+10x rna 3p v4	3M-3pgex-may-2023_TRU.txt.gz	16	28	28	
+10x rna 5p v3	3M-5pgex-jan-2023.txt.gz	16	28	28	
+10x multiome v1 rna	737k-arc-v1_rna.txt.gz	16	28	28	
+10x rna 3p v3.1	3M-february-2018_TRU.txt.gz	16	28	28	also for v3, and v3.1 HT
+10x rna 3p v2	737k-august-2016.txt.gz	16	26	26	
+10x rna 5p v1	737k-august-2016.txt.gz	16	26	26	
+10x rna 5p v2	737k-august-2016.txt.gz	16	26	26	also for 10x rna 5p HT v2
