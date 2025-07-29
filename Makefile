@@ -115,6 +115,7 @@ test_bam2fragments:
 test_minhash_kmc:
 	rm -Rf temp; cargo +nightly run mapcell -i testdata/kmc.0.zip -o testdata/minhash.0.zip -s _minhash_kmc --show-script-output --keep-files 
 
+#//NOTE
 test_countsketch_fq:
 	#rm -Rf temp; cargo +nightly run mapcell -i testdata/filtered.0.tirp.gz -o testdata/countsketch.0.zip -s _countsketch_fq # --show-script-output --keep-files 
 	rm -Rf temp; cargo +nightly run mapcell -i miseqdata/filtered.1.tirp.gz -o miseqdata/countsketch.0.zip -s _countsketch_fq # --show-script-output --keep-files 

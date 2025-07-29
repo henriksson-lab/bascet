@@ -1,8 +1,8 @@
-use std::{panic, process::ExitCode};
-
-use clap::{Parser, Subcommand};
-
-use bascet::command;
+use bascet::{
+    log_info,
+    runtime::{self, Commands},
+};
+use clap::Parser;
 
 ///////////////////////////////
 /// Parser for commandline options, top level
@@ -10,45 +10,71 @@ use bascet::command;
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
-}
+    command: runtime::Commands,
 
-///////////////////////////////
-/// Possible subcommands to parse
-#[derive(Subcommand)]
-enum Commands {
-    Getraw(command::GetRawCMD),
-    Mapcell(command::MapCellCMD),
-    Extract(command::ExtractCMD),
-    Shardify(command::ShardifyCMD),
-    Transform(command::TransformCMD),
-    Featurise(command::FeaturiseKmcCMD),
-    MinhashHist(command::MinhashHistCMD),
-    QueryKmc(command::QueryKmcCMD),
-    QueryFq(command::QueryFqCMD),
-    Bam2fragments(command::Bam2FragmentsCMD),
-    Kraken(command::KrakenCMD),
-    Countchrom(command::CountChromCMD),
-    Countfeature(command::CountFeatureCMD),
-    PipeSamAddTags(command::PipeSamAddTagsCMD),
-    Countsketch(command::countsketch_mat::CountsketchCMD),
-    ExtractStream(command::ExtractStreamCMD),    
+    #[arg(long, default_value = "skip")]
+    error_mode: runtime::ErrorMode,
+
+    #[arg(long, default_value = "trace")]
+    log_level: runtime::LogLevel,
+
+    #[arg(long, default_value = "both")]
+    log_mode: runtime::LogMode,
+
+    #[arg(long, default_value = "./latest.log")]
+    log_path: std::path::PathBuf,
 }
 
 ///////////////////////////////
 /// Entry point into the software
-fn main() -> ExitCode {
+fn main() -> std::process::ExitCode {
+    let start = std::time::Instant::now();
     let cli = Cli::parse();
-    
 
-    env_logger::init();
+    let _config = runtime::CONFIG.set(runtime::Config {
+        error_mode: cli.error_mode,
+        log_level: cli.log_level,
+        log_mode: cli.log_mode,
+        log_path: cli.log_path.clone(),
+    });
 
-    //Ensure that a panic in a thread results in the entire program terminating
-    let orig_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        orig_hook(panic_info);
+    let _logger = runtime::setup_global_logger(
+        runtime::CONFIG.get().unwrap().log_level,
+        runtime::CONFIG.get().unwrap().log_mode,
+        runtime::CONFIG.get().unwrap().log_path.clone(),
+    );
+
+    // Ensure that a panic in a thread results in the entire program terminating
+    let panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // nicer formatting
+        let msg = format!("\n\n{}\n", panic_info).replace('\n', "\n\t");
+        slog_scope::crit!(""; "panicked" => %msg);
+
+        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+            if let Some(async_guard) = guard.take() {
+                drop(async_guard); // Waits for all logs to flush
+            }
+        }
+
+        println!("Exiting, took: {:#?}", start.elapsed());
+
+        panic_hook(panic_info);
         std::process::exit(1);
     }));
+
+    log_info!("================================================");
+    log_info!("Running Bascet"; "v" => env!("CARGO_PKG_VERSION"));
+    log_info!(""; "Command" => ?cli.command, "Error Handling Mode" => %cli.error_mode);
+    log_info!(""; "Log Mode" => %cli.log_mode, "Log Level" => %cli.log_level);
+
+    match cli.log_mode {
+        runtime::LogMode::Both | runtime::LogMode::Path => {
+            log_info!(""; "Log Path" => cli.log_path.display());
+        }
+        _ => {}
+    }
+    log_info!("================================================");
 
     let result = match cli.command {
         Commands::Getraw(mut cmd) => cmd.try_execute(),
@@ -67,11 +93,20 @@ fn main() -> ExitCode {
         Commands::PipeSamAddTags(mut cmd) => cmd.try_execute(),
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(mut cmd) => cmd.try_execute(),
+        Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
     };
 
-    if let Err(e) = result {
-        eprintln!("Error: {}", e);
-        return ExitCode::FAILURE;
+    if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
+        if let Some(async_guard) = guard.take() {
+            drop(async_guard); // Waits for all logs to flush
+        }
     }
-    return ExitCode::SUCCESS;
+
+    if let Err(e) = result {
+        eprintln!("Error! took: {:#?}\n{e}", start.elapsed());
+        return std::process::ExitCode::FAILURE;
+    }
+
+    println!("Success! took: {:#?}", start.elapsed());
+    return std::process::ExitCode::SUCCESS;
 }

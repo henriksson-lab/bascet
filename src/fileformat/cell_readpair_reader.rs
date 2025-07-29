@@ -1,5 +1,4 @@
-
-/* 
+/*
 use crate::fileformat::CellID;
 use crate::fileformat::ReadPair;
 
@@ -12,12 +11,3 @@ pub trait CellReadPairProcessor {
 
 }
 */
-
-
-
-
-
-
-
-
-

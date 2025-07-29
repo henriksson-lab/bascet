@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Args;
-use std::io::{self, BufRead, stdout, Write, BufWriter};
+use std::io::{self, stdout, BufRead, BufWriter, Write};
 
 #[derive(Args)]
 pub struct PipeSamAddTagsCMD {
@@ -10,8 +10,7 @@ pub struct PipeSamAddTagsCMD {
 }
 impl PipeSamAddTagsCMD {
     pub fn try_execute(&mut self) -> Result<()> {
-
-        let mut writer=BufWriter::new(stdout());
+        let mut writer = BufWriter::new(stdout());
 
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
@@ -23,7 +22,7 @@ impl PipeSamAddTagsCMD {
             } else {
                 //This is a read that need to be mangled
                 let (cell_id, umi) = crate::fileformat::bam::readname_to_cell_umi(line.as_bytes());
-                        
+
                 writer.write_all(line.as_bytes())?;
                 writer.write_all(b"\tCB:Z:")?;
                 writer.write_all(cell_id)?;
@@ -36,13 +35,8 @@ impl PipeSamAddTagsCMD {
                 //Thus add this:
                 //CB:Z:ACGACTTAGTATTGTG-1
                 //UB:Z:TAGGCAGAAGCT
-
             }
         }
         Ok(())
     }
 }
-
-
-
-

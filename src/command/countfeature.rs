@@ -1,55 +1,58 @@
 use clap::Args;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::collections::HashMap;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
 
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
-use crossbeam::channel::Sender;
-use crossbeam::channel::Receiver;
 use threadpool::ThreadPool;
 
 use bio::bio_types::strand::ReqStrand;
-use rust_htslib::bam::Read;
 use rust_htslib::bam::record::Record as BamRecord;
+use rust_htslib::bam::Read;
 
-use noodles_gff::feature::record::Strand;
 use noodles_gff as gff;
+use noodles_gff::feature::record::Strand;
 
+<<<<<<< HEAD
+=======
 use crate::umi::umi_dedup::UMIcounter;
+>>>>>>> main
 use super::determine_thread_counts_1;
+use crate::utils::dedup_umi;
 
 use sprs::{CsMat, TriMat};
 
-
-   
 type Cellid = Vec<u8>;
 type ChromosomeID = Vec<u8>;
-
 
 #[derive(Args)]
 pub struct CountFeatureCMD {
     /// BAM or CRAM file; has to be sorted
-    #[arg(short = 'i', value_parser)]  
+    #[arg(short = 'i', value_parser)]
     pub path_in: PathBuf,
 
     /// GFF3 file
-    #[arg(short = 'g', value_parser)]  
+    #[arg(short = 'g', value_parser)]
     pub path_gff: PathBuf,
 
     /// Full path to file to store in
-    #[arg(short = 'o', value_parser)]  
+    #[arg(short = 'o', value_parser)]
     pub path_out: PathBuf,
 
     // Feature to count
-    #[arg(short = 'f', default_value = "gene")] //Not used, but kept here for consistency with other commands
+    #[arg(short = 'f', default_value = "gene")]
+    //Not used, but kept here for consistency with other commands
     pub use_feature: String,
-    
+
     // Temp file directory
-    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = "temp")] //Not used, but kept here for consistency with other commands
+    #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = "temp")]
+    //Not used, but kept here for consistency with other commands
     pub path_tmp: PathBuf,
 
     //Thread settings
@@ -58,31 +61,27 @@ pub struct CountFeatureCMD {
 }
 impl CountFeatureCMD {
     pub fn try_execute(&mut self) -> anyhow::Result<()> {
-
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
-        println!("Using threads {}",num_threads_total);
+        println!("Using threads {}", num_threads_total);
 
         //TODO Can check that input file is sorted via header
-
 
         CountFeature::new(
             self.path_in.clone(),
             self.path_gff.clone(),
             self.path_out.clone(),
             self.use_feature.clone(),
-            num_threads_total
-        ).run()?;
+            num_threads_total,
+        )
+        .run()?;
 
         log::info!("CountFeature has finished succesfully");
         Ok(())
     }
 }
 
-
-
-
-/* 
-pub enum BascetStrand {  //equivalent to GFF 
+/*
+pub enum BascetStrand {  //equivalent to GFF
     None,
     Forward,
     Reverse,
@@ -90,43 +89,40 @@ pub enum BascetStrand {  //equivalent to GFF
 }
  */
 
-
-
-
-pub struct CountFeature { 
+pub struct CountFeature {
     pub path_in: PathBuf,
     pub path_gff: PathBuf,
     pub path_out: PathBuf,
     pub use_feature: String,
     pub num_threads: usize,
 
-
     thread_pool_work: ThreadPool,
     tx: Sender<Option<GeneCounter>>,
     rx: Receiver<Option<GeneCounter>>,
 
     ///List of genes that have been finally counted
+<<<<<<< HEAD
+    finished_genes: Arc<Mutex<Vec<(GeneCounter, BTreeMap<Vec<u8>, usize>)>>>,
+=======
     finished_genes: Arc<Mutex<Vec<(
         GeneCounter,
         BTreeMap<Vec<u8>, u32>
     )>>>,
 
+>>>>>>> main
 }
 impl CountFeature {
-
     pub fn new(
         path_in: PathBuf,
         path_gff: PathBuf,
         path_out: PathBuf,
         use_feature: String,
-        num_threads: usize
+        num_threads: usize,
     ) -> CountFeature {
-
         //Prepare thread pool
         let thread_pool_work = threadpool::ThreadPool::new(num_threads);
-        let (tx, rx) = crossbeam::channel::bounded(num_threads*3);   
+        let (tx, rx) = crossbeam::channel::bounded(num_threads * 3);
         //let (tx, rx) = (Arc::new(tx), Arc::new(rx));
-
 
         CountFeature {
             path_in: path_in.clone(),
@@ -139,19 +135,15 @@ impl CountFeature {
             tx: tx,
             rx: rx,
 
-            finished_genes: Arc::new(Mutex::new(Vec::new()))
+            finished_genes: Arc::new(Mutex::new(Vec::new())),
         }
-
     }
-
-
 
     fn process_bam(
         &mut self,
         //params: &CountFeature,
-        gff: &mut GenomeCounter
+        gff: &mut GenomeCounter,
     ) -> anyhow::Result<()> {
-
         //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads.
         //cannot be TIRF; if we divide up reads we risk double counting
         let mut bam = rust_htslib::bam::Reader::from_path(&self.path_in)?;
@@ -160,12 +152,12 @@ impl CountFeature {
         bam.set_threads(self.num_threads).unwrap();
 
         //Keep track of last chromosome seen (assuming that file is sorted)
-        //let mut last_chr:Vec<u8> = Vec::new();        
+        //let mut last_chr:Vec<u8> = Vec::new();
 
         //Map cellid -> count. Note that we do not have a list of cellid's at start; we need to harmonize this later
         //let mut map_cell_count: BTreeMap<Cellid, uint> = BTreeMap::new();
 
-        let mut num_reads=0;
+        let mut num_reads = 0;
 
         //Transfer all records
         let mut record = BamRecord::new();
@@ -175,22 +167,22 @@ impl CountFeature {
 
             //Only keep mapping reads
             let flags = record.flags();
-            if flags & 0x4 ==0 {
-
+            if flags & 0x4 == 0 {
                 let header = bam.header();
                 let chr = header.tid2name(record.tid() as u32);
 
                 //Figure out the cell barcode. In one format, this is before the first :
                 //TODO support read name as a TAG
                 let read_name = record.qname();
-                let mut splitter = read_name.split(|b| *b == b':'); 
-                let cell_id = splitter.next().expect("Could not parse cellID from read name");
+                let mut splitter = read_name.split(|b| *b == b':');
+                let cell_id = splitter
+                    .next()
+                    .expect("Could not parse cellID from read name");
                 let umi = splitter.next().expect("Could not parse UMI from read name");
 
-               
                 let strand = match record.strand() {
                     ReqStrand::Forward => Strand::Forward,
-                    ReqStrand::Reverse => Strand::Reverse
+                    ReqStrand::Reverse => Strand::Reverse,
                 };
 
                 gff.count_read(
@@ -200,13 +192,12 @@ impl CountFeature {
                     record.pos(), //or mpos? TODO
                     record.cigar().end_pos(),
                     strand,
-                    &self
+                    &self,
                 );
 
-
                 //Keep track of where we are
-                num_reads+=1;
-                if num_reads%1000000 == 0 {
+                num_reads += 1;
+                if num_reads % 1000000 == 0 {
                     println!("Processed {} reads", num_reads);
                 }
             }
@@ -215,43 +206,32 @@ impl CountFeature {
         Ok(())
     }
 
-
-
-
-
-
-
-
     /// Start all deduplication threads and make them ready for processing
-    pub fn start_dedupers(
-        &mut self
-    ) {
+    pub fn start_dedupers(&mut self) {
         for tidx in 0..self.num_threads {
             let rx = self.rx.clone();
             let finished_genes = Arc::clone(&self.finished_genes);
 
-            println!("Starting deduper thread {}",tidx);
+            println!("Starting deduper thread {}", tidx);
 
-            
             self.thread_pool_work.execute(move || {
-
                 while let Ok(Some(gene)) = rx.recv() {
-
                     //Deduplicate
+<<<<<<< HEAD
+                    let cnt = gene.get_counts(); // t
+=======
                     let cnt = gene.get_counts(); 
 
+>>>>>>> main
 
                     //Put into matrix
                     let mut data = finished_genes.lock().unwrap();
-                    data.push((gene, cnt));                    
+                    data.push((gene, cnt));
                 }
-                println!("Ending deduper thread {}",tidx);
+                println!("Ending deduper thread {}", tidx);
             });
-
-            
         }
     }
-
 
     /// End deduplication threads
     fn end_dedupers(&self) {
@@ -262,23 +242,18 @@ impl CountFeature {
         self.thread_pool_work.join();
     }
 
-
-
     /// Write count matrix to disk
-    fn write_matrix(
-        &self
-    ) -> anyhow::Result<()> {
-
+    fn write_matrix(&self) -> anyhow::Result<()> {
         //Operate on the finished counts from all threads
         let finished_genes = self.finished_genes.lock().unwrap();
 
-        let mut set_cellid = HashSet::new();        
+        let mut set_cellid = HashSet::new();
 
         let mut cur_gene_index = 0;
         let mut map_gene_index = HashMap::new();
 
         //Gather genes and cell names
-        for (g,map) in finished_genes.iter() {
+        for (g, map) in finished_genes.iter() {
             //Give matrix index for genes
             map_gene_index.insert(g.gene_id.to_vec(), cur_gene_index);
             cur_gene_index += 1;
@@ -298,9 +273,9 @@ impl CountFeature {
         }
 
         //Proceed to fill in matrix in triplet format.
-        //matrix is indexed as [gene,cell] 
+        //matrix is indexed as [gene,cell]
         let mut trimat = TriMat::new((cur_gene_index, cur_cellid_index));
-        for (gene,map) in finished_genes.iter() {
+        for (gene, map) in finished_genes.iter() {
             for (cell_id, cnt) in map {
                 let g = map_gene_index.get(&gene.gene_id).unwrap();
                 let c = map_cellid_index.get(&cell_id).unwrap();
@@ -313,22 +288,14 @@ impl CountFeature {
         // converted to a compatible sparse type, using for example
         let compressed_mat: CsMat<_> = trimat.to_csr();
 
-
         //TODO store the matrix in a better way
         sprs::io::write_matrix_market(&self.path_out, &compressed_mat)?;
 
         anyhow::Ok(())
     }
 
-
-
-
-
     /// Run the feature counting algorithm
-    pub fn run(
-        &mut self,
-    ) -> anyhow::Result<()> {
-    
+    pub fn run(&mut self) -> anyhow::Result<()> {
         //Set up counter data structure
         let mut gc = GenomeCounter::read_file(&self)?;
 
@@ -349,30 +316,15 @@ impl CountFeature {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
 /// Counter: cell level
 pub struct CellCounter {
     pub umis: Vec<Vec<u8>>,
 }
 impl CellCounter {
     fn new() -> CellCounter {
-        CellCounter {
-            umis: Vec::new()
-        }
+        CellCounter { umis: Vec::new() }
     }
 }
-
-
 
 //// Counter: gene level
 pub struct GeneCounter {
@@ -385,10 +337,14 @@ pub struct GeneCounter {
     pub gene_name: Vec<u8>,
 
     pub counters: HashMap<Cellid, CellCounter>,
-
 }
 impl GeneCounter {
+<<<<<<< HEAD
+    fn get_counts(&self) -> BTreeMap<Vec<u8>, usize> {
+        //
+=======
     fn get_counts(&self) -> BTreeMap<Vec<u8>, u32> { 
+>>>>>>> main
         // type inference lets us omit an explicit type signature (which
         // would be `BTreeMap<&str, &str>` in this example).
         let mut map_cell_count: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
@@ -403,49 +359,37 @@ impl GeneCounter {
             
             //let cnt = UMIcounter::dedup_umi(&counter.umis);
             map_cell_count.insert(cellid.clone(), cnt);
-
         }
         map_cell_count
     }
 }
 
-
-
 /// Counter: chromosome level
 pub struct ChromosomeCounter {
-    pub genes: Vec<GeneCounter>
+    pub genes: Vec<GeneCounter>,
 }
 impl ChromosomeCounter {
-
     /// Create a new chromosome
     pub fn new() -> ChromosomeCounter {
-        ChromosomeCounter {
-            genes: Vec::new()
-        }
+        ChromosomeCounter { genes: Vec::new() }
     }
 
     /// Add a feature to this chromosome
-    pub fn add_feature(
-        &mut self,
-        f: GeneCounter
-    ) {
+    pub fn add_feature(&mut self, f: GeneCounter) {
         self.genes.push(f);
     }
 
     /// Sort features along this chromosome. This must be done before counting starts as
     /// the features must follow the same order as reads appear in the BAM input file
     pub fn sort(&mut self) {
-        self.genes.sort_by_key(|e| (e.gene_start, e.gene_end)); 
+        self.genes.sort_by_key(|e| (e.gene_start, e.gene_end));
         //The first element will be the last element of this vector.
         //This means that items can be popped off at the end in O(1), keeping ownership
         self.genes.reverse();
     }
 
     /// Signal that this chromosome is done. Thus, finalize all cell counts on this chromosome
-    pub fn finish(
-        &mut self, 
-        cf: &CountFeature
-    ) {
+    pub fn finish(&mut self, cf: &CountFeature) {
         //For any remaining genes, wrap up
         while let Some(this_gene) = self.genes.pop() {
             cf.tx.send(Some(this_gene)).unwrap();
@@ -453,24 +397,18 @@ impl ChromosomeCounter {
     }
 }
 
-
-
-
 /// Counter: chromosome level
 pub struct GenomeCounter {
     chroms: HashMap<Vec<u8>, ChromosomeCounter>,
-    last_chrom: Vec<u8>
+    last_chrom: Vec<u8>,
 }
 impl GenomeCounter {
-
-
     pub fn new() -> GenomeCounter {
-        GenomeCounter { 
+        GenomeCounter {
             chroms: HashMap::new(),
-            last_chrom: Vec::new()
+            last_chrom: Vec::new(),
         }
     }
-
 
     pub fn count_read(
         &mut self,
@@ -479,12 +417,11 @@ impl GenomeCounter {
         chr: &[u8],
         start: i64,
         end: i64,
-        _strand: Strand,  //TOOD make use of this. chemistry dependent
-        cf: &CountFeature
+        _strand: Strand, //TOOD make use of this. chemistry dependent
+        cf: &CountFeature,
     ) {
-
         //If we moved to a new chromosome, ensure we wrap up the counters on the previous one
-        if chr!=self.last_chrom {    
+        if chr != self.last_chrom {
             let prev = self.chroms.get_mut(&self.last_chrom);
             if let Some(prev) = prev {
                 prev.finish(&cf);
@@ -495,46 +432,45 @@ impl GenomeCounter {
         //Investigate relevant chromosome
         let gff_chrom = self.chroms.get_mut(chr);
         if let Some(gff_chrom) = gff_chrom {
-
             //Loop over all genes on this chromosome. Note that the list is sorted backwards
             //such that genes can be popped off the end in O(1) once they are done
-            let mut cur_gene = (gff_chrom.genes.len()-1) as i64 ;
+            let mut cur_gene = (gff_chrom.genes.len() - 1) as i64;
             while cur_gene >= 0 {
                 let this_gene = gff_chrom.genes.get_mut(cur_gene as usize).unwrap();
 
                 //See if the read overlaps current gene
                 if this_gene.gene_end < start {
                     //We are past this gene. The counting can be finalized
-                    let this_gene = gff_chrom.genes.pop().unwrap();                    
+                    let this_gene = gff_chrom.genes.pop().unwrap();
                     cf.tx.send(Some(this_gene)).unwrap();
                 } else if end < this_gene.gene_start {
                     //This gene is beyond the current read. Since reads are sorted by position, we need not check more genes
                     break;
                 } else {
                     //This gene overlaps, so add to its read count
-                    let counter = this_gene.counters.entry(cell_id.into()).or_insert(CellCounter::new());
+                    let counter = this_gene
+                        .counters
+                        .entry(cell_id.into())
+                        .or_insert(CellCounter::new());
                     counter.umis.push(umi.into());
                 }
 
                 //Proceed to check the next gene
                 cur_gene -= 1;
             }
-
         } else {
-            println!("Read from chromosome not declared in GFF; ignoring: {}", String::from_utf8(chr.into()).unwrap());
+            println!(
+                "Read from chromosome not declared in GFF; ignoring: {}",
+                String::from_utf8(chr.into()).unwrap()
+            );
         }
     }
 
-
-
-
-    pub fn add_feature(
-        &mut self,
-        f: GeneCounter
-    ) {
-        self.chroms.entry(f.gene_chr.clone()).
-            and_modify(|e| e.add_feature(f)).
-            or_insert(ChromosomeCounter::new());
+    pub fn add_feature(&mut self, f: GeneCounter) {
+        self.chroms
+            .entry(f.gene_chr.clone())
+            .and_modify(|e| e.add_feature(f))
+            .or_insert(ChromosomeCounter::new());
     }
 
     pub fn sort(&mut self) {
@@ -543,12 +479,10 @@ impl GenomeCounter {
         }
     }
 
-
     pub fn read_file(params: &CountFeature) -> anyhow::Result<GenomeCounter> {
-
         let mut gff = GenomeCounter::new();
 
-        /* 
+        /*
         https://gmod.org/wiki/GFF3
 
         OUR GFF
@@ -570,27 +504,29 @@ impl GenomeCounter {
 
             //Only insert records that the user have chosen; typically genes
             if record.ty() == params.use_feature {
-
                 /*
-                println!(
-                    "{}\t{}\t{}",
-                    record.reference_sequence_name(),
-                    record.start(),
-                    record.end(),
-                );
- */
-                
+                               println!(
+                                   "{}\t{}\t{}",
+                                   record.reference_sequence_name(),
+                                   record.start(),
+                                   record.end(),
+                               );
+                */
+
                 let attr = record.attributes();
                 let attr_id = attr.get(b"ID");
 
-                if let Some(attr_id)=attr_id {
+                if let Some(attr_id) = attr_id {
                     let attr_id = attr_id.as_string().expect("ID is not a string").to_string();
 
                     //Pick a name. Use ID if nothing else
                     let attr_name = attr.get(b"Name");
                     let attr_name = match attr_name {
-                        Some(attr_name) => attr_name.as_string().expect("Name is not a string").to_string(),
-                        None => attr_id.clone()
+                        Some(attr_name) => attr_name
+                            .as_string()
+                            .expect("Name is not a string")
+                            .to_string(),
+                        None => attr_id.clone(),
                     };
 
                     let gc = GeneCounter {
@@ -598,7 +534,7 @@ impl GenomeCounter {
                         gene_start: record.start().get() as i64,
                         gene_end: record.end().get() as i64,
                         gene_strand: record.strand(),
-            
+
                         gene_id: attr_id.as_bytes().to_vec(),
                         gene_name: attr_name.as_bytes().to_vec(),
 
@@ -606,20 +542,15 @@ impl GenomeCounter {
                     };
 
                     gff.add_feature(gc);
-
                 } else {
                     println!("Requested feature has no ID");
                 }
             }
         }
 
-    //Sort records to make it ready for counting
-    gff.sort();
+        //Sort records to make it ready for counting
+        gff.sort();
 
-
-    anyhow::Ok(gff)
+        anyhow::Ok(gff)
     }
-
 }
-
-

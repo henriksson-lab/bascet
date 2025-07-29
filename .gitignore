@@ -15,3 +15,12 @@ Cargo.lock
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 .Rproj.user
+
+# data dirs for development
+data
+out
+# working dir for development
+zorn
+
+# bascet log
+latest.log
