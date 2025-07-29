@@ -1,10 +1,10 @@
 mod commands;
 mod config;
-mod r#macro;
 mod error;
 mod log;
+mod r#macro;
 
 pub use commands::*;
 pub use config::*;
-pub use log::*;
 pub use error::*;
+pub use log::*;
