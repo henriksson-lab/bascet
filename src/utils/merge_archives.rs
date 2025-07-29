@@ -1,10 +1,11 @@
 use std::{
     fs::{self, File},
-    io::BufWriter, path::PathBuf,
+    io::BufWriter,
+    path::PathBuf,
 };
 
-use zip::{ZipArchive, ZipWriter};
 use std::ffi::OsString;
+use zip::{ZipArchive, ZipWriter};
 
 ///////////////////////////////
 /// Merge a list of ZIP archives
@@ -30,14 +31,12 @@ where
     Ok(())
 }
 
-
 ///////////////////////////////
 /// Take multiple zip-files, and merge into a new one. Then delete the source zip files
 pub fn merge_archives_and_delete<P>(destination: &P, sources: &Vec<P>) -> anyhow::Result<()>
 where
     P: AsRef<std::path::Path>,
 {
-
     //Merge into a temp-file first, to make it easy to tell if the write was complete or not
     let mut destination_temp = OsString::from(destination.as_ref().as_os_str());
     destination_temp.push("_");
@@ -54,9 +53,13 @@ where
         let mut archive_source = ZipArchive::new(&file_source).unwrap();
 
         for i in 0..archive_source.len() {
-
-            if num_out%100 == 0 {
-                println!("{} {} / {} ", source.as_ref().display(), i, archive_source.len());
+            if num_out % 100 == 0 {
+                println!(
+                    "{} {} / {} ",
+                    source.as_ref().display(),
+                    i,
+                    archive_source.len()
+                );
             }
 
             let file = archive_source.by_index(i)?;

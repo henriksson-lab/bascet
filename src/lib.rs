@@ -1,10 +1,13 @@
-pub mod command;
-pub mod utils;
-pub mod fileformat;
 pub mod barcode;
+pub mod command;
+pub mod common;
+pub mod fileformat;
+pub mod io;
+pub mod kmer;
 pub mod mapcell;
 pub mod mapcell_scripts;
+pub mod playground;
+pub mod runtime;
+pub mod utils;
 pub mod kmer;
 pub mod umi;
-
-pub mod playground;

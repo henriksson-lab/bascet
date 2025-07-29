@@ -1,30 +1,27 @@
-
-use log::{debug, info};
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::fs::File;
 use anyhow::Result;
 use clap::Args;
+use log::{debug, info};
+use std::collections::HashSet;
+use std::fs::File;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use std::io::{BufWriter, Write};
 
-use crossbeam::channel::Sender;
 use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
 
 use crate::fileformat::read_cell_list_file;
+use crate::fileformat::shard;
+use crate::fileformat::tirp;
 use crate::fileformat::CellID;
 use crate::fileformat::ReadPair;
-use crate::fileformat::TirpBascetShardReader;
-use crate::fileformat::ShardCellDictionary;
 use crate::fileformat::ReadPairReader;
-use crate::fileformat::tirp;
-use crate::fileformat::shard;
-
+use crate::fileformat::ShardCellDictionary;
+use crate::fileformat::TirpBascetShardReader;
 
 type ListReadPair = Arc<Vec<ReadPair>>;
-type MergedListReadWithBarcode = Arc<(CellID,Vec<ListReadPair>)>;
-
+type MergedListReadWithBarcode = Arc<(CellID, Vec<ListReadPair>)>;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
@@ -47,13 +44,10 @@ pub struct ShardifyCMD {
     // File with a list of cells to include
     #[arg(long = "cells")]
     pub include_cells: Option<PathBuf>,
-
 }
 impl ShardifyCMD {
-
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-
         //Read optional list of cells
         let include_cells = if let Some(p) = &self.include_cells {
             let name_of_cells = read_cell_list_file(&p);
@@ -67,9 +61,9 @@ impl ShardifyCMD {
             path_in: self.path_in.clone(),
             path_tmp: self.path_tmp.clone(),
             path_out: self.path_out.clone(),
-            include_cells: include_cells
+            include_cells: include_cells,
         };
-        
+
         let _ = Shardify::run(Arc::new(params)).expect("shardify failed");
 
         log::info!("Shardify has finished succesfully");
@@ -77,13 +71,8 @@ impl ShardifyCMD {
     }
 }
 
-
-
-
-
-
 /// Algorithm: Take parsed reads and organize them as shards
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct Shardify {
     pub path_in: Vec<std::path::PathBuf>,
     pub path_tmp: std::path::PathBuf,
@@ -92,6 +81,10 @@ pub struct Shardify {
     pub include_cells: Option<Vec<CellID>>,
 }
 impl Shardify {
+<<<<<<< HEAD
+    /// Run the algorithm
+    pub fn run(params: Arc<Shardify>) -> anyhow::Result<()> {
+=======
 
 
 
@@ -112,8 +105,8 @@ impl Shardify {
         params: Arc<Shardify>
     ) -> anyhow::Result<()> {
 
+>>>>>>> main
         info!("Running command: shardify");
-
 
         // https://github.com/zaeleus/noodles/blob/master/noodles-tabix/examples/tabix_write.rs
         // noodles writing index while writing bed-like file
@@ -121,18 +114,22 @@ impl Shardify {
         // multithreaded reader can also get virtual position https://github.com/zaeleus/noodles/blob/master/noodles-bgzf/src/multithreaded_reader.rs
 
         if false {
-            crate::utils::check_tabix().expect("tabix not found");  /////// can we write tabix files with rust?? bgzip is possible
+            crate::utils::check_tabix().expect("tabix not found"); /////// can we write tabix files with rust?? bgzip is possible
             println!("Required software is in place");
         }
-
 
         //Open up readers for all input tabix files
         println!("opening input files");
         let mut list_input_files: Vec<TirpBascetShardReader> = Vec::new();
         for p in params.path_in.iter() {
+<<<<<<< HEAD
+            list_input_files
+                .push(TirpBascetShardReader::new(&p).expect("Unable to open input file"));
+=======
             println!("{}",p.display());
             let reader = TirpBascetShardReader::new(&p).expect("Unable to open input file");
             list_input_files.push(reader);
+>>>>>>> main
         }
 
         //Get full list of cells, or use provided list. possibly subset to cells present to avoid calls later?
@@ -155,35 +152,32 @@ impl Shardify {
 
         //Create queue: reads going to main thread, for concatenation
         //Limit how many chunks can be in pipe
-        let (tx_write_seq, rx_write_seq) = crossbeam::channel::unbounded::<ListReadPair>();  
+        let (tx_write_seq, rx_write_seq) = crossbeam::channel::unbounded::<ListReadPair>();
 
         //Create queue: concatenated reads going to writers
         //Limit how many chunks can be in pipe
-        let (tx_write_cat, rx_write_cat) = crossbeam::channel::bounded::<Option<MergedListReadWithBarcode>>(30);  
+        let (tx_write_cat, rx_write_cat) =
+            crossbeam::channel::bounded::<Option<MergedListReadWithBarcode>>(30);
 
         //Start writer threads, one per shard requested
         let thread_pool_write = threadpool::ThreadPool::new(params.path_out.len());
         for p in params.path_out.iter() {
-            let _ = create_writer_thread(
-                &p,
-                &thread_pool_write,
-                &rx_write_cat
-            ).unwrap();
+            let _ = create_writer_thread(&p, &thread_pool_write, &rx_write_cat).unwrap();
         }
 
         //Create queue: cellid's to be read. we will use this as a broadcaster, one cellid at a time
-        let (tx_request_cell, rx_request_cell) = crossbeam::channel::unbounded::<Option<CellID>>();  
+        let (tx_request_cell, rx_request_cell) = crossbeam::channel::unbounded::<Option<CellID>>();
 
         //Prepare reader threads, one per input file
+<<<<<<< HEAD
+        let thread_pool_read = threadpool::ThreadPool::new(params.path_in.len());
+=======
         println!("Starting reader threads");
         let thread_pool_read = threadpool::ThreadPool::new(params.path_in.len());  
+>>>>>>> main
         for p in params.path_in.iter() {
-            let _ = create_reader_thread(
-                &p,
-                &thread_pool_read,
-                &rx_request_cell,
-                &tx_write_seq
-            ).unwrap();
+            let _ = create_reader_thread(&p, &thread_pool_read, &rx_request_cell, &tx_write_seq)
+                .unwrap();
         }
 
         //Loop through all the cells that we want
@@ -191,7 +185,6 @@ impl Shardify {
         let n_input = params.path_in.len();
         let n_output = params.path_out.len();
         for cellid in include_cells {
-
             println!("cell: {}", &cellid);
 
             //Ask each input thread to provide reads
@@ -202,7 +195,9 @@ impl Shardify {
             //Collect reads from each input file
             let mut all_reads_list: Vec<ListReadPair> = Vec::new();
             for _ in 0..n_input {
-                let r =rx_write_seq.recv().expect("Failed to get data from input reader");
+                let r = rx_write_seq
+                    .recv()
+                    .expect("Failed to get data from input reader");
                 debug!("sending {}", r.len());
                 all_reads_list.push(r);
             }
@@ -230,54 +225,46 @@ impl Shardify {
 
         Ok(())
     }
-    
 }
-
-
-
-
-
 
 //////////////// Writer to TIRP format, taking multiple blocks of reads for the same cell
 fn create_writer_thread(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    rx: &Receiver<Option<MergedListReadWithBarcode>>
+    rx: &Receiver<Option<MergedListReadWithBarcode>>,
 ) -> anyhow::Result<()> {
-
     let outfile = outfile.clone();
-    let rx=rx.clone();
+    let rx = rx.clone();
     let outfile_keep = outfile.clone();
 
     thread_pool.execute(move || {
         // Open output file
-        println!("Creating pre-TIRP output file: {}",outfile.display());
+        println!("Creating pre-TIRP output file: {}", outfile.display());
         debug!("starting write loop");
 
-
         let mut hist = shard::BarcodeHistogram::new();
-        let file_output = File::create(&outfile).unwrap();   
-        let writer=BufWriter::new(file_output);
+        let file_output = File::create(&outfile).unwrap();
+        let writer = BufWriter::new(file_output);
 
         let mut writer = noodles_bgzf::MultithreadedWriter::new(writer);
         //1.0.0 · Source
         //fn write_all(&mut self, buf: &[u8]) -> Result<(), Error>  is implemented
 
         // Write reads
-        let mut n_read_written=0;
-        let mut n_cell_written=0;
+        let mut n_read_written = 0;
+        let mut n_cell_written = 0;
         while let Ok(Some(entry)) = rx.recv() {
-
             let cellid = &entry.0;
             let list_of_list_pairs = &entry.1;
 
-            let mut tot_reads_for_cell:u64 = 0;
+            let mut tot_reads_for_cell: u64 = 0;
             for list_pairs in list_of_list_pairs {
                 for rp in list_pairs.iter() {
-                    tirp::write_records_pair_to_tirp( //::<File>
-                        &mut writer, 
-                        &cellid, 
-                        &rp
+                    tirp::write_records_pair_to_tirp(
+                        //::<File>
+                        &mut writer,
+                        &cellid,
+                        &rp,
                     );
                 }
                 tot_reads_for_cell = tot_reads_for_cell + list_pairs.len() as u64;
@@ -287,63 +274,53 @@ fn create_writer_thread(
             hist.inc_by(&cellid, &tot_reads_for_cell);
 
             if n_cell_written % 1000 == 0 {
-                println!("#reads written to outfile: {:?}\t#cells written {:?}", n_read_written, n_cell_written);
+                println!(
+                    "#reads written to outfile: {:?}\t#cells written {:?}",
+                    n_read_written, n_cell_written
+                );
             }
         }
-    
+
         //absolutely have to call this before dropping, for bufwriter
-        _ = writer.flush(); 
+        _ = writer.flush();
 
         //Write histogram
         debug!("Writing histogram");
         let hist_path = tirp::get_histogram_path_for_tirp(&outfile);
-        hist.write_file(&hist_path).expect("Failed to write histogram");
+        hist.write_file(&hist_path)
+            .expect("Failed to write histogram");
 
-        //// Index the final file with tabix  
+        //// Index the final file with tabix
         println!("Indexing final output file");
         tirp::index_tirp(&outfile_keep).expect("Failed to index output file");
-        
-
     });
     Ok(())
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 //////////////// Reader from TIRP format
 fn create_reader_thread(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     rx_get_cellid: &Receiver<Option<CellID>>,
-    tx_send_reads: &Sender<ListReadPair>
+    tx_send_reads: &Sender<ListReadPair>,
 ) -> anyhow::Result<()> {
-
     let infile = infile.clone();
-    let tx_send_reads=tx_send_reads.clone();
-    let rx_get_cellid=rx_get_cellid.clone();
+    let tx_send_reads = tx_send_reads.clone();
+    let rx_get_cellid = rx_get_cellid.clone();
 
     thread_pool.execute(move || {
-
         // Open input file
-        println!("Opening pre-TIRP input file: {}",infile.display());
+        println!("Opening pre-TIRP input file: {}", infile.display());
         debug!("starting read loop");
-        let mut reader = tirp::TirpBascetShardReader::new(&infile).expect("Could not open input file");
+        let mut reader =
+            tirp::TirpBascetShardReader::new(&infile).expect("Could not open input file");
 
         // Read reads for each cell requested
         while let Ok(Some(cell_id)) = rx_get_cellid.recv() {
             let reads = if reader.has_cell(&cell_id) {
-                reader.get_reads_for_cell(&cell_id).expect("Failed to read from input file")
+                reader
+                    .get_reads_for_cell(&cell_id)
+                    .expect("Failed to read from input file")
             } else {
                 Arc::new(Vec::new())
             };
@@ -353,6 +330,8 @@ fn create_reader_thread(
     });
     Ok(())
 }
+<<<<<<< HEAD
+=======
 
 
 
@@ -380,3 +359,4 @@ mod tests {
 
 
 }
+>>>>>>> main

@@ -1,8 +1,3 @@
-
-
-
-
-
 /*
 
 
@@ -25,7 +20,7 @@ cellSNP -s $BAM -b $BARCODE -O $OUT_DIR -p 22 --minMAF 0.1 --minCOUNT 100
 
 check:
 
-- mpileup.c in bcftools: https://github.com/samtools/bcftools/blob/develop/mpileup.c                                                                                
+- mpileup.c in bcftools: https://github.com/samtools/bcftools/blob/develop/mpileup.c
 - bam_plcmd.c in samtools: https://github.com/samtools/samtools/blob/develop/bam_plcmd.c  refer to the cmdline options in this file too.
 
 
@@ -33,7 +28,7 @@ check:
 
 (base) mahogny@beagle:~$ bcftools mpileup
 
-Usage: bcftools mpileup [options] in1.bam [in2.bam [...]] 
+Usage: bcftools mpileup [options] in1.bam [in2.bam [...]]
 
 
 
@@ -43,7 +38,7 @@ Usage: bcftools mpileup [options] in1.bam [in2.bam [...]]
 
 (base) mahogny@beagle:~$ bcftools call         --ploidy-file <file>        space/tab-delimited list of CHROM,FROM,TO,SEX,PLOIDY
 
- 
+
 About:   SNP/indel variant calling from VCF/BCF. To be used in conjunction with samtools mpileup.
          This command replaces the former "bcftools view" caller. Some of the original
          functionality has been temporarily lost in the process of transition to htslib,
