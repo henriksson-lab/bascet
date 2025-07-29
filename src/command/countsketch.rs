@@ -77,16 +77,15 @@ impl CountsketchCMD {
                     while let Ok(Some(token)) = rx.recv() {
                         countsketch.reset();
 
-                        // let mut total = 0;
                         for read in token.reads.iter() {
                             let kmers = read.windows(31);
-                            // total += kmers.len();
                             for kmer in kmers {
                                 countsketch.add(kmer);
                             }
-                            let rread: Vec<u8> = read
-                                .iter()
-                                .rev()
+                        }
+
+                        for rev_read in token.reads.iter() {
+                            let rev_read: Vec<u8> = rev_read.iter().rev()
                                 .map(|&base| match base {
                                     b'A' => b'T',
                                     b'T' => b'A',
@@ -96,8 +95,7 @@ impl CountsketchCMD {
                                 })
                                 .collect();
 
-                            let kmers = rread.windows(31);
-                            // total += kmers.len();
+                            let kmers = rev_read.windows(31);
                             for kmer in kmers {
                                 countsketch.add(kmer);
                             }
