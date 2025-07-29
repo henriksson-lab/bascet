@@ -20,21 +20,17 @@ use seq_io::fastq::Reader as FastqReader;
 use seq_io::fastq::Record as FastqRecord;
 
 use super::determine_thread_counts_1;
+use crate::barcode::atrandi_wgs_barcode::AtrandiWGSChemistry;
+use crate::barcode::general_barcode::GeneralCombinatorialBarcode;
 use crate::barcode::AtrandiRNAseqChemistry;
-use crate::barcode::AtrandiWGSChemistry;
 use crate::barcode::Chemistry;
-<<<<<<< HEAD
-use crate::barcode::GeneralCombinatorialBarcode;
-use crate::barcode::PetriseqChemistry;
-=======
 use crate::barcode::ParseBioChemistry3;
+use crate::barcode::PetriseqChemistry;
 use crate::barcode::TenxRNAChemistry;
 use crate::fileformat::tirp;
->>>>>>> main
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
-use crate::fileformat::tirp;
 
 type ListReadWithBarcode = Arc<Vec<(ReadPair, CellID)>>;
 type ListRecordPair = Arc<Vec<RecordPair>>;
@@ -136,15 +132,11 @@ impl GetRawCMD {
                 ),
             );
         } else if self.chemistry == "atrandi_rnaseq" {
-<<<<<<< HEAD
-            let _ = GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
-=======
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut AtrandiRNAseqChemistry::new(
                 )
             );
->>>>>>> main
         } else if self.chemistry == "petriseq" {
             let _ = GetRaw::getraw(Arc::new(params_io), &mut PetriseqChemistry::new());
         } else if self.chemistry == "combinatorial" {
@@ -156,12 +148,6 @@ impl GetRawCMD {
             } else {
                 bail!("Barcode file not specified");
             }
-<<<<<<< HEAD
-        } else if self.chemistry == "10x" {
-            panic!("not implemented");
-        } else if self.chemistry == "parsebio" {
-            panic!("not implemented");
-=======
         } else if self.chemistry == "10xrna" || self.chemistry == "10x_rna" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
@@ -175,7 +161,6 @@ impl GetRawCMD {
                     //TODO: option to be more specific
                 )
             );
->>>>>>> main
         } else {
             bail!("Unidentified chemistry");
         }

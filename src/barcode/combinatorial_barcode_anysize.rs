@@ -59,37 +59,23 @@ impl MyersBarcode {
 /// A set of barcode positions and sequences, making up a total combinatorial barcode
 #[derive(Clone, Debug)]
 pub struct CombinatorialBarcode {
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    //Maps name of pool to index in array (used using building only)
-    map_name_to_index: HashMap<String, usize>,
-=======
 
     //Maps name of pool to index in array (used during building only)
     map_poolname_to_index: HashMap<String,usize>,
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
 
     //Each barcode set in the combination
     pools: Vec<CombinatorialBarcodePart>,
 
     //How much to trim from this read
     pub trim_bcread_len: usize,
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-=======
 
     //Location of the UMI
     pub umi_from: usize,
     pub umi_to: usize,
 
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
 }
 impl CombinatorialBarcode {
     pub fn new() -> CombinatorialBarcode {
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-        CombinatorialBarcode {
-            map_name_to_index: HashMap::new(),
-            pools: vec![],
-            trim_bcread_len: 0,
-=======
 
         CombinatorialBarcode {
             map_poolname_to_index: HashMap::new(),
@@ -97,7 +83,6 @@ impl CombinatorialBarcode {
             trim_bcread_len: 0,
             umi_from: 0,
             umi_to: 0
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         }
     }
 
@@ -105,23 +90,6 @@ impl CombinatorialBarcode {
         self.pools.len()
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    pub fn add_bc(&mut self, name: &str, poolname: &str, sequence: &str) {
-        //Create new pool if needed
-        if !(self.map_name_to_index.contains_key(poolname)) {
-            let mut pool = CombinatorialBarcodePart::new();
-            pool.bc_length = sequence.len();
-
-            let pool_index = self.pools.len();
-            self.map_name_to_index
-                .insert(poolname.to_string(), pool_index);
-            self.pools.push(pool);
-        }
-
-        let pool_index = self.map_name_to_index.get(poolname).expect("bc index fail");
-        let pool: &mut CombinatorialBarcodePart =
-            self.pools.get_mut(*pool_index).expect("get pool fail");
-=======
 
     pub fn add_pool(
         &mut self,
@@ -148,7 +116,6 @@ impl CombinatorialBarcode {
 
         let pool_index = self.map_poolname_to_index.get(poolname).expect("bc index fail");
         let pool: &mut CombinatorialBarcodePart = self.pools.get_mut(*pool_index).expect("get pool fail");
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         pool.add_bc(name, sequence);
     }
 
@@ -161,51 +128,32 @@ impl CombinatorialBarcode {
         Ok(())
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    fn scan_startpos(&mut self, seq: &[u8]) {
-=======
     ///////////////////////////////
     /// For each round of barcode, check location along all read
     pub fn scan_oneread_barcode_boundaries(
         &mut self,
         seq: &[u8]
     ) {
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         for p in &mut self.pools {
             p.scan_oneread_barcode_boundaries(seq);
         }
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    pub fn find_probable_barcode_boundaries(
-        /////////////////////////////////////////// TODO: sort barcodes such that innermost BC is searched first. thus we can give up early possibly
-=======
 
 
 
 
     pub fn scan_reads_barcode_boundaries( 
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         &mut self,
         fastq_file: &mut FastqReader<Box<impl std::io::Read + ?Sized>>,
         n_reads: u32,
     ) -> anyhow::Result<()> {
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-        // Generate histogram of probable barcode start through iterating over the first n reads
-        //let mut all_hits: Vec<(u32, usize, usize, i32)> = Vec::new();
-        for _ in 0..n_reads {
-            let record = fastq_file.next().unwrap();
-            let record = record
-                .expect("Error reading record for checking barcode position; input file too short");
-            self.scan_startpos(&record.seq());
-=======
 
         //Generate histogram of probable barcode start through iterating over the first n reads
         for _ in 0..n_reads {
             let record = fastq_file.next().unwrap();
             let record = record.expect("Error reading record for checking barcode position; input file too short");
             self.scan_oneread_barcode_boundaries(&record.seq());
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         }
 
         Ok(())
@@ -383,14 +331,11 @@ impl CombinatorialBarcode {
         );
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-=======
 
 
     
     ///////////////////////////////
     /// Read list of barcodes from a TSV file
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
     pub fn read_barcodes(src: impl Read) -> CombinatorialBarcode {
         let mut cb: CombinatorialBarcode = CombinatorialBarcode::new();
 
@@ -412,12 +357,9 @@ impl CombinatorialBarcode {
     }
 }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-=======
 
 ///////////////////////////////
 /// Convert list of barcode names to cellID
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
 fn bcvec_to_string(cell_id: &Vec<String>) -> CellID {
     //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
     //should support some type of uuencodeing
@@ -438,12 +380,8 @@ pub struct CombinatorialBarcodePart {
     pub histogram_startpos: Vec<usize>,
 }
 impl CombinatorialBarcodePart {
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    fn new() -> CombinatorialBarcodePart {
-=======
 
     pub fn new() -> CombinatorialBarcodePart {
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         CombinatorialBarcodePart {
             barcode_list: vec![],
             seq2barcode: HashMap::new(),
@@ -455,9 +393,6 @@ impl CombinatorialBarcodePart {
         }
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    pub fn add_bc(&mut self, bcname: &str, sequence: &str) {
-=======
     ///////////////////////////////
     /// Add a barcode to this round
     pub fn add_bc(
@@ -465,7 +400,6 @@ impl CombinatorialBarcodePart {
         bcname: &str,
         sequence: &str
     ){
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         let bc = MyersBarcode::new(bcname, sequence);
         self.seq2barcode
             .insert(sequence.to_string().clone(), self.barcode_list.len());
@@ -473,11 +407,6 @@ impl CombinatorialBarcodePart {
         self.bc_length = sequence.len();
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    // Find where this barcode might be located in a read.
-    // Stores it internal histogram
-    fn scan_startpos(&mut self, seq: &[u8]) {
-=======
     ///////////////////////////////
     /// Find where this barcode might be located in a read.
     /// Stores location in the internal histogram
@@ -486,7 +415,6 @@ impl CombinatorialBarcodePart {
         seq: &[u8]
     ) {
 
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         //Find candidate hits
         let mut all_hits: Vec<(usize, i32)> = Vec::new(); //start, score
         for barcode in self.barcode_list.iter_mut() {
@@ -507,10 +435,6 @@ impl CombinatorialBarcodePart {
         }
     }
 
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-    //From histogram, decide where to start. This can fail if no barcode fitted at all
-    fn pick_startpos(&mut self) -> anyhow::Result<()> {
-=======
 
     
 
@@ -532,7 +456,6 @@ impl CombinatorialBarcodePart {
         &mut self
     ) -> anyhow::Result<()> {
 
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
         if self.histogram_startpos.is_empty() {
             bail!("Barcode pool is not detected in reads");
         }
@@ -578,10 +501,6 @@ impl CombinatorialBarcodePart {
         //barcode name, score
 
         //perform optimistic search first!
-<<<<<<< HEAD:src/barcode/combinatorial_barcode.rs
-        let optimistic_seq = &seq[self.quick_testpos..(self.quick_testpos + self.bc_length)];
-        let optimistic_seq = String::from_utf8(optimistic_seq.to_vec()).expect("weird bc"); // seems evil
-=======
         let optimistic_seq = &seq[self.quick_testpos..(self.quick_testpos+self.bc_length)];
         let optimistic_seq = unsafe {
             //This has to be fast. Pray that we don't get weird strings as input
@@ -591,7 +510,6 @@ impl CombinatorialBarcodePart {
             //We can work with plain u8 if we get rid of meyers algorithm
 
         };
->>>>>>> main:src/barcode/combinatorial_barcode_anysize.rs
 
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
             let bc = self.barcode_list.get(i).expect("wtf");

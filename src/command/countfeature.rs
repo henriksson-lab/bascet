@@ -19,10 +19,7 @@ use rust_htslib::bam::Read;
 use noodles_gff as gff;
 use noodles_gff::feature::record::Strand;
 
-<<<<<<< HEAD
-=======
 use crate::umi::umi_dedup::UMIcounter;
->>>>>>> main
 use super::determine_thread_counts_1;
 use crate::utils::dedup_umi;
 
@@ -101,15 +98,11 @@ pub struct CountFeature {
     rx: Receiver<Option<GeneCounter>>,
 
     ///List of genes that have been finally counted
-<<<<<<< HEAD
-    finished_genes: Arc<Mutex<Vec<(GeneCounter, BTreeMap<Vec<u8>, usize>)>>>,
-=======
     finished_genes: Arc<Mutex<Vec<(
         GeneCounter,
         BTreeMap<Vec<u8>, u32>
     )>>>,
 
->>>>>>> main
 }
 impl CountFeature {
     pub fn new(
@@ -217,12 +210,8 @@ impl CountFeature {
             self.thread_pool_work.execute(move || {
                 while let Ok(Some(gene)) = rx.recv() {
                     //Deduplicate
-<<<<<<< HEAD
-                    let cnt = gene.get_counts(); // t
-=======
                     let cnt = gene.get_counts(); 
 
->>>>>>> main
 
                     //Put into matrix
                     let mut data = finished_genes.lock().unwrap();
@@ -339,12 +328,7 @@ pub struct GeneCounter {
     pub counters: HashMap<Cellid, CellCounter>,
 }
 impl GeneCounter {
-<<<<<<< HEAD
-    fn get_counts(&self) -> BTreeMap<Vec<u8>, usize> {
-        //
-=======
     fn get_counts(&self) -> BTreeMap<Vec<u8>, u32> { 
->>>>>>> main
         // type inference lets us omit an explicit type signature (which
         // would be `BTreeMap<&str, &str>` in this example).
         let mut map_cell_count: BTreeMap<Vec<u8>, u32> = BTreeMap::new();

@@ -26,13 +26,9 @@ pub struct PetriseqChemistry {
 }
 
 impl Chemistry for PetriseqChemistry {
-<<<<<<< HEAD
-    ////// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
-=======
 
     ////////////////
     ///  Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
->>>>>>> main
     fn prepare(
         &mut self,
         fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
