@@ -21,8 +21,8 @@ support_which_stream! {
     for formats [tirp, zip]
 }
 
-pub const DEFAULT_THREADS_READ: usize = 1;
-pub const DEFAULT_THREADS_WORK: usize = 11;
+pub const DEFAULT_THREADS_READ: usize = 8;
+pub const DEFAULT_THREADS_WORK: usize = 4;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
 pub const DEFAULT_COUNTSKETCH_SIZE: usize = 128;
 pub const DEFAULT_KMER_SIZE: usize = 31;
@@ -82,7 +82,7 @@ impl CountsketchCMD {
                 log_critical!("Failed to determine thread counts"; "error" => %e);
             }
         };
-
+        
         // GOOD FIRST ISSUE:
         // Output files should also use the AutoFile system
         let expanded_output = expand_and_resolve(&self.path_out)?;
