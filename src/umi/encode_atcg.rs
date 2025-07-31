@@ -1,19 +1,15 @@
-
-
-const NT4_DIMSIZE: usize = 32 as usize;   //0b0011111  = 31 is largest value 
+const NT4_DIMSIZE: usize = 32 as usize; //0b0011111  = 31 is largest value
 
 // A  65  0b1000001
 // C  67  0b1000011
 // G  71  0b1000111
 // T  84  0b1010100
 
-
 ////////////////
 /// Only keep the lower bits
 const fn reduce_base(b: u8) -> u8 {
     b & 0b0011111
 }
-
 
 ////////////////
 ///  Lookup table for N where N is any of ATCG. Maps to 0..3
@@ -26,7 +22,6 @@ const NT1_LOOKUP: [u8; NT4_DIMSIZE] = {
     table[reduce_base(b'N') as usize] = 0b00; //This is default anyway. for UMIs, we can fail gracefully if we get an N
     table
 };
-
 
 const fn generate_nt4_value(a: u8, b: u8, c: u8, d: u8) -> u8 {
     (NT1_LOOKUP[reduce_base(a) as usize] << 6)
@@ -43,7 +38,6 @@ const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
         + (reduce_base(c) as usize * NT4_DIMSIZE * NT4_DIMSIZE)
         + (reduce_base(d) as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
 }
-
 
 ////////////////
 ///  Lookup table for NNNN where N is any of ATCG.
@@ -70,27 +64,23 @@ const fn generate_nt4_table() -> [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * 
 
 ////////////////
 /// Map compressed ATCG => single byte
-const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] = generate_nt4_table();
+const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
+    generate_nt4_table();
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
-
-
 ////////////////
 /// KMER encoder
-/// 
+///
 /// 12bp UMI => 24 bits needed (u32)
 /// 16bp UMI => 32 bits needed (u32)
-/// 
-pub struct KMER2bit {
-}
+///
+pub struct KMER2bit {}
 impl KMER2bit {
-
     ////////////////
     /// Encode a kmer as u32
     #[inline(always)]
     pub unsafe fn encode_u32(bytes: &[u8]) -> u32 {
-
         let kmer_size = bytes.len();
 
         let chunk_size: usize = 4;
@@ -108,7 +98,10 @@ impl KMER2bit {
                 reduce_base(*chunk_ptr.offset(0)) as usize
                     + (reduce_base(*chunk_ptr.offset(1)) as usize * NT4_DIMSIZE)
                     + (reduce_base(*chunk_ptr.offset(2)) as usize * NT4_DIMSIZE * NT4_DIMSIZE)
-                    + (reduce_base(*chunk_ptr.offset(3)) as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
+                    + (reduce_base(*chunk_ptr.offset(3)) as usize
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE
+                        * NT4_DIMSIZE)
             };
             encoded = (encoded << 8) | u32::from(NT4_LOOKUP[idx]);
         }
@@ -116,20 +109,19 @@ impl KMER2bit {
         // Compress remaining nucleotides
         let start = full_chunks * chunk_size;
         for i in 0..remainder {
-            encoded = (encoded << 2) | u32::from(NT1_LOOKUP[reduce_base(bytes[start + i]) as usize]);
+            encoded =
+                (encoded << 2) | u32::from(NT1_LOOKUP[reduce_base(bytes[start + i]) as usize]);
         }
 
         encoded
     }
 
-
-
     ////////////////
     /// Get KMER from encoded format
     #[inline(always)]
-    pub unsafe fn decode_u32(&self, encoded: u32, kmer_size:usize) -> String {
+    pub unsafe fn decode_u32(&self, encoded: u32, kmer_size: usize) -> String {
         let mut sequence = Vec::with_capacity(kmer_size);
-        let mut temp = encoded; 
+        let mut temp = encoded;
         for _ in 0..kmer_size {
             let nuc = (temp & 0b11) as usize;
             sequence.push(NT_REVERSE[nuc]);
@@ -138,12 +130,7 @@ impl KMER2bit {
         sequence.reverse();
         String::from_utf8_unchecked(sequence)
     }
-
 }
-
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -151,30 +138,24 @@ mod tests {
 
     #[test]
     fn test_encode_4() {
-        let t=[
-            b'A', b'A', b'A', b'A',
-        ];
-        let e=unsafe { KMER2bit::encode_u32(&t) };
+        let t = [b'A', b'A', b'A', b'A'];
+        let e = unsafe { KMER2bit::encode_u32(&t) };
 
-        println!("{}",e);
+        println!("{}", e);
 
         assert_eq!(e, 0);
-
     }
 
     #[test]
     fn test_encode_12() {
-        let t=[
-            b'A', b'A', b'A', b'A',
-            b'A', b'A', b'A', b'A',
-            b'A', b'A', b'A', b'A',
-            b'A', b'A', b'A', b'A',
+        let t = [
+            b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A', b'A',
+            b'A', b'A',
         ];
-        let e=unsafe { KMER2bit::encode_u32(&t) };
+        let e = unsafe { KMER2bit::encode_u32(&t) };
 
-        println!("{}",e);
+        println!("{}", e);
 
         assert_eq!(e, 0);
-
     }
 }

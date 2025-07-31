@@ -19,8 +19,8 @@ use rust_htslib::bam::Read;
 use noodles_gff as gff;
 use noodles_gff::feature::record::Strand;
 
-use crate::umi::umi_dedup::UMIcounter;
 use super::determine_thread_counts_1;
+use crate::umi::umi_dedup::UMIcounter;
 use crate::utils::dedup_umi;
 
 use sprs::{CsMat, TriMat};
@@ -98,11 +98,7 @@ pub struct CountFeature {
     rx: Receiver<Option<GeneCounter>>,
 
     ///List of genes that have been finally counted
-    finished_genes: Arc<Mutex<Vec<(
-        GeneCounter,
-        BTreeMap<Vec<u8>, u32>
-    )>>>,
-
+    finished_genes: Arc<Mutex<Vec<(GeneCounter, BTreeMap<Vec<u8>, u32>)>>>,
 }
 impl CountFeature {
     pub fn new(
@@ -210,8 +206,7 @@ impl CountFeature {
             self.thread_pool_work.execute(move || {
                 while let Ok(Some(gene)) = rx.recv() {
                     //Deduplicate
-                    let cnt = gene.get_counts(); 
-
+                    let cnt = gene.get_counts();
 
                     //Put into matrix
                     let mut data = finished_genes.lock().unwrap();
@@ -328,19 +323,17 @@ pub struct GeneCounter {
     pub counters: HashMap<Cellid, CellCounter>,
 }
 impl GeneCounter {
-    fn get_counts(&self) -> BTreeMap<Vec<u8>, u32> { 
+    fn get_counts(&self) -> BTreeMap<Vec<u8>, u32> {
         // type inference lets us omit an explicit type signature (which
         // would be `BTreeMap<&str, &str>` in this example).
         let mut map_cell_count: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
 
         //For each cell
         for (cellid, counter) in self.counters.iter() {
-
-
             //Perform UMI deduplication and counting
             let mut prep_data = UMIcounter::prepare_from_str(&counter.umis);
             let cnt = UMIcounter::directional_algorithm(&mut prep_data, 1);
-            
+
             //let cnt = UMIcounter::dedup_umi(&counter.umis);
             map_cell_count.insert(cellid.clone(), cnt);
         }
