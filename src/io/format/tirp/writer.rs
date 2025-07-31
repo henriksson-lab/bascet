@@ -4,68 +4,63 @@ use bgzip::{write::BGZFMultiThreadWriter, Compression};
 
 use crate::{
     common::{self, ReadPair},
-    io::format::tirp,
-    io::{BascetFile, BascetWrite},
+    io::{format::tirp, BascetFile, BascetStreamToken, BascetWriter},
     log_critical, log_trace,
 };
-
-pub type DefaultWriter =
-    Writer<bgzip::write::BGZFMultiThreadWriter<std::io::BufWriter<std::fs::File>>>;
 
 pub struct Writer<W>
 where
     W: std::io::Write,
 {
-    inner: W,
+    inner: Option<W>,
 }
 
 impl<W> Writer<W>
 where
     W: std::io::Write,
 {
-    pub fn new(inner: W) -> Self {
-        Self { inner }
+    pub fn new() -> Result<Self, crate::runtime::Error> {
+        Ok(Self { inner: None })
     }
 }
 
-impl DefaultWriter {
-    pub fn from_tirp(file: &tirp::File) -> Self {
-        let file = log_critical!(
-            file.file_open(),
-            "[TIRP Writer] Could not open destination file"
-        );
-
-        let buf_writer = BufWriter::new(file);
-        let bgzf_writer = BGZFMultiThreadWriter::new(buf_writer, Compression::default());
-
-        Self::new(bgzf_writer)
+impl<W> BascetWriter<W> for Writer<W>
+where
+    W: std::io::Write,
+{
+    fn set_writer(mut self, writer: W) -> Self {
+        self.inner = Some(writer);
+        self
     }
-}
 
-impl BascetWrite for DefaultWriter {
-    fn write_cell(&mut self, cell_id: &str, reads: &Vec<ReadPair>) {
-        log_trace!("[TIRP Writer] Writing"; "cell" => ?cell_id);
+    fn write_cell<T>(&mut self, token: T)
+    where
+        T: BascetStreamToken,
+    {
+        // log_trace!("[TIRP Writer] Writing"; "cell" => ?cell_id);
 
-        for rp in reads.iter() {
-            _ = self.inner.write_all(cell_id.as_bytes());
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
+        if let Some(ref mut writer) = self.inner {
+            // for rp in reads.iter() {
+            //     _ = writer.write_all(cell_id.as_bytes());
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
 
-            _ = self.inner.write_all(&[common::U8_CHAR_1]);
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
+            //     _ = writer.write_all(&[common::U8_CHAR_1]);
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
 
-            _ = self.inner.write_all(&[common::U8_CHAR_1]);
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
+            //     _ = writer.write_all(&[common::U8_CHAR_1]);
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
 
-            _ = self.inner.write_all(&rp.r1);
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
-            _ = self.inner.write_all(&rp.r2);
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
-            _ = self.inner.write_all(&rp.q1);
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
-            _ = self.inner.write_all(&rp.q2);
-            _ = self.inner.write_all(&[common::U8_CHAR_TAB]);
-            _ = self.inner.write_all(&rp.umi);
-            _ = self.inner.write_all(&[common::U8_CHAR_NEWLINE]);
+            //     _ = writer.write_all(&rp.r1);
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            //     _ = writer.write_all(&rp.r2);
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            //     _ = writer.write_all(&rp.q1);
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            //     _ = writer.write_all(&rp.q2);
+            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            //     _ = writer.write_all(&rp.umi);
+            //     _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
+            // }
         }
     }
 }

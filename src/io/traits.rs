@@ -1,8 +1,11 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use crate::command::countsketch::AutoStream;
-use crate::io::support::*;
 use enum_dispatch::enum_dispatch;
+
+use crate::command::countsketch::CountsketchStream;
+
+use crate::command::shardify::ShardifyStream;
+use crate::command::shardify::ShardifyWriter;
 
 pub trait BascetFile {
     const VALID_EXT: Option<&'static str>;
@@ -72,8 +75,18 @@ pub trait BascetRead {
     // Retrieve all records for a cell.
     fn read_cell(&mut self, cell: &str) -> Vec<crate::common::ReadPair>;
 }
-pub trait BascetWrite {
-    fn write_cell(&mut self, cell_id: &str, reads: &Vec<crate::common::ReadPair>);
+
+#[enum_dispatch]
+pub trait BascetWriter<W>: Sized
+where
+    W: std::io::Write,
+{
+    fn set_writer(self, _: W) -> Self {
+        self
+    }
+    fn write_cell<T>(&mut self, token: T)
+    where
+        T: BascetStreamToken;
 }
 
 #[enum_dispatch]
@@ -96,7 +109,6 @@ pub trait BascetStreamTokenBuilder: Sized {
     type Token: BascetStreamToken;
 
     // Core methods all builders must support
-    fn add_cell_id_owned(self, id: Vec<u8>) -> Self;
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
@@ -110,6 +122,9 @@ pub trait BascetStreamTokenBuilder: Sized {
         self
     }
 
+    fn add_cell_id_owned(self, id: Vec<u8>) -> Self {
+        self
+    }
     fn add_sequence_owned(self, seq: Vec<u8>) -> Self {
         self
     }
@@ -117,7 +132,10 @@ pub trait BascetStreamTokenBuilder: Sized {
         self
     }
 
-    fn add_metadata(self, meta: &str) -> Self {
+    fn add_metadata_owned(self, meta: Vec<u8>) -> Self {
+        self
+    }
+    fn add_metadata_slice(self, meta: &[u8]) -> Self {
         self
     }
 }
