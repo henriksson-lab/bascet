@@ -1,6 +1,6 @@
 use crate::{
-    io::format,
-    io::BascetFile,
+    io::{format, BascetFile},
+    log_info, runtime,
     utils::{command_to_string, expand_and_resolve},
 };
 use std::process::Command;
@@ -77,73 +77,75 @@ impl BascetFile for File {
 
         let ext_ok = (fext == Self::VALID_EXT && sext_ok) || fext == Self::VALID_EXT;
         if !ext_ok {
-            return Err(crate::runtime::Error::FileNotValid {
-                path: fpath.to_path_buf(),
-                msg: Some("file extension is not tirp or tirp.gz".into()),
-            });
+            return Err(runtime::Error::file_not_valid(
+                fpath,
+                Some(format!(
+                    "file extension is not tirp or tirp.gz (is {fext:?})"
+                )),
+            ));
         }
 
-        // 3. File is not empty
-        let meta = match std::fs::metadata(&fpath) {
-            Ok(m) => m,
-            Err(_) => {
-                return Err(crate::runtime::Error::FileNotValid {
-                    path: fpath.to_path_buf(),
-                    msg: Some("metadata could not be fetched".into()),
-                })
-            }
-        };
-        if meta.len() == 0 {
-            return Err(crate::runtime::Error::FileNotValid {
-                path: fpath.to_path_buf(),
-                msg: Some("file is 0 bytes".into()),
-            });
-        }
+        // // 3. File is not empty
+        // let meta = match std::fs::metadata(&fpath) {
+        //     Ok(m) => m,
+        //     Err(_) => {
+        //         return Err(crate::runtime::Error::FileNotValid {
+        //             path: fpath.to_path_buf(),
+        //             msg: Some("metadata could not be fetched".into()),
+        //         })
+        //     }
+        // };
+        // if meta.len() == 0 {
+        //     return Err(crate::runtime::Error::FileNotValid {
+        //         path: fpath.to_path_buf(),
+        //         msg: Some("file is 0 bytes".into()),
+        //     });
+        // }
 
-        // Tabix index file checks
-        let ipath = fpath.with_file_name(format!(
-            "{}.tbi",
-            fpath.file_name().unwrap().to_string_lossy()
-        ));
+        // // Tabix index file checks
+        // let ipath = fpath.with_file_name(format!(
+        //     "{}.tbi",
+        //     fpath.file_name().unwrap().to_string_lossy()
+        // ));
 
-        // 1. File exists and is a regular file
-        if !ipath.exists() {
-            return Err(crate::runtime::Error::FileNotFound {
-                path: ipath.to_path_buf(),
-            });
-        } else if !ipath.is_file() {
-            return Err(crate::runtime::Error::FileNotValid {
-                path: ipath.to_path_buf(),
-                msg: Some("directory found instead".into()),
-            });
-        }
+        // // 1. File exists and is a regular file
+        // if !ipath.exists() {
+        //     return Err(crate::runtime::Error::FileNotFound {
+        //         path: ipath.to_path_buf(),
+        //     });
+        // } else if !ipath.is_file() {
+        //     return Err(crate::runtime::Error::FileNotValid {
+        //         path: ipath.to_path_buf(),
+        //         msg: Some("directory found instead".into()),
+        //     });
+        // }
 
-        // 2. File has the correct extension
-        let fext = ipath.extension().and_then(|e| e.to_str());
-        let ext_ok = fext == Some("tbi");
-        if !ext_ok {
-            return Err(crate::runtime::Error::FileNotValid {
-                path: ipath.to_path_buf(),
-                msg: Some("file extension is not tbi".into()),
-            });
-        }
+        // // 2. File has the correct extension
+        // let fext = ipath.extension().and_then(|e| e.to_str());
+        // let ext_ok = fext == Some("tbi");
+        // if !ext_ok {
+        //     return Err(crate::runtime::Error::FileNotValid {
+        //         path: ipath.to_path_buf(),
+        //         msg: Some("file extension is not tbi".into()),
+        //     });
+        // }
 
-        // 3. File is not empty
-        let meta = match std::fs::metadata(&ipath) {
-            Ok(m) => m,
-            Err(_) => {
-                return Err(crate::runtime::Error::FileNotValid {
-                    path: ipath.to_path_buf(),
-                    msg: Some("metadata could not be fetched".into()),
-                })
-            }
-        };
-        if meta.len() == 0 {
-            return Err(crate::runtime::Error::FileNotValid {
-                path: ipath.to_path_buf(),
-                msg: Some("file is 0 bytes".into()),
-            });
-        }
+        // // 3. File is not empty
+        // let meta = match std::fs::metadata(&ipath) {
+        //     Ok(m) => m,
+        //     Err(_) => {
+        //         return Err(crate::runtime::Error::FileNotValid {
+        //             path: ipath.to_path_buf(),
+        //             msg: Some("metadata could not be fetched".into()),
+        //         })
+        //     }
+        // };
+        // if meta.len() == 0 {
+        //     return Err(crate::runtime::Error::FileNotValid {
+        //         path: ipath.to_path_buf(),
+        //         msg: Some("file is 0 bytes".into()),
+        //     });
+        // }
 
         // NOTE: Could/should try to attempt to read a record/magic bytes, skipping this for now though
 

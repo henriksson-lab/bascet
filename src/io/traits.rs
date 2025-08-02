@@ -6,6 +6,7 @@ use crate::command::countsketch::CountsketchStream;
 
 use crate::command::shardify::ShardifyStream;
 use crate::command::shardify::ShardifyWriter;
+use crate::common::ReadPair;
 
 pub trait BascetFile {
     const VALID_EXT: Option<&'static str>;
@@ -101,9 +102,22 @@ where
     }
 }
 
-pub trait BascetStreamToken: Send {
+pub trait BascetStreamToken: Send + Sized {
     type Builder: BascetStreamTokenBuilder<Token = Self>;
     fn builder() -> Self::Builder;
+
+    fn get_cell(&self) -> Option<&[u8]> {
+        None
+    }
+    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
+        None
+    }
+    fn get_qualities(&self) -> Option<&[(&[u8], &[u8])]> {
+        None
+    }
+    fn get_umis(&self) -> Option<&[&[u8]]> {
+        None
+    }
 }
 pub trait BascetStreamTokenBuilder: Sized {
     type Token: BascetStreamToken;
@@ -112,10 +126,22 @@ pub trait BascetStreamTokenBuilder: Sized {
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
-    fn add_cell_id_slice(self, slice: &[u8]) -> Self {
+    fn add_cell_id_slice(self, id: &[u8]) -> Self {
         self
     }
-    fn add_seq_slice(self, slice: &[u8]) -> Self {
+    fn add_rp_slice(self, r1: &[u8], r2: &[u8]) -> Self {
+        self
+    }
+    fn add_qp_slice(self, q1: &[u8], q2: &[u8]) -> Self {
+        self
+    }
+    fn add_sequence_slice(self, sequence: &[u8]) -> Self {
+        self
+    }
+    fn add_quality_slice(self, qualities: &[u8]) -> Self {
+        self
+    }
+    fn add_umi_slice(self, umi: &[u8]) -> Self {
         self
     }
     fn add_underlying(self, other: Arc<Vec<u8>>) -> Self {
@@ -125,10 +151,16 @@ pub trait BascetStreamTokenBuilder: Sized {
     fn add_cell_id_owned(self, id: Vec<u8>) -> Self {
         self
     }
-    fn add_sequence_owned(self, seq: Vec<u8>) -> Self {
+    fn add_sequence_owned(self, sequence: Vec<u8>) -> Self {
+        self
+    }
+    fn add_rp_owned(self, rp: (Vec<u8>, Vec<u8>)) -> Self {
         self
     }
     fn add_quality_owned(self, scores: Vec<u8>) -> Self {
+        self
+    }
+    fn add_umi_owned(self, umi: Vec<u8>) -> Self {
         self
     }
 

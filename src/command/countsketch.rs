@@ -155,44 +155,45 @@ impl CountsketchCMD {
                     while let Ok(Some(cell)) = work_rx.recv() {
                         countsketch.reset();
 
-                        for read in cell.reads.iter() {
-                            if read.len() >= kmer_size {
-                                let kmers = read.windows(kmer_size);
-                                for kmer in kmers {
-                                    countsketch.add(kmer);
-                                }
+                        let Some(cell_id) = cell.get_cell() else { continue };
+                        let Some(reads) = cell.get_reads() else { continue };
+
+                        for (r1, r2) in reads {
+                            for kmer in r1.windows(kmer_size) {
+                                countsketch.add(kmer);
                             }
-                        }
+                            for kmer in r2.windows(kmer_size) {
+                                countsketch.add(kmer);
+                            }
+                            let mut rev_r1 = Vec::with_capacity(r1.len());
+                            for &base in r1.iter().rev() {
+                                rev_r1.push(match base {
+                                    b'A' => b'T', b'T' => b'A',
+                                    b'G' => b'C', b'C' => b'G',
+                                    _ => base,
+                                });
+                            }
+                            for kmer in rev_r1.windows(kmer_size) {
+                                countsketch.add(kmer);
+                            }
 
-                        for read in cell.reads.iter() {
-                            if read.len() >= kmer_size {
-                                // GOOD FIRST ISSUE:
-                                // writing into the memory the read originates would be unsafe behaviour 
-                                // but is safe in this context since nothing will ever access that memory again
-                                // would probably be a bit faster than collecting into a Vec
-                                let rev_read: Vec<u8> = read
-                                    .iter()
-                                    .rev()
-                                    .map(|&base| match base {
-                                        b'A' => b'T',
-                                        b'T' => b'A',
-                                        b'G' => b'C',
-                                        b'C' => b'G',
-                                        _ => base,
-                                    })
-                                    .collect();
-
-                                let kmers = rev_read.windows(kmer_size);
-                                for kmer in kmers {
-                                    countsketch.add(kmer);
-                                }
+                            let mut rev_r2 = Vec::with_capacity(r2.len());
+                            for &base in r2.iter().rev() {
+                                rev_r2.push(match base {
+                                    b'A' => b'T', b'T' => b'A',
+                                    b'G' => b'C', b'C' => b'G',
+                                    _ => base,
+                                });
+                            }
+                            for kmer in rev_r2.windows(kmer_size) {
+                                countsketch.add(kmer);
                             }
                         }
 
                         buffer.clear();
-                        buffer.extend_from_slice(cell.cell);
+                        buffer.extend_from_slice(cell_id);
                         buffer.push(common::U8_CHAR_TAB);
-                        buffer.extend_from_slice(cell.reads.len().to_string().as_bytes());
+                        buffer.extend_from_slice(reads.len().to_string().as_bytes());
 
                         for value in countsketch.sketch.iter() {
                             buffer.push(common::U8_CHAR_TAB);
@@ -287,7 +288,7 @@ impl CountsketchCMD {
 
 struct CountsketchToken {
     cell: &'static [u8],
-    reads: Vec<&'static [u8]>,
+    reads: Vec<(&'static [u8], &'static [u8])>,
     _underlying: Vec<Arc<Vec<u8>>>,
 }
 
@@ -297,11 +298,19 @@ impl BascetStreamToken for CountsketchToken {
     fn builder() -> Self::Builder {
         Self::Builder::new()
     }
+
+    fn get_cell(&self) -> Option<&'static [u8]> {
+        None
+    }
+
+    fn get_reads(&self) -> Option<&'static [(&'static [u8], &'static [u8])]> {
+        None
+    }
 }
 
 struct CountsketchTokenBuilder {
     cell: Option<&'static [u8]>,
-    reads: Vec<&'static [u8]>,
+    reads: Vec<(&'static [u8], &'static [u8])>,
     underlying: Vec<Arc<Vec<u8>>>,
 }
 
@@ -334,7 +343,7 @@ impl BascetStreamTokenBuilder for CountsketchTokenBuilder {
         self.underlying.push(aseq.clone());
 
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(aseq.as_slice()) };
-        self.reads.push(static_slice);
+        self.reads.push((static_slice, &[]));
         self
     }
 
@@ -350,9 +359,17 @@ impl BascetStreamTokenBuilder for CountsketchTokenBuilder {
     }
 
     #[inline(always)]
-    fn add_seq_slice(mut self, slice: &[u8]) -> Self {
+    fn add_sequence_slice(mut self, slice: &[u8]) -> Self {
         let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.reads.push(static_slice);
+        self.reads.push((static_slice, &[]));
+        self
+    }
+
+    #[inline(always)]
+    fn add_rp_slice(mut self, r1: &[u8], r2: &[u8]) -> Self {
+        let r1_static_slice: &'static [u8] = unsafe { std::mem::transmute(r1) };
+        let r2_static_slice: &'static [u8] = unsafe { std::mem::transmute(r2) };
+        self.reads.push((r1_static_slice, r2_static_slice));
         self
     }
 

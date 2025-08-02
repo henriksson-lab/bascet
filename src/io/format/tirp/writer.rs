@@ -1,6 +1,7 @@
 use std::io::{BufWriter, Write};
 
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
+use itertools::izip;
 
 use crate::{
     common::{self, ReadPair},
@@ -39,28 +40,33 @@ where
     {
         // log_trace!("[TIRP Writer] Writing"; "cell" => ?cell_id);
 
+        let cell = token.get_cell().unwrap();
         if let Some(ref mut writer) = self.inner {
-            // for rp in reads.iter() {
-            //     _ = writer.write_all(cell_id.as_bytes());
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            let reads = token.get_reads().unwrap_or(&[]);
+            let quals = token.get_qualities().unwrap_or(&[]);
+            let umis = token.get_umis().unwrap_or(&[]);
 
-            //     _ = writer.write_all(&[common::U8_CHAR_1]);
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
+                _ = writer.write_all(cell);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
 
-            //     _ = writer.write_all(&[common::U8_CHAR_1]);
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[common::U8_CHAR_1]);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
 
-            //     _ = writer.write_all(&rp.r1);
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
-            //     _ = writer.write_all(&rp.r2);
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
-            //     _ = writer.write_all(&rp.q1);
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
-            //     _ = writer.write_all(&rp.q2);
-            //     _ = writer.write_all(&[common::U8_CHAR_TAB]);
-            //     _ = writer.write_all(&rp.umi);
-            //     _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
-            // }
+                _ = writer.write_all(&[common::U8_CHAR_1]);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+
+                _ = writer.write_all(r1);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(r2);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(q1);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(q2);
+                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(umi);
+                _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
+            }
         }
     }
 }
