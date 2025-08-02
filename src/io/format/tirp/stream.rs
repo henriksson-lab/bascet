@@ -197,7 +197,11 @@ where
                     match &cell_id {
                         Some(existing_id) if existing_id == id => {
                             if let Some(b) = builder.take() {
-                                builder = Some(b.add_seq_slice(rp.r1).add_seq_slice(rp.r2));
+                                let b = b
+                                    .add_rp_slice(rp.r1, rp.r2)
+                                    .add_qp_slice(rp.q1, rp.q2)
+                                    .add_umi_slice(rp.umi);
+                                builder = Some(b);
                             }
                         }
                         Some(_) => {
@@ -212,8 +216,9 @@ where
                             let new_builder = T::builder()
                                 .add_underlying(Arc::clone(buf))
                                 .add_cell_id_slice(id)
-                                .add_seq_slice(rp.r1)
-                                .add_seq_slice(rp.r2);
+                                .add_rp_slice(rp.r1, rp.r2)
+                                .add_qp_slice(rp.q1, rp.q2)
+                                .add_umi_slice(rp.umi);
                             builder = Some(new_builder);
                         }
                     }
