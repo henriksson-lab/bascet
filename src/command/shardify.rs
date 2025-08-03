@@ -7,9 +7,8 @@ use std::{
 };
 
 use crate::{
-    io::{traits::*, AutoBascetFile},
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
-    utils::expand_and_resolve,
+    io::traits::*, log_critical, log_info, log_warning, support_which_input, support_which_output,
+    support_which_stream, support_which_writer,
 };
 
 use std::collections::hash_map::DefaultHasher;
@@ -22,12 +21,20 @@ pub const DEFAULT_THREADS_READ: usize = 8;
 pub const DEFAULT_THREADS_WORK: usize = 4;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
+support_which_input! {
+    ShardifyInput
+    for formats [tirp]
+}
+support_which_output! {
+    ShardifyOutput
+    for formats [tirp]
+}
 support_which_stream! {
-    ShardifyStream<T: BascetStreamToken>
+    ShardifyInput => ShardifyStream<T: BascetCell>
     for formats [tirp]
 }
 support_which_writer! {
-    ShardifyWriter<W: std::io::Write>
+    ShardifyOutput => ShardifyWriter<W: std::io::Write>
     for formats [tirp]
 }
 /// Commandline option: Take parsed reads and organize them as shards
@@ -80,7 +87,7 @@ impl ShardifyCMD {
 
         let threads_per_stream = self.threads_read / self.path_in.len();
 
-        let (tx, rx) = mpsc::channel::<ShardifyToken>();
+        let (tx, rx) = mpsc::channel::<ShardifyCell>();
 
         let path_out = self.path_out.clone();
         let writer_handle = thread::spawn(move || {
@@ -89,8 +96,8 @@ impl ShardifyCMD {
             let mut senders = Vec::new();
             let mut writer_handles = Vec::new();
 
-            for (_, path) in path_out.iter().enumerate() {
-                let (writer_tx, writer_rx) = mpsc::channel::<ShardifyToken>();
+            for path in path_out.iter() {
+                let (writer_tx, writer_rx) = mpsc::channel::<ShardifyCell>();
                 senders.push(writer_tx);
 
                 let mut total = 0;
@@ -99,15 +106,16 @@ impl ShardifyCMD {
                 let file = std::fs::File::create(&path).unwrap();
 
                 let handle = thread::spawn(move || {
-                    let output_file = match AutoBascetFile::try_from_path(&path) {
+                    let output_file = match ShardifyOutput::try_from_path(&path) {
                         Ok(file) => file,
                         Err(e) => {
                             log_critical!("Failed to open input file, skipping"; "path" => ?path, "error" => %e);
                         }
                     };
                     let mut output_writer: ShardifyWriter<BufWriter<std::fs::File>> =
-                        ShardifyWriter::try_from_file(output_file).unwrap();
-                    output_writer = output_writer.set_writer(BufWriter::new(file));
+                        ShardifyWriter::try_from_output(output_file)
+                            .unwrap()
+                            .set_writer(BufWriter::new(file));
 
                     while let Ok(token) = writer_rx.recv() {
                         output_writer.write_cell(token);
@@ -155,7 +163,7 @@ impl ShardifyCMD {
             thread::spawn(move || {
                 log_info!("Processing input file"; "path" => ?input);
 
-                let file = match AutoBascetFile::try_from_path(&input) {
+                let file = match ShardifyInput::try_from_path(&input) {
                     Ok(file) => file,
                     Err(e) => {
                         log_warning!("Failed to open input file, skipping"; "path" => ?input, "error" => %e);
@@ -164,7 +172,7 @@ impl ShardifyCMD {
                     }
                 };
 
-                let mut stream: ShardifyStream<ShardifyToken> = match ShardifyStream::try_from_file(file) {
+                let mut stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(file) {
                     Ok(stream) => stream.set_reader_threads(threads_per_stream),
                     Err(e) => {
                         log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
@@ -201,7 +209,7 @@ impl ShardifyCMD {
 }
 
 #[derive(Debug)]
-struct ShardifyToken {
+struct ShardifyCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
@@ -209,8 +217,8 @@ struct ShardifyToken {
     _underlying: Vec<Arc<Vec<u8>>>,
 }
 
-impl BascetStreamToken for ShardifyToken {
-    type Builder = ShardifyTokenBuilder;
+impl BascetCell for ShardifyCell {
+    type Builder = ShardifyCellBuilder;
     fn builder() -> Self::Builder {
         Self::Builder::new()
     }
@@ -231,7 +239,7 @@ impl BascetStreamToken for ShardifyToken {
         Some(&self.umis)
     }
 }
-struct ShardifyTokenBuilder {
+struct ShardifyCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
@@ -239,7 +247,7 @@ struct ShardifyTokenBuilder {
     underlying: Vec<Arc<Vec<u8>>>,
 }
 
-impl ShardifyTokenBuilder {
+impl ShardifyCellBuilder {
     fn new() -> Self {
         Self {
             cell: None,
@@ -251,26 +259,22 @@ impl ShardifyTokenBuilder {
     }
 }
 
-impl BascetStreamTokenBuilder for ShardifyTokenBuilder {
-    type Token = ShardifyToken;
+impl BascetCellBuilder for ShardifyCellBuilder {
+    type Token = ShardifyCell;
 
     // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
     // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
     #[inline(always)]
     fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
         let aid = Arc::new(id);
-        self.underlying.push(aid.clone());
-        self.cell = Some(unsafe { std::mem::transmute(aid.as_slice()) });
+        self = self.add_underlying(aid.clone()).add_cell_id_slice(&aid);
         self
     }
 
     #[inline(always)]
     fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
         let aseq = Arc::new(seq);
-        self.underlying.push(aseq.clone());
-
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(aseq.as_slice()) };
-        self.reads.push((static_slice, &[]));
+        self = self.add_underlying(aseq.clone()).add_cell_id_slice(&aseq);
         self
     }
 
@@ -326,8 +330,8 @@ impl BascetStreamTokenBuilder for ShardifyTokenBuilder {
     }
 
     #[inline(always)]
-    fn build(self) -> ShardifyToken {
-        ShardifyToken {
+    fn build(self) -> ShardifyCell {
+        ShardifyCell {
             cell: self.cell.expect("cell is required"),
             reads: self.reads,
             qualities: self.qualities,
@@ -340,7 +344,7 @@ impl BascetStreamTokenBuilder for ShardifyTokenBuilder {
 // convenience iterator over stream
 impl<T> Iterator for ShardifyStream<T>
 where
-    T: BascetStreamToken,
+    T: BascetCell,
 {
     type Item = Result<T, crate::runtime::Error>;
 

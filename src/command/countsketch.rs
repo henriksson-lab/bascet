@@ -1,9 +1,6 @@
 use crate::{
-    command::determine_thread_counts_2,
-    common,
-    io::{traits::*, AutoBascetFile},
-    kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_stream,
+    command::determine_thread_counts_2, common, io::traits::*, kmer::kmc_counter::CountSketch,
+    log_critical, log_info, log_warning, support_which_input, support_which_stream,
     utils::expand_and_resolve,
 };
 
@@ -22,11 +19,18 @@ pub const DEFAULT_COUNTSKETCH_SIZE: usize = 128;
 pub const DEFAULT_KMER_SIZE: usize = 31;
 pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
-support_which_stream! {
-    CountsketchStream<T: BascetStreamToken>
+support_which_input! {
+    CountsketchInput
     for formats [tirp, zip]
 }
-
+// support_which_output! {
+//     CountsketchOutput
+//     for formats ?[csv]
+// }
+support_which_stream! {
+    CountsketchInput => CountsketchStream<T: BascetCell>
+    for formats [tirp, zip]
+}
 #[derive(Args)]
 pub struct CountsketchCMD {
     // Input bascets
@@ -96,7 +100,7 @@ impl CountsketchCMD {
         for input in &self.path_in {
             log_info!("Processing input file"; "path" => ?input);
 
-            let file = match AutoBascetFile::try_from_path(input) {
+            let file = match CountsketchInput::try_from_path(input) {
                 Ok(file) => file,
                 Err(e) => {
                     log_warning!("Failed to open input file, skipping"; "path" => ?input, "error" => %e);
@@ -105,7 +109,9 @@ impl CountsketchCMD {
                 }
             };
 
-            let stream: CountsketchStream<CountsketchToken> = match CountsketchStream::try_from_file(file) {
+            let stream: CountsketchStream<CountsketchCell> = match CountsketchStream::try_from_input(
+                file,
+            ) {
                 Ok(stream) => stream,
                 Err(e) => {
                     log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
@@ -138,7 +144,7 @@ impl CountsketchCMD {
 
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
             let (work_tx, work_rx) =
-                crossbeam::channel::bounded::<Option<CountsketchToken>>(self.channel_buffer_size);
+                crossbeam::channel::bounded::<Option<CountsketchCell>>(self.channel_buffer_size);
 
             for worker_id in 0..n_workers {
                 let work_rx = work_rx.clone();
@@ -217,6 +223,16 @@ impl CountsketchCMD {
                     }
 
                     log_info!("Worker thread completed"; "worker id" => worker_id, "cells processed" => cells_processed);
+                    match bufwriter.lock() {
+                        Ok(mut writer) => {
+                            if let Err(e) = writer.flush() {
+                            log_warning!("Flush error in worker thread"; "worker id" => worker_id, "error" => %e);
+                            }
+                        }
+                        Err(_) => {
+                            log_warning!("Buffer lock contention in worker"; "worker id" => worker_id);
+                        }
+                    }
                 });
             }
 
@@ -258,17 +274,6 @@ impl CountsketchCMD {
 
             worker_threadpool.join();
 
-            match bufwriter.try_lock() {
-                Ok(mut writer) => {
-                    if let Err(e) = writer.flush() {
-                        log_warning!("Failed to flush output buffer"; "error" => %e);
-                    }
-                }
-                Err(e) => {
-                    log_warning!("Could not acquire lock to flush buffer"; "error" => %e);
-                }
-            }
-
             processed_files += 1;
             total_cells_processed += cells_parsed;
             total_errors += parse_errors;
@@ -286,35 +291,35 @@ impl CountsketchCMD {
     }
 }
 
-struct CountsketchToken {
+struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
     _underlying: Vec<Arc<Vec<u8>>>,
 }
 
-impl BascetStreamToken for CountsketchToken {
-    type Builder = CountsketchTokenBuilder;
+impl BascetCell for CountsketchCell {
+    type Builder = CountsketchCellBuilder;
 
     fn builder() -> Self::Builder {
         Self::Builder::new()
     }
 
-    fn get_cell(&self) -> Option<&'static [u8]> {
-        None
+    fn get_cell(&self) -> Option<&[u8]> {
+        Some(self.cell)
     }
 
-    fn get_reads(&self) -> Option<&'static [(&'static [u8], &'static [u8])]> {
-        None
+    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
+        Some(&self.reads)
     }
 }
 
-struct CountsketchTokenBuilder {
+struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
     underlying: Vec<Arc<Vec<u8>>>,
 }
 
-impl CountsketchTokenBuilder {
+impl CountsketchCellBuilder {
     fn new() -> Self {
         Self {
             cell: None,
@@ -324,26 +329,22 @@ impl CountsketchTokenBuilder {
     }
 }
 
-impl BascetStreamTokenBuilder for CountsketchTokenBuilder {
-    type Token = CountsketchToken;
+impl BascetCellBuilder for CountsketchCellBuilder {
+    type Token = CountsketchCell;
 
     // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
     // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
     #[inline(always)]
     fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
         let aid = Arc::new(id);
-        self.underlying.push(aid.clone());
-        self.cell = Some(unsafe { std::mem::transmute(aid.as_slice()) });
+        self = self.add_underlying(aid.clone()).add_cell_id_slice(&aid);
         self
     }
 
     #[inline(always)]
     fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
         let aseq = Arc::new(seq);
-        self.underlying.push(aseq.clone());
-
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(aseq.as_slice()) };
-        self.reads.push((static_slice, &[]));
+        self = self.add_underlying(aseq.clone()).add_cell_id_slice(&aseq);
         self
     }
 
@@ -380,8 +381,8 @@ impl BascetStreamTokenBuilder for CountsketchTokenBuilder {
     }
 
     #[inline(always)]
-    fn build(self) -> CountsketchToken {
-        CountsketchToken {
+    fn build(self) -> CountsketchCell {
+        CountsketchCell {
             cell: self.cell.expect("cell is required"),
             reads: self.reads,
             _underlying: self.underlying,
@@ -392,7 +393,7 @@ impl BascetStreamTokenBuilder for CountsketchTokenBuilder {
 // convenience iterator over stream
 impl<T> Iterator for CountsketchStream<T>
 where
-    T: BascetStreamToken,
+    T: BascetCell,
 {
     type Item = Result<T, crate::runtime::Error>;
 

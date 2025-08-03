@@ -3,11 +3,7 @@ use std::io::{BufWriter, Write};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use itertools::izip;
 
-use crate::{
-    common::{self, ReadPair},
-    io::{format::tirp, BascetFile, BascetStreamToken, BascetWriter},
-    log_critical, log_trace,
-};
+use crate::io::traits::{BascetCell, BascetWrite};
 
 pub struct Writer<W>
 where
@@ -25,7 +21,7 @@ where
     }
 }
 
-impl<W> BascetWriter<W> for Writer<W>
+impl<W> BascetWrite<W> for Writer<W>
 where
     W: std::io::Write,
 {
@@ -36,10 +32,8 @@ where
 
     fn write_cell<T>(&mut self, token: T)
     where
-        T: BascetStreamToken,
+        T: BascetCell,
     {
-        // log_trace!("[TIRP Writer] Writing"; "cell" => ?cell_id);
-
         let cell = token.get_cell().unwrap();
         if let Some(ref mut writer) = self.inner {
             let reads = token.get_reads().unwrap_or(&[]);
@@ -48,24 +42,24 @@ where
 
             for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
                 _ = writer.write_all(cell);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
 
-                _ = writer.write_all(&[common::U8_CHAR_1]);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_1]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
 
-                _ = writer.write_all(&[common::U8_CHAR_1]);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_1]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
 
                 _ = writer.write_all(r1);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
                 _ = writer.write_all(r2);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
                 _ = writer.write_all(q1);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
                 _ = writer.write_all(q2);
-                _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
                 _ = writer.write_all(umi);
-                _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
+                _ = writer.write_all(&[crate::common::U8_CHAR_NEWLINE]);
             }
         }
     }
