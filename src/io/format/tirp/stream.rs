@@ -9,7 +9,7 @@ use crate::{
     io::{
         self,
         format::{self, tirp},
-        BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
+        traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
     },
 };
 
@@ -25,8 +25,8 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &io::tirp::File) -> Result<Self, crate::runtime::Error> {
-        let path = file.file_path();
+    pub fn new(file: &io::format::tirp::Input) -> Result<Self, crate::runtime::Error> {
+        let path = file.path();
 
         let file = match File::open(&path) {
             Ok(f) => f,
@@ -153,8 +153,8 @@ impl<T> Drop for Stream<T> {
 
 impl<T> BascetStream<T> for Stream<T>
 where
-    T: BascetStreamToken + 'static,
-    T::Builder: BascetStreamTokenBuilder<Token = T>,
+    T: BascetCell + 'static,
+    T::Builder: BascetCellBuilder<Token = T>,
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
