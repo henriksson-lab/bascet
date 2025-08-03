@@ -1,7 +1,6 @@
 use crate::{
     command::determine_thread_counts_2, common, io::traits::*, kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_input, support_which_stream,
-    utils::expand_and_resolve,
+    log_critical, log_info, log_warning, support_which_stream, utils::expand_and_resolve,
 };
 
 use clap::Args;
@@ -19,10 +18,6 @@ pub const DEFAULT_COUNTSKETCH_SIZE: usize = 128;
 pub const DEFAULT_KMER_SIZE: usize = 31;
 pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
-support_which_input! {
-    CountsketchInput
-    for formats [tirp, zip]
-}
 // support_which_output! {
 //     CountsketchOutput
 //     for formats ?[csv]
@@ -281,10 +276,10 @@ impl CountsketchCMD {
             log_info!("Completed file"; "output path" => ?output_path, "cells processed" => cells_parsed, "parse errors" => parse_errors);
         }
 
-        log_info!("Processing complete"; "files processed" => processed_files, "total files" => self.path_in.len(), "total cells processed" => total_cells_processed, "total errors" => total_errors);
+        log_info!("Countsketch complete"; "files processed" => processed_files, "files given as input" => self.path_in.len(), "total cells processed" => total_cells_processed, "total errors" => total_errors);
 
         if total_errors > 0 {
-            log_warning!("Execution completed with errors"; "total errors" => total_errors);
+            log_warning!("Execution completed with errors");
         }
 
         Ok(())

@@ -7,8 +7,7 @@ use std::{
 };
 
 use crate::{
-    io::traits::*, log_critical, log_info, log_warning, support_which_input, support_which_output,
-    support_which_stream, support_which_writer,
+    io::traits::*, log_critical, log_info, log_warning, support_which_stream, support_which_writer,
 };
 
 use std::collections::hash_map::DefaultHasher;
@@ -21,14 +20,6 @@ pub const DEFAULT_THREADS_READ: usize = 8;
 pub const DEFAULT_THREADS_WORK: usize = 4;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
-support_which_input! {
-    ShardifyInput
-    for formats [tirp]
-}
-support_which_output! {
-    ShardifyOutput
-    for formats [tirp]
-}
 support_which_stream! {
     ShardifyInput => ShardifyStream<T: BascetCell>
     for formats [tirp]
@@ -70,16 +61,6 @@ impl ShardifyCMD {
             "read threads" => self.threads_read,
             "work threads" => self.threads_work,
         );
-
-        // GOOD FIRST ISSUE:
-        // Output files should also use the AutoFile system
-        // let expanded_output = expand_and_resolve(&self.path_out)?;
-        // if let Some(parent) = expanded_output.parent() {
-        //     if !parent.exists() {
-        //         log_critical!("Output directory does not exist"; "path" => ?parent);
-        //     }
-        // }
-        // self.path_out = expanded_output;
 
         let processed_files = Arc::new(AtomicUsize::new(0));
         let total_cells_processed = Arc::new(AtomicUsize::new(0));
