@@ -69,7 +69,7 @@ macro_rules! __generate_input_enum {
                     let path = path.as_ref();
                     $(
                         if let Ok(inner) = crate::io::format::$format::Input::new(path) {
-                            crate::log_info!("Detected format: {}", stringify!($format));
+                            crate::log_info!("Detected input format: {}", stringify!($format));
                             return Ok(Self::[<$format:camel>](inner));
                         }
                     )*
@@ -93,7 +93,7 @@ macro_rules! __generate_output_enum {
                     let path = path.as_ref();
                     $(
                         if let Ok(inner) = crate::io::format::$format::Output::new(path) {
-                            crate::log_info!("Detected format: {}", stringify!($format));
+                            crate::log_info!("Detected output format: {}", stringify!($format));
                             return Ok(Self::[<$format:camel>](inner));
                         }
                     )*
