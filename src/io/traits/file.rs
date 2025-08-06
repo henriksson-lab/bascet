@@ -1,5 +1,5 @@
 use crate::command::countsketch::CountsketchInput;
-// use crate::command::countsketch::CountsketchOutput;
+use crate::command::countsketch::CountsketchOutput;
 
 use crate::command::shardify::ShardifyInput;
 use crate::command::shardify::ShardifyOutput;
@@ -95,7 +95,7 @@ pub trait BascetFile: Sized {
     }
 }
 
-#[enum_dispatch::enum_dispatch]
+// #[enum_dispatch::enum_dispatch]
 pub trait BascetTempFile: BascetFile {
     /// Create temp file instance from NamedTempFile (implementors must provide this)
     fn from_tempfile(temp_file: tempfile::NamedTempFile) -> Result<Self, crate::runtime::Error>

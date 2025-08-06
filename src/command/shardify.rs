@@ -99,7 +99,7 @@ impl ShardifyCMD {
                             .set_writer(BufWriter::new(file));
 
                     while let Ok(token) = writer_rx.recv() {
-                        output_writer.write_cell(token);
+                        let _ = output_writer.write_cell(&token);
                         total += 1;
                         if total % 1000 == 0 {
                             println!("{}", total)
@@ -153,14 +153,14 @@ impl ShardifyCMD {
                     }
                 };
 
-                let mut stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(file) {
-                    Ok(stream) => stream.set_reader_threads(threads_per_stream),
+                let stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(file) {
+                    Ok(stream) => stream,
                     Err(e) => {
                         log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
                         total_errors.fetch_add(1, Ordering::Relaxed);
                         return;
                     }
-                };
+                }.set_reader_threads(threads_per_stream);
 
                 for token in stream {
                     if let Ok(token) = token {

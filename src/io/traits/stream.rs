@@ -1,5 +1,6 @@
 use crate::command::countsketch::CountsketchStream;
 use crate::command::shardify::ShardifyStream;
+use crate::log_debug;
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetStream<T>: Sized
@@ -38,47 +39,72 @@ pub trait BascetCellBuilder: Sized {
 
     // Optional methods with default implementations
     fn add_cell_id_slice(self, id: &[u8]) -> Self {
+        log_debug!("Method 'add_cell_id_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_rp_slice(self, r1: &[u8], r2: &[u8]) -> Self {
+        log_debug!("Method 'add_rp_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_qp_slice(self, q1: &[u8], q2: &[u8]) -> Self {
+        log_debug!("Method 'add_qp_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_sequence_slice(self, sequence: &[u8]) -> Self {
+        log_debug!("Method 'add_sequence_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_quality_slice(self, qualities: &[u8]) -> Self {
+        log_debug!("Method 'add_quality_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_umi_slice(self, umi: &[u8]) -> Self {
+        log_debug!("Method 'add_umi_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_underlying(self, other: std::sync::Arc<Vec<u8>>) -> Self {
+        log_debug!("Method 'add_underlying' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
     fn add_cell_id_owned(self, id: Vec<u8>) -> Self {
+        log_debug!("Method 'add_cell_id_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_sequence_owned(self, sequence: Vec<u8>) -> Self {
+        log_debug!("Method 'add_sequence_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_rp_owned(self, rp: (Vec<u8>, Vec<u8>)) -> Self {
+        log_debug!("Method 'add_rp_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_quality_owned(self, scores: Vec<u8>) -> Self {
+        log_debug!("Method 'add_quality_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_umi_owned(self, umi: Vec<u8>) -> Self {
+        log_debug!("Method 'add_umi_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
     fn add_metadata_owned(self, meta: Vec<u8>) -> Self {
+        log_debug!("Method 'add_metadata_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
+
     fn add_metadata_slice(self, meta: &[u8]) -> Self {
+        log_debug!("Method 'add_metadata_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 }

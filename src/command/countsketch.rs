@@ -1,9 +1,11 @@
 use crate::{
     command::determine_thread_counts_2, common, io::traits::*, kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_stream, utils::expand_and_resolve,
+    log_critical, log_info, log_warning, support_which_stream, support_which_temp,
+    support_which_writer,
 };
 
 use clap::Args;
+use itertools::enumerate;
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -18,13 +20,13 @@ pub const DEFAULT_COUNTSKETCH_SIZE: usize = 128;
 pub const DEFAULT_KMER_SIZE: usize = 31;
 pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
-// support_which_output! {
-//     CountsketchOutput
-//     for formats ?[csv]
-// }
 support_which_stream! {
     CountsketchInput => CountsketchStream<T: BascetCell>
     for formats [tirp, zip]
+}
+support_which_writer! {
+    CountsketchOutput => CountsketchWriter<W: std::io::Write>
+    for formats [csv]
 }
 #[derive(Args)]
 pub struct CountsketchCMD {
@@ -78,21 +80,11 @@ impl CountsketchCMD {
             }
         };
 
-        // GOOD FIRST ISSUE:
-        // Output files should also use the AutoFile system
-        let expanded_output = expand_and_resolve(&self.path_out)?;
-        if let Some(parent) = expanded_output.parent() {
-            if !parent.exists() {
-                log_critical!("Output directory does not exist"; "path" => ?parent);
-            }
-        }
-        self.path_out = expanded_output;
-
         let mut processed_files = 0;
         let mut total_cells_processed = 0;
         let mut total_errors = 0;
 
-        for input in &self.path_in {
+        for (i, input) in enumerate(&self.path_in) {
             log_info!("Processing input file"; "path" => ?input);
 
             let file = match CountsketchInput::try_from_path(input) {
@@ -115,27 +107,33 @@ impl CountsketchCMD {
                 }
             }.set_reader_threads(n_readers);
 
-            let output_path_buf = input.with_extension("countsketch.txt");
-            let output_filename = match output_path_buf.file_name() {
-                Some(name) => name,
-                None => {
-                    log_warning!("Failed to generate output filename, skipping"; "input" => ?input);
+            let output_path = self.path_out.join(format!("countsketch.{i}.csv"));
+            let output_auto = match CountsketchOutput::try_from_path(&output_path) {
+                Ok(output) => output,
+                Err(e) => {
+                    log_warning!("Failed to identify output file, skipping"; "path" => ?output_path, "error" => %e);
+                    total_errors += 1;
+                    continue;
+                }
+            };
+            let output_file = match File::create(output_auto.path()) {
+                Ok(output) => output,
+                Err(e) => {
+                    log_warning!("Failed to create output file, skipping"; "path" => ?output_path, "error" => %e);
                     total_errors += 1;
                     continue;
                 }
             };
 
-            let output_path = self.path_out.join(output_filename);
-
-            let output_file = match File::create(&output_path) {
-                Ok(file) => file,
+            let writer =  match CountsketchWriter::try_from_output(output_auto) {
+                Ok(writer) => writer,
                 Err(e) => {
-                    log_critical!("Failed to create output file"; "path" => ?output_path, "error" => %e);
+                    log_warning!("Failed to create output writer, skipping"; "path" => ?output_path, "error" => %e);
+                    total_errors += 1;
+                    continue;
                 }
-            };
-
-            let bufwriter = BufWriter::new(output_file);
-            let bufwriter = Arc::new(Mutex::new(bufwriter));
+            }.set_writer(BufWriter::new(output_file));
+            let writer = Arc::new(Mutex::new(writer));
 
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
             let (work_tx, work_rx) =
@@ -147,16 +145,12 @@ impl CountsketchCMD {
                 let kmer_size = self.kmer_size;
                 let mut countsketch = CountSketch::new(self.countsketch_size);
 
-                let bufwriter = Arc::clone(&bufwriter);
-                let mut buffer: Vec<u8> = Vec::new();
-
+                let writer = Arc::clone(&writer);
                 worker_threadpool.execute(move || {
                     let mut cells_processed = 0;
 
                     while let Ok(Some(cell)) = work_rx.recv() {
                         countsketch.reset();
-
-                        let Some(cell_id) = cell.get_cell() else { continue };
                         let Some(reads) = cell.get_reads() else { continue };
 
                         for (r1, r2) in reads {
@@ -191,21 +185,10 @@ impl CountsketchCMD {
                             }
                         }
 
-                        buffer.clear();
-                        buffer.extend_from_slice(cell_id);
-                        buffer.push(common::U8_CHAR_TAB);
-                        buffer.extend_from_slice(reads.len().to_string().as_bytes());
-
-                        for value in countsketch.sketch.iter() {
-                            buffer.push(common::U8_CHAR_TAB);
-                            buffer.extend_from_slice(value.to_string().as_bytes());
-                        }
-                        buffer.push(common::U8_CHAR_NEWLINE);
-
                         // NOTE: lock free aproaches for writing did not perform much better
-                        match bufwriter.lock() {
+                        match writer.lock() {
                             Ok(mut writer) => {
-                                if let Err(e) = writer.write_all(&buffer) {
+                                if let Err(e) = writer.write_countsketch(&cell, &countsketch) {
                                     log_warning!("Write error in worker thread"; "worker id" => worker_id, "error" => %e);
                                 }
                             }
@@ -216,18 +199,7 @@ impl CountsketchCMD {
 
                         cells_processed += 1;
                     }
-
                     log_info!("Worker thread completed"; "worker id" => worker_id, "cells processed" => cells_processed);
-                    match bufwriter.lock() {
-                        Ok(mut writer) => {
-                            if let Err(e) = writer.flush() {
-                            log_warning!("Flush error in worker thread"; "worker id" => worker_id, "error" => %e);
-                            }
-                        }
-                        Err(_) => {
-                            log_warning!("Buffer lock contention in worker"; "worker id" => worker_id);
-                        }
-                    }
                 });
             }
 
