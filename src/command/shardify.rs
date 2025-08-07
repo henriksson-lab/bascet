@@ -1,9 +1,12 @@
 use anyhow::Result;
+use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use clap::Args;
+use gxhash::GxHasher;
 use std::{
+    fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use crate::{
@@ -16,8 +19,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
-pub const DEFAULT_THREADS_READ: usize = 8;
-pub const DEFAULT_THREADS_WORK: usize = 4;
+pub const DEFAULT_THREADS_READ: usize = 10;
+pub const DEFAULT_THREADS_WORK: usize = 2;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
 support_which_stream! {
@@ -54,136 +57,120 @@ pub struct ShardifyCMD {
 impl ShardifyCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-        log_info!("Starting Shardify";
-            "input files" => self.path_in.len(),
-            "output path" => ?self.path_out,
-            "total threads" => self.threads_total,
-            "read threads" => self.threads_read,
-            "work threads" => self.threads_work,
-        );
+        let (collector_tx, collector_rx) =
+            crossbeam::channel::bounded::<(usize, Option<ShardifyCell>)>(1000);
 
-        let processed_files = Arc::new(AtomicUsize::new(0));
-        let total_cells_processed = Arc::new(AtomicUsize::new(0));
-        let total_errors = Arc::new(AtomicUsize::new(0));
+        let writer_pool = Arc::new(WriterPool::new(&self.path_out));
 
-        let threads_per_stream = self.threads_read / self.path_in.len();
+        let writer_pool_clone = Arc::clone(&writer_pool);
+        let num_readers = self.path_in.len();
+        let collector_handle = thread::spawn(move || {
+            use std::collections::BTreeMap;
 
-        let (tx, rx) = mpsc::channel::<ShardifyCell>();
+            let mut reader_minimums: Vec<Option<Vec<u8>>> = vec![None; num_readers];
+            let mut pending_tokens: BTreeMap<Vec<u8>, (usize, ShardifyCell)> = BTreeMap::new();
 
-        let path_out = self.path_out.clone();
-        let writer_handle = thread::spawn(move || {
-            use std::sync::mpsc;
+            while let Ok((reader_id, token_opt)) = collector_rx.recv() {
+                match token_opt {
+                    Some(token) => {
+                        let cell_bytes = token.get_cell().unwrap().to_vec();
 
-            let mut senders = Vec::new();
-            let mut writer_handles = Vec::new();
+                        reader_minimums[reader_id] = Some(cell_bytes.clone());
 
-            for path in path_out.iter() {
-                let (writer_tx, writer_rx) = mpsc::channel::<ShardifyCell>();
-                senders.push(writer_tx);
+                        pending_tokens
+                            .entry(cell_bytes)
+                            .and_modify(|(count, _)| *count += 1)
+                            .or_insert((1, token));
 
-                let mut total = 0;
+                        let global_min = reader_minimums
+                            .iter()
+                            .filter_map(|m| m.as_ref())
+                            .min()
+                            .cloned();
 
-                let path = path.clone();
-                let file = std::fs::File::create(&path).unwrap();
+                        if let Some(min) = global_min {
+                            let ready_tokens: Vec<_> = pending_tokens
+                                .range(..min)
+                                .map(|(k, _)| k.clone())
+                                .collect();
 
-                let handle = thread::spawn(move || {
-                    let output_file = match ShardifyOutput::try_from_path(&path) {
-                        Ok(file) => file,
-                        Err(e) => {
-                            log_critical!("Failed to open input file, skipping"; "path" => ?path, "error" => %e);
-                        }
-                    };
-                    let mut output_writer: ShardifyWriter<BufWriter<std::fs::File>> =
-                        ShardifyWriter::try_from_output(output_file)
-                            .unwrap()
-                            .set_writer(BufWriter::new(file));
+                            for token_key in ready_tokens {
+                                if let Some((_, token)) = pending_tokens.remove(&token_key) {
+                                    let mut hasher = GxHasher::default();
+                                    token.cell.hash(&mut hasher);
+                                    let writer_index =
+                                        hasher.finish() as usize % writer_pool_clone.writer_count();
 
-                    while let Ok(token) = writer_rx.recv() {
-                        let _ = output_writer.write_cell(&token);
-                        total += 1;
-                        if total % 1000 == 0 {
-                            println!("{}", total)
+                                    writer_pool_clone.write(writer_index, token);
+                                }
+                            }
                         }
                     }
-                });
-                writer_handles.push(handle);
-            }
-
-            while let Ok(token) = rx.recv() {
-                // Hash cell to determine output file
-                let mut hasher = DefaultHasher::new();
-                token.cell.hash(&mut hasher);
-                let hash = hasher.finish();
-                let writer_index = hash as usize % senders.len();
-
-                senders[writer_index].send(token).unwrap();
-            }
-
-            drop(senders);
-            for handle in writer_handles {
-                handle.join().unwrap();
-            }
-        });
-
-        let handles: Vec<_> = self.path_in.iter().map(|input| {
-            let input = input.clone();
-            let tx = tx.clone();
-            let processed_files = Arc::clone(&processed_files);
-            let total_cells_processed = Arc::clone(&total_cells_processed);
-            let total_errors = Arc::clone(&total_errors);
-
-            let file = std::fs::File::open(self.include_cells.as_ref().unwrap().as_path()).unwrap();
-            let reader = BufReader::new(file);
-            let hashset: gxhash::HashSet<Vec<u8>> = reader
-                .lines()
-                .collect::<Result<Vec<_>, _>>().unwrap()
-                .into_iter()
-                .map(|line| line.into_bytes())
-                .collect();
-
-            thread::spawn(move || {
-                log_info!("Processing input file"; "path" => ?input);
-
-                let file = match ShardifyInput::try_from_path(&input) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        log_warning!("Failed to open input file, skipping"; "path" => ?input, "error" => %e);
-                        total_errors.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                };
-
-                let stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(file) {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
-                        total_errors.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                }.set_reader_threads(threads_per_stream);
-
-                for token in stream {
-                    if let Ok(token) = token {
-                        if hashset.contains(token.get_cell().unwrap()) {
-                            let _ = tx.send(token);
-                        }
+                    None => {
+                        reader_minimums[reader_id] = None;
                     }
                 }
+            }
 
-                processed_files.fetch_add(1, Ordering::Relaxed);
+            for (_, (_, token)) in pending_tokens {
+                let mut hasher = GxHasher::default();
+                token.cell.hash(&mut hasher);
+                let writer_index = hasher.finish() as usize % writer_pool_clone.writer_count();
+
+                writer_pool_clone.write(writer_index, token);
+            }
+
+            writer_pool_clone.shutdown();
+        });
+
+        let filter = self.include_cells.as_ref().map(|path| {
+            let file = File::open(path).unwrap();
+            let reader = BufReader::new(file);
+            reader
+                .lines()
+                .map(|line| line.unwrap().into_bytes())
+                .collect::<gxhash::HashSet<Vec<u8>>>()
+        });
+        println!("filter len: {}", filter.as_ref().unwrap().len());
+
+        let stream_threads = self.threads_read / self.path_in.len();
+        let stream_handles: Vec<_> = self
+            .path_in
+            .iter()
+            .enumerate()
+            .map(|(reader_id, input_path)| {
+                let input_path = input_path.clone();
+                let collector_tx = collector_tx.clone();
+                let filter = filter.clone();
+                let mut filtered = 0;
+                let mut processed = 0;
+
+                thread::spawn(move || {
+                    let file = ShardifyInput::try_from_path(&input_path).unwrap();
+                    let stream: ShardifyStream<ShardifyCell> =
+                        ShardifyStream::try_from_input(file).unwrap().set_reader_threads(stream_threads);
+
+                    for token in stream {
+                        let token = token.unwrap();
+
+                        if let Some(ref filter) = filter {
+                            if !filter.contains(token.get_cell().unwrap()) {
+                                continue;
+                            }
+                        }
+                        collector_tx.send((reader_id, Some(token))).unwrap();
+                    }
+                    collector_tx.send((reader_id, None)).unwrap();
+                })
             })
-        }).collect();
+            .collect();
 
-        for handle in handles {
+        for handle in stream_handles {
             handle.join().unwrap();
         }
 
-        drop(tx);
-        writer_handle.join().unwrap();
-
-        let mut processed_files = processed_files.load(Ordering::Relaxed);
-        let mut total_cells_processed = total_cells_processed.load(Ordering::Relaxed);
-        let mut total_errors = total_errors.load(Ordering::Relaxed);
+        drop(collector_tx);
+        collector_handle.join().unwrap();
 
         Ok(())
     }
@@ -331,5 +318,79 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_cell().transpose()
+    }
+}
+
+struct WriterPool {
+    writers: Vec<Arc<Mutex<WriterHandle>>>,
+}
+
+impl WriterPool {
+    fn new(paths: &[PathBuf]) -> Self {
+        let writers = paths
+            .iter()
+            .map(|path| Arc::new(Mutex::new(WriterHandle::new(path.clone()))))
+            .collect();
+
+        WriterPool { writers }
+    }
+
+    fn writer_count(&self) -> usize {
+        self.writers.len()
+    }
+
+    fn write(&self, index: usize, token: ShardifyCell) {
+        let mut writer = self.writers[index].lock().unwrap();
+        writer.write(token);
+    }
+
+    fn shutdown(&self) {
+        for writer in &self.writers {
+            let mut writer = writer.lock().unwrap();
+            writer.shutdown();
+        }
+    }
+}
+
+struct WriterHandle {
+    tx: Option<crossbeam::channel::Sender<ShardifyCell>>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl WriterHandle {
+    fn new(path: PathBuf) -> Self {
+        let (tx, rx) = crossbeam::channel::unbounded::<ShardifyCell>();
+        let handle = thread::spawn(move || {
+            let file = File::create(&path).unwrap();
+            let output_file = ShardifyOutput::try_from_path(&path).unwrap();
+            let bgzf_writer: BGZFMultiThreadWriter<BufWriter<File>> = BGZFMultiThreadWriter::new(BufWriter::new(file), Compression::fast());
+            let mut writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
+                ShardifyWriter::try_from_output(output_file)
+                    .unwrap()
+                    .set_writer(bgzf_writer);
+            
+            while let Ok(token) = rx.recv() {
+                writer.write_cell(&token).unwrap();
+            }
+            let _ = writer.get_writer().unwrap().flush();
+        });
+
+        WriterHandle {
+            tx: Some(tx),
+            handle: Some(handle),
+        }
+    }
+
+    fn write(&mut self, token: ShardifyCell) {
+        if let Some(ref tx) = self.tx {
+            tx.send(token).unwrap();
+        }
+    }
+
+    fn shutdown(&mut self) {
+        self.tx = None;
+        if let Some(handle) = self.handle.take() {
+            handle.join().unwrap();
+        }
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    command::determine_thread_counts_2, common, io::traits::*, kmer::kmc_counter::CountSketch,
+    command::determine_thread_counts_2, io::traits::*, kmer::kmc_counter::CountSketch,
     log_critical, log_info, log_warning, support_which_stream, support_which_temp,
     support_which_writer,
 };
@@ -8,7 +8,7 @@ use clap::Args;
 use itertools::enumerate;
 use std::{
     fs::File,
-    io::{BufWriter, Write},
+    io::BufWriter,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
