@@ -1,5 +1,4 @@
 use crate::{
-    io::format,
     io::BascetFile,
     utils::{command_to_string, expand_and_resolve},
 };

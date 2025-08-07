@@ -1,7 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 
 use crate::command::countsketch::AutoStream;
-use crate::io::support::*;
 use enum_dispatch::enum_dispatch;
 
 pub trait BascetFile {
@@ -100,24 +99,24 @@ pub trait BascetStreamTokenBuilder: Sized {
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
-    fn add_cell_id_slice(self, slice: &[u8]) -> Self {
+    fn add_cell_id_slice(self, _slice: &[u8]) -> Self {
         self
     }
-    fn add_seq_slice(self, slice: &[u8]) -> Self {
+    fn add_seq_slice(self, _slice: &[u8]) -> Self {
         self
     }
-    fn add_underlying(self, other: Arc<Vec<u8>>) -> Self {
-        self
-    }
-
-    fn add_sequence_owned(self, seq: Vec<u8>) -> Self {
-        self
-    }
-    fn add_quality_owned(self, scores: Vec<u8>) -> Self {
+    fn add_underlying(self, _other: Arc<Vec<u8>>) -> Self {
         self
     }
 
-    fn add_metadata(self, meta: &str) -> Self {
+    fn add_sequence_owned(self, _seq: Vec<u8>) -> Self {
+        self
+    }
+    fn add_quality_owned(self, _scores: Vec<u8>) -> Self {
+        self
+    }
+
+    fn add_metadata(self, _meta: &str) -> Self {
         self
     }
 }

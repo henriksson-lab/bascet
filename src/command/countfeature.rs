@@ -25,7 +25,6 @@ use noodles::gff::feature::record::Strand;
 
 use crate::umi::umi_dedup::UMIcounter;
 use super::determine_thread_counts_1;
-use crate::utils::dedup_umi;
 
 use sprs::{CsMat, TriMat};
 
@@ -345,7 +344,6 @@ impl GeneCounter {
             let mut prep_data = UMIcounter::prepare_from_str(&counter.umis);
             let cnt = UMIcounter::directional_algorithm(&mut prep_data, 1);
             
-            //let cnt = UMIcounter::dedup_umi(&counter.umis);
             map_cell_count.insert(cellid.clone(), cnt);
         }
         map_cell_count

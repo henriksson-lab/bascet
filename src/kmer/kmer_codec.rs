@@ -1,3 +1,4 @@
+/*
 use std::{cmp::Ordering, hash::Hasher};
 
 ////////////// Lookup table for N where N is any of ATCG. Maps to 0..3
@@ -52,6 +53,9 @@ const NT4_LOOKUP: [u8; NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE] =
     generate_nt4_table();
 
 const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
+
+ */
+
 
 // Lookup table for plusmin_one_hash: [1, -1] for even/odd
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];

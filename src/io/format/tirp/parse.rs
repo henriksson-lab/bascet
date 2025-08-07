@@ -1,6 +1,5 @@
 use crate::{
     common::{self, ReadPair},
-    io::format,
 };
 
 #[inline]
