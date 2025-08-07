@@ -136,9 +136,6 @@ impl Chemistry for TenxRNAChemistry {
         //}
 
         if isok {
-            let r1_from = 0;
-            let r1_to = r1_seq.len();
-
             //R1 need to have the first part with barcodes removed. Figure out total size!
             let r1_from = self.barcode.trim_bcread_len;
             let r1_to = r1_seq.len();

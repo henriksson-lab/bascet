@@ -1,9 +1,7 @@
 use crate::{
-    io::format,
     io::BascetFile,
-    utils::{command_to_string, expand_and_resolve},
+    utils::{expand_and_resolve},
 };
-use std::process::Command;
 
 #[derive(Debug)]
 pub struct File {

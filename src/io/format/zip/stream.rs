@@ -1,8 +1,6 @@
-use rust_htslib::htslib;
 use std::{
     fs::File,
-    io::{BufReader, Read},
-    sync::Arc,
+    io::{Read},
 };
 use zip::{HasZipMetadata, ZipArchive};
 
@@ -10,10 +8,8 @@ use crate::{
     common::{self},
     io::{
         self,
-        format::{self},
         BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
     },
-    log_critical, log_info,
 };
 
 pub struct Stream<T> {

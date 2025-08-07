@@ -1,4 +1,3 @@
-use memmap2::Mmap;
 use rust_htslib::htslib;
 
 use std::fs::File;
@@ -8,7 +7,7 @@ use crate::{
     common::{self},
     io::{
         self,
-        format::{self, tirp},
+        format::{tirp},
         BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
     },
 };
