@@ -232,7 +232,7 @@ fn create_writer_thread(
         let file_output = File::create(&outfile).unwrap();
         let writer = BufWriter::new(file_output);
 
-        let mut writer = noodles_bgzf::MultithreadedWriter::new(writer);
+        let mut writer = noodles::bgzf::io::MultithreadedWriter::new(writer);
         //1.0.0 · Source
         //fn write_all(&mut self, buf: &[u8]) -> Result<(), Error>  is implemented
 

@@ -1,4 +1,6 @@
 use clap::Args;
+use flate2::read::GzDecoder;
+use noodles::gff::feature::RecordBuf;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -16,8 +18,10 @@ use bio::bio_types::strand::ReqStrand;
 use rust_htslib::bam::record::Record as BamRecord;
 use rust_htslib::bam::Read;
 
-use noodles_gff as gff;
-use noodles_gff::feature::record::Strand;
+use noodles::gtf as gtf;
+
+use noodles::gff as gff;
+use noodles::gff::feature::record::Strand;
 
 use crate::umi::umi_dedup::UMIcounter;
 use super::determine_thread_counts_1;
@@ -286,7 +290,7 @@ impl CountFeature {
     /// Run the feature counting algorithm
     pub fn run(&mut self) -> anyhow::Result<()> {
         //Set up counter data structure
-        let mut gc = GenomeCounter::read_file(&self)?;
+        let mut gc = GenomeCounter::read_gff_file(&self)?;
 
         //Start multithreaded deduplicators
         self.start_dedupers();
@@ -463,78 +467,170 @@ impl GenomeCounter {
         }
     }
 
-    pub fn read_file(params: &CountFeature) -> anyhow::Result<GenomeCounter> {
-        let mut gff = GenomeCounter::new();
 
-        /*
-        https://gmod.org/wiki/GFF3
 
-        OUR GFF
-        NC_006153.2	RefSeq	gene	56826	58085	.	+	.	ID=gene-YPTB_RS21810;Name=yscD;gbkey=Gene;gene=yscD;gene_biotype=protein_coding;locus_tag=YPTB_RS21810;old_locus_tag=pYV0080
-        NC_006153.2	Protein Homology	CDS	56826	58085	.	+	0	ID=cds-WP_002212919.1;Parent=gene-YPTB_RS21810;Dbxref=GenBank:WP_002212919.1;Name=WP_002212919.1;gbkey=CDS;gene=yscD;inference=COORDINATES: similar to AA sequence:RefSeq:WP_002212919.1;locus_tag=YPTB_RS21810;product=SctD family type III secretion system inner membrane ring subunit YscD;protein_id=WP_002212919.1;transl_table=11
+    
 
-        BASIC GFF
-        ctg123 . mRNA            1300  9000  .  +  .  ID=mrna0001;Name=sonichedgehog
-        ctg123 . exon            1300  1500  .  +  .  Parent=mrna0001
-        */
+    /// 
+    /// For GFF/GTF reading, process one record
+    /// 
+    fn add_gene_record(
+        gff: &mut GenomeCounter, params: &CountFeature, record: &RecordBuf
+    ) {
+        //Only insert records that the user have chosen; typically genes
+        if record.ty() == params.use_feature {
 
-        //Read all records
-        let mut reader = File::open(&params.path_gff)
-            .map(BufReader::new)
-            .map(gff::io::Reader::new)?;
+            /*
+            println!(
+                "{}\t{}\t{}",
+                record.reference_sequence_name(),
+                record.start(),
+                record.end(),
+            );
+            */
+            
+            let attr = record.attributes();
+            let attr_id = attr.get(b"ID");
 
-        for result in reader.record_bufs() {
-            let record = result?;
+            if let Some(attr_id)=attr_id {
+                let attr_id = attr_id.as_string().expect("GFF: ID is not a string").to_string();
 
-            //Only insert records that the user have chosen; typically genes
-            if record.ty() == params.use_feature {
-                /*
-                               println!(
-                                   "{}\t{}\t{}",
-                                   record.reference_sequence_name(),
-                                   record.start(),
-                                   record.end(),
-                               );
-                */
+                //Pick a name. Use ID if nothing else
+                let attr_name = attr.get(b"Name");
+                let attr_name = match attr_name {
+                    Some(attr_name) => attr_name.as_string().expect("GFF: Name is not a string").to_string(),
+                    None => attr_id.clone()
+                };
 
-                let attr = record.attributes();
-                let attr_id = attr.get(b"ID");
+                let gc = GeneCounter {
+                    gene_chr: record.reference_sequence_name().to_vec(),
+                    gene_start: record.start().get() as i64,
+                    gene_end: record.end().get() as i64,
+                    gene_strand: record.strand(),
+        
+                    gene_id: attr_id.as_bytes().to_vec(),
+                    gene_name: attr_name.as_bytes().to_vec(),
 
-                if let Some(attr_id) = attr_id {
-                    let attr_id = attr_id.as_string().expect("ID is not a string").to_string();
+                    counters: HashMap::new(),
+                };
 
-                    //Pick a name. Use ID if nothing else
-                    let attr_name = attr.get(b"Name");
-                    let attr_name = match attr_name {
-                        Some(attr_name) => attr_name
-                            .as_string()
-                            .expect("Name is not a string")
-                            .to_string(),
-                        None => attr_id.clone(),
-                    };
+                gff.add_feature(gc);
 
-                    let gc = GeneCounter {
-                        gene_chr: record.reference_sequence_name().to_vec(),
-                        gene_start: record.start().get() as i64,
-                        gene_end: record.end().get() as i64,
-                        gene_strand: record.strand(),
-
-                        gene_id: attr_id.as_bytes().to_vec(),
-                        gene_name: attr_name.as_bytes().to_vec(),
-
-                        counters: HashMap::new(),
-                    };
-
-                    gff.add_feature(gc);
-                } else {
-                    println!("Requested feature has no ID");
-                }
+            } else {
+                println!("GFF: Requested feature has no ID");
             }
         }
+    }
+
+
+    /// 
+    /// Read a GFF file - from a reader
+    /// 
+    fn read_gff_from_reader<R>(
+        reader: &mut gff::io::Reader<R>, params: &CountFeature
+    ) -> anyhow::Result<GenomeCounter> where R:std::io::BufRead  {
+        let mut gff = GenomeCounter::new();
+        for result in reader.record_bufs() {
+            let record = result.expect("Could not read a GFF record; is it actually a GTF?");
+            Self::add_gene_record(&mut gff, params, &record);
+        }
+        anyhow::Ok(gff)
+    }
+
+
+    /// 
+    /// Read a GTF file - from a reader
+    /// 
+    fn read_gtf_from_reader<R>(
+        reader: &mut gtf::io::Reader<R>, params: &CountFeature
+    ) -> anyhow::Result<GenomeCounter> where R:std::io::BufRead  {
+        let mut gff = GenomeCounter::new();
+        for result in reader.record_bufs() {
+            let record = result.expect("Could not read a GFF record; is it actually a GTF?");
+            Self::add_gene_record(&mut gff, params, &record);
+        }
+        anyhow::Ok(gff)
+    }
+
+
+    /// 
+    /// Read a GFF file
+    /// 
+    fn read_gff_file(params: &CountFeature) -> anyhow::Result<GenomeCounter> {
+
+
+        let spath = params.path_gff.to_string_lossy();
+
+        let mut gff = if spath.ends_with("gff.gz") {
+
+            println!("Reading gzipped GFF: {:?}",params.path_gff);
+            let mut reader = File::open(&params.path_gff)
+                .map(GzDecoder::new)
+                .map(BufReader::new)
+                .map(gff::io::Reader::new)?;
+            Self::read_gff_from_reader(&mut reader, params)
+
+        } else if spath.ends_with("gff") {
+
+            println!("Reading flat GFF: {:?}",params.path_gff);
+            let mut reader = File::open(&params.path_gff)
+                .map(BufReader::new)
+                .map(gff::io::Reader::new)?;
+            Self::read_gff_from_reader(&mut reader, params)
+
+        } else if spath.ends_with("gtf.gz") {
+
+            println!("Reading gzipped GTF: {:?}",params.path_gff);
+            let mut reader = File::open(&params.path_gff)
+                .map(GzDecoder::new)
+                .map(BufReader::new)
+                .map(gtf::io::Reader::new)?;
+            Self::read_gtf_from_reader(&mut reader, params)
+
+        } else if spath.ends_with("gtf") {
+
+            println!("Reading gzipped GTF: {:?}",params.path_gff);
+            let mut reader = File::open(&params.path_gff)
+                .map(BufReader::new)
+                .map(gtf::io::Reader::new)?;
+            Self::read_gtf_from_reader(&mut reader, params)
+            
+        } else {
+            anyhow::bail!("Could not tell file format for GFF/GTF file {:?}", params.path_gff);
+        }?;
+
 
         //Sort records to make it ready for counting
         gff.sort();
 
-        anyhow::Ok(gff)
+        anyhow::Ok(gff)       
     }
+
+
+
+
+
+
+
+/* 
+https://gmod.org/wiki/GFF3
+
+OUR GFF
+NC_006153.2	RefSeq	gene	56826	58085	.	+	.	ID=gene-YPTB_RS21810;Name=yscD;gbkey=Gene;gene=yscD;gene_biotype=protein_coding;locus_tag=YPTB_RS21810;old_locus_tag=pYV0080
+NC_006153.2	Protein Homology	CDS	56826	58085	.	+	0	ID=cds-WP_002212919.1;Parent=gene-YPTB_RS21810;Dbxref=GenBank:WP_002212919.1;Name=WP_002212919.1;gbkey=CDS;gene=yscD;inference=COORDINATES: similar to AA sequence:RefSeq:WP_002212919.1;locus_tag=YPTB_RS21810;product=SctD family type III secretion system inner membrane ring subunit YscD;protein_id=WP_002212919.1;transl_table=11
+
+BASIC GFF
+ctg123 . mRNA            1300  9000  .  +  .  ID=mrna0001;Name=sonichedgehog
+ctg123 . exon            1300  1500  .  +  .  Parent=mrna0001
+*/
+
+
+
+
+/* 
+    use noodles_gtf as gtf;
+let reader = gtf::io::Reader::new(io::empty());
+let _ = reader.get_ref();
+*/
+
 }
