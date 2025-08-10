@@ -46,9 +46,21 @@ pub struct CountFeatureCMD {
     pub path_out: PathBuf,
 
     // Feature to count
-    #[arg(short = 'f', default_value = "gene")]
+    #[arg(long = "use-feature", default_value = "gene")]
     //Not used, but kept here for consistency with other commands
     pub use_feature: String,
+
+
+    // Attribute id for gene ID
+    #[arg(long = "attr-id", default_value = "gene_id")]
+    //Not used, but kept here for consistency with other commands
+    pub attr_id: String,
+
+    // Attribute id for gene ID
+    #[arg(long = "attr-name", default_value = "name")]
+    //Not used, but kept here for consistency with other commands
+    pub attr_name: String,
+
 
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = "temp")]
@@ -66,11 +78,17 @@ impl CountFeatureCMD {
 
         //TODO Can check that input file is sorted via header
 
+        let gff_settings = GFFparseSettings {
+            use_feature: self.use_feature.clone(),
+            attr_id: self.attr_id.clone(),
+            attr_name: self.attr_name.clone(),
+        };
+
         CountFeature::new(
             self.path_in.clone(),
             self.path_gff.clone(),
             self.path_out.clone(),
-            self.use_feature.clone(),
+            gff_settings,
             num_threads_total,
         )
         .run()?;
@@ -89,12 +107,19 @@ pub enum BascetStrand {  //equivalent to GFF
 }
  */
 
+pub struct GFFparseSettings {
+    pub use_feature: String,
+    pub attr_id: String,
+    pub attr_name: String,
+}
+
 pub struct CountFeature {
     pub path_in: PathBuf,
     pub path_gff: PathBuf,
     pub path_out: PathBuf,
-    pub use_feature: String,
+    pub gff_settings: GFFparseSettings,
     pub num_threads: usize,
+
 
     thread_pool_work: ThreadPool,
     tx: Sender<Option<GeneCounter>>,
@@ -108,12 +133,14 @@ pub struct CountFeature {
 
 }
 impl CountFeature {
+
+
     pub fn new(
         path_in: PathBuf,
         path_gff: PathBuf,
         path_out: PathBuf,
-        use_feature: String,
-        num_threads: usize,
+        gff_settings: GFFparseSettings,
+        num_threads: usize,        
     ) -> CountFeature {
         //Prepare thread pool
         let thread_pool_work = threadpool::ThreadPool::new(num_threads);
@@ -124,8 +151,9 @@ impl CountFeature {
             path_in: path_in.clone(),
             path_gff: path_gff.clone(),
             path_out: path_out.clone(),
-            use_feature: use_feature.clone(),
             num_threads: num_threads,
+
+            gff_settings: gff_settings,
 
             thread_pool_work: thread_pool_work,
             tx: tx,
@@ -134,6 +162,8 @@ impl CountFeature {
             finished_genes: Arc::new(Mutex::new(Vec::new())),
         }
     }
+
+
 
     fn process_bam(
         &mut self,
@@ -289,7 +319,10 @@ impl CountFeature {
     /// Run the feature counting algorithm
     pub fn run(&mut self) -> anyhow::Result<()> {
         //Set up counter data structure
-        let mut gc = GenomeCounter::read_gff_file(&self)?;
+        let mut gc = GenomeCounter::read_gff_file(
+            &self.path_gff,
+            &self.gff_settings
+        )?;
 
         //Start multithreaded deduplicators
         self.start_dedupers();
@@ -387,12 +420,14 @@ impl ChromosomeCounter {
 pub struct GenomeCounter {
     chroms: HashMap<Vec<u8>, ChromosomeCounter>,
     last_chrom: Vec<u8>,
+    failed_to_get_name: usize
 }
 impl GenomeCounter {
     pub fn new() -> GenomeCounter {
         GenomeCounter {
             chroms: HashMap::new(),
             last_chrom: Vec::new(),
+            failed_to_get_name: 0
         }
     }
 
@@ -473,7 +508,9 @@ impl GenomeCounter {
     /// For GFF/GTF reading, process one record
     /// 
     fn add_gene_record(
-        gff: &mut GenomeCounter, params: &CountFeature, record: &RecordBuf
+        gff: &mut GenomeCounter, 
+        params: &GFFparseSettings, 
+        record: &RecordBuf
     ) {
         //Only insert records that the user have chosen; typically genes
         if record.ty() == params.use_feature {
@@ -487,17 +524,24 @@ impl GenomeCounter {
             );
             */
             
+            //let fieldid_id = "ID"; // fieldGeneId   for yersinia
+            let fieldid_id = "gene_id"; // fieldGeneId
+            let fieldid_name = "name"; // fieldGeneId
+
             let attr = record.attributes();
-            let attr_id = attr.get(b"ID");
+            let attr_id = attr.get(fieldid_id.as_bytes());
 
             if let Some(attr_id)=attr_id {
                 let attr_id = attr_id.as_string().expect("GFF: ID is not a string").to_string();
 
                 //Pick a name. Use ID if nothing else
-                let attr_name = attr.get(b"Name");
+                let attr_name = attr.get(fieldid_name.as_bytes());
                 let attr_name = match attr_name {
                     Some(attr_name) => attr_name.as_string().expect("GFF: Name is not a string").to_string(),
-                    None => attr_id.clone()
+                    None => {
+                        gff.failed_to_get_name += 1;
+                        attr_id.clone()
+                    }
                 };
 
                 let gc = GeneCounter {
@@ -525,7 +569,8 @@ impl GenomeCounter {
     /// Read a GFF file - from a reader
     /// 
     fn read_gff_from_reader<R>(
-        reader: &mut gff::io::Reader<R>, params: &CountFeature
+        reader: &mut gff::io::Reader<R>, 
+        params: &GFFparseSettings
     ) -> anyhow::Result<GenomeCounter> where R:std::io::BufRead  {
         let mut gff = GenomeCounter::new();
         for result in reader.record_bufs() {
@@ -540,7 +585,8 @@ impl GenomeCounter {
     /// Read a GTF file - from a reader
     /// 
     fn read_gtf_from_reader<R>(
-        reader: &mut gtf::io::Reader<R>, params: &CountFeature
+        reader: &mut gtf::io::Reader<R>, 
+        params: &GFFparseSettings
     ) -> anyhow::Result<GenomeCounter> where R:std::io::BufRead  {
         let mut gff = GenomeCounter::new();
         for result in reader.record_bufs() {
@@ -554,15 +600,15 @@ impl GenomeCounter {
     /// 
     /// Read a GFF file
     /// 
-    fn read_gff_file(params: &CountFeature) -> anyhow::Result<GenomeCounter> {
+    fn read_gff_file(path_gff: &PathBuf, params: &GFFparseSettings) -> anyhow::Result<GenomeCounter> {
 
 
-        let spath = params.path_gff.to_string_lossy();
+        let spath = path_gff.to_string_lossy();
 
         let mut gff = if spath.ends_with("gff.gz") {
 
-            println!("Reading gzipped GFF: {:?}",params.path_gff);
-            let mut reader = File::open(&params.path_gff)
+            println!("Reading gzipped GFF: {:?}",path_gff);
+            let mut reader = File::open(&path_gff)
                 .map(GzDecoder::new)
                 .map(BufReader::new)
                 .map(gff::io::Reader::new)?;
@@ -570,16 +616,16 @@ impl GenomeCounter {
 
         } else if spath.ends_with("gff") {
 
-            println!("Reading flat GFF: {:?}",params.path_gff);
-            let mut reader = File::open(&params.path_gff)
+            println!("Reading flat GFF: {:?}",path_gff);
+            let mut reader = File::open(&path_gff)
                 .map(BufReader::new)
                 .map(gff::io::Reader::new)?;
             Self::read_gff_from_reader(&mut reader, params)
 
         } else if spath.ends_with("gtf.gz") {
 
-            println!("Reading gzipped GTF: {:?}",params.path_gff);
-            let mut reader = File::open(&params.path_gff)
+            println!("Reading gzipped GTF: {:?}",path_gff);
+            let mut reader = File::open(&path_gff)
                 .map(GzDecoder::new)
                 .map(BufReader::new)
                 .map(gtf::io::Reader::new)?;
@@ -587,19 +633,29 @@ impl GenomeCounter {
 
         } else if spath.ends_with("gtf") {
 
-            println!("Reading gzipped GTF: {:?}",params.path_gff);
-            let mut reader = File::open(&params.path_gff)
+            println!("Reading gzipped GTF: {:?}",path_gff);
+            let mut reader = File::open(&path_gff)
                 .map(BufReader::new)
                 .map(gtf::io::Reader::new)?;
             Self::read_gtf_from_reader(&mut reader, params)
             
         } else {
-            anyhow::bail!("Could not tell file format for GFF/GTF file {:?}", params.path_gff);
+            anyhow::bail!("Could not tell file format for GFF/GTF file {:?}", path_gff);
         }?;
-
 
         //Sort records to make it ready for counting
         gff.sort();
+
+        //See if it worked
+        let mut num_features = 0;
+        for chr in gff.chroms.values() {
+            num_features += chr.genes.len();
+        }
+        println!("Done reading GFF; number of features: {}", num_features);
+        println!("Number of features for which name field was missing: {}  (not all files have a name field - feature ID will be reported instead)", gff.failed_to_get_name);
+        if num_features == 0 {
+            anyhow::bail!("Stopping because there are no features");
+        }        
 
         anyhow::Ok(gff)       
     }
