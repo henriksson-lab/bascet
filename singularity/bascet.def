@@ -6,7 +6,8 @@ From: deps.sif
     . "$HOME/.cargo/env"
 
 %files
-    ../src /src/bascet/src
+    ../src        /src/bascet/src
+    ../.cargo     /src/bascet/.cargo
     ../Cargo.toml /src/bascet/Cargo.toml
 
 %post

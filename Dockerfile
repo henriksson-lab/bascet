@@ -43,7 +43,9 @@ RUN rustup toolchain install nightly
 ######## install bascet
 
 COPY src /src/bascet/src
+COPY .cargo /src/bascet/.cargo
 COPY Cargo.toml /src/bascet/Cargo.toml
+
 WORKDIR /src/bascet
 #RUN cd /src/bascet
 RUN cargo +nightly build --profile=release
