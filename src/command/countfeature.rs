@@ -113,6 +113,9 @@ pub struct GFFparseSettings {
     pub attr_name: String,
 }
 
+///
+/// Feature counter. A single thread reads the file while deduplication is performed on separate threads
+/// 
 pub struct CountFeature {
     pub path_in: PathBuf,
     pub path_gff: PathBuf,
@@ -134,7 +137,9 @@ pub struct CountFeature {
 }
 impl CountFeature {
 
-
+    ///
+    /// Initialize a new feature counter
+    /// 
     pub fn new(
         path_in: PathBuf,
         path_gff: PathBuf,
@@ -142,10 +147,10 @@ impl CountFeature {
         gff_settings: GFFparseSettings,
         num_threads: usize,        
     ) -> CountFeature {
+
         //Prepare thread pool
         let thread_pool_work = threadpool::ThreadPool::new(num_threads);
         let (tx, rx) = crossbeam::channel::bounded(num_threads * 3);
-        //let (tx, rx) = (Arc::new(tx), Arc::new(rx));
 
         CountFeature {
             path_in: path_in.clone(),
@@ -164,7 +169,9 @@ impl CountFeature {
     }
 
 
-
+    /// 
+    /// Process on BAM file
+    /// 
     fn process_bam(
         &mut self,
         //params: &CountFeature,
@@ -183,7 +190,7 @@ impl CountFeature {
         //Map cellid -> count. Note that we do not have a list of cellid's at start; we need to harmonize this later
         //let mut map_cell_count: BTreeMap<Cellid, uint> = BTreeMap::new();
 
-        let mut num_reads = 0;
+        let mut num_reads: u64 = 0;
 
         //Transfer all records
         let mut record = BamRecord::new();
@@ -438,7 +445,7 @@ impl GenomeCounter {
         chr: &[u8],
         start: i64,
         end: i64,
-        _strand: Strand, //TOOD make use of this. chemistry dependent
+        _strand: Strand, //TOOD make use of this. chemistry dependent. input flag?
         cf: &CountFeature,
     ) {
         //If we moved to a new chromosome, ensure we wrap up the counters on the previous one
