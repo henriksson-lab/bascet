@@ -12,6 +12,8 @@ use rust_htslib::bam::Read;
 
 use noodles::gff::feature::record::Strand;
 
+use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 use crate::umi::umi_dedup::UMIcounter;
 use super::determine_thread_counts_1;
 
@@ -143,12 +145,15 @@ impl CountPerCell {
         //For all unknown cells, update their identity
         for (cellid,cnt) in &self.counter_other_cell {
             if let Some(i) = new_cellintmapping.map_cell_int.get(cellid) {
-                //This cell received an ID from another process already, so it can just be inserted
+                //This cell received an ID from another process already, so it can just be reused
                 self.counter_known_cell.insert(*i as u32, *cnt);
             } else {
                 //Generate a new ID
                 let i = new_cellintmapping.list_cell.len();
+
+                //Add ID to mapping
                 new_cellintmapping.map_cell_int.insert(cellid.clone(),i);
+                new_cellintmapping.list_cell.push(cellid.clone());
 
                 //Now insert cell in known list
                 self.counter_known_cell.insert(i as u32, *cnt);
@@ -255,7 +260,7 @@ impl CountFeature {
             let current_state = Arc::clone(&current_state);
             let path_in = path_in.clone();
 
-            println!("Starting deduper thread {}", tidx);
+            //println!("Starting deduper thread {}", tidx);
 
             thread_pool_work.execute(move || {
                 
@@ -308,7 +313,7 @@ impl CountFeature {
                         );  
                     }
                 }
-                println!("Ending thread {}", tidx);
+                //println!("Ending thread {}", tidx);
             });
         }
 
@@ -319,7 +324,7 @@ impl CountFeature {
         }
 
         // Send termination signals to workers, then wait for them to complete
-        println!("Shutting down BAM counters");
+        println!("Shutting down counters");
         for _ in 0..num_threads {
             let _ = tx.send(None);
         }
@@ -433,58 +438,85 @@ impl CountFeature {
         let mut state = state.lock().unwrap();
 
         //Operate on the finished counts from all threads
-        let finished_genes = &mut state.finished_genes;
-
         //Sort by genes such that count table from shards always match up        
-        println!("- Sorting genes");
-        print_mem_usage();
-        finished_genes.sort_by(|(a,_),(b,_)| a.gene_id.cmp(&b.gene_id));
-
-
-        let mut cur_gene_index = 0;
-        let mut map_gene_index = HashMap::new();
-
-        //Gather genes and cell names
-        println!("- Assign features to matrix index");
-        print_mem_usage();
-        for g in &gff.list_feature {
-            //Give matrix index for genes
-            map_gene_index.insert(g.gene_id.to_vec(), cur_gene_index);
-            cur_gene_index += 1;
+        {
+            //Keep mutable borrow here
+            println!("- Sorting genes");
+            let finished_genes = &mut state.finished_genes;
+            finished_genes.sort_by(|(a,_),(b,_)| a.gene_id.cmp(&b.gene_id));
         }
-        
+        let finished_genes = &state.finished_genes;
 
         //Proceed to fill in matrix in triplet format.
         //matrix is indexed as [gene,cell]
-        println!("- Add triplets");
-        print_mem_usage();
+        println!("- Generate triplets");
 
         let num_features = gff.list_feature.len();
-        let mut trimat = TriMat::new((cur_gene_index, num_features));
-        for (gene, map) in finished_genes.iter() {
+        let num_cells = state.current_cellintmapping.list_cell.len();
+
+        let mut trimat = TriMat::new((num_cells, num_features));
+        for (gene_id, (_meta, map)) in finished_genes.iter().enumerate() {
             for (cell_id, cnt) in map {
-                let g = map_gene_index.get(&gene.gene_id).unwrap();
-                //let c = cell_id; //map_cellid_index.get(&cell_id).unwrap();
 
                 trimat.add_triplet(
-                    *g, 
                     *cell_id as usize, 
+                    gene_id, 
                     *cnt
                 );   // is u32 too small? maybe not for kraken etc
             }
         }
 
         println!("- To CSR format");
-        print_mem_usage();
         // This matrix type does not allow computations, and must to
         // converted to a compatible sparse type, using for example
         let compressed_mat: CsMat<_> = trimat.to_csr();
 
         //TODO store the matrix in a better way
+        /*
+        
         println!("- Store as matrix market :(");
         print_mem_usage();
         sprs::io::write_matrix_market(&path_out, &compressed_mat)?;
+         */
 
+
+        //Prepare matrix that we will store into
+        //let mut mm = SparseMatrixAnnDataWriter::new();
+
+
+        println!("- Store as anndata");
+//        sprs::io::write_matrix_market(&path_out, &compressed_mat)?;
+
+        let mut file = SparseMatrixAnnDataWriter::create_anndata(path_out)?;
+      
+        let list_cell_names = 
+            SparseMatrixAnnDataWriter::list_string_to_h5(&state.current_cellintmapping.list_cell);
+
+        let list_feature_names:Vec<Vec<u8>> = finished_genes
+            .into_iter()
+            .map(|(x,_)| x.gene_id.clone())
+            .collect();
+        let list_feature_names = SparseMatrixAnnDataWriter::list_string_to_h5(&list_feature_names);
+
+        file.store_feature_names(
+            &list_feature_names
+        )?; 
+
+        file.store_cell_names(
+            &list_cell_names,
+            None
+        )?;
+        
+        let n_rows = num_cells as u32;
+        let n_cols = num_features as u32;
+        file.store_sparse_count_matrix(
+            &compressed_mat,
+            n_rows,  
+            n_cols,  
+        )?;
+
+
+        
         anyhow::Ok(())
     }
 
