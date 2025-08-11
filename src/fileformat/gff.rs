@@ -114,9 +114,9 @@ impl FeatureCollection {
                 };
 
 
-                //if record.reference_sequence_name().to_string() == "MT" {  ////////// for now: only include MT!! TODO
+                if record.reference_sequence_name().to_string() == "1" {  ////////// for testing
                     gff.add_feature(gene_meta);
-                //}
+                }
 
 
             } else {
