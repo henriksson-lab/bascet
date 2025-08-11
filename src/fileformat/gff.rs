@@ -114,9 +114,9 @@ impl FeatureCollection {
                 };
 
 
-                if record.reference_sequence_name().to_string() == "1" {  ////////// for testing
+                //if record.reference_sequence_name().to_string() == "1" {  ////////// for testing
                     gff.add_feature(gene_meta);
-                }
+                //}
 
 
             } else {
