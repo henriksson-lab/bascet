@@ -1,11 +1,14 @@
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use clap::Args;
-use gxhash::GxHasher;
+use crossbeam::channel::{self, Receiver};
+use itertools::Itertools;
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
-    path::PathBuf,
+    num::NonZero,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -43,8 +46,8 @@ pub struct ShardifyCMD {
     pub path_out: Vec<PathBuf>,
 
     // File with a list of cells to include
-    #[arg(long = "cells")]
-    pub include_cells: Option<PathBuf>,
+    #[arg(long = "include")]
+    pub path_include: Option<PathBuf>,
 
     #[arg(short = '@', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_TOTAL)]
     threads_total: usize,
@@ -57,121 +60,12 @@ pub struct ShardifyCMD {
 impl ShardifyCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-        let (collector_tx, collector_rx) =
-            crossbeam::channel::bounded::<(usize, Option<ShardifyCell>)>(1000);
-
-        let writer_pool = Arc::new(WriterPool::new(&self.path_out));
-
-        let writer_pool_clone = Arc::clone(&writer_pool);
-        let num_readers = self.path_in.len();
-        let collector_handle = thread::spawn(move || {
-            use std::collections::BTreeMap;
-
-            let mut reader_minimums: Vec<Option<Vec<u8>>> = vec![None; num_readers];
-            let mut pending_tokens: BTreeMap<Vec<u8>, (usize, ShardifyCell)> = BTreeMap::new();
-
-            while let Ok((reader_id, token_opt)) = collector_rx.recv() {
-                match token_opt {
-                    Some(token) => {
-                        let cell_bytes = token.get_cell().unwrap().to_vec();
-
-                        reader_minimums[reader_id] = Some(cell_bytes.clone());
-
-                        pending_tokens
-                            .entry(cell_bytes)
-                            .and_modify(|(count, _)| *count += 1)
-                            .or_insert((1, token));
-
-                        let global_min = reader_minimums
-                            .iter()
-                            .filter_map(|m| m.as_ref())
-                            .min()
-                            .cloned();
-
-                        if let Some(min) = global_min {
-                            let ready_tokens: Vec<_> = pending_tokens
-                                .range(..min)
-                                .map(|(k, _)| k.clone())
-                                .collect();
-
-                            for token_key in ready_tokens {
-                                if let Some((_, token)) = pending_tokens.remove(&token_key) {
-                                    let mut hasher = GxHasher::default();
-                                    token.cell.hash(&mut hasher);
-                                    let writer_index =
-                                        hasher.finish() as usize % writer_pool_clone.writer_count();
-
-                                    writer_pool_clone.write(writer_index, token);
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        reader_minimums[reader_id] = None;
-                    }
-                }
-            }
-
-            for (_, (_, token)) in pending_tokens {
-                let mut hasher = GxHasher::default();
-                token.cell.hash(&mut hasher);
-                let writer_index = hasher.finish() as usize % writer_pool_clone.writer_count();
-
-                writer_pool_clone.write(writer_index, token);
-            }
-
-            writer_pool_clone.shutdown();
-        });
-
-        let filter = self.include_cells.as_ref().map(|path| {
-            let file = File::open(path).unwrap();
-            let reader = BufReader::new(file);
-            reader
-                .lines()
-                .map(|line| line.unwrap().into_bytes())
-                .collect::<gxhash::HashSet<Vec<u8>>>()
-        });
-        println!("filter len: {}", filter.as_ref().unwrap().len());
-
-        let stream_threads = self.threads_read / self.path_in.len();
-        let stream_handles: Vec<_> = self
-            .path_in
-            .iter()
-            .enumerate()
-            .map(|(reader_id, input_path)| {
-                let input_path = input_path.clone();
-                let collector_tx = collector_tx.clone();
-                let filter = filter.clone();
-                let mut filtered = 0;
-                let mut processed = 0;
-
-                thread::spawn(move || {
-                    let file = ShardifyInput::try_from_path(&input_path).unwrap();
-                    let stream: ShardifyStream<ShardifyCell> =
-                        ShardifyStream::try_from_input(file).unwrap().set_reader_threads(stream_threads);
-
-                    for token in stream {
-                        let token = token.unwrap();
-
-                        if let Some(ref filter) = filter {
-                            if !filter.contains(token.get_cell().unwrap()) {
-                                continue;
-                            }
-                        }
-                        collector_tx.send((reader_id, Some(token))).unwrap();
-                    }
-                    collector_tx.send((reader_id, None)).unwrap();
-                })
-            })
-            .collect();
-
-        for handle in stream_handles {
-            handle.join().unwrap();
-        }
-
-        drop(collector_tx);
-        collector_handle.join().unwrap();
-
+        let filter = setup_filter(self.path_include.as_deref());
+        let rx = setup_streams(
+            self.path_in.iter().map(|p| p.as_path()).collect_vec(),
+            (self.threads_read / self.path_in.len()).max(1),
+            filter,
+        );
         Ok(())
     }
 }
@@ -321,76 +215,47 @@ where
     }
 }
 
-struct WriterPool {
-    writers: Vec<Arc<Mutex<WriterHandle>>>,
+type ShardifyFilter = Arc<gxhash::HashSet<Vec<u8>>>;
+fn setup_filter(input: Option<&Path>) -> ShardifyFilter {
+    if input == None {
+        log_critical!(
+            "Empty cell list detected! This configuration may consume massive amounts of computer memory (potentially hundreds of GiB of RAM) and will DUPLICATE the input datasets. This is almost certainly an error. Verify input parameters or provide an explicitly empty collection only if this behavior is understood and intended."
+        );
+    }
+    let input = input.unwrap();
+    // GOOD FIRST ISSUE:
+    // implement cell list reader around the support macros!
+    let file = File::open(input).unwrap();
+    let reader = BufReader::new(file);
+    let filter = reader
+        .lines()
+        .map(|l| l.unwrap().into_bytes())
+        .collect::<gxhash::HashSet<Vec<u8>>>();
+
+    if filter.is_empty() {
+        log_warning!(
+            "Empty cell list detected! This configuration may consume massive amounts of computer memory (potentially hundreds of GiB of RAM) and will DUPLICATE the input datasets."
+        );
+    }
+    return Arc::new(filter);
 }
 
-impl WriterPool {
-    fn new(paths: &[PathBuf]) -> Self {
-        let writers = paths
-            .iter()
-            .map(|path| Arc::new(Mutex::new(WriterHandle::new(path.clone()))))
-            .collect();
-
-        WriterPool { writers }
-    }
-
-    fn writer_count(&self) -> usize {
-        self.writers.len()
-    }
-
-    fn write(&self, index: usize, token: ShardifyCell) {
-        let mut writer = self.writers[index].lock().unwrap();
-        writer.write(token);
-    }
-
-    fn shutdown(&self) {
-        for writer in &self.writers {
-            let mut writer = writer.lock().unwrap();
-            writer.shutdown();
-        }
-    }
+const STREAM_COORDINATOR_N_QX: usize = 32;
+struct StreamCoordinator {
+    rx: crossbeam::channel::Receiver<Option<usize>>,
+    qx: smallvec::SmallVec<[rtrb::Consumer<ShardifyCell>; STREAM_COORDINATOR_N_QX]>,
 }
-
-struct WriterHandle {
-    tx: Option<crossbeam::channel::Sender<ShardifyCell>>,
-    handle: Option<thread::JoinHandle<()>>,
+impl StreamCoordinator {
+    
 }
+fn spawn_streams_coordinated(
+    input: Vec<&Path>,
+    threads_per_reader: usize,
+    filter: ShardifyFilter,
+) -> anyhow::Result<StreamCoordinator> {
+    let (tx, rx) = channel::unbounded::<Option<usize>>();
+    let queues: smallvec::SmallVec<[rtrb::Consumer<ShardifyCell>; STREAM_COORDINATOR_N_QX]> = smallvec::SmallVec::new();
+    for path in input {}
 
-impl WriterHandle {
-    fn new(path: PathBuf) -> Self {
-        let (tx, rx) = crossbeam::channel::unbounded::<ShardifyCell>();
-        let handle = thread::spawn(move || {
-            let file = File::create(&path).unwrap();
-            let output_file = ShardifyOutput::try_from_path(&path).unwrap();
-            let bgzf_writer: BGZFMultiThreadWriter<BufWriter<File>> = BGZFMultiThreadWriter::new(BufWriter::new(file), Compression::fast());
-            let mut writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
-                ShardifyWriter::try_from_output(output_file)
-                    .unwrap()
-                    .set_writer(bgzf_writer);
-            
-            while let Ok(token) = rx.recv() {
-                writer.write_cell(&token).unwrap();
-            }
-            let _ = writer.get_writer().unwrap().flush();
-        });
-
-        WriterHandle {
-            tx: Some(tx),
-            handle: Some(handle),
-        }
-    }
-
-    fn write(&mut self, token: ShardifyCell) {
-        if let Some(ref tx) = self.tx {
-            tx.send(token).unwrap();
-        }
-    }
-
-    fn shutdown(&mut self) {
-        self.tx = None;
-        if let Some(handle) = self.handle.take() {
-            handle.join().unwrap();
-        }
-    }
+    anyhow::bail!("aa")
 }

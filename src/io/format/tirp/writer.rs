@@ -37,7 +37,6 @@ where
     where
         C: BascetCell,
     {
-        
         let id = cell.get_cell().unwrap();
         if let Some(ref mut writer) = self.inner {
             let reads = cell.get_reads().unwrap_or(&[]);
