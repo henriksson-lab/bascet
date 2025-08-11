@@ -28,6 +28,30 @@ impl UMIcounter {
         //Get frequency of each UMI
         let map_encoded_cnt = count_element_function(encoded);
 
+        Self::prepare_from_map(&map_encoded_cnt)
+        /*
+        //Keep frequencies in a list
+        let mut list_encoded_cnt: Vec<OneUMI> = map_encoded_cnt.iter().map(
+            |(&umi, &cnt)| OneUMI {
+                umi: umi,
+                cnt: cnt as u32,
+                //parent: None
+            }
+        ).collect();
+
+        //Sort list, smallest to greatest
+        list_encoded_cnt.sort_by(|a,b| a.cnt.cmp(&b.cnt));
+
+        list_encoded_cnt
+         */
+        
+    }
+
+
+    pub fn prepare_from_map(
+        map_encoded_cnt: &HashMap<u32,u32>
+    ) -> Vec<OneUMI> {
+
         //Keep frequencies in a list
         let mut list_encoded_cnt: Vec<OneUMI> = map_encoded_cnt.iter().map(
             |(&umi, &cnt)| OneUMI {
@@ -42,7 +66,6 @@ impl UMIcounter {
 
         list_encoded_cnt
     }
-
 
     ///////////////////////////////
     /// Deduplicate using directional algorithm
@@ -93,7 +116,7 @@ impl UMIcounter {
 
 ///////////////////////////////
 /// Get frequency of each element as a hashmap
-fn count_element_function<I>(it: I) -> HashMap<I::Item, usize>
+fn count_element_function<I>(it: I) -> HashMap<I::Item, u32>
 where
     I: IntoIterator,
     I::Item: Eq + core::hash::Hash,

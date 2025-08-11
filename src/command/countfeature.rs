@@ -113,6 +113,9 @@ pub struct CountPerCell {
 }
 impl CountPerCell {
 
+    ///
+    /// Create a new counter given cell->int mapping
+    /// 
     pub fn new(known_cells: Arc<CellIntMapping>) -> CountPerCell {
         CountPerCell {
             known_cells: known_cells,
@@ -121,6 +124,9 @@ impl CountPerCell {
         }
     }
 
+    ///
+    /// Add count for a cell
+    /// 
     pub fn insert(&mut self, cellid: &Vec<u8>, cnt: u32) {
         if let Some(i) = self.known_cells.map_cell_int.get(cellid) {
             self.counter_known_cell.insert(*i as u32, cnt);
@@ -129,6 +135,9 @@ impl CountPerCell {
         }
     }
 
+    ///
+    /// Propagage unknown cell identities into cell->int map
+    /// 
     fn add_unknown_ids(&mut self, new_cellintmapping: &mut CellIntMapping) {
 
         //For all unknown cells, update their identity
@@ -171,8 +180,7 @@ impl CellIntMapping {
 
 
 
-pub struct CountedNamedCells {
-//    counters: CountPerCell, // BTreeMap<Vec<u8>, u32>,
+struct CounterResult {
     processed_reads: u64,
 }
 
@@ -318,7 +326,7 @@ impl CountFeature {
         thread_pool_work.join();
 
         println!("Writing count matrix");
-        let current_state = current_state.lock().unwrap();
+//        let current_state = current_state.lock().unwrap();
         Self::write_matrix(
             &current_state, 
             &gff,
@@ -340,7 +348,7 @@ impl CountFeature {
         bam: &mut rust_htslib::bam::IndexedReader,
         meta: &GeneMeta,
         map_cell_count: &mut CountPerCell
-    ) -> anyhow::Result<CountedNamedCells> {  
+    ) -> anyhow::Result<CounterResult> {  
 
         let mut counters: HashMap<Cellid, CellCounter> = HashMap::new(); 
 
@@ -386,33 +394,28 @@ impl CountFeature {
             }
 
 
-            if num_reads > 10000000 && num_reads%1000000 == 0 {
-                
-                let chrom = String::from_utf8_lossy(meta.gene_chr.as_slice());
-                let gene_id = String::from_utf8_lossy(meta.gene_id.as_slice());
+        }
 
-                println!("Suspicious feature with {} reads: {}    {}:{}-{}", num_reads, gene_id, chrom, meta.gene_start, meta.gene_end);
-            }
+        if num_reads > 20000000 {
+            let chrom = String::from_utf8_lossy(meta.gene_chr.as_slice());
+            let gene_id = String::from_utf8_lossy(meta.gene_id.as_slice());
+            println!("Very common feature with {} reads: {}    {}:{}-{}", 
+            num_reads, gene_id, chrom, meta.gene_start, meta.gene_end);
         }
 
 
         //Convert UMI to cell counts
-//        let mut map_cell_count: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
-
-//        let mut map_cell_count: CountPerCell::new();
-
         for (cellid, counter) in counters.iter() {
 
             //Perform UMI deduplication and counting
-            let mut prep_data = UMIcounter::prepare_from_str(&counter.umis);
+            let mut prep_data = UMIcounter::prepare_from_map(&counter.umis);
             let cnt = UMIcounter::directional_algorithm(&mut prep_data, 1);
             
             map_cell_count.insert(cellid, cnt);
         }
 
 
-        Ok(CountedNamedCells {
-//            counters: map_cell_count,
+        Ok(CounterResult {
             processed_reads: num_reads
         })
     }
@@ -422,15 +425,21 @@ impl CountFeature {
 
     /// Write count matrix to disk
     fn write_matrix(
-        state: &CurrentCounterState,
+        state: &Arc<Mutex<CurrentCounterState>>,
         gff: &FeatureCollection,
         path_out: &PathBuf
     ) -> anyhow::Result<()> {
         
-        //Operate on the finished counts from all threads
-        let finished_genes = &state.finished_genes;
+        let mut state = state.lock().unwrap();
 
-//        let mut set_cellid = HashSet::new();
+        //Operate on the finished counts from all threads
+        let finished_genes = &mut state.finished_genes;
+
+        //Sort by genes such that count table from shards always match up        
+        println!("- Sorting genes");
+        print_mem_usage();
+        finished_genes.sort_by(|(a,_),(b,_)| a.gene_id.cmp(&b.gene_id));
+
 
         let mut cur_gene_index = 0;
         let mut map_gene_index = HashMap::new();
@@ -442,32 +451,15 @@ impl CountFeature {
             //Give matrix index for genes
             map_gene_index.insert(g.gene_id.to_vec(), cur_gene_index);
             cur_gene_index += 1;
-
-            //Collect cell names
-//            for cell_id in map.keys() {
-//                set_cellid.insert(cell_id);
-//            }
         }
-
-        //Give matrix index for cell names
-        /*
-        println!("- Get index for cell names");
-        print_mem_usage();
-        let mut cur_cellid_index = 0;
-        let mut map_cellid_index = HashMap::new();
-        for cell_id in set_cellid {
-            map_cellid_index.insert(cell_id, cur_cellid_index);
-            cur_cellid_index += 1;
-        }
-
- */
         
-        let num_features = gff.list_feature.len();
 
         //Proceed to fill in matrix in triplet format.
         //matrix is indexed as [gene,cell]
         println!("- Add triplets");
         print_mem_usage();
+
+        let num_features = gff.list_feature.len();
         let mut trimat = TriMat::new((cur_gene_index, num_features));
         for (gene, map) in finished_genes.iter() {
             for (cell_id, cnt) in map {
@@ -505,33 +497,34 @@ impl CountFeature {
 
 
 /// 
-/// Counter: cell level
+/// Counter of UMIs for a cell, prior to deduplication
+/// 
+/// Comparison of keeping list of UMIs vs keeping hashmap.
+/// 
+/// Just looking at MT reads (time, memory)
+/// 151s (list),   9,345,486,848 
+/// 154s (hashmap) 3,574,112,256
+/// 
+/// It is the same speed but hashmaps only uses 30% of RAM
 /// 
 pub struct CellCounter {
-    pub umis: Vec<Vec<u8>>, 
-
-
-    /////////// TODO. terrible to use Vec<u8>. should we prescan to get most cellIDs, then look the rest up upon need?
-    // to avoid plenty locking, we can let threads keep a copied own list of a dictionary so far, then let them make a new
-    // dictionary for newly encountered cells. the additional dictionary is merged with a central dictionary at the end
-    // of a run (single lock), where no particular merging is needed if the central dictionary has not changed.
-    // future BAM files could also get a list of cell names in the beginning with IDs back to it. e.g. CBI:0, Cell Barcode Index.
-    // CBI is not compatible with cellSNP though, so we would need to rewrite some tools
-    //
-    // Since we got a single reader, it could take care of lookup right away?
-
-    // is a hashset counter better? 
-
-
+    pub umis: HashMap<u32, u32>, //umi -> count   
 }
 impl CellCounter {
 
     fn new() -> CellCounter {
-        CellCounter { umis: Vec::new() }
+        CellCounter { umis: HashMap::new() }
     }
 
+    ///
+    /// Note: this implementation assumes 8 byte UMIs!! pad if needed. could do unsafe reading outside memory and bitwise & to make this fast
+    /// 
     pub fn push(&mut self, umi: &[u8]) {
-        self.umis.push(umi.into());
+        let encoded_umi = unsafe { crate::umi::KMER2bit::encode_u32(umi) };
+
+        let cur_value = self.umis.entry(encoded_umi).or_insert(0); //get(k)
+        *cur_value += 1;
+
     }
 }
 
