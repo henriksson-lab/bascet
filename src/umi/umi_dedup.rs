@@ -47,7 +47,7 @@ impl UMIcounter {
     ///////////////////////////////
     /// Deduplicate using directional algorithm
     pub fn directional_algorithm(
-        list_umi: &mut Vec<OneUMI>, 
+        list_umi: &Vec<OneUMI>, 
         max_distance: u32
     ) -> u32 {
 

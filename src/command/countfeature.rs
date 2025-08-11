@@ -113,6 +113,25 @@ pub struct GFFparseSettings {
     pub attr_name: String,
 }
 
+
+
+pub struct CountPerCell {
+    pub map_cell_id: Arc<BTreeMap<usize, Vec<u8>>>,
+    pub counter_known_cell: BTreeMap<usize, u32>,
+    pub counter_other_cell: BTreeMap<Vec<u8>, u32>,
+//    pub BTreeMap<Vec<u8>, u32>
+}
+
+
+
+
+
+
+
+
+
+
+
 ///
 /// Feature counter. A single thread reads the file while deduplication is performed on separate threads
 /// 
@@ -130,8 +149,8 @@ pub struct CountFeature {
 
     ///List of genes that have been finally counted
     finished_genes: Arc<Mutex<Vec<(
-        GeneCounter,
-        BTreeMap<Vec<u8>, u32>
+        GeneMeta,
+        BTreeMap<Vec<u8>, u32>  // CountPerCell  //
     )>>>,
 
 }
@@ -252,10 +271,9 @@ impl CountFeature {
                     //Deduplicate
                     let cnt = gene.get_counts(); 
 
-
                     //Put into matrix
                     let mut data = finished_genes.lock().unwrap();
-                    data.push((gene, cnt));
+                    data.push((gene.meta, cnt));
                 }
                 println!("Ending deduper thread {}", tidx);
             });
@@ -350,7 +368,13 @@ impl CountFeature {
 
 /// Counter: cell level
 pub struct CellCounter {
-    pub umis: Vec<Vec<u8>>,
+    pub umis: Vec<Vec<u8>>, 
+    /////////// TODO. terrible to use Vec<u8>. should we prescan to get most cellIDs, then look the rest up upon need?
+    // to avoid plenty locking, we can let threads keep a copied own list of a dictionary so far, then let them make a new
+    // dictionary for newly encountered cells. the additional dictionary is merged with a central dictionary at the end
+    // of a run (single lock), where no particular merging is needed if the central dictionary has not changed.
+    // future BAM files could also get a list of cell names in the beginning with IDs back to it. e.g. CBI:0, Cell Barcode Index.
+    // CBI is not compatible with cellSNP though, so we would need to rewrite some tools
 }
 impl CellCounter {
     fn new() -> CellCounter {
@@ -358,8 +382,9 @@ impl CellCounter {
     }
 }
 
-//// Counter: gene level
-pub struct GeneCounter {
+
+
+pub struct GeneMeta {
     pub gene_chr: ChromosomeID,
     pub gene_start: i64,
     pub gene_end: i64,
@@ -367,6 +392,14 @@ pub struct GeneCounter {
 
     pub gene_id: Vec<u8>,
     pub gene_name: Vec<u8>,
+}
+
+
+///
+/// Counter: gene level
+/// 
+pub struct GeneCounter {
+    pub meta: GeneMeta,
 
     pub counters: HashMap<Cellid, CellCounter>,
 }
@@ -379,15 +412,16 @@ impl GeneCounter {
         //For each cell
         for (cellid, counter) in self.counters.iter() {
 
-
             //Perform UMI deduplication and counting
             let mut prep_data = UMIcounter::prepare_from_str(&counter.umis);
             let cnt = UMIcounter::directional_algorithm(&mut prep_data, 1);
             
             map_cell_count.insert(cellid.clone(), cnt);
         }
+
         map_cell_count
     }
+
 }
 
 /// Counter: chromosome level
@@ -408,7 +442,7 @@ impl ChromosomeCounter {
     /// Sort features along this chromosome. This must be done before counting starts as
     /// the features must follow the same order as reads appear in the BAM input file
     pub fn sort(&mut self) {
-        self.genes.sort_by_key(|e| (e.gene_start, e.gene_end));
+        self.genes.sort_by_key(|e| (e.meta.gene_start, e.meta.gene_end));
         //The first element will be the last element of this vector.
         //This means that items can be popped off at the end in O(1), keeping ownership
         self.genes.reverse();
@@ -467,11 +501,11 @@ impl GenomeCounter {
                 let this_gene = gff_chrom.genes.get_mut(cur_gene as usize).unwrap();
 
                 //See if the read overlaps current gene
-                if this_gene.gene_end < start {
+                if this_gene.meta.gene_end < start {
                     //We are past this gene. The counting can be finalized
                     let this_gene = gff_chrom.genes.pop().unwrap();
                     cf.tx.send(Some(this_gene)).unwrap();
-                } else if end < this_gene.gene_start {
+                } else if end < this_gene.meta.gene_start {
                     //This gene is beyond the current read. Since reads are sorted by position, we need not check more genes
                     break;
                 } else {
@@ -496,7 +530,7 @@ impl GenomeCounter {
 
     pub fn add_feature(&mut self, f: GeneCounter) {
         self.chroms
-            .entry(f.gene_chr.clone())
+            .entry(f.meta.gene_chr.clone())
             .and_modify(|e| e.add_feature(f))
             .or_insert(ChromosomeCounter::new());
     }
@@ -551,7 +585,7 @@ impl GenomeCounter {
                     }
                 };
 
-                let gc = GeneCounter {
+                let gene_meta = GeneMeta {
                     gene_chr: record.reference_sequence_name().to_vec(),
                     gene_start: record.start().get() as i64,
                     gene_end: record.end().get() as i64,
@@ -559,7 +593,11 @@ impl GenomeCounter {
         
                     gene_id: attr_id.as_bytes().to_vec(),
                     gene_name: attr_name.as_bytes().to_vec(),
+                };
 
+
+                let gc = GeneCounter {
+                    meta: gene_meta,
                     counters: HashMap::new(),
                 };
 
