@@ -27,7 +27,7 @@ pub struct GFFparseSettings {
 
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug)]  //, PartialEq, Eq, PartialOrd, Ord
 pub struct GeneMeta {
     pub gene_chr: ChromosomeID,
     pub gene_start: i64,
@@ -114,9 +114,9 @@ impl FeatureCollection {
                 };
 
 
-                if record.reference_sequence_name().to_string() == "MT" {  ////////// for now: only include MT!! TODO
+                //if record.reference_sequence_name().to_string() == "MT" {  ////////// for now: only include MT!! TODO
                     gff.add_feature(gene_meta);
-                }
+                //}
 
 
             } else {
