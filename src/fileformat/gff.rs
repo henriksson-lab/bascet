@@ -27,11 +27,11 @@ pub struct GFFparseSettings {
 
 
 
-#[derive(Clone, Debug)]  //, PartialEq, Eq, PartialOrd, Ord
+#[derive(Clone, Debug)]
 pub struct GeneMeta {
     pub gene_chr: ChromosomeID,
     pub gene_start: i64,
-    pub gene_end: i64,
+    pub gene_end: i64,  //Could be u32 most likely
     pub gene_strand: Strand,
 
     pub gene_id: Vec<u8>,
