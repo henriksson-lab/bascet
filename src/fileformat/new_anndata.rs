@@ -383,7 +383,7 @@ impl SparseMatrixAnnDataWriter {
         Ok(())
     }
 
-    /*
+    
     pub fn csr_mat_u32_to_u16(
         csr_mat: &CsMat<u32>
     ) -> CsMat<u16> {
@@ -395,7 +395,6 @@ impl SparseMatrixAnnDataWriter {
         );
         csr_mat
     }
- */
     
 
     ///
@@ -405,13 +404,16 @@ impl SparseMatrixAnnDataWriter {
         csr_mat: &'a CsMat<X>
     ) -> CsMat<Y> 
     where
-        Y: From<&'a X>
+        X: Copy,
+        Y: TryFrom<X>,
+        <Y as TryFrom<X>>::Error: std::fmt::Debug   // is the try_from slow? better implement a specific converter?
+//        Y: From<&'a X>
     {
         CsMat::new(
             csr_mat.shape().into(),
             csr_mat.indptr().as_slice().unwrap().to_vec(),
             csr_mat.indices().into(),
-            csr_mat.data().iter().map(|x| Y::from(x)).collect()
+            csr_mat.data().iter().map(|x| Y::try_from(*x).unwrap()).collect()
         )
     }
 
