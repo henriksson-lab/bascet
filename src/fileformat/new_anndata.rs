@@ -383,15 +383,47 @@ impl SparseMatrixAnnDataWriter {
         Ok(())
     }
 
+    /*
+    pub fn csr_mat_u32_to_u16(
+        csr_mat: &CsMat<u32>
+    ) -> CsMat<u16> {
+        let csr_mat: CsMat<u16> = CsMat::new(
+            csr_mat.shape().into(),
+            csr_mat.indptr().as_slice().unwrap().to_vec(),
+            csr_mat.indices().into(),
+            csr_mat.data().iter().map(|x| *x as u16).collect()
+        );
+        csr_mat
+    }
+ */
+    
+
     ///
-    /// x
+    /// Cast the storage type of a CSR matrix
+    /// 
+    pub fn cast_csr_mat<'a, X,Y> (
+        csr_mat: &'a CsMat<X>
+    ) -> CsMat<Y> 
+    where
+        Y: From<&'a X>
+    {
+        CsMat::new(
+            csr_mat.shape().into(),
+            csr_mat.indptr().as_slice().unwrap().to_vec(),
+            csr_mat.indices().into(),
+            csr_mat.data().iter().map(|x| Y::from(x)).collect()
+        )
+    }
+
+/* 
     /// 
     pub fn store_sparse_count_matrix(
         &mut self,
-        csr_mat: &CsMat<u32>,
+        csr_mat: &CsMat<u32>,  //u16 is enough in most cases. can try to downscale!
         n_rows: u32,
         n_cols: u32
     ) -> anyhow::Result<()> {
+
 
         //Extract separate vectors to store
         let mat_indices = csr_mat.indices();
@@ -421,7 +453,48 @@ impl SparseMatrixAnnDataWriter {
             .create("shape")?;
         Ok(())
     }
+*/
 
+    ///
+    /// x
+    /// 
+    pub fn store_sparse_count_matrix<X>(
+        &mut self,
+        csr_mat: &CsMat<X>,  //u16 is enough in most cases. can try to downscale!
+        n_rows: u32,
+        n_cols: u32
+    ) -> anyhow::Result<()> 
+    where 
+        X: hdf5::H5Type
+    {
+        //Extract separate vectors to store
+        let mat_indices = csr_mat.indices();
+        let mat_data = csr_mat.data();
+        let mat_indptr = csr_mat.indptr();
+        let mat_indptr = mat_indptr.as_slice().unwrap();
+
+        //Store the sparse matrix here
+        let group = self.file.create_group("X")?;
+        let builder = group.new_dataset_builder();
+        let _ = builder.with_data(&mat_data).create("data")?; //Data
+        let builder = group.new_dataset_builder();
+        let _ = builder.with_data(&mat_indices).create("indices")?; // Columns
+        let builder = group.new_dataset_builder();
+        let _ = builder.with_data(&mat_indptr).create("indptr")?; // Rows
+
+        //Store the matrix size
+        let builder = group.new_dataset_builder();
+        let _ = builder
+            .with_data(
+                &[
+                    n_rows, //num cells
+                    n_cols, //num features
+                ]
+                .as_slice(),
+            )
+            .create("shape")?;
+        Ok(())
+    }
 
 
     ///

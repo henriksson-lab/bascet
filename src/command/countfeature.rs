@@ -13,7 +13,6 @@ use rust_htslib::bam::Read;
 use noodles::gff::feature::record::Strand;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
-use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 use crate::umi::umi_dedup::UMIcounter;
 use super::determine_thread_counts_1;
 
@@ -112,6 +111,10 @@ pub struct CountPerCell {
     pub known_cells: Arc<CellIntMapping>,
     pub counter_known_cell: BTreeMap<u32, u32>,   //Option: store a list (cell, cnt), and presort until later
     pub counter_other_cell: BTreeMap<Vec<u8>, u32>,
+
+    //we are now sorting triplets at the end, so treemap is overkill.
+    //also, does clear() remove the underlying allocation? for hashmap, it retains the allocation
+
 }
 impl CountPerCell {
 
@@ -160,7 +163,7 @@ impl CountPerCell {
             }
         }
 
-        //All cells are now known
+        //Clear up memory
         self.counter_other_cell.clear();
     }
 }
@@ -193,7 +196,8 @@ struct CounterResult {
 struct CurrentCounterState {
     finished_genes: Vec<(
             GeneMeta,
-            BTreeMap<u32, u32>,   //Option: store a list (cell, cnt), and presort until later
+            Vec<(u32,u32)>  // stored list of (cellid, count)  
+//            BTreeMap<u32, u32>,   //Option: store a list (cell, cnt), and presort until later
         )>,
     processed_reads: u64,
     processed_features: u64,
@@ -255,7 +259,7 @@ impl CountFeature {
         let (tx, rx) = crossbeam::channel::bounded(num_threads * 2);
 
         //Prepare to process BAM in parallel
-        for tidx in 0..num_threads {
+        for _tidx in 0..num_threads {
             let rx = rx.clone();
             let current_state = Arc::clone(&current_state);
             let path_in = path_in.clone();
@@ -283,9 +287,9 @@ impl CountFeature {
                         &mut cell_counter
                     ).expect("Failed to count featuee in BAM");
 
-                    //Put count data into matrix
+                    //Put count data into matrix. To do this, we need access to the common state
+                    //of the process. The operations below should thus be as fast as possible
                     let mut state = current_state.lock().unwrap();
-
 
                     if !cell_counter.counter_other_cell.is_empty() {
                         //Need to extend common list of cells with new IDs
@@ -297,9 +301,15 @@ impl CountFeature {
                     }
 
                     //now store counts as-is
-                    let known_counter = cell_counter.counter_known_cell;
+                    //let known_counter = cell_counter.counter_known_cell;
 
-                    state.finished_genes.push((meta, known_counter));
+                    //Compress the data.
+                    //Assume that this is rather fast. Otherwise could actually move out of the mutex lock for this operation, but
+                    //we will soon need it again
+                    let arr_counter: Vec<(u32,u32)> = cell_counter.counter_known_cell.iter().map(|(x,y)| (*x,*y)).collect();
+
+
+                    state.finished_genes.push((meta, arr_counter));
                     state.processed_reads += cnt.processed_reads;
                     state.processed_features += 1;
 

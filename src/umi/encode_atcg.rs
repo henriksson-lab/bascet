@@ -76,8 +76,8 @@ const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
 
 
-////////////////
-/// KMER encoder
+///
+///  KMER encoder
 /// 
 /// 12bp UMI => 24 bits needed (u32)
 /// 16bp UMI => 32 bits needed (u32)
@@ -86,8 +86,9 @@ pub struct KMER2bit {
 }
 impl KMER2bit {
 
-    ////////////////
-    /// Encode a kmer as u32
+    ///
+    /// Encode a kmer as u32. This function works for any size of data
+    /// 
     #[inline(always)]
     pub unsafe fn encode_u32(bytes: &[u8]) -> u32 {
 
