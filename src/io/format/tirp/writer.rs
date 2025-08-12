@@ -33,6 +33,7 @@ where
         self
     }
 
+    #[inline(always)]
     fn write_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
     where
         C: BascetCell,
