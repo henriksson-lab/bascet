@@ -479,23 +479,12 @@ impl CountFeature {
         println!("- To CSR format");
         // This matrix type does not allow computations, and must to
         // converted to a compatible sparse type, using for example
-        let compressed_mat: CsMat<_> = trimat.to_csr();
-
-        //TODO store the matrix in a better way
-        /*
-        
-        println!("- Store as matrix market :(");
-        print_mem_usage();
-        sprs::io::write_matrix_market(&path_out, &compressed_mat)?;
-         */
-
-
-        //Prepare matrix that we will store into
-        //let mut mm = SparseMatrixAnnDataWriter::new();
+        let compressed_mat: CsMat<u32> = trimat.to_csr();
 
 
         println!("- Store as anndata");
 //        sprs::io::write_matrix_market(&path_out, &compressed_mat)?;
+        
 
         let mut file = SparseMatrixAnnDataWriter::create_anndata(path_out)?;
       
@@ -519,11 +508,31 @@ impl CountFeature {
         
         let n_rows = num_cells as u32;
         let n_cols = num_features as u32;
-        file.store_sparse_count_matrix(
-            &compressed_mat,
-            n_rows,  
-            n_cols,  
-        )?;
+
+        let max_count = compressed_mat.data().iter().max();
+        let can_convert_u16 = if let Some(max_count) = max_count {
+            *max_count <= u16::MAX as u32
+        } else {
+            false
+        };
+
+        if can_convert_u16 {
+            let compressed_mat: CsMat<u16> = SparseMatrixAnnDataWriter::cast_csr_mat(&compressed_mat);
+            file.store_sparse_count_matrix(
+                &compressed_mat,
+                n_rows,  
+                n_cols,  
+            )?;
+
+        } else {
+            file.store_sparse_count_matrix(
+                &compressed_mat,
+                n_rows,  
+                n_cols,  
+            )?;
+
+        }
+
 
 
         
