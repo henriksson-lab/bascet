@@ -18,7 +18,6 @@ pub fn str_to_barcode_8bp(
     HotEncodeATCGN::encode_8bp(&bytes)
 }
 
-
 ///////////////////////////////
 /// A set of barcode positions and sequences, making up a total combinatorial barcode
 #[derive(Clone, Debug)]

@@ -109,7 +109,6 @@ impl Chemistry for TenxRNAChemistry {
         Ok(())
     }
 
-
     ///////////////////////////////
     /// Detect barcode, and trim if ok
     fn detect_barcode_and_trim(
