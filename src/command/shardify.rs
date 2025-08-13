@@ -74,7 +74,7 @@ impl ShardifyCMD {
             let mut producers = Vec::with_capacity(count_streams);
             let consumers: Vec<UnsafeSyncConsumer> = (0..count_streams)
                 .map(|_| {
-                    let (px, cx) = rtrb::RingBuffer::new(8);
+                    let (px, cx) = rtrb::RingBuffer::new(32);
                     producers.push(px);
                     UnsafeSyncConsumer(cx)
                 })
@@ -287,8 +287,8 @@ impl ShardifyCMD {
 
         let mut coordinator_count_streams_finished = 0;
         let mut coordinator_count_spins = 0;
-        let mut coordinator_all_ready = false;
-        let mut coordinator_min_cell: Option<&[u8]> = None;
+        let mut coordinator_all_ready;
+        let mut coordinator_min_cell: Option<&[u8]>;
         let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(count_streams);
         let mut coordinator_vec_send: Vec<ShardifyCell> = Vec::with_capacity(count_streams); // Local vec
 
