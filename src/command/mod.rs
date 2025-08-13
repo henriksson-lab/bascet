@@ -31,11 +31,7 @@ pub use countsketch_mat::CountsketchMatCMD;
 
 // Data processing operations
 pub use getraw::{GetRaw, GetRawCMD};
-<<<<<<< HEAD
 pub use shardify::ShardifyCMD;
-=======
-pub use shardify::{Shardify, ShardifyCMD};
->>>>>>> main
 pub use transform::{TransformCMD, TransformFile};
 
 // Extract operations
