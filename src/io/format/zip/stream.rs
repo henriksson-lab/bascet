@@ -1,14 +1,28 @@
+<<<<<<< HEAD
 use rust_htslib::htslib;
 use std::{
     fs::File,
     io::{BufReader, Read},
     sync::Arc,
+=======
+use std::{
+    fs::File,
+    io::{Read},
+>>>>>>> main
 };
 use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
+<<<<<<< HEAD
     io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
     log_critical, log_info,
+=======
+    common::{self},
+    io::{
+        self,
+        BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
+    },
+>>>>>>> main
 };
 
 pub struct Stream<T> {
@@ -20,8 +34,13 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
+<<<<<<< HEAD
     pub fn new(file: &crate::io::format::zip::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
+=======
+    pub fn new(file: &io::zip::File) -> Result<Self, crate::runtime::Error> {
+        let path = file.file_path();
+>>>>>>> main
 
         let file = match File::open(path) {
             Ok(f) => f,
@@ -56,7 +75,11 @@ impl<T> Stream<T> {
 
 impl<T> BascetStream<T> for Stream<T>
 where
+<<<<<<< HEAD
     T: BascetCell + Send + 'static,
+=======
+    T: BascetStreamToken + Send + 'static,
+>>>>>>> main
 {
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
         let archive = &mut self.inner_archive;
@@ -112,6 +135,7 @@ where
                 }
                 _ => {
                     while let Some(next_pos) =
+<<<<<<< HEAD
                         memchr::memchr(crate::common::U8_CHAR_FASTA_IDEN, &buffer[cursor..])
                     {
                         let line = match memchr::memchr(
@@ -123,6 +147,17 @@ where
                         };
 
                         let seq = match memchr::memchr(crate::common::U8_CHAR_NEWLINE, line) {
+=======
+                        memchr::memchr(common::U8_CHAR_FASTA_IDEN, &buffer[cursor..])
+                    {
+                        let line =
+                            match memchr::memchr(common::U8_CHAR_FASTA_IDEN, &buffer[cursor..]) {
+                                Some(eor) => &buffer[cursor..(cursor + eor).saturating_sub(1)],
+                                None => &buffer[cursor..],
+                            };
+
+                        let seq = match memchr::memchr(common::U8_CHAR_NEWLINE, line) {
+>>>>>>> main
                             Some(record_seq_start) => &line[record_seq_start + 1..],
                             None => {
                                 cursor += next_pos + 1;
