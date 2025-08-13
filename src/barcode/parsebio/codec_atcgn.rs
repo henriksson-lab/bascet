@@ -24,7 +24,6 @@ const NT1_LOOKUP: [u8; 256 as usize] = {
     table
 };
 
-
 ///////////////////////////////
 /// Lookup table for NN where N is any of ATCGN.
 /// Maps compressed 2xN, where N is any of ATCGN, to 0..255.

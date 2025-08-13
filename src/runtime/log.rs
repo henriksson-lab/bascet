@@ -1,7 +1,7 @@
 use slog::{o, Drain, Logger};
 use slog_async::AsyncGuard;
 use std::fmt;
-use std::fs::{File};
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 
 use crate::utils::expand_and_resolve;

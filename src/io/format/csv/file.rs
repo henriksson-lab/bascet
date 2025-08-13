@@ -1,37 +1,23 @@
-<<<<<<< HEAD
 use crate::io::traits::{BascetFile, BascetTempFile};
 use crate::utils::expand_and_resolve;
 
-const VALID_EXTENSIONS: &[&str] = &["zip"];
+const VALID_EXTENSIONS: &[&str] = &["csv"];
 
-/// Zip input file - must exist, have content, and match extensions
+/// CSV input file - must exist, have content, and match extensions
 #[derive(Debug)]
 pub struct Input {
     path: std::path::PathBuf,
 }
 
 impl Input {
-=======
-use crate::{
-    io::BascetFile,
-    utils::{expand_and_resolve},
-};
-
-#[derive(Debug)]
-pub struct File {
-    path: std::path::PathBuf,
-}
-
-impl File {
->>>>>>> main
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
         let path = match expand_and_resolve(&path) {
             Ok(p) => p,
             Err(_) => path.as_ref().to_path_buf(),
         };
 
-<<<<<<< HEAD
         let file = Self { path };
+        file.validate()?;
         Ok(file)
     }
 }
@@ -50,7 +36,7 @@ impl BascetFile for Input {
     }
 }
 
-/// Zip output file - parent directory must exist, file may or may not exist
+/// CSV output file - parent directory must exist, file may or may not exist
 #[derive(Debug)]
 pub struct Output {
     path: std::path::PathBuf,
@@ -73,6 +59,7 @@ impl BascetFile for Output {
     fn valid_extensions(&self) -> &[&str] {
         VALID_EXTENSIONS
     }
+
     fn path(&self) -> &std::path::Path {
         &self.path
     }
@@ -89,7 +76,7 @@ impl BascetFile for Output {
     }
 }
 
-/// Zip temporary file - automatically deleted on drop, minimal validation
+/// CSV temporary file - automatically deleted on drop, minimal validation
 #[derive(Debug)]
 pub struct Temp {
     inner: tempfile::NamedTempFile,
@@ -128,25 +115,4 @@ impl BascetTempFile for Temp {
         std::mem::forget(temp_path);
         path
     }
-=======
-        let _ = match Self::file_validate(&path) {
-            Ok(_) => (),
-            Err(e) => return Err(e),
-        };
-
-        Ok(Self { path: path })
-    }
-}
-
-impl BascetFile for File {
-    const VALID_EXT: Option<&'static str> = Some("zip");
-
-    fn file_path(&self) -> &std::path::Path {
-        &self.path
-    }
-
-    fn file_open(&self) -> anyhow::Result<std::fs::File> {
-        Ok(std::fs::File::open(&self.path)?)
-    }
->>>>>>> main
 }

@@ -9,7 +9,11 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+<<<<<<< HEAD
+use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
+=======
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
+>>>>>>> main
 use crate::fileformat::{CellID, ReadPair};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
@@ -69,7 +73,11 @@ impl QueryFq {
     /// Run the algorithm
     pub fn run(params: &Arc<QueryFq>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
+<<<<<<< HEAD
+        let mut mm = SparseMatrixAnnDataWriter::new();
+=======
         let mut mm = SparseMatrixAnnDataBuilder::new();
+>>>>>>> main
 
         //Need to create temp dir
         if params.path_tmp.exists() {
@@ -124,7 +132,11 @@ impl QueryFq {
         let (tx_data, rx_data) =
             crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(n_output * 2);
         let (tx_data, rx_data) = (Arc::new(tx_data), Arc::new(rx_data));
+<<<<<<< HEAD
+        let mm: Arc<Mutex<SparseMatrixAnnDataWriter>> = Arc::new(Mutex::new(mm));
+=======
         let mm: Arc<Mutex<SparseMatrixAnnDataBuilder>> = Arc::new(Mutex::new(mm));
+>>>>>>> main
 
         //Set up counters
         let features_reference = Arc::new(features_reference);
@@ -165,7 +177,11 @@ fn start_matrix_counter_threads(
     features_reference: &Arc<BTreeMap<Vec<u8>, u32>>, //Map from feature to index
     kmer_size: usize,
     max_reads: usize,
+<<<<<<< HEAD
+    mm: &Arc<Mutex<SparseMatrixAnnDataWriter>>,
+=======
     mm: &Arc<Mutex<SparseMatrixAnnDataBuilder>>,
+>>>>>>> main
     thread_pool: &threadpool::ThreadPool,
     rx_data: &Receiver<Option<ListReadWithBarcode>>,
 ) -> anyhow::Result<()> {

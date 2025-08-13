@@ -1,3 +1,8 @@
+<<<<<<< HEAD
+pub mod csv;
+pub mod tirp;
+pub mod zip;
+=======
 pub mod tirp;
 pub mod zip;
 
@@ -8,3 +13,4 @@ crate::support_which_files! {
     AutoBascetFile
     for formats [tirp, zip]
 }
+>>>>>>> main
