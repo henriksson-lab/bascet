@@ -65,18 +65,18 @@ impl ShardifyCMD {
         let filter = read_filter(self.path_include.as_deref());
         let count_streams = self.path_in.len();
         let count_writers = self.path_out.len();
-        let count_threads_per_stream = (self.threads_read / self.path_in.len()).max(1);
+        let count_threads_per_stream = (self.threads_read / count_streams).max(1);
 
         let (vec_coordinator_producers, vec_coordinator_consumers): (
             &'static mut Vec<rtrb::Producer<ShardifyCell>>,
-            &'static mut Vec<RwLock<UnsafeSyncConsumer>>,
+            &'static mut Vec<UnsafeSyncConsumer>,
         ) = {
-            let mut producers = Vec::with_capacity(self.path_in.len());
-            let consumers: Vec<RwLock<UnsafeSyncConsumer>> = (0..self.path_in.len())
+            let mut producers = Vec::with_capacity(count_streams);
+            let consumers: Vec<UnsafeSyncConsumer> = (0..count_streams)
                 .map(|_| {
                     let (px, cx) = rtrb::RingBuffer::new(8);
                     producers.push(px);
-                    RwLock::new(UnsafeSyncConsumer(cx))
+                    UnsafeSyncConsumer(cx)
                 })
                 .collect();
 
@@ -85,19 +85,13 @@ impl ShardifyCMD {
                 Box::leak(Box::new(consumers)),
             )
         };
-        let vec_consumers_ptr: &'static UnsafeSyncConsumerPtr =
-            Box::leak(Box::new(UnsafeSyncConsumerPtr {
-                ptr: vec_coordinator_consumers.as_mut_ptr(),
-                len: vec_coordinator_consumers.len(),
-            }));
-
         let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(count_streams)));
         let mut vec_reader_handles = Vec::with_capacity(count_streams);
-        let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
+        // let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
         let mut vec_writer_handles = Vec::with_capacity(count_writers);
 
-        let (stream_tx, stream_rx) = channel::unbounded::<Option<&[u8]>>();
-
+        // bounds given by rtrb, this is only a notifier
+        let (stream_tx, stream_rx) = channel::unbounded::<Option<()>>();
         for (thread_idx, (thread_input, thread_px)) in
             izip!(self.path_in.clone(), vec_coordinator_producers).enumerate()
         {
@@ -131,104 +125,139 @@ impl ShardifyCMD {
                     }
 
                     let mut token_cell = token_cell;
-                    let mut count_spins = 0;
+                    let mut rtrb_count_spins = 0;
                     loop {
                         match thread_px.push(token_cell) {
                             Ok(()) => break,
                             Err(rtrb::PushError::Full(ret)) => {
                                 token_cell = ret;
-                                spin_or_park(&mut count_spins, 100);
+                                spin_or_park(&mut rtrb_count_spins, 100);
                             }
                         }
                     }
-                    let _ = thread_tx.send(Some(cell_id));
+                    let _ = thread_tx.send(Some(()));
                 }
                 thread_expired.write().unwrap().push(thread_idx);
+                let _ = thread_tx.send(None);
                 log_info!("Stream finished!");
             });
             vec_reader_handles.push(thread_handle);
         }
 
-        let (write_tx, write_rx) = channel::unbounded::<Option<Vec<ShardifyCell>>>();
-        for _ in 0..self.threads_work {
-            let thread_tx = write_tx.clone();
-            let thread_rx = stream_rx.clone();
-            let thread_reemit_tx = stream_tx.clone();
-            let thread_expired = Arc::clone(&vec_consumers_states);
+        let (write_tx, write_rx) = channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16);
 
-            let mut thread_concat = Vec::with_capacity(count_streams);
+        // for _ in 0..self.threads_work {
+        //     let thread_tx = write_tx.clone();
+        //     let thread_rx = stream_rx.clone();
+        //     let thread_reemit_tx = stream_tx.clone();
+        //     let thread_expired = Arc::clone(&vec_consumers_states);
 
-            let thread_handle = thread::spawn(move || {
-                while let Ok(Some(pending_id)) = thread_rx.recv() {
-                    log_info!("Recieved token"; "pending" => %String::from_utf8_lossy(pending_id));
-                    thread_concat.clear();
+        //     let mut thread_concat = Vec::with_capacity(count_streams);
 
-                    consumers_exchange_min(pending_id);
-                    unsafe {
-                        for sweep_idx in 0..vec_consumers_ptr.len {
-                            let sweep_consumer = vec_consumers_ptr.get(sweep_idx);
-                            let sweep_rlock = sweep_consumer.read().unwrap();
-                            match sweep_rlock.peek() {
-                                Ok(sweep_token) => match sweep_token.cell.cmp(pending_id) {
-                                    std::cmp::Ordering::Greater => {
-                                        // some other thread is going to concat instead
-                                        // thread_concat.clear();
-                                        continue;
-                                    }
-                                    std::cmp::Ordering::Equal => {
-                                        thread_concat.push(sweep_idx);
-                                        
-                                    }
-                                    std::cmp::Ordering::Less => {
-                                        // println!("{} < {}", String::from_utf8_lossy(sweep_token.cell), String::from_utf8_lossy(pending_id));
-                                        // trigger re-sweep somehow??
-                                        // let min = CONSUMERS_MIN_TOKEN.load();
-                                        // let slice = min.as_slice();
-                                        // let slice: &'static [u8] = unsafe {
-                                        //     std::mem::transmute::<&[u8], &'static [u8]>(slice)
-                                        // };
-                                        // let _ = thread_reemit_tx.send(Some(slice));
-                                        thread_concat.clear();
-                                        break;
-                                    }
-                                },
-                                // NOTE: if one is empty, not all readers have read a cell yet
-                                Err(rtrb::PeekError::Empty) => {
-                                    if thread_expired.read().unwrap().contains(&sweep_idx) {
-                                        // we expect this to be empty in this case
-                                        continue;
-                                    } else {
-                                        // wait for this channel to fill instead
-                                        // log_info!("Waiting for channels to fill");
-                                        thread_concat.clear();
-                                        break;
-                                    }
-                                }
-                            };
-                        }
+        //     let thread_handle = thread::spawn(move || {
+        //         while let Ok(Some(pending_id)) = thread_rx.recv() {
+        //             // log_info!("Recieved token"; "pending" => %String::from_utf8_lossy(&pending_id), "open" => %thread_rx.len());
+        //             thread_concat.clear();
 
-                        if thread_concat.is_empty() {
-                            continue;
-                        }
+        //             consumers_exchange_min(&pending_id);
+        //             let current_min = CONSUMERS_MIN_TOKEN.load();
+        //             let current_min_slice = current_min.as_slice();
+        //             // if *pending_id != current_min_slice {
+        //             //     continue;
+        //             // }
 
-                        let mut thread_concat_cell = Vec::with_capacity(thread_concat.len());
-                        for pop_idx in &thread_concat {
-                            let pop_consumer = vec_consumers_ptr.get(*pop_idx);
-                            let mut pop_wlock = pop_consumer.write().unwrap();
-                            let cell = pop_wlock.pop().unwrap();
-                            thread_concat_cell.push(cell);
+        //             unsafe {
+        //                 for sweep_idx in 0..vec_consumers_ptr.len {
+        //                     let sweep_consumer = vec_consumers_ptr.get(sweep_idx);
+        //                     let sweep_rlock = sweep_consumer.read().unwrap();
+        //                     let sweep_peek = sweep_rlock.peek();
+        //                     match sweep_peek {
+        //                         Ok(sweep_token) => match sweep_token.cell.cmp(&pending_id) {
+        //                             std::cmp::Ordering::Greater => {
+        //                                 // some other recieved token will be concat'ing this instead
+        //                                 // thread_concat.clear();
+        //                                 // println!(
+        //                                 //     "Greater encountered: {}",
+        //                                 //     String::from_utf8_lossy(sweep_token.cell)
+        //                                 // );
+        //                                 // thread_concat.clear();
+        //                                 continue;
+        //                             }
+        //                             std::cmp::Ordering::Equal => {
+        //                                 thread_concat.push(sweep_idx);
+        //                             }
+        //                             std::cmp::Ordering::Less => {
+        //                                 // trigger re-sweep somehow??
+        //                                 if sweep_token.cell == current_min_slice {
+        //                                     // println!(
+        //                                     //     "Reemitting: {}",
+        //                                     //     String::from_utf8_lossy(&current_min_slice)
+        //                                     // );
+        //                                     let slice: &'static [u8] = unsafe {
+        //                                         std::mem::transmute::<&[u8], &'static [u8]>(
+        //                                             current_min_slice,
+        //                                         )
+        //                                     };
+        //                                     let _ = thread_reemit_tx.send(Some(Arc::new(slice)));
+        //                                 }
 
-                            // reset min
-                            consumers_exchange_min(&[]);
-                            drop(pop_wlock);
-                        }
-                        let _ = thread_tx.send(Some(thread_concat_cell));
-                    }
-                }
-                log_info!("Worker finished!");
-            });
-            vec_worker_handles.push(thread_handle);
-        }
+        //                                 thread_concat.clear();
+        //                                 break;
+        //                             }
+        //                         },
+        //                         // NOTE: if one is empty, not all readers have read a cell yet
+        //                         Err(rtrb::PeekError::Empty) => {
+        //                             if thread_expired.read().unwrap().contains(&sweep_idx) {
+        //                                 // we expect this to be empty in this case
+        //                                 continue;
+        //                             } else {
+        //                                 // wait for this channel to fill instead
+        //                                 // log_info!("Waiting for channels to fill");
+        //                                 // println!("Empty encountered");
+        //                                 thread_concat.clear();
+        //                                 break;
+        //                             }
+        //                         }
+        //                     };
+        //                 }
+        //             }
+
+        //             if thread_concat.is_empty() {
+        //                 continue;
+        //             }
+
+        //             let mut thread_concat_cell = Vec::with_capacity(thread_concat.len());
+        //             unsafe {
+        //                 for pop_idx in &thread_concat {
+        //                     let pop_consumer = vec_consumers_ptr.get(*pop_idx);
+        //                     let mut pop_wlock = pop_consumer.write().unwrap();
+        //                     let cell = pop_wlock.pop().unwrap();
+        //                     thread_concat_cell.push(cell);
+
+        //                     drop(pop_wlock);
+        //                 }
+        //             }
+        //             // reset min
+        //             for i in 0..vec_consumers_ptr.len {
+        //                 let consumer = unsafe { vec_consumers_ptr.get(i) };
+        //                 if let Ok(guard) = consumer.read() {
+        //                     if let Ok(peeked) = unsafe { guard.peek() } {
+        //                         let next_cell = peeked.cell;
+        //                         let static_slice: &'static [u8] = unsafe {
+        //                             std::mem::transmute::<&[u8], &'static [u8]>(next_cell)
+        //                         };
+        //                         let _ = thread_reemit_tx.send(Some(Arc::new(static_slice)));
+        //                         break;
+        //                     }
+        //                 }
+        //             }
+        //             // consumers_exchange_min(&[]);
+        //             let _ = thread_tx.send(Some(thread_concat_cell));
+        //         }
+        //         log_info!("Worker finished!");
+        //     });
+        //     vec_worker_handles.push(thread_handle);
+        // }
 
         for thread_output in self.path_out.clone() {
             let thread_rx = write_rx.clone();
@@ -245,8 +274,8 @@ impl ShardifyCMD {
 
             let thread_handle = thread::spawn(move || {
                 while let Ok(Some(vec_cells)) = thread_rx.recv() {
-                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_cells[0].cell), "open" => thread_rx.len());
-                    for cell in &vec_cells {
+                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_cells.read().unwrap()[0].cell), "open" => thread_rx.len());
+                    for cell in &*vec_cells.read().unwrap() {
                         let _ = thread_shardify_writer.write_cell(cell);
                     }
                 }
@@ -256,49 +285,132 @@ impl ShardifyCMD {
             vec_writer_handles.push(thread_handle);
         }
 
+        let mut coordinator_count_streams_finished = 0;
+        let mut coordinator_count_spins = 0;
+        let mut coordinator_all_ready = false;
+        let mut coordinator_min_cell: Option<&[u8]> = None;
+        let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(count_streams);
+        let mut coordinator_vec_send: Vec<ShardifyCell> = Vec::with_capacity(count_streams); // Local vec
+
+        loop {
+            match stream_rx.try_recv() {
+                Ok(Some(())) => {}
+                Ok(None) => {
+                    coordinator_count_streams_finished += 1;
+                    println!("incr {coordinator_count_streams_finished}/{count_streams}");
+                    if coordinator_count_streams_finished == count_streams {
+                        println!("Closing reciever");
+                        break;
+                    }
+                }
+                Err(channel::TryRecvError::Empty) => {
+                    spin_or_park(&mut coordinator_count_spins, 100);
+                    continue;
+                }
+                Err(_) => break,
+            };
+
+            // log_info!("Received token"; "pending" => %String::from_utf8_lossy(&pending_token), "open" => %stream_rx.len());
+            coordinator_count_spins = 0;
+            coordinator_all_ready = true;
+            coordinator_min_cell = None;
+            coordinator_vec_take.clear();
+            coordinator_vec_send.clear();
+
+            for (sweep_consumer_idx, sweep_consumer) in vec_coordinator_consumers.iter().enumerate()
+            {
+                // Skip streams marked done/expired
+                if vec_consumers_states
+                    .read()
+                    .unwrap()
+                    .contains(&sweep_consumer_idx)
+                {
+                    continue;
+                }
+
+                let sweep_token = match unsafe { sweep_consumer.peek() } {
+                    Ok(token) => token,
+                    Err(rtrb::PeekError::Empty) => {
+                        // Stream not ready
+                        coordinator_all_ready = false;
+                        break;
+                    }
+                };
+
+                match coordinator_min_cell {
+                    None => {
+                        coordinator_min_cell = Some(sweep_token.cell);
+                        coordinator_vec_take.clear();
+                        coordinator_vec_take.push(sweep_consumer_idx);
+                    }
+                    Some(cmc) if sweep_token.cell < cmc => {
+                        coordinator_min_cell = Some(sweep_token.cell);
+                        coordinator_vec_take.clear();
+                        coordinator_vec_take.push(sweep_consumer_idx);
+                    }
+                    Some(cmc) if sweep_token.cell == cmc => {
+                        coordinator_vec_take.push(sweep_consumer_idx);
+                    }
+                    _ => {}
+                }
+            }
+
+            if !coordinator_all_ready {
+                continue;
+            }
+
+            for take_idx in &coordinator_vec_take {
+                let take_consumer = &mut vec_coordinator_consumers[*take_idx];
+                match unsafe { take_consumer.pop() } {
+                    Ok(take_cell) => coordinator_vec_send.push(take_cell),
+                    Err(_) => unreachable!("Token disappeared between peek and pop"),
+                }
+            }
+
+            let _ = write_tx.send(Some(Arc::new(RwLock::new(std::mem::take(
+                &mut coordinator_vec_send,
+            )))));
+        }
+
         for handle in vec_reader_handles {
             handle.join().expect("Stream thread panicked");
         }
-        for _ in 0..self.threads_work {
-            let _ = stream_tx.send(None);
-        }
-        for handle in vec_worker_handles {
-            handle.join().expect("Worker thread panicked");
-        }
-        for _ in 0..self.path_out.len() {
+        log_info!("Stream handles closed");
+        for _ in 0..count_writers {
             let _ = write_tx.send(None);
         }
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");
         }
+        log_info!("Write handles closed");
         Ok(())
     }
 }
 
-static CONSUMERS_MIN_TOKEN: LazyLock<ArcSwap<Vec<u8>>> =
-    LazyLock::new(|| ArcSwap::from_pointee(Vec::new()));
+// static CONSUMERS_MIN_TOKEN: LazyLock<ArcSwap<Vec<u8>>> =
+//     LazyLock::new(|| ArcSwap::from_pointee(Vec::new()));
 
-#[inline(always)]
-fn consumers_exchange_min(token_incoming: &[u8]) {
-    let mut count_spins = 0;
-    loop {
-        let current = CONSUMERS_MIN_TOKEN.load();
+// #[inline(always)]
+// fn consumers_exchange_min(token_incoming: &[u8]) {
+//     let mut count_spins = 0;
+//     loop {
+//         let current = CONSUMERS_MIN_TOKEN.load();
 
-        let update =
-            token_incoming < current.as_slice() || current.is_empty() || token_incoming.is_empty();
-        if !update {
-            return;
-        }
+//         let update =
+//             token_incoming < current.as_slice() || current.is_empty() || token_incoming.is_empty();
+//         if !update {
+//             return;
+//         }
 
-        let new = Arc::new(token_incoming.to_vec());
-        let old = CONSUMERS_MIN_TOKEN.compare_and_swap(&current, new);
-        if Arc::ptr_eq(&old, &current) {
-            return;
-        }
+//         let new = Arc::new(token_incoming.to_vec());
+//         let old = CONSUMERS_MIN_TOKEN.compare_and_swap(&current, new);
+//         if Arc::ptr_eq(&old, &current) {
+//             return;
+//         }
 
-        spin_or_park(&mut count_spins, 100);
-    }
-}
+//         spin_or_park(&mut count_spins, 100);
+//     }
+// }
 #[inline(always)]
 pub fn spin_or_park(spin_counter: &mut usize, max_spins: usize) {
     if *spin_counter < max_spins {
@@ -310,13 +422,23 @@ pub fn spin_or_park(spin_counter: &mut usize, max_spins: usize) {
     }
 }
 
-#[derive(Debug)]
 struct ShardifyCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
     _underlying: Vec<Arc<Vec<u8>>>,
+}
+impl Clone for ShardifyCell {
+    fn clone(&self) -> Self {
+        Self {
+            cell: self.cell,
+            reads: self.reads.clone(),
+            qualities: self.qualities.clone(),
+            umis: self.umis.clone(),
+            _underlying: self._underlying.clone(),
+        }
+    }
 }
 
 impl BascetCell for ShardifyCell {
