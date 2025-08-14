@@ -27,17 +27,10 @@ use crate::barcode::Chemistry;
 use crate::barcode::ParseBioChemistry3;
 use crate::barcode::PetriseqChemistry;
 use crate::barcode::TenxRNAChemistry;
-<<<<<<< HEAD
-use crate::fileformat::shard;
-use crate::fileformat::shard::CellID;
-use crate::fileformat::shard::ReadPair;
-use crate::fileformat::tirp;
-=======
 use crate::fileformat::tirp;
 use crate::fileformat::shard;
 use crate::fileformat::shard::CellID;
 use crate::fileformat::shard::ReadPair;
->>>>>>> main
 
 type ListReadWithBarcode = Arc<Vec<(ReadPair, CellID)>>;
 type ListRecordPair = Arc<Vec<RecordPair>>;
@@ -139,15 +132,11 @@ impl GetRawCMD {
                 ),
             );
         } else if self.chemistry == "atrandi_rnaseq" {
-<<<<<<< HEAD
-            let _ = GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
-=======
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut AtrandiRNAseqChemistry::new(
                 )
             );
->>>>>>> main
         } else if self.chemistry == "petriseq" {
             let _ = GetRaw::getraw(Arc::new(params_io), &mut PetriseqChemistry::new());
         } else if self.chemistry == "combinatorial" {
@@ -160,25 +149,17 @@ impl GetRawCMD {
                 bail!("Barcode file not specified");
             }
         } else if self.chemistry == "10xrna" || self.chemistry == "10x_rna" {
-<<<<<<< HEAD
-            let _ = GetRaw::getraw(Arc::new(params_io), &mut TenxRNAChemistry::new());
-=======
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut TenxRNAChemistry::new(
                 )
             );
->>>>>>> main
         } else if self.chemistry == "pb_rnaseq" || self.chemistry == "pb_rna" {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut ParseBioChemistry3::new(
                     //TODO: option to be more specific
-<<<<<<< HEAD
-                ),
-=======
                 )
->>>>>>> main
             );
         } else {
             bail!("Unidentified chemistry");
