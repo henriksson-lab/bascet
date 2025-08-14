@@ -7,10 +7,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-<<<<<<< HEAD
-use anyhow::bail;
-=======
->>>>>>> main
 use crossbeam::channel::Receiver;
 use zip::ZipWriter;
 
