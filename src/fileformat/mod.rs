@@ -9,11 +9,6 @@ pub mod zip;
 //pub mod count_matrix;
 pub mod bam;
 
-<<<<<<< HEAD
-=======
-pub mod gff;
-
->>>>>>> main
 ////// Utility
 pub mod cell_list_file;
 pub mod cell_readpair_reader;
