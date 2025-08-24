@@ -7,11 +7,13 @@ const NT4_DIMSIZE: usize = 32 as usize;   //0b0011111  = 31 is largest value
 // G  71  0b1000111
 // T  84  0b1010100
 
+
 ////////////////
 /// Only keep the lower bits
 const fn reduce_base(b: u8) -> u8 {
     b & 0b0011111
 }
+
 
 ////////////////
 ///  Lookup table for N where N is any of ATCG. Maps to 0..3
@@ -24,6 +26,7 @@ const NT1_LOOKUP: [u8; NT4_DIMSIZE] = {
     table[reduce_base(b'N') as usize] = 0b00; //This is default anyway. for UMIs, we can fail gracefully if we get an N
     table
 };
+
 
 const fn generate_nt4_value(a: u8, b: u8, c: u8, d: u8) -> u8 {
     (NT1_LOOKUP[reduce_base(a) as usize] << 6)
@@ -40,6 +43,7 @@ const fn calculate_index(a: u8, b: u8, c: u8, d: u8) -> usize {
         + (reduce_base(c) as usize * NT4_DIMSIZE * NT4_DIMSIZE)
         + (reduce_base(d) as usize * NT4_DIMSIZE * NT4_DIMSIZE * NT4_DIMSIZE)
 }
+
 
 ////////////////
 ///  Lookup table for NNNN where N is any of ATCG.

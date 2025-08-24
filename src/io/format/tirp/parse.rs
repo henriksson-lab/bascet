@@ -9,25 +9,46 @@ pub fn parse_readpair(buf_record: &[u8]) -> Result<(&[u8], ReadPair), crate::run
     let tabs: [usize; 7] = [
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 0")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 0".into()),
+            })?,
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 1")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 1".into()),
+            })?,
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 2")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 2".into()),
+            })?,
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 3")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 3".into()),
+            })?,
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 4")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 4".into()),
+            })?,
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 5")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 5".into()),
+            })?,
         tab_iter
             .next()
-            .ok_or_else(|| crate::runtime::Error::parse_error("readpair", Some("missing tab 6")))?,
+            .ok_or_else(|| crate::runtime::Error::ParseError {
+                context: "readpair".into(),
+                msg: Some("missing tab 6".into()),
+            })?,
     ];
 
     let id = &buf_record[0..tabs[0]];
@@ -38,10 +59,10 @@ pub fn parse_readpair(buf_record: &[u8]) -> Result<(&[u8], ReadPair), crate::run
     let umi = &buf_record[tabs[6] + 1..];
 
     if r1.len() != q1.len() || r2.len() != q2.len() {
-        return Err(crate::runtime::Error::parse_error(
-            "readpair",
-            Some("r1/q1 or r2/q2 length mismatch"),
-        ));
+        return Err(crate::runtime::Error::ParseError {
+            context: "readpair".into(),
+            msg: Some("length mismatch".into()),
+        });
     }
 
     Ok((
