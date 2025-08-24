@@ -2,10 +2,10 @@ use gxhash::GxHasher;
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
-use std::{fs::File, usize};
+use std::{cmp::min, fs::File, sync::Arc, usize};
 
 // use super::kmer_codec::KMERandCount;
-use super::{KMERCodec};
+use super::{BoundedHeap, BoundedMinHeap, KMERCodec};
 
 // \t[0-9]{10}\n
 // (4 294 967 296) is max value for kmer counts, thats 10 digits :)

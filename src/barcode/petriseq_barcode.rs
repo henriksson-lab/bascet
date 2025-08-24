@@ -26,7 +26,6 @@ pub struct PetriseqChemistry {
 }
 
 impl Chemistry for PetriseqChemistry {
-
     ////////////////
     ///  Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
     fn prepare(
