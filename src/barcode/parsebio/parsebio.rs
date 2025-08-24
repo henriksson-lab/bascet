@@ -396,3 +396,4 @@ struct ChemistryDefCsvFileRow {
     bc2pos: usize,
     bc3pos: usize,
 }
+

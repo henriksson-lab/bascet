@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::KMER2bit;
 
+
 pub struct OneUMI {
     umi: u32,
     cnt: u32,

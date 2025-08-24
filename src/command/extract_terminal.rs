@@ -117,6 +117,7 @@ impl ExtractStream {
                 let path_in = splitter.next().expect("error Did not get file name");
 
                 if path_in.ends_with(".tirp.gz") {
+
                     let mut reader = TirpBascetShardReader::new(&PathBuf::from(path_in));
                     if let Ok(reader) = &mut reader {
                         ExtractStream::print_listcellsanyfile(reader);

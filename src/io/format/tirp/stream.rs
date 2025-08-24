@@ -1,4 +1,3 @@
-use memmap2::Mmap;
 use rust_htslib::htslib;
 
 use std::fs::File;
@@ -8,8 +7,8 @@ use crate::{
     common::{self},
     io::{
         self,
-        format::{self, tirp},
-        traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
+        format::{tirp},
+        BascetFile, BascetStream, BascetStreamToken, BascetStreamTokenBuilder,
     },
 };
 
@@ -25,8 +24,8 @@ pub struct Stream<T> {
 }
 
 impl<T> Stream<T> {
-    pub fn new(file: &io::format::tirp::Input) -> Result<Self, crate::runtime::Error> {
-        let path = file.path();
+    pub fn new(file: &io::tirp::File) -> Result<Self, crate::runtime::Error> {
+        let path = file.file_path();
 
         let file = match File::open(&path) {
             Ok(f) => f,
@@ -153,8 +152,8 @@ impl<T> Drop for Stream<T> {
 
 impl<T> BascetStream<T> for Stream<T>
 where
-    T: BascetCell + 'static,
-    T::Builder: BascetCellBuilder<Token = T>,
+    T: BascetStreamToken + 'static,
+    T::Builder: BascetStreamTokenBuilder<Token = T>,
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
@@ -197,11 +196,7 @@ where
                     match &cell_id {
                         Some(existing_id) if existing_id == id => {
                             if let Some(b) = builder.take() {
-                                let b = b
-                                    .add_rp_slice(rp.r1, rp.r2)
-                                    .add_qp_slice(rp.q1, rp.q2)
-                                    .add_umi_slice(rp.umi);
-                                builder = Some(b);
+                                builder = Some(b.add_seq_slice(rp.r1).add_seq_slice(rp.r2));
                             }
                         }
                         Some(_) => {
@@ -216,9 +211,8 @@ where
                             let new_builder = T::builder()
                                 .add_underlying(Arc::clone(buf))
                                 .add_cell_id_slice(id)
-                                .add_rp_slice(rp.r1, rp.r2)
-                                .add_qp_slice(rp.q1, rp.q2)
-                                .add_umi_slice(rp.umi);
+                                .add_seq_slice(rp.r1)
+                                .add_seq_slice(rp.r2);
                             builder = Some(new_builder);
                         }
                     }
