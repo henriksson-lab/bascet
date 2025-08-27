@@ -44,8 +44,11 @@ pub trait BascetCellBuilder<'page>: Sized {
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
-
-    fn add_sentinel_tracking(self, buffer_page_ptr: *mut crate::io::format::tirp::alloc::PageBuffer, buffer_bounds: (*const u8, *const u8)) -> Self {
+    fn add_sentinel_tracking(
+        self,
+        buffer_page_ptr: *mut crate::io::format::tirp::alloc::PageBuffer,
+        buffer_bounds: (*const u8, *const u8),
+    ) -> Self {
         log_debug!("Method 'add_buffer_info' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }

@@ -2,7 +2,7 @@ use crate::{common::spin_or_park, log_info, log_warning};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub struct PageBuffer {
-    pub inner: Vec<u8>,  // Make public for inline access
+    pub inner: Vec<u8>,
     inner_ptr: usize,
     // Atomic flag for expiration tracking
     pub expired: AtomicBool,
@@ -115,15 +115,27 @@ impl PageBufferAllocResult {
 
     pub fn buffer_page_ptr(&self) -> *mut PageBuffer {
         match self {
-            PageBufferAllocResult::Continue { buffer_page_ptr, .. }
-            | PageBufferAllocResult::NewPage { buffer_page_ptr, .. } => *buffer_page_ptr,
+            PageBufferAllocResult::Continue {
+                buffer_page_ptr, ..
+            }
+            | PageBufferAllocResult::NewPage {
+                buffer_page_ptr, ..
+            } => *buffer_page_ptr,
         }
     }
 
     pub fn buffer_bounds(&self) -> (*const u8, *const u8) {
         match self {
-            PageBufferAllocResult::Continue { buffer_start, buffer_end, .. }
-            | PageBufferAllocResult::NewPage { buffer_start, buffer_end, .. } => (*buffer_start, *buffer_end),
+            PageBufferAllocResult::Continue {
+                buffer_start,
+                buffer_end,
+                ..
+            }
+            | PageBufferAllocResult::NewPage {
+                buffer_start,
+                buffer_end,
+                ..
+            } => (*buffer_start, *buffer_end),
         }
     }
 }
@@ -152,7 +164,6 @@ impl PageBufferPool {
     pub fn alloc(&mut self, bytes: usize) -> PageBufferAllocResult {
         let current_page = &mut self.inner_pages[self.inner_index];
 
-        // Try to continue in current page (skip availability check for now)
         if current_page.remaining() >= bytes {
             let ptr = current_page.alloc_unchecked(bytes);
             let buffer_start = current_page.inner.as_ptr();

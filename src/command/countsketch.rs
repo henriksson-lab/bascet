@@ -1,5 +1,10 @@
 use crate::{
-    command::determine_thread_counts_2, io::{traits::*, format::tirp::{alloc::PageBuffer, SENTINEL_BYTE}}, kmer::kmc_counter::CountSketch,
+    command::determine_thread_counts_2,
+    io::{
+        format::tirp::{alloc::PageBuffer, SENTINEL_BYTE},
+        traits::*,
+    },
+    kmer::kmc_counter::CountSketch,
     log_critical, log_info, log_warning, support_which_stream, support_which_temp,
     support_which_writer,
 };
@@ -33,7 +38,7 @@ impl<T> SafePtr<T> {
     fn new(ptr: *const T) -> Self {
         Self(ptr)
     }
-    
+
     #[inline(always)]
     fn as_ptr(&self) -> *const T {
         self.0
@@ -45,13 +50,12 @@ impl<T> SafeMutPtr<T> {
     fn new(ptr: *mut T) -> Self {
         Self(ptr)
     }
-    
+
     #[inline(always)]
     fn as_ptr(&self) -> *mut T {
         self.0
     }
 }
-
 
 pub const DEFAULT_THREADS_READ: usize = 8;
 pub const DEFAULT_THREADS_WORK: usize = 4;
@@ -325,7 +329,7 @@ impl Drop for CountsketchCell {
                 let page = page_ptr.as_ptr();
                 let page_start = (*page).inner.as_ptr();
                 let page_end = page_start.add((*page).inner.capacity());
-                
+
                 if sentinel_pos >= page_end || *sentinel_pos == SENTINEL_BYTE {
                     (*page).expired.store(true, Ordering::Relaxed);
                 }
@@ -349,7 +353,6 @@ impl BascetCell for CountsketchCell {
         Some(&self.reads)
     }
 }
-
 
 struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
@@ -375,10 +378,15 @@ impl<'page> BascetCellBuilder<'page> for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
-    fn add_sentinel_tracking(mut self, buffer_page_ptr: *mut PageBuffer, _buffer_bounds: (*const u8, *const u8)) -> Self {
+    fn add_sentinel_tracking(
+        mut self,
+        buffer_page_ptr: *mut PageBuffer,
+        _buffer_bounds: (*const u8, *const u8),
+    ) -> Self {
         if let Some(cell) = self.cell {
             let end_ptr = unsafe { cell.as_ptr().add(cell.len().saturating_sub(1)) };
-            self.page_end_ptrs.push((SafePtr::new(end_ptr), SafeMutPtr::new(buffer_page_ptr)));
+            self.page_end_ptrs
+                .push((SafePtr::new(end_ptr), SafeMutPtr::new(buffer_page_ptr)));
         }
         self
     }

@@ -3,7 +3,6 @@ use rust_htslib::htslib;
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-
 use crate::log_info;
 use crate::{
     common::{self},
@@ -21,7 +20,7 @@ pub struct Stream<T> {
     inner_buf: &'static [u8],
     inner_cursor: usize,
     // Raw pointer to the ref counter for the current inner_buf
-    inner_refcount: *const AtomicUsize,
+    inner_buffer_ptr: *const AtomicUsize,
 
     partial_len: usize,
     _marker: std::marker::PhantomData<T>,
@@ -87,7 +86,7 @@ impl<T> Stream<T> {
                 inner_pool: alloc::PageBufferPool::new(32, 1024 * 1024 * 64),
                 inner_cursor: 0,
                 inner_buf: &[],
-                inner_refcount: std::ptr::null(),
+                inner_buffer_ptr: std::ptr::null(),
                 partial_len: 0,
                 _marker: std::marker::PhantomData,
             })
@@ -164,14 +163,14 @@ impl<T> Stream<T> {
             match writebytes {
                 n if n > 0 => {
                     let totalbytes = writebytes as usize + self.partial_len;
-                    
+
                     // Write sentinel byte after the read data if there's space
                     let (buffer_start, buffer_end) = allocres.buffer_bounds();
                     let sentinel_pos = bufptr.add(totalbytes);
                     if (sentinel_pos as *const u8) < buffer_end {
                         *sentinel_pos = SENTINEL_BYTE;
                     }
-                    
+
                     let bufslice = std::slice::from_raw_parts(bufptr, totalbytes);
                     // Find last complete line
                     if let Some(last_newline) = memchr::memrchr(b'\n', bufslice) {
@@ -181,7 +180,7 @@ impl<T> Stream<T> {
                         self.partial_len = partslc.len();
                         self.inner_buf = bufslc;
                         // Store buffer page pointer for this buffer
-                        self.inner_refcount = allocres.buffer_page_ptr() as *const AtomicUsize;
+                        self.inner_buffer_ptr = allocres.buffer_page_ptr() as *const AtomicUsize;
 
                         self.inner_cursor = 0;
 
@@ -204,12 +203,12 @@ impl<T> Stream<T> {
                         if (sentinel_pos as *const u8) < buffer_end {
                             *sentinel_pos = SENTINEL_BYTE;
                         }
-                        
+
                         let eofslice = std::slice::from_raw_parts(bufptr, totalbytes);
                         self.inner_buf = eofslice;
                         self.inner_cursor = 0;
                         // Store buffer page pointer for this buffer
-                        self.inner_refcount = allocres.buffer_page_ptr() as *const AtomicUsize;
+                        self.inner_buffer_ptr = allocres.buffer_page_ptr() as *const AtomicUsize;
 
                         self.partial_len = 0;
                         return Ok(Some(allocres));
@@ -240,7 +239,7 @@ impl<T> Drop for Stream<T> {
 impl<T> BascetStream<T> for Stream<T>
 where
     T: BascetCell + 'static,
-     for<'page> T::Builder<'page>: BascetCellBuilder<'page, Token = T>,
+    for<'page> T::Builder<'page>: BascetCellBuilder<'page, Token = T>,
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
@@ -268,9 +267,17 @@ where
                     Some(alloc_result) => {
                         // Got new buffer data
                         match &alloc_result {
-                            alloc::PageBufferAllocResult::NewPage { buffer_page_ptr, buffer_start, buffer_end, .. } => {
+                            alloc::PageBufferAllocResult::NewPage {
+                                buffer_page_ptr,
+                                buffer_start,
+                                buffer_end,
+                                ..
+                            } => {
                                 // New page: add buffer information to builder
-                                builder = builder.add_sentinel_tracking(*buffer_page_ptr, (*buffer_start, *buffer_end));
+                                builder = builder.add_sentinel_tracking(
+                                    *buffer_page_ptr,
+                                    (*buffer_start, *buffer_end),
+                                );
                             }
                             alloc::PageBufferAllocResult::Continue { .. } => {
                                 // Continue in same page: no new buffer info needed
@@ -292,9 +299,15 @@ where
                 if let Ok((cell_id, cell_rp)) = tirp::parse_readpair(line) {
                     if next_id.is_empty() {
                         // SAFETY: Transmute slice to static lifetime - kept alive by buffer expiration tracking
-                        let lifetime_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
+                        let lifetime_cell_id: &'static [u8] =
+                            unsafe { std::mem::transmute(cell_id) };
                         builder = builder
-                            .add_sentinel_tracking(self.inner_refcount as *mut alloc::PageBuffer, (self.inner_buf.as_ptr(), unsafe { self.inner_buf.as_ptr().add(self.inner_buf.len()) }))
+                            .add_sentinel_tracking(
+                                self.inner_buffer_ptr as *mut alloc::PageBuffer,
+                                (self.inner_buf.as_ptr(), unsafe {
+                                    self.inner_buf.as_ptr().add(self.inner_buf.len())
+                                }),
+                            )
                             .add_cell_id_slice(lifetime_cell_id);
                         next_id = cell_id;
                     }
