@@ -1,7 +1,4 @@
-use crate::{
-    common::{self, ReadPair},
-    io::format,
-};
+use crate::common::{self, ReadPair};
 
 #[inline]
 pub fn parse_readpair(buf_record: &[u8]) -> Result<(&[u8], ReadPair), crate::runtime::Error> {

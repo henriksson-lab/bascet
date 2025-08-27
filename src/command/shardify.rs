@@ -15,8 +15,8 @@ use std::{
 };
 
 use crate::{
-    io::traits::*, log_critical, log_debug, log_info, log_warning, support_which_stream,
-    support_which_writer,
+    common::spin_or_park, io::traits::*, log_critical, log_debug, log_info, log_warning,
+    support_which_stream, support_which_writer,
 };
 
 use std::collections::hash_map::DefaultHasher;
@@ -411,23 +411,15 @@ impl ShardifyCMD {
 //         spin_or_park(&mut count_spins, 100);
 //     }
 // }
-#[inline(always)]
-pub fn spin_or_park(spin_counter: &mut usize, max_spins: usize) {
-    if *spin_counter < max_spins {
-        *spin_counter += 1;
-        std::hint::spin_loop();
-    } else {
-        // yield CPU for a few us
-        thread::park_timeout(std::time::Duration::from_micros(50));
-    }
-}
 
 struct ShardifyCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
-    _underlying: Vec<Arc<Vec<u8>>>,
+
+    _guards: Vec<Arc<()>>,
+    _owned: Vec<Vec<u8>>,
 }
 impl Clone for ShardifyCell {
     fn clone(&self) -> Self {
@@ -436,7 +428,9 @@ impl Clone for ShardifyCell {
             reads: self.reads.clone(),
             qualities: self.qualities.clone(),
             umis: self.umis.clone(),
-            _underlying: self._underlying.clone(),
+
+            _guards: self._guards.clone(),
+            _owned: self._owned.clone(),
         }
     }
 }
@@ -468,7 +462,9 @@ struct ShardifyCellBuilder {
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
-    underlying: Vec<Arc<Vec<u8>>>,
+
+    guards: Vec<Arc<()>>,
+    owned: Vec<Vec<u8>>,
 }
 
 impl ShardifyCellBuilder {
@@ -478,7 +474,9 @@ impl ShardifyCellBuilder {
             reads: Vec::new(),
             qualities: Vec::new(),
             umis: Vec::new(),
-            underlying: Vec::new(),
+
+            guards: Vec::new(),
+            owned: Vec::new(),
         }
     }
 }
@@ -486,19 +484,39 @@ impl ShardifyCellBuilder {
 impl BascetCellBuilder for ShardifyCellBuilder {
     type Token = ShardifyCell;
 
+    #[inline(always)]
+    fn add_guard(mut self, guard: Arc<()>) -> Self {
+        self.guards.push(guard);
+        self
+    }
+
     // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
     // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
     #[inline(always)]
     fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
-        let aid = Arc::new(id);
-        self = self.add_underlying(aid.clone()).add_cell_id_slice(&aid);
+        self.owned.push(id);
+        // Get reference to the data in its final location
+        let slice = self.owned.last().unwrap().as_slice();
+        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.cell = Some(static_slice);
         self
     }
 
     #[inline(always)]
     fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
-        let aseq = Arc::new(seq);
-        self = self.add_underlying(aseq.clone()).add_cell_id_slice(&aseq);
+        self.owned.push(seq);
+        let slice = self.owned.last().unwrap().as_slice();
+        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.reads.push((static_slice, &[]));
+        self
+    }
+
+    #[inline(always)]
+    fn add_quality_owned(mut self, qual: Vec<u8>) -> Self {
+        self.owned.push(qual);
+        let slice = self.owned.last().unwrap().as_slice();
+        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.qualities.push((static_slice, &[]));
         self
     }
 
@@ -548,19 +566,15 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     }
 
     #[inline(always)]
-    fn add_underlying(mut self, buffer: Arc<Vec<u8>>) -> Self {
-        self.underlying.push(buffer);
-        self
-    }
-
-    #[inline(always)]
     fn build(self) -> ShardifyCell {
         ShardifyCell {
             cell: self.cell.expect("cell is required"),
             reads: self.reads,
             qualities: self.qualities,
             umis: self.umis,
-            _underlying: self.underlying,
+
+            _guards: self.guards,
+            _owned: self.owned,
         }
     }
 }

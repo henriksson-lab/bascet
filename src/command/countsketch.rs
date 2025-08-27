@@ -1,5 +1,5 @@
 use crate::{
-    command::determine_thread_counts_2, io::traits::*, kmer::kmc_counter::CountSketch,
+    command::determine_thread_counts_2, io::{traits::*, format::tirp::{alloc::PageBuffer, SENTINEL_BYTE}}, kmer::kmc_counter::CountSketch,
     log_critical, log_info, log_warning, support_which_stream, support_which_temp,
     support_which_writer,
 };
@@ -8,10 +8,50 @@ use clap::Args;
 use itertools::enumerate;
 use std::{
     fs::File,
-    io::BufWriter,
+    io::{BufWriter, Write},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
+
+// SAFETY: These pointers are valid for the buffer page lifetime
+#[derive(Clone, Copy)]
+struct SafePtr<T>(*const T);
+
+#[derive(Clone, Copy)]
+struct SafeMutPtr<T>(*mut T);
+
+unsafe impl<T> Send for SafePtr<T> {}
+unsafe impl<T> Sync for SafePtr<T> {}
+unsafe impl<T> Send for SafeMutPtr<T> {}
+unsafe impl<T> Sync for SafeMutPtr<T> {}
+
+impl<T> SafePtr<T> {
+    #[inline(always)]
+    fn new(ptr: *const T) -> Self {
+        Self(ptr)
+    }
+    
+    #[inline(always)]
+    fn as_ptr(&self) -> *const T {
+        self.0
+    }
+}
+
+impl<T> SafeMutPtr<T> {
+    #[inline(always)]
+    fn new(ptr: *mut T) -> Self {
+        Self(ptr)
+    }
+    
+    #[inline(always)]
+    fn as_ptr(&self) -> *mut T {
+        self.0
+    }
+}
+
 
 pub const DEFAULT_THREADS_READ: usize = 8;
 pub const DEFAULT_THREADS_WORK: usize = 4;
@@ -96,16 +136,16 @@ impl CountsketchCMD {
                 }
             };
 
-            let stream: CountsketchStream<CountsketchCell> = match CountsketchStream::try_from_input(
-                file,
-            ) {
-                Ok(stream) => stream,
-                Err(e) => {
-                    log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
-                    total_errors += 1;
-                    continue;
-                }
-            }.set_reader_threads(n_readers);
+            let mut stream: CountsketchStream<CountsketchCell> =
+                match CountsketchStream::try_from_input(file) {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
+                        total_errors += 1;
+                        continue;
+                    }
+                };
+            stream = stream.set_reader_threads(n_readers);
 
             let output_path = self.path_out.join(format!("countsketch.{i}.csv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
@@ -125,7 +165,7 @@ impl CountsketchCMD {
                 }
             };
 
-            let writer =  match CountsketchWriter::try_from_output(output_auto) {
+            let mut output_countsketch_writer =  match CountsketchWriter::try_from_output(output_auto) {
                 Ok(writer) => writer,
                 Err(e) => {
                     log_warning!("Failed to create output writer, skipping"; "path" => ?output_path, "error" => %e);
@@ -133,24 +173,39 @@ impl CountsketchCMD {
                     continue;
                 }
             }.set_writer(BufWriter::new(output_file));
-            let writer = Arc::new(Mutex::new(writer));
 
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
             let (work_tx, work_rx) =
                 crossbeam::channel::bounded::<Option<CountsketchCell>>(self.channel_buffer_size);
 
+            let (write_tx, write_rx) = crossbeam::channel::bounded::<
+                Option<(CountsketchCell, CountSketch)>,
+            >(self.channel_buffer_size);
+
+            let _ = std::thread::spawn(move || {
+                while let Ok(Some((cell, countsketch))) = write_rx.recv() {
+                    // log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell), "open" => write_rx.len());
+                    let _ = output_countsketch_writer.write_countsketch(&cell, &countsketch);
+                }
+                log_info!("Write finished!");
+                let _ = output_countsketch_writer.get_writer().unwrap().flush();
+            });
+
             for worker_id in 0..n_workers {
                 let work_rx = work_rx.clone();
+                let write_tx = write_tx.clone();
 
                 let kmer_size = self.kmer_size;
                 let mut countsketch = CountSketch::new(self.countsketch_size);
 
-                let writer = Arc::clone(&writer);
                 worker_threadpool.execute(move || {
                     let mut cells_processed = 0;
 
                     while let Ok(Some(cell)) = work_rx.recv() {
-                        countsketch.reset();
+                        // println!("Worker {} receiving cell {} at {:?}", 
+                        //         worker_id,
+                        //         String::from_utf8_lossy(cell.get_cell().unwrap()),
+                        //         std::time::SystemTime::now());
                         let Some(reads) = cell.get_reads() else { continue };
 
                         for (r1, r2) in reads {
@@ -185,59 +240,54 @@ impl CountsketchCMD {
                             }
                         }
 
-                        // NOTE: lock free aproaches for writing did not perform much better
-                        match writer.lock() {
-                            Ok(mut writer) => {
-                                if let Err(e) = writer.write_countsketch(&cell, &countsketch) {
-                                    log_warning!("Write error in worker thread"; "worker id" => worker_id, "error" => %e);
-                                }
-                            }
-                            Err(_) => {
-                                log_warning!("Buffer lock contention in worker"; "worker id" => worker_id);
-                            }
-                        }
-
+                        let _ = write_tx.send(Some((cell, countsketch.clone())));
+                        countsketch.reset();
                         cells_processed += 1;
                     }
                     log_info!("Worker thread completed"; "worker id" => worker_id, "cells processed" => cells_processed);
                 });
             }
 
-            let mut cells_parsed = 0;
-            let mut parse_errors = 0;
+            let (cells_parsed, parse_errors) = {
+                let mut cells_parsed = 0;
+                let mut parse_errors = 0;
 
-            for cell_res in stream {
-                let cell = match cell_res {
-                    Ok(cell) => cell,
-                    Err(e) => match e {
-                        crate::runtime::Error::ParseError { .. } => {
-                            log_warning!("Parse error"; "error" => %e);
-                            parse_errors += 1;
-                            continue;
-                        }
-                        _ => {
-                            log_critical!("Stream error"; "error" => %e);
-                        }
-                    },
-                };
+                for cell_res in &mut stream {
+                    let cell = match cell_res {
+                        Ok(cell) => cell,
+                        Err(e) => match e {
+                            crate::runtime::Error::ParseError { .. } => {
+                                log_warning!("Parse error"; "error" => %e);
+                                parse_errors += 1;
+                                continue;
+                            }
+                            _ => {
+                                log_critical!("Stream error"; "error" => %e);
+                            }
+                        },
+                    };
 
-                match work_tx.send(Some(cell)) {
-                    Ok(_) => cells_parsed += 1,
-                    Err(e) => {
-                        log_critical!("Channel send failed"; "error" => %e);
+                    match work_tx.send(Some(cell)) {
+                        Ok(_) => cells_parsed += 1,
+                        Err(e) => {
+                            log_critical!("Channel send failed"; "error" => %e);
+                        }
+                    }
+
+                    if cells_parsed % 100 == 0 {
+                        log_info!("Processing"; "cells parsed" => cells_parsed, "parse errors" => parse_errors);
                     }
                 }
 
-                if cells_parsed % 100 == 0 {
-                    log_info!("Processing progress"; "cells parsed" => cells_parsed, "parse errors" => parse_errors);
-                }
-            }
+                (cells_parsed, parse_errors)
+            };
 
             for worker_id in 0..n_workers {
                 if let Err(e) = work_tx.send(None) {
                     log_warning!("Failed to send stop signal to worker"; "worker id" => worker_id, "error" => %e);
                 }
             }
+            let _ = write_tx.send(None);
 
             worker_threadpool.join();
 
@@ -261,14 +311,34 @@ impl CountsketchCMD {
 struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
-    _underlying: Vec<Arc<Vec<u8>>>,
+
+    _page_end_ptrs: Vec<(SafePtr<u8>, SafeMutPtr<PageBuffer>)>,
+    _owned: Vec<Vec<u8>>,
+}
+
+impl Drop for CountsketchCell {
+    #[inline(always)]
+    fn drop(&mut self) {
+        unsafe {
+            for (end_ptr, page_ptr) in &self._page_end_ptrs {
+                let sentinel_pos = end_ptr.as_ptr().add(1);
+                let page = page_ptr.as_ptr();
+                let page_start = (*page).inner.as_ptr();
+                let page_end = page_start.add((*page).inner.capacity());
+                
+                if sentinel_pos >= page_end || *sentinel_pos == SENTINEL_BYTE {
+                    (*page).expired.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+    }
 }
 
 impl BascetCell for CountsketchCell {
-    type Builder = CountsketchCellBuilder;
+    type Builder<'page> = CountsketchCellBuilder;
 
-    fn builder() -> Self::Builder {
-        Self::Builder::new()
+    fn builder<'page>() -> Self::Builder<'page> {
+        CountsketchCellBuilder::new()
     }
 
     fn get_cell(&self) -> Option<&[u8]> {
@@ -280,10 +350,13 @@ impl BascetCell for CountsketchCell {
     }
 }
 
+
 struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
-    underlying: Vec<Arc<Vec<u8>>>,
+
+    page_end_ptrs: Vec<(SafePtr<u8>, SafeMutPtr<PageBuffer>)>,
+    owned: Vec<Vec<u8>>,
 }
 
 impl CountsketchCellBuilder {
@@ -291,59 +364,60 @@ impl CountsketchCellBuilder {
         Self {
             cell: None,
             reads: Vec::new(),
-            underlying: Vec::new(),
+
+            page_end_ptrs: Vec::new(),
+            owned: Vec::new(),
         }
     }
 }
 
-impl BascetCellBuilder for CountsketchCellBuilder {
+impl<'page> BascetCellBuilder<'page> for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
-    // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
-    // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
     #[inline(always)]
+    fn add_sentinel_tracking(mut self, buffer_page_ptr: *mut PageBuffer, _buffer_bounds: (*const u8, *const u8)) -> Self {
+        if let Some(cell) = self.cell {
+            let end_ptr = unsafe { cell.as_ptr().add(cell.len().saturating_sub(1)) };
+            self.page_end_ptrs.push((SafePtr::new(end_ptr), SafeMutPtr::new(buffer_page_ptr)));
+        }
+        self
+    }
+
     fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
-        let aid = Arc::new(id);
-        self = self.add_underlying(aid.clone()).add_cell_id_slice(&aid);
+        self.owned.push(id);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        // and the CountsketchCell holds the _owned field to maintain this invariant
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.cell = Some(slice_with_lifetime);
         self
     }
 
     #[inline(always)]
     fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
-        let aseq = Arc::new(seq);
-        self = self.add_underlying(aseq.clone()).add_cell_id_slice(&aseq);
-        self
-    }
-
-    // NOTE: Here the idea is that for as long as the stream tokens are alive the underlying memory will be kept alive
-    // by Arcs. For as long as these are valid the memory can be considered static even if it technically is not
-    // this is a bit of a hack to make the underlying trait easier to use.
-    // has the benefit of being much faster and more memory efficient since there is no copy overhead
-    #[inline(always)]
-    fn add_cell_id_slice(mut self, slice: &[u8]) -> Self {
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.cell = Some(static_slice);
+        self.owned.push(seq);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.reads.push((slice_with_lifetime, &[]));
         self
     }
 
     #[inline(always)]
-    fn add_sequence_slice(mut self, slice: &[u8]) -> Self {
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.reads.push((static_slice, &[]));
+    fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
+        self.cell = Some(slice);
         self
     }
 
     #[inline(always)]
-    fn add_rp_slice(mut self, r1: &[u8], r2: &[u8]) -> Self {
-        let r1_static_slice: &'static [u8] = unsafe { std::mem::transmute(r1) };
-        let r2_static_slice: &'static [u8] = unsafe { std::mem::transmute(r2) };
-        self.reads.push((r1_static_slice, r2_static_slice));
+    fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
+        self.reads.push((slice, &[]));
         self
     }
 
     #[inline(always)]
-    fn add_underlying(mut self, buffer: Arc<Vec<u8>>) -> Self {
-        self.underlying.push(buffer);
+    fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
+        self.reads.push((r1, r2));
         self
     }
 
@@ -352,7 +426,9 @@ impl BascetCellBuilder for CountsketchCellBuilder {
         CountsketchCell {
             cell: self.cell.expect("cell is required"),
             reads: self.reads,
-            _underlying: self.underlying,
+
+            _page_end_ptrs: self.page_end_ptrs,
+            _owned: self.owned,
         }
     }
 }
