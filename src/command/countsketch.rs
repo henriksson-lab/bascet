@@ -1,5 +1,6 @@
 use crate::{
     command::determine_thread_counts_2,
+    common,
     io::{
         format::tirp::{alloc::PageBuffer, SENTINEL_BYTE},
         traits::*,
@@ -20,42 +21,6 @@ use std::{
         Arc, Mutex,
     },
 };
-
-// SAFETY: These pointers are valid for the buffer page lifetime
-#[derive(Clone, Copy)]
-struct SafePtr<T>(*const T);
-
-#[derive(Clone, Copy)]
-struct SafeMutPtr<T>(*mut T);
-
-unsafe impl<T> Send for SafePtr<T> {}
-unsafe impl<T> Sync for SafePtr<T> {}
-unsafe impl<T> Send for SafeMutPtr<T> {}
-unsafe impl<T> Sync for SafeMutPtr<T> {}
-
-impl<T> SafePtr<T> {
-    #[inline(always)]
-    fn new(ptr: *const T) -> Self {
-        Self(ptr)
-    }
-
-    #[inline(always)]
-    fn as_ptr(&self) -> *const T {
-        self.0
-    }
-}
-
-impl<T> SafeMutPtr<T> {
-    #[inline(always)]
-    fn new(ptr: *mut T) -> Self {
-        Self(ptr)
-    }
-
-    #[inline(always)]
-    fn as_ptr(&self) -> *mut T {
-        self.0
-    }
-}
 
 pub const DEFAULT_THREADS_READ: usize = 8;
 pub const DEFAULT_THREADS_WORK: usize = 4;
@@ -316,7 +281,7 @@ struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    _page_end_ptrs: Vec<(SafePtr<u8>, SafeMutPtr<PageBuffer>)>,
+    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -324,15 +289,8 @@ impl Drop for CountsketchCell {
     #[inline(always)]
     fn drop(&mut self) {
         unsafe {
-            for (end_ptr, page_ptr) in &self._page_end_ptrs {
-                let sentinel_pos = end_ptr.as_ptr().add(1);
-                let page = page_ptr.as_ptr();
-                let page_start = (*page).inner.as_ptr();
-                let page_end = page_start.add((*page).inner.capacity());
-
-                if sentinel_pos >= page_end || *sentinel_pos == SENTINEL_BYTE {
-                    (*page).expired.store(true, Ordering::Relaxed);
-                }
+            for page_ptr in &self._page_refs {
+                (*page_ptr.as_ptr()).dec_ref();
             }
         }
     }
@@ -358,7 +316,7 @@ struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    page_end_ptrs: Vec<(SafePtr<u8>, SafeMutPtr<PageBuffer>)>,
+    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -368,7 +326,7 @@ impl CountsketchCellBuilder {
             cell: None,
             reads: Vec::new(),
 
-            page_end_ptrs: Vec::new(),
+            page_refs: smallvec::SmallVec::new(),
             owned: Vec::new(),
         }
     }
@@ -378,16 +336,11 @@ impl<'page> BascetCellBuilder<'page> for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
-    fn add_sentinel_tracking(
-        mut self,
-        buffer_page_ptr: *mut PageBuffer,
-        _buffer_bounds: (*const u8, *const u8),
-    ) -> Self {
-        if let Some(cell) = self.cell {
-            let end_ptr = unsafe { cell.as_ptr().add(cell.len().saturating_sub(1)) };
-            self.page_end_ptrs
-                .push((SafePtr::new(end_ptr), SafeMutPtr::new(buffer_page_ptr)));
+    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer>) -> Self {
+        unsafe {
+            (*page_ptr.as_ptr()).inc_ref();
         }
+        self.page_refs.push(page_ptr);
         self
     }
 
@@ -435,7 +388,7 @@ impl<'page> BascetCellBuilder<'page> for CountsketchCellBuilder {
             cell: self.cell.expect("cell is required"),
             reads: self.reads,
 
-            _page_end_ptrs: self.page_end_ptrs,
+            _page_refs: self.page_refs,
             _owned: self.owned,
         }
     }

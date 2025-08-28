@@ -3,15 +3,12 @@ use rust_htslib::htslib;
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{log_debug, log_info};
-use crate::{
-    common::{self},
-    io::{
-        self,
-        format::tirp::{self, alloc, SENTINEL_BYTE},
-        traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
-    },
+use crate::io::{
+    self,
+    format::tirp::{self, alloc, SENTINEL_BYTE},
+    traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
+use crate::{common, log_debug, log_info};
 
 pub struct Stream<T> {
     inner_htsfileptr: *mut htslib::htsFile,
@@ -83,7 +80,7 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_pool: alloc::PageBufferPool::new(8, 1024 * 1024 * 8),
+                inner_pool: alloc::PageBufferPool::new(16, 1024 * 1024 * 32),
                 inner_cursor: 0,
                 inner_buf: &[],
                 inner_buffer_ptr: std::ptr::null(),
@@ -132,7 +129,6 @@ impl<T> Stream<T> {
                         .active_mut()
                         .incr_ptr_unchecked(self.partial_len);
 
-                    // partial line guaranteed to be located at the end of the buffer
                     let oldbuf = &self.inner_buf;
                     // ok so this is kind of stupid but because the used buffer is truncated to last newline,
                     // the partial is contained after the end of old_buf
@@ -164,13 +160,6 @@ impl<T> Stream<T> {
                 n if n > 0 => {
                     let totalbytes = writebytes as usize + self.partial_len;
 
-                    // Write sentinel byte after the read data if there's space
-                    let (buffer_start, buffer_end) = allocres.buffer_bounds();
-                    let sentinel_pos = bufptr.add(totalbytes);
-                    if (sentinel_pos as *const u8) < buffer_end {
-                        *sentinel_pos = SENTINEL_BYTE;
-                    }
-
                     let bufslice = std::slice::from_raw_parts(bufptr, totalbytes);
                     // Find last complete line
                     if let Some(last_newline) = memchr::memrchr(b'\n', bufslice) {
@@ -197,13 +186,6 @@ impl<T> Stream<T> {
                     // EOF
                     let totalbytes = writebytes as usize + self.partial_len;
                     if totalbytes > 0 {
-                        // Write sentinel byte after the read data if there's space
-                        let (buffer_start, buffer_end) = allocres.buffer_bounds();
-                        let sentinel_pos = bufptr.add(totalbytes);
-                        if (sentinel_pos as *const u8) < buffer_end {
-                            *sentinel_pos = SENTINEL_BYTE;
-                        }
-
                         let eofslice = std::slice::from_raw_parts(bufptr, totalbytes);
                         self.inner_buf = eofslice;
                         self.inner_cursor = 0;
@@ -254,7 +236,7 @@ where
 
         loop {
             let mut buf = &self.inner_buf;
-            if self.inner_cursor >= buf.len() {
+            if self.inner_cursor > buf.len() {
                 match self.load_next_buf()? {
                     None => {
                         // EOF
@@ -267,21 +249,17 @@ where
                     Some(alloc_result) => {
                         // Got new buffer data
                         match &alloc_result {
-                            alloc::PageBufferAllocResult::NewPage {
-                                buffer_page_ptr,
-                                buffer_start,
-                                buffer_end,
-                                ..
-                            } => {
-                                // New page: add buffer information to builder
-                                builder = builder.add_sentinel_tracking(
-                                    *buffer_page_ptr,
-                                    (*buffer_start, *buffer_end),
-                                );
-                            }
                             alloc::PageBufferAllocResult::Continue { .. } => {
-                                // Continue in same page: no new buffer info needed
+                                
                             }
+                            alloc::PageBufferAllocResult::NewPage { .. } => {
+                                // If we have an ongoing cell, add page ref for the previous page
+                                if !next_id.is_empty() {
+                                    builder = builder.add_page_ref(common::UnsafeMutPtr::new(
+                                        self.inner_buffer_ptr as *mut alloc::PageBuffer,
+                                    ));
+                                }
+                            }   
                         }
                     }
                 }
@@ -299,18 +277,18 @@ where
                 if let Ok((cell_id, cell_rp)) = tirp::parse_readpair(line) {
                     if next_id.is_empty() {
                         // SAFETY: Transmute slice to static lifetime - kept alive by buffer expiration tracking
-                        let lifetime_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
-                        builder = builder
-                            .add_sentinel_tracking(
-                                self.inner_buffer_ptr as *mut alloc::PageBuffer,
-                                (self.inner_buf.as_ptr(), unsafe {
-                                    self.inner_buf.as_ptr().add(self.inner_buf.len())
-                                }),
-                            )
-                            .add_cell_id_slice(lifetime_cell_id);
+                        let lifetime_cell_id: &'static [u8] =
+                            unsafe { std::mem::transmute(cell_id) };
+                        builder = builder.add_cell_id_slice(lifetime_cell_id);
                         next_id = cell_id;
+                        // println!("new cell {:?} at buffer {:p}", String::from_utf8_lossy(cell_id), self.inner_buf.as_ptr());
                     } else if next_id != cell_id {
-                        // Different cell, return the current one
+                        // Different cell - add page ref for the current cell
+                        builder = builder.add_page_ref(common::UnsafeMutPtr::new(
+                            self.inner_buffer_ptr as *mut alloc::PageBuffer,
+                        ));
+                        // Back up cursor and return current cell
+                        self.inner_cursor = line_start;
                         return Ok(Some(builder.build()));
                     }
 
@@ -326,9 +304,10 @@ where
                         .add_qp_slice(lifetime_q1, lifetime_q2)
                         .add_umi_slice(lifetime_umi);
                 }
+
                 self.inner_cursor = line_end + 1;
             } else {
-                self.inner_cursor = buf.len();
+                self.inner_cursor = buf.len() + 1;
             }
         }
     }

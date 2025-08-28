@@ -1,6 +1,6 @@
 use crate::command::countsketch::CountsketchStream;
 // use crate::command::shardify::ShardifyStream;
-use crate::log_debug;
+use crate::{common, log_debug};
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetStream<T>: Sized
@@ -44,12 +44,13 @@ pub trait BascetCellBuilder<'page>: Sized {
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
-    fn add_sentinel_tracking(
+
+    // TODO: common::PageBuffer
+    fn add_page_ref(
         self,
-        buffer_page_ptr: *mut crate::io::format::tirp::alloc::PageBuffer,
-        buffer_bounds: (*const u8, *const u8),
+        page_ptr: common::UnsafeMutPtr<crate::io::format::tirp::alloc::PageBuffer>,
     ) -> Self {
-        log_debug!("Method 'add_buffer_info' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
+        log_debug!("Method 'add_page_ref' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 

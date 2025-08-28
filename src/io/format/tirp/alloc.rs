@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 pub struct PageBuffer {
     pub inner: Vec<u8>,
     inner_ptr: usize,
-    // Atomic flag for expiration tracking
-    pub expired: AtomicBool,
+    // Reference counter for active cells
+    pub ref_count: AtomicUsize,
 }
 
 impl PageBuffer {
@@ -17,8 +17,7 @@ impl PageBuffer {
         Self {
             inner: data,
             inner_ptr: 0,
-
-            expired: AtomicBool::new(false),
+            ref_count: AtomicUsize::new(0),
         }
     }
 
@@ -43,14 +42,13 @@ impl PageBuffer {
 
     #[inline(always)]
     pub fn available(&self) -> bool {
-        !self.expired.load(Ordering::Relaxed)
+        self.ref_count.load(Ordering::Acquire) == 0
     }
 
     #[inline(always)]
     pub fn try_reset(&mut self) -> bool {
         if self.available() {
             self.inner_ptr = 0;
-            self.expired.store(false, Ordering::Relaxed);
             true
         } else {
             false
@@ -58,12 +56,17 @@ impl PageBuffer {
     }
 
     #[inline(always)]
-    pub fn mark_expired(&self) {
-        self.expired.store(true, Ordering::Relaxed);
+    pub fn inc_ref(&self) {
+        self.ref_count.fetch_add(1, Ordering::Relaxed);
     }
 
     #[inline(always)]
-    pub fn buffer_bounds(&self) -> (*const u8, *const u8) {
+    pub fn dec_ref(&self) {
+        self.ref_count.fetch_sub(1, Ordering::Release);
+    }
+
+    #[inline(always)]
+    pub fn bounds(&self) -> (*const u8, *const u8) {
         let start = self.inner.as_ptr();
         let end = unsafe { start.add(self.inner.capacity()) };
         (start, end)
