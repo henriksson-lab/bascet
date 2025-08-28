@@ -3,7 +3,7 @@ use rust_htslib::htslib;
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::log_info;
+use crate::{log_debug, log_info};
 use crate::{
     common::{self},
     io::{
@@ -83,7 +83,7 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_pool: alloc::PageBufferPool::new(32, 1024 * 1024 * 64),
+                inner_pool: alloc::PageBufferPool::new(8, 1024 * 1024 * 8),
                 inner_cursor: 0,
                 inner_buf: &[],
                 inner_buffer_ptr: std::ptr::null(),
@@ -299,8 +299,7 @@ where
                 if let Ok((cell_id, cell_rp)) = tirp::parse_readpair(line) {
                     if next_id.is_empty() {
                         // SAFETY: Transmute slice to static lifetime - kept alive by buffer expiration tracking
-                        let lifetime_cell_id: &'static [u8] =
-                            unsafe { std::mem::transmute(cell_id) };
+                        let lifetime_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                         builder = builder
                             .add_sentinel_tracking(
                                 self.inner_buffer_ptr as *mut alloc::PageBuffer,
@@ -310,8 +309,7 @@ where
                             )
                             .add_cell_id_slice(lifetime_cell_id);
                         next_id = cell_id;
-                    }
-                    if next_id != cell_id {
+                    } else if next_id != cell_id {
                         // Different cell, return the current one
                         return Ok(Some(builder.build()));
                     }
