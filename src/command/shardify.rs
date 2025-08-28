@@ -1,28 +1,20 @@
-use anyhow::{anyhow, bail, Result};
-use arc_swap::ArcSwap;
+use anyhow::Result;
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use clap::Args;
-use crossbeam::channel::{self, Receiver};
-use derive_builder::Builder;
-use itertools::{izip, Itertools};
+use crossbeam::channel;
+use itertools::izip;
 use std::{
-    collections::VecDeque,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
-    num::NonZero,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicPtr, Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use crate::{
-    common::spin_or_park, io::traits::*, log_critical, log_debug, log_info, log_warning,
+    common::{self, spin_or_park}, io::traits::*, log_critical, log_info, log_warning,
     support_which_stream, support_which_writer,
 };
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
 use std::thread;
 
 pub const DEFAULT_THREADS_READ: usize = 10;
@@ -145,120 +137,6 @@ impl ShardifyCMD {
         }
 
         let (write_tx, write_rx) = channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16);
-
-        // for _ in 0..self.threads_work {
-        //     let thread_tx = write_tx.clone();
-        //     let thread_rx = stream_rx.clone();
-        //     let thread_reemit_tx = stream_tx.clone();
-        //     let thread_expired = Arc::clone(&vec_consumers_states);
-
-        //     let mut thread_concat = Vec::with_capacity(count_streams);
-
-        //     let thread_handle = thread::spawn(move || {
-        //         while let Ok(Some(pending_id)) = thread_rx.recv() {
-        //             // log_info!("Recieved token"; "pending" => %String::from_utf8_lossy(&pending_id), "open" => %thread_rx.len());
-        //             thread_concat.clear();
-
-        //             consumers_exchange_min(&pending_id);
-        //             let current_min = CONSUMERS_MIN_TOKEN.load();
-        //             let current_min_slice = current_min.as_slice();
-        //             // if *pending_id != current_min_slice {
-        //             //     continue;
-        //             // }
-
-        //             unsafe {
-        //                 for sweep_idx in 0..vec_consumers_ptr.len {
-        //                     let sweep_consumer = vec_consumers_ptr.get(sweep_idx);
-        //                     let sweep_rlock = sweep_consumer.read().unwrap();
-        //                     let sweep_peek = sweep_rlock.peek();
-        //                     match sweep_peek {
-        //                         Ok(sweep_token) => match sweep_token.cell.cmp(&pending_id) {
-        //                             std::cmp::Ordering::Greater => {
-        //                                 // some other recieved token will be concat'ing this instead
-        //                                 // thread_concat.clear();
-        //                                 // println!(
-        //                                 //     "Greater encountered: {}",
-        //                                 //     String::from_utf8_lossy(sweep_token.cell)
-        //                                 // );
-        //                                 // thread_concat.clear();
-        //                                 continue;
-        //                             }
-        //                             std::cmp::Ordering::Equal => {
-        //                                 thread_concat.push(sweep_idx);
-        //                             }
-        //                             std::cmp::Ordering::Less => {
-        //                                 // trigger re-sweep somehow??
-        //                                 if sweep_token.cell == current_min_slice {
-        //                                     // println!(
-        //                                     //     "Reemitting: {}",
-        //                                     //     String::from_utf8_lossy(&current_min_slice)
-        //                                     // );
-        //                                     let slice: &'static [u8] = unsafe {
-        //                                         std::mem::transmute::<&[u8], &'static [u8]>(
-        //                                             current_min_slice,
-        //                                         )
-        //                                     };
-        //                                     let _ = thread_reemit_tx.send(Some(Arc::new(slice)));
-        //                                 }
-
-        //                                 thread_concat.clear();
-        //                                 break;
-        //                             }
-        //                         },
-        //                         // NOTE: if one is empty, not all readers have read a cell yet
-        //                         Err(rtrb::PeekError::Empty) => {
-        //                             if thread_expired.read().unwrap().contains(&sweep_idx) {
-        //                                 // we expect this to be empty in this case
-        //                                 continue;
-        //                             } else {
-        //                                 // wait for this channel to fill instead
-        //                                 // log_info!("Waiting for channels to fill");
-        //                                 // println!("Empty encountered");
-        //                                 thread_concat.clear();
-        //                                 break;
-        //                             }
-        //                         }
-        //                     };
-        //                 }
-        //             }
-
-        //             if thread_concat.is_empty() {
-        //                 continue;
-        //             }
-
-        //             let mut thread_concat_cell = Vec::with_capacity(thread_concat.len());
-        //             unsafe {
-        //                 for pop_idx in &thread_concat {
-        //                     let pop_consumer = vec_consumers_ptr.get(*pop_idx);
-        //                     let mut pop_wlock = pop_consumer.write().unwrap();
-        //                     let cell = pop_wlock.pop().unwrap();
-        //                     thread_concat_cell.push(cell);
-
-        //                     drop(pop_wlock);
-        //                 }
-        //             }
-        //             // reset min
-        //             for i in 0..vec_consumers_ptr.len {
-        //                 let consumer = unsafe { vec_consumers_ptr.get(i) };
-        //                 if let Ok(guard) = consumer.read() {
-        //                     if let Ok(peeked) = unsafe { guard.peek() } {
-        //                         let next_cell = peeked.cell;
-        //                         let static_slice: &'static [u8] = unsafe {
-        //                             std::mem::transmute::<&[u8], &'static [u8]>(next_cell)
-        //                         };
-        //                         let _ = thread_reemit_tx.send(Some(Arc::new(static_slice)));
-        //                         break;
-        //                     }
-        //                 }
-        //             }
-        //             // consumers_exchange_min(&[]);
-        //             let _ = thread_tx.send(Some(thread_concat_cell));
-        //         }
-        //         log_info!("Worker finished!");
-        //     });
-        //     vec_worker_handles.push(thread_handle);
-        // }
-
         for thread_output in self.path_out.clone() {
             let thread_rx = write_rx.clone();
             let thread_output = ShardifyOutput::try_from_path(&thread_output).unwrap();
@@ -387,53 +265,26 @@ impl ShardifyCMD {
     }
 }
 
-// static CONSUMERS_MIN_TOKEN: LazyLock<ArcSwap<Vec<u8>>> =
-//     LazyLock::new(|| ArcSwap::from_pointee(Vec::new()));
-
-// #[inline(always)]
-// fn consumers_exchange_min(token_incoming: &[u8]) {
-//     let mut count_spins = 0;
-//     loop {
-//         let current = CONSUMERS_MIN_TOKEN.load();
-
-//         let update =
-//             token_incoming < current.as_slice() || current.is_empty() || token_incoming.is_empty();
-//         if !update {
-//             return;
-//         }
-
-//         let new = Arc::new(token_incoming.to_vec());
-//         let old = CONSUMERS_MIN_TOKEN.compare_and_swap(&current, new);
-//         if Arc::ptr_eq(&old, &current) {
-//             return;
-//         }
-
-//         spin_or_park(&mut count_spins, 100);
-//     }
-// }
-
 struct ShardifyCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    _guards: Vec<Arc<()>>,
+    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
-impl Clone for ShardifyCell {
-    fn clone(&self) -> Self {
-        Self {
-            cell: self.cell,
-            reads: self.reads.clone(),
-            qualities: self.qualities.clone(),
-            umis: self.umis.clone(),
-
-            _guards: self._guards.clone(),
-            _owned: self._owned.clone(),
+impl Drop for ShardifyCell {
+    #[inline(always)]
+    fn drop(&mut self) {
+        unsafe {
+            for page_ptr in &self._page_refs {
+                (*page_ptr.as_ptr()).dec_ref();
+            }
         }
     }
 }
+
 
 impl BascetCell for ShardifyCell {
     type Builder = ShardifyCellBuilder;
@@ -463,7 +314,7 @@ struct ShardifyCellBuilder {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    guards: Vec<Arc<()>>,
+    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -475,7 +326,7 @@ impl ShardifyCellBuilder {
             qualities: Vec::new(),
             umis: Vec::new(),
 
-            guards: Vec::new(),
+            page_refs: smallvec::SmallVec::new(),
             owned: Vec::new(),
         }
     }
@@ -485,8 +336,11 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     type Token = ShardifyCell;
 
     #[inline(always)]
-    fn add_guard(mut self, guard: Arc<()>) -> Self {
-        self.guards.push(guard);
+    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
+        unsafe {
+            (*page_ptr.as_ptr()).inc_ref();
+        }
+        self.page_refs.push(page_ptr);
         self
     }
 
@@ -573,7 +427,7 @@ impl BascetCellBuilder for ShardifyCellBuilder {
             qualities: self.qualities,
             umis: self.umis,
 
-            _guards: self.guards,
+            _page_refs: self.page_refs,
             _owned: self.owned,
         }
     }

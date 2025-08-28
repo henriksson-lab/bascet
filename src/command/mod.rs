@@ -14,7 +14,7 @@ pub mod minhash_hist;
 pub mod query_fq;
 pub mod query_kmc;
 pub mod sam_add_barcode_tag_cmd;
-// pub mod shardify;
+pub mod shardify;
 pub mod snpcall;
 pub mod threadcount;
 pub mod transform;
@@ -31,7 +31,7 @@ pub use countsketch_mat::CountsketchMatCMD;
 
 // Data processing operations
 pub use getraw::{GetRaw, GetRawCMD};
-// pub use shardify::ShardifyCMD;
+pub use shardify::ShardifyCMD;
 pub use transform::{TransformCMD, TransformFile};
 
 // Extract operations

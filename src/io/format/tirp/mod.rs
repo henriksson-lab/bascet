@@ -1,5 +1,3 @@
-pub mod alloc;
-
 pub mod constants;
 pub mod file;
 pub mod parse;

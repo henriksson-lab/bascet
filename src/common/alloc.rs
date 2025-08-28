@@ -1,10 +1,9 @@
-use crate::{common::spin_or_park, log_info, log_warning};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use crate::{common::spin_or_park};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct PageBuffer {
     pub inner: Vec<u8>,
     inner_ptr: usize,
-    // Reference counter for active cells
     pub ref_count: AtomicUsize,
 }
 

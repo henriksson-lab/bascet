@@ -1,8 +1,10 @@
+mod alloc;
 mod consts;
 mod ptr;
 mod readpair;
 mod spin_or_park;
 
+pub use alloc::*;
 pub use consts::*;
 pub use ptr::*;
 pub use readpair::*;

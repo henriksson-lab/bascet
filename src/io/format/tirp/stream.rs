@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::io::{
     self,
-    format::tirp::{self, alloc, SENTINEL_BYTE},
+    format::tirp::{self, SENTINEL_BYTE},
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
 use crate::{common, log_debug, log_info};
@@ -13,7 +13,7 @@ use crate::{common, log_debug, log_info};
 pub struct Stream<T> {
     inner_htsfileptr: *mut htslib::htsFile,
 
-    inner_pool: alloc::PageBufferPool,
+    inner_pool: common::PageBufferPool,
     inner_buf: &'static [u8],
     inner_cursor: usize,
     // Raw pointer to the ref counter for the current inner_buf
@@ -80,7 +80,7 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_pool: alloc::PageBufferPool::new(16, 1024 * 1024 * 32),
+                inner_pool: common::PageBufferPool::new(16, 1024 * 1024 * 32),
                 inner_cursor: 0,
                 inner_buf: &[],
                 inner_buffer_ptr: std::ptr::null(),
@@ -92,13 +92,13 @@ impl<T> Stream<T> {
 
     fn load_next_buf(
         &mut self,
-    ) -> Result<Option<alloc::PageBufferAllocResult>, crate::runtime::Error> {
+    ) -> Result<Option<common::PageBufferAllocResult>, crate::runtime::Error> {
         unsafe {
             let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr);
 
             // Allocate space for new read
             let allocres = match self.inner_pool.alloc(common::HUGE_PAGE_SIZE) {
-                alloc::PageBufferAllocResult::Continue {
+                common::PageBufferAllocResult::Continue {
                     ptr,
                     len,
                     buffer_page_ptr,
@@ -108,7 +108,7 @@ impl<T> Stream<T> {
                     // we can move the ptr back partial.len() since partial is guaranteed to lie before the newly appended page in the buffer
                     let adjptr = ptr.sub(self.partial_len);
                     let adjlen = len + self.partial_len;
-                    alloc::PageBufferAllocResult::Continue {
+                    common::PageBufferAllocResult::Continue {
                         ptr: adjptr,
                         len: adjlen,
                         buffer_page_ptr,
@@ -116,7 +116,7 @@ impl<T> Stream<T> {
                         buffer_end,
                     }
                 }
-                alloc::PageBufferAllocResult::NewPage {
+                common::PageBufferAllocResult::NewPage {
                     ptr,
                     len,
                     buffer_page_ptr,
@@ -137,7 +137,7 @@ impl<T> Stream<T> {
 
                     std::ptr::copy_nonoverlapping(partptr, ptr, self.partial_len);
 
-                    alloc::PageBufferAllocResult::Continue {
+                    common::PageBufferAllocResult::Continue {
                         ptr: ptr,
                         len: adjlen,
                         buffer_page_ptr,
@@ -221,7 +221,7 @@ impl<T> Drop for Stream<T> {
 impl<T> BascetStream<T> for Stream<T>
 where
     T: BascetCell + 'static,
-    for<'page> T::Builder<'page>: BascetCellBuilder<'page, Token = T>,
+    T::Builder: BascetCellBuilder<Token = T>,
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
@@ -249,14 +249,14 @@ where
                     Some(alloc_result) => {
                         // Got new buffer data
                         match &alloc_result {
-                            alloc::PageBufferAllocResult::Continue { .. } => {
+                            common::PageBufferAllocResult::Continue { .. } => {
                                 
                             }
-                            alloc::PageBufferAllocResult::NewPage { .. } => {
+                            common::PageBufferAllocResult::NewPage { .. } => {
                                 // If we have an ongoing cell, add page ref for the previous page
                                 if !next_id.is_empty() {
                                     builder = builder.add_page_ref(common::UnsafeMutPtr::new(
-                                        self.inner_buffer_ptr as *mut alloc::PageBuffer,
+                                        self.inner_buffer_ptr as *mut common::PageBuffer,
                                     ));
                                 }
                             }   
@@ -285,7 +285,7 @@ where
                     } else if next_id != cell_id {
                         // Different cell - add page ref for the current cell
                         builder = builder.add_page_ref(common::UnsafeMutPtr::new(
-                            self.inner_buffer_ptr as *mut alloc::PageBuffer,
+                            self.inner_buffer_ptr as *mut common::PageBuffer,
                         ));
                         // Back up cursor and return current cell
                         self.inner_cursor = line_start;

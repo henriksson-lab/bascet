@@ -1,7 +1,7 @@
 use crate::command::countsketch::CountsketchWriter;
-// use crate::command::countsketch::CountsketchOutput;
+use crate::command::countsketch::CountsketchOutput;
 
-// use crate::command::shardify::ShardifyWriter;
+use crate::command::shardify::ShardifyWriter;
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetWrite<W>: Sized

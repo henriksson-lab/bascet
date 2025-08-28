@@ -1,12 +1,12 @@
 use crate::command::countsketch::CountsketchStream;
-// use crate::command::shardify::ShardifyStream;
+use crate::command::shardify::ShardifyStream;
 use crate::{common, log_debug};
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetStream<T>: Sized
 where
     T: BascetCell + 'static,
-    for<'page> T::Builder<'page>: BascetCellBuilder<'page, Token = T>,
+    T::Builder: BascetCellBuilder<Token = T>,
 {
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error>;
     fn set_reader_threads(self, _: usize) -> Self {
@@ -16,11 +16,9 @@ where
 
 pub trait BascetCellGuard {}
 
-// 'page represents the lifetime of buffer page data
-// Cells can hold references to page data with this lifetime
 pub trait BascetCell: Send + Sized {
-    type Builder<'page>: BascetCellBuilder<'page, Token = Self>;
-    fn builder<'page>() -> Self::Builder<'page>;
+    type Builder: BascetCellBuilder<Token = Self>;
+    fn builder() -> Self::Builder;
 
     fn get_cell(&self) -> Option<&[u8]> {
         None
@@ -36,8 +34,7 @@ pub trait BascetCell: Send + Sized {
     }
 }
 
-// 'page represents the lifetime of buffer page data that the builder references
-pub trait BascetCellBuilder<'page>: Sized {
+pub trait BascetCellBuilder: Sized {
     type Token: BascetCell;
 
     // Core methods all builders must support
@@ -45,10 +42,9 @@ pub trait BascetCellBuilder<'page>: Sized {
 
     // Optional methods with default implementations
 
-    // TODO: common::PageBuffer
     fn add_page_ref(
         self,
-        page_ptr: common::UnsafeMutPtr<crate::io::format::tirp::alloc::PageBuffer>,
+        page_ptr: common::UnsafeMutPtr<crate::common::PageBuffer>,
     ) -> Self {
         log_debug!("Method 'add_page_ref' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self

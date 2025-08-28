@@ -1,8 +1,8 @@
 use crate::{
     command::determine_thread_counts_2,
-    common,
+    common::{self, PageBuffer},
     io::{
-        format::tirp::{alloc::PageBuffer, SENTINEL_BYTE},
+        format::tirp::SENTINEL_BYTE,
         traits::*,
     },
     kmer::kmc_counter::CountSketch,
@@ -297,9 +297,9 @@ impl Drop for CountsketchCell {
 }
 
 impl BascetCell for CountsketchCell {
-    type Builder<'page> = CountsketchCellBuilder;
+    type Builder = CountsketchCellBuilder;
 
-    fn builder<'page>() -> Self::Builder<'page> {
+    fn builder() -> Self::Builder {
         CountsketchCellBuilder::new()
     }
 
@@ -332,7 +332,7 @@ impl CountsketchCellBuilder {
     }
 }
 
-impl<'page> BascetCellBuilder<'page> for CountsketchCellBuilder {
+impl BascetCellBuilder for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
