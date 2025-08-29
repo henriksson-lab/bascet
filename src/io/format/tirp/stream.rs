@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::io::{
     self,
-    format::tirp::{self, SENTINEL_BYTE},
+    format::tirp,
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
 use crate::{common, log_debug, log_info};
