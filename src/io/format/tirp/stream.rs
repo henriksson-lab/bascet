@@ -80,7 +80,7 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_pool: common::PageBufferPool::new(16, 1024 * 1024 * 32),
+                inner_pool: common::PageBufferPool::new(64, 1024 * 1024 * 8),
                 inner_cursor: 0,
                 inner_buf: &[],
                 inner_buffer_ptr: std::ptr::null(),
@@ -235,79 +235,66 @@ where
         let mut builder = T::builder();
 
         loop {
-            let mut buf = &self.inner_buf;
-            if self.inner_cursor > buf.len() {
-                match self.load_next_buf()? {
-                    None => {
-                        // EOF
-                        if next_id.is_empty() {
-                            return Ok(None);
-                        } else {
-                            return Ok(Some(builder.build()));
-                        }
-                    }
-                    Some(alloc_result) => {
-                        // Got new buffer data
-                        match &alloc_result {
-                            common::PageBufferAllocResult::Continue { .. } => {
-                                
-                            }
-                            common::PageBufferAllocResult::NewPage { .. } => {
-                                // If we have an ongoing cell, add page ref for the previous page
-                                if !next_id.is_empty() {
-                                    builder = builder.add_page_ref(common::UnsafeMutPtr::new(
-                                        self.inner_buffer_ptr as *mut common::PageBuffer,
-                                    ));
-                                }
-                            }   
-                        }
-                    }
-                }
-
-                buf = &self.inner_buf;
-            }
-
-            if let Some(next_pos) =
-                memchr::memchr(common::U8_CHAR_NEWLINE, &buf[self.inner_cursor..])
-            {
+            while let Some(next_pos) = memchr::memchr(
+                common::U8_CHAR_NEWLINE,
+                &self.inner_buf[self.inner_cursor..],
+            ) {
                 let line_start = self.inner_cursor;
                 let line_end = self.inner_cursor + next_pos;
-                let line = &buf[line_start..line_end];
+                self.inner_cursor = line_end + 1;
 
-                if let Ok((cell_id, cell_rp)) = tirp::parse_readpair(line) {
-                    if next_id.is_empty() {
-                        // SAFETY: Transmute slice to static lifetime - kept alive by buffer expiration tracking
-                        let lifetime_cell_id: &'static [u8] =
-                            unsafe { std::mem::transmute(cell_id) };
-                        builder = builder.add_cell_id_slice(lifetime_cell_id);
-                        next_id = cell_id;
-                        // println!("new cell {:?} at buffer {:p}", String::from_utf8_lossy(cell_id), self.inner_buf.as_ptr());
-                    } else if next_id != cell_id {
-                        // Different cell - add page ref for the current cell
-                        builder = builder.add_page_ref(common::UnsafeMutPtr::new(
-                            self.inner_buffer_ptr as *mut common::PageBuffer,
-                        ));
-                        // Back up cursor and return current cell
-                        self.inner_cursor = line_start;
-                        return Ok(Some(builder.build()));
-                    }
+                let line = &self.inner_buf[line_start..line_end];
 
-                    // SAFETY: Transmute slices to static lifetime - kept alive by ref counter
-                    let lifetime_r1: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r1) };
-                    let lifetime_r2: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r2) };
-                    let lifetime_q1: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q1) };
-                    let lifetime_q2: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q2) };
-                    let lifetime_umi: &'static [u8] = unsafe { std::mem::transmute(cell_rp.umi) };
-
+                let (cell_id, cell_rp) = unsafe { tirp::parse_readpair(line).unwrap_unchecked() };
+                if next_id.is_empty() {
+                    // SAFETY: Transmute slice to static lifetime; kept alive by buffer expiration tracking
+                    let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                     builder = builder
-                        .add_rp_slice(lifetime_r1, lifetime_r2)
-                        .add_qp_slice(lifetime_q1, lifetime_q2)
-                        .add_umi_slice(lifetime_umi);
+                        .add_cell_id_slice(static_cell_id)
+                        .add_page_ref(common::UnsafeMutPtr::new(self.inner_buffer_ptr as *mut common::PageBuffer));
+
+                    next_id = cell_id;
+                    // println!("new cell {:?} at buffer {:p}", String::from_utf8_lossy(cell_id), self.inner_buf.as_ptr());
+                } else if next_id != cell_id {
+                    // Different cell - back up cursor and return current cell
+                    self.inner_cursor = line_start;
+                    return Ok(Some(builder.build()));
                 }
 
-                self.inner_cursor = line_end + 1;
-            } else {
-                self.inner_cursor = buf.len() + 1;
+                // SAFETY: Transmute slices to static static - kept alive by ref counter
+                let static_r1: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r1) };
+                let static_r2: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r2) };
+                let static_q1: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q1) };
+                let static_q2: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q2) };
+                let static_umi: &'static [u8] = unsafe { std::mem::transmute(cell_rp.umi) };
+
+                builder = builder
+                    .add_rp_slice(static_r1, static_r2)
+                    .add_qp_slice(static_q1, static_q2)
+                    .add_umi_slice(static_umi);
+            }
+
+            // No more lines in current buffer - load next buffer
+            match self.load_next_buf()? {
+                None => {
+                    // EOF
+                    return Ok(if next_id.is_empty() {
+                        None
+                    } else {
+                        Some(builder.build())
+                    });
+                }
+                Some(alloc_result) => {
+                    // Got new buffer data
+                    if let common::PageBufferAllocResult::NewPage { .. } = alloc_result {
+                        // If we have an ongoing cell, add page ref for the previous page
+                        if !next_id.is_empty() {
+                            builder = builder.add_page_ref(common::UnsafeMutPtr::new(
+                                self.inner_buffer_ptr as *mut common::PageBuffer,
+                            ));
+                        }
+                    }
+                }
             }
         }
     }

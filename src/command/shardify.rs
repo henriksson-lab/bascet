@@ -11,8 +11,9 @@ use std::{
 };
 
 use crate::{
-    common::{self, spin_or_park}, io::traits::*, log_critical, log_info, log_warning,
-    support_which_stream, support_which_writer,
+    common::{self, spin_or_park},
+    io::traits::*,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
 };
 
 use std::thread;
@@ -104,17 +105,15 @@ impl ShardifyCMD {
                         Ok(token_cell) => token_cell,
                         Err(_) => todo!(),
                     };
-
-                    // SAFETY: this is known to be safe for as long as the token itself is valid!
-                    // a better rust programmer could probably annotate the lifetimes properly.
-                    let cell_id: &'static [u8] = unsafe {
-                        std::mem::transmute::<&[u8], &'static [u8]>(token_cell.get_cell().unwrap())
-                    };
-
-                    if !thread_filter.contains(cell_id) {
+                    // log_info!("Filtering"; "cell" => %String::from_utf8_lossy(token_cell.cell));
+                    if !thread_filter.contains(token_cell.cell) {
                         drop(token_cell);
                         continue;
                     }
+                    // NOTE: this gets a valid cell but between here and pop/peeking from rtrb,
+                    // data corruption occurs
+                    // println!("");
+                    // log_info!("Passed Filter!"; "cell" => %String::from_utf8_lossy(token_cell.cell));
 
                     let mut token_cell = token_cell;
                     let mut rtrb_count_spins = 0;
@@ -123,7 +122,7 @@ impl ShardifyCMD {
                             Ok(()) => break,
                             Err(rtrb::PushError::Full(ret)) => {
                                 token_cell = ret;
-                                spin_or_park(&mut rtrb_count_spins, 100);
+                                spin_or_park(&mut rtrb_count_spins, 1000);
                             }
                         }
                     }
@@ -152,8 +151,8 @@ impl ShardifyCMD {
 
             let thread_handle = thread::spawn(move || {
                 while let Ok(Some(vec_cells)) = thread_rx.recv() {
-                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_cells.read().unwrap()[0].cell), "open" => thread_rx.len());
                     for cell in &*vec_cells.read().unwrap() {
+                        log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell));
                         let _ = thread_shardify_writer.write_cell(cell);
                     }
                 }
@@ -285,7 +284,6 @@ impl Drop for ShardifyCell {
     }
 }
 
-
 impl BascetCell for ShardifyCell {
     type Builder = ShardifyCellBuilder;
     fn builder() -> Self::Builder {
@@ -346,13 +344,13 @@ impl BascetCellBuilder for ShardifyCellBuilder {
 
     // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
     // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
-    #[inline(always)]
     fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
         self.owned.push(id);
-        // Get reference to the data in its final location
         let slice = self.owned.last().unwrap().as_slice();
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.cell = Some(static_slice);
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        // and the CountsketchCell holds the _owned field to maintain this invariant
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.cell = Some(slice_with_lifetime);
         self
     }
 
@@ -360,8 +358,9 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
         self.owned.push(seq);
         let slice = self.owned.last().unwrap().as_slice();
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.reads.push((static_slice, &[]));
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.reads.push((slice_with_lifetime, &[]));
         self
     }
 
@@ -369,8 +368,9 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     fn add_quality_owned(mut self, qual: Vec<u8>) -> Self {
         self.owned.push(qual);
         let slice = self.owned.last().unwrap().as_slice();
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.qualities.push((static_slice, &[]));
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.qualities.push((slice_with_lifetime, &[]));
         self
     }
 
@@ -379,43 +379,35 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     // this is a bit of a hack to make the underlying trait easier to use.
     // has the benefit of being much faster and more memory efficient since there is no copy overhead
     #[inline(always)]
-    fn add_cell_id_slice(mut self, slice: &[u8]) -> Self {
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.cell = Some(static_slice);
+    fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
+        self.cell = Some(slice);
         self
     }
 
     #[inline(always)]
-    fn add_rp_slice(mut self, r1: &[u8], r2: &[u8]) -> Self {
-        let r1_static_slice: &'static [u8] = unsafe { std::mem::transmute(r1) };
-        let r2_static_slice: &'static [u8] = unsafe { std::mem::transmute(r2) };
-        self.reads.push((r1_static_slice, r2_static_slice));
+    fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
+        self.reads.push((r1, r2));
         self
     }
     #[inline(always)]
-    fn add_qp_slice(mut self, q1: &[u8], q2: &[u8]) -> Self {
-        let q1_static_slice: &'static [u8] = unsafe { std::mem::transmute(q1) };
-        let q2_static_slice: &'static [u8] = unsafe { std::mem::transmute(q2) };
-        self.qualities.push((q1_static_slice, q2_static_slice));
+    fn add_qp_slice(mut self, q1: &'static [u8], q2: &'static [u8]) -> Self {
+        self.qualities.push((q1, q2));
         self
     }
 
     #[inline(always)]
-    fn add_sequence_slice(mut self, slice: &[u8]) -> Self {
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.reads.push((static_slice, &[]));
+    fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
+        self.reads.push((slice, &[]));
         self
     }
     #[inline(always)]
-    fn add_quality_slice(mut self, slice: &[u8]) -> Self {
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.qualities.push((static_slice, &[]));
+    fn add_quality_slice(mut self, slice: &'static [u8]) -> Self {
+        self.qualities.push((slice, &[]));
         self
     }
 
-    fn add_umi_slice(mut self, umi: &[u8]) -> Self {
-        let static_slice: &'static [u8] = unsafe { std::mem::transmute(umi) };
-        self.umis.push(static_slice);
+    fn add_umi_slice(mut self, umi: &'static [u8]) -> Self {
+        self.umis.push(umi);
         self
     }
 

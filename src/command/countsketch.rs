@@ -1,10 +1,7 @@
 use crate::{
     command::determine_thread_counts_2,
     common::{self, PageBuffer},
-    io::{
-        format::tirp::SENTINEL_BYTE,
-        traits::*,
-    },
+    io::{format::tirp::SENTINEL_BYTE, traits::*},
     kmer::kmc_counter::CountSketch,
     log_critical, log_info, log_warning, support_which_stream, support_which_temp,
     support_which_writer,

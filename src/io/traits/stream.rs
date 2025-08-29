@@ -42,10 +42,7 @@ pub trait BascetCellBuilder: Sized {
 
     // Optional methods with default implementations
 
-    fn add_page_ref(
-        self,
-        page_ptr: common::UnsafeMutPtr<crate::common::PageBuffer>,
-    ) -> Self {
+    fn add_page_ref(self, page_ptr: common::UnsafeMutPtr<crate::common::PageBuffer>) -> Self {
         log_debug!("Method 'add_page_ref' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }

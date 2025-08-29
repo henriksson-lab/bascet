@@ -1,5 +1,5 @@
-use crate::command::countsketch::CountsketchWriter;
 use crate::command::countsketch::CountsketchOutput;
+use crate::command::countsketch::CountsketchWriter;
 
 use crate::command::shardify::ShardifyWriter;
 

@@ -1,4 +1,4 @@
-use crate::{common::spin_or_park};
+use crate::common::spin_or_park;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct PageBuffer {
