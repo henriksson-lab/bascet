@@ -21,7 +21,7 @@ impl PageBuffer {
     }
 
     #[inline(always)]
-    pub fn alloc_unchecked(&mut self, size: usize) -> *mut u8 {
+    pub fn alloc_unchecked(&mut self, size: usize) -> *const u8 {
         let start = self.inner_ptr;
         let end = start + size;
         self.inner_ptr = end;
@@ -63,17 +63,6 @@ impl PageBuffer {
     pub fn dec_ref(&self) {
         self.ref_count.fetch_sub(1, Ordering::Release);
     }
-
-    #[inline(always)]
-    pub fn bounds(&self) -> (*const u8, *const u8) {
-        let start = self.inner.as_ptr();
-        let end = unsafe { start.add(self.inner.capacity()) };
-        (start, end)
-    }
-    #[inline(always)]
-    pub unsafe fn incr_ptr_unchecked(&mut self, bytes: usize) {
-        self.inner_ptr += bytes;
-    }
 }
 
 pub struct PageBufferPool {
@@ -81,64 +70,31 @@ pub struct PageBufferPool {
     pub inner_index: usize,
 }
 
-pub enum PageBufferAllocResult {
-    Continue {
-        ptr: *mut u8,
-        len: usize,
-        buffer_page_ptr: *mut PageBuffer,
-        buffer_start: *const u8,
-        buffer_end: *const u8,
-    },
-    NewPage {
-        ptr: *mut u8,
-        len: usize,
-        buffer_page_ptr: *mut PageBuffer,
-        buffer_start: *const u8,
-        buffer_end: *const u8,
-    },
+pub struct PageBufferAllocResult {
+    buffer_slice_ptr: *const u8,
+    buffer_slice_len: usize,
+    buffer_page_ptr: *mut PageBuffer,
 }
 
 impl PageBufferAllocResult {
-    pub unsafe fn as_slice_mut(&self) -> &mut [u8] {
-        match self {
-            PageBufferAllocResult::Continue { ptr, len, .. }
-            | PageBufferAllocResult::NewPage { ptr, len, .. } => {
-                std::slice::from_raw_parts_mut(*ptr, *len)
-            }
-        }
+    pub fn buffer_slice_ptr(&self) -> *const u8 {
+        self.buffer_slice_ptr
     }
 
-    pub fn ptr_mut(&self) -> *mut u8 {
-        match self {
-            PageBufferAllocResult::Continue { ptr, .. }
-            | PageBufferAllocResult::NewPage { ptr, .. } => *ptr,
-        }
+    pub fn buffer_slice_mut_ptr(&self) -> *mut u8 {
+        self.buffer_slice_ptr as *mut u8
     }
 
-    pub fn buffer_page_ptr(&self) -> *mut PageBuffer {
-        match self {
-            PageBufferAllocResult::Continue {
-                buffer_page_ptr, ..
-            }
-            | PageBufferAllocResult::NewPage {
-                buffer_page_ptr, ..
-            } => *buffer_page_ptr,
-        }
+    pub fn buffer_slice_len(&self) -> usize {
+        self.buffer_slice_len
     }
 
-    pub fn buffer_bounds(&self) -> (*const u8, *const u8) {
-        match self {
-            PageBufferAllocResult::Continue {
-                buffer_start,
-                buffer_end,
-                ..
-            }
-            | PageBufferAllocResult::NewPage {
-                buffer_start,
-                buffer_end,
-                ..
-            } => (*buffer_start, *buffer_end),
-        }
+    pub fn buffer_page_ptr(&self) -> *const PageBuffer {
+        self.buffer_page_ptr
+    }
+
+    pub fn buffer_page_mut_ptr(&self) -> *mut PageBuffer {
+        self.buffer_page_ptr
     }
 }
 
@@ -163,20 +119,19 @@ impl PageBufferPool {
         return &mut self.inner_pages[self.inner_index];
     }
 
+    pub fn active_mut_ptr(&mut self) -> *mut PageBuffer {
+        return &mut self.inner_pages[self.inner_index] as *mut PageBuffer;
+    }
+
     pub fn alloc(&mut self, bytes: usize) -> PageBufferAllocResult {
         let current_page = &mut self.inner_pages[self.inner_index];
 
         if current_page.remaining() >= bytes {
             let ptr = current_page.alloc_unchecked(bytes);
-            let buffer_start = current_page.inner.as_ptr();
-            let buffer_end = unsafe { buffer_start.add(current_page.inner.capacity()) };
-
-            return PageBufferAllocResult::Continue {
-                ptr,
-                len: bytes,
+            return PageBufferAllocResult {
+                buffer_slice_ptr: ptr,
+                buffer_slice_len: bytes,
                 buffer_page_ptr: current_page as *mut PageBuffer,
-                buffer_start,
-                buffer_end,
             };
         }
 
@@ -186,21 +141,14 @@ impl PageBufferPool {
             for i in 0..self.inner_pages.len() {
                 let idx = (self.inner_index + i) % self.inner_pages.len();
                 let new_page = &mut self.inner_pages[idx];
-
-                // println!("guards: {}", Arc::strong_count(&new_page.guard));
-
                 if new_page.remaining() >= bytes || new_page.try_reset() {
-                    let ptr = new_page.alloc_unchecked(bytes);
-                    let buffer_start = new_page.inner.as_ptr();
-                    let buffer_end = unsafe { buffer_start.add(new_page.inner.capacity()) };
-
                     self.inner_index = idx;
-                    return PageBufferAllocResult::NewPage {
-                        ptr,
-                        len: bytes,
+
+                    let ptr = new_page.alloc_unchecked(bytes);
+                    return PageBufferAllocResult {
+                        buffer_slice_ptr: ptr,
+                        buffer_slice_len: bytes,
                         buffer_page_ptr: new_page as *mut PageBuffer,
-                        buffer_start,
-                        buffer_end,
                     };
                 }
             }

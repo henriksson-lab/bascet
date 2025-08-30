@@ -67,7 +67,7 @@ impl ShardifyCMD {
             let mut producers = Vec::with_capacity(count_streams);
             let consumers: Vec<UnsafeSyncConsumer> = (0..count_streams)
                 .map(|_| {
-                    let (px, cx) = rtrb::RingBuffer::new(32);
+                    let (px, cx) = rtrb::RingBuffer::new(1024);
                     producers.push(px);
                     UnsafeSyncConsumer(cx)
                 })
@@ -116,13 +116,17 @@ impl ShardifyCMD {
                     // log_info!("Passed Filter!"; "cell" => %String::from_utf8_lossy(token_cell.cell));
 
                     let mut token_cell = token_cell;
+                    let cell_debug = String::from_utf8_lossy(token_cell.cell).to_string();
                     let mut rtrb_count_spins = 0;
                     loop {
                         match thread_px.push(token_cell) {
-                            Ok(()) => break,
+                            Ok(()) => {
+                                println!("DEBUG: Pushed cell to ring buffer: {:?}", cell_debug);
+                                break;
+                            }
                             Err(rtrb::PushError::Full(ret)) => {
                                 token_cell = ret;
-                                spin_or_park(&mut rtrb_count_spins, 1000);
+                                spin_or_park(&mut rtrb_count_spins, 100);
                             }
                         }
                     }
@@ -150,11 +154,16 @@ impl ShardifyCMD {
                     .set_writer(thread_bgzf_writer);
 
             let thread_handle = thread::spawn(move || {
-                while let Ok(Some(vec_cells)) = thread_rx.recv() {
-                    for cell in &*vec_cells.read().unwrap() {
-                        log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell));
+                while let Ok(Some(vec_records)) = thread_rx.recv() {
+                    println!(
+                        "DEBUG: Writer received {} records",
+                        vec_records.read().unwrap().len()
+                    );
+                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.try_read().unwrap().first().unwrap().get_cell().unwrap()));
+                    for cell in &*vec_records.read().unwrap() {
                         let _ = thread_shardify_writer.write_cell(cell);
                     }
+                    println!("DEBUG: Writer finished batch, Arc should drop now");
                 }
                 log_info!("Writer finished!");
                 let _ = thread_shardify_writer.get_writer().unwrap().flush();
@@ -239,7 +248,13 @@ impl ShardifyCMD {
             for take_idx in &coordinator_vec_take {
                 let take_consumer = &mut vec_coordinator_consumers[*take_idx];
                 match unsafe { take_consumer.pop() } {
-                    Ok(take_cell) => coordinator_vec_send.push(take_cell),
+                    Ok(take_cell) => {
+                        println!(
+                            "DEBUG: Coordinator popped cell: {:?}",
+                            String::from_utf8_lossy(take_cell.cell)
+                        );
+                        coordinator_vec_send.push(take_cell);
+                    }
                     Err(_) => unreachable!("Token disappeared between peek and pop"),
                 }
             }
@@ -276,6 +291,7 @@ struct ShardifyCell {
 impl Drop for ShardifyCell {
     #[inline(always)]
     fn drop(&mut self) {
+        // println!("DEBUG: Dropping ShardifyCell: {:?}", String::from_utf8_lossy(self.cell));
         unsafe {
             for page_ptr in &self._page_refs {
                 (*page_ptr.mut_ptr()).dec_ref();

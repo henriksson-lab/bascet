@@ -1,6 +1,7 @@
 use rust_htslib::htslib;
 
 use std::fs::File;
+use std::sync::atomic::Ordering;
 
 use crate::common::{PageBuffer, UnsafeMutPtr};
 use crate::io::{
@@ -8,17 +9,18 @@ use crate::io::{
     format::tirp,
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
-use crate::common;
+use crate::{common, log_info, log_warning};
 
 pub struct Stream<T> {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
-    inner_pool: common::PageBufferPool,
+    inner_buf_pool: common::PageBufferPool,
     inner_buf_ptr: common::UnsafeMutPtr<PageBuffer>,
     inner_buf_slice: &'static [u8],
-    inner_cursor: usize,
+    inner_buf_cursor: usize,
 
-    partial_len: usize,
+    inner_buf_truncated_line_len: usize,
+    inner_buf_partial_data: Vec<u8>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -79,129 +81,142 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_pool: common::PageBufferPool::new(64, 1024 * 1024 * 8),
-                inner_cursor: 0,
+                inner_buf_pool: common::PageBufferPool::new(64, 1024 * 1024 * 8),
+                inner_buf_cursor: 0,
                 inner_buf_slice: &[],
                 inner_buf_ptr: UnsafeMutPtr::null(),
-                partial_len: 0,
+
+                inner_buf_truncated_line_len: 0,
+                inner_buf_partial_data: Vec::new(),
                 _marker: std::marker::PhantomData,
             })
         }
     }
 
-    fn load_next_buf(
+    unsafe fn load_next_buf(
         &mut self,
     ) -> Result<Option<common::PageBufferAllocResult>, crate::runtime::Error> {
-        unsafe {
-            let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr.mut_ptr());
-
-            // Allocate space for new read
-            let allocres = match self.inner_pool.alloc(common::HUGE_PAGE_SIZE) {
-                common::PageBufferAllocResult::Continue {
-                    ptr,
-                    len,
-                    buffer_page_ptr,
-                    buffer_start,
-                    buffer_end,
-                } => {
-                    // we can move the ptr back partial.len() since partial is guaranteed to lie before the newly appended page in the buffer
-                    let adjptr = ptr.sub(self.partial_len);
-                    let adjlen = len + self.partial_len;
-                    common::PageBufferAllocResult::Continue {
-                        ptr: adjptr,
-                        len: adjlen,
-                        buffer_page_ptr,
-                        buffer_start,
-                        buffer_end,
-                    }
+        let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr.mut_ptr());
+        // Allocates space for new read but does NOT write anything
+        let alloc_res = self.inner_buf_pool.alloc(common::HUGE_PAGE_SIZE);
+        // let (incramt, partptr, copylen, ptroffset) =
+        let (alloc_ptr_offset, partial_slice_ptr, partial_copy_len) =
+            match alloc_res.buffer_page_ptr() == self.inner_buf_ptr.mut_ptr() {
+                // Continue case
+                true => {
+                    /*
+                        if the buffer is the same we want to:
+                            1. decrement the slice pointer with length = self.partial_len
+                            2. increase the slice length with length = self.partial_len
+                            3. not copy any partial data
+                    */
+                    (
+                        self.inner_buf_truncated_line_len,
+                        alloc_res.buffer_slice_ptr(),
+                        0,
+                    )
                 }
-                common::PageBufferAllocResult::NewPage {
-                    ptr,
-                    len,
-                    buffer_page_ptr,
-                    buffer_start,
-                    buffer_end,
-                } => {
-                    // log_info!("NewPage");
-                    // SAFETY: new page should always be large enough. Unless using tiny pages (why do that) this will always be fine :)
-                    self.inner_pool
-                        .active_mut()
-                        .incr_ptr_unchecked(self.partial_len);
+                // Newpage case
+                false => {
+                    /*
+                        if the buffer is a new one we want to:
+                            1. leave slice ptr unchanged
+                            2. increase the slice length with length = self.partial_len
+                            3. allocate extra space for partial
+                            4. copy partial (needs ptr)
+                    */
 
-                    let oldbuf = &self.inner_buf_slice;
                     // ok so this is kind of stupid but because the used buffer is truncated to last newline,
                     // the partial is contained after the end of old_buf
-                    let partptr = oldbuf.as_ptr().add(oldbuf.len());
-                    let adjlen = len + self.partial_len;
-
-                    std::ptr::copy_nonoverlapping(partptr, ptr, self.partial_len);
-
-                    common::PageBufferAllocResult::Continue {
-                        ptr: ptr,
-                        len: adjlen,
-                        buffer_page_ptr,
-                        buffer_start,
-                        buffer_end,
+                    let buf_previous = &self.inner_buf_slice;
+                    let old_approach_ptr = buf_previous.as_ptr().add(buf_previous.len());
+                    
+                    // For debugging: compare old pointer approach with vec approach
+                    if self.inner_buf_truncated_line_len > 0 {
+                        let old_approach_slice = std::slice::from_raw_parts(old_approach_ptr, self.inner_buf_truncated_line_len);
+                        assert_eq!(old_approach_slice, &self.inner_buf_partial_data, 
+                            "Vec and pointer approaches should give same partial data");
                     }
+                    
+                    // Use vec approach but return pointer for compatibility
+                    (
+                        0,
+                        self.inner_buf_partial_data.as_ptr(),
+                        self.inner_buf_truncated_line_len,
+                    )
                 }
             };
 
-            // Read new data after partial
-            let bufptr = allocres.ptr_mut();
-            let writeptr = bufptr.add(self.partial_len);
-            let writebytes = htslib::bgzf_read(
-                fileptr,
-                writeptr as *mut std::os::raw::c_void,
-                common::HUGE_PAGE_SIZE,
-            );
+        // copy partial data
+        // copylen = 0 makes this compile down to noop => useful for when we dont want to copy
+        let buf_slice_ptr = alloc_res.buffer_slice_mut_ptr().sub(alloc_ptr_offset);
+        std::ptr::copy_nonoverlapping(partial_slice_ptr, buf_slice_ptr, partial_copy_len);
 
-            match writebytes {
-                n if n > 0 => {
-                    let totalbytes = writebytes as usize + self.partial_len;
+        // Read new data after partial
+        let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
+        let buf_bytes_written = htslib::bgzf_read(
+            fileptr,
+            buf_write_ptr as *mut std::os::raw::c_void,
+            common::HUGE_PAGE_SIZE,
+        );
 
-                    let bufslice = std::slice::from_raw_parts(bufptr, totalbytes);
-                    // Find last complete line
-                    if let Some(last_newline) = memchr::memrchr(b'\n', bufslice) {
-                        let (partslc, bufslc) =
-                            (&bufslice[last_newline + 1..], &bufslice[..=last_newline]);
-                        // println!("{:?}", String::from_utf8_lossy(partslc));
-                        self.partial_len = partslc.len();
-                        self.inner_buf_slice = bufslc;
-                        // Store buffer page pointer for this buffer
-                        self.inner_buf_ptr = UnsafeMutPtr::new(allocres.buffer_page_ptr());
+        match buf_bytes_written {
+            buf_bytes_written if buf_bytes_written > 0 => {
+                let buf_bytes_written = buf_bytes_written as usize;
+                let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
+                let bufslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
 
-                        self.inner_cursor = 0;
+                // Find last complete line (simplifies parsing) (mem**r**chr)
+                if let Some(pos_char_last_newline) =
+                    memchr::memrchr(common::U8_CHAR_NEWLINE, bufslice)
+                {
+                    let (buf_slice_truncated_use, buf_slice_truncated_line) = (
+                        &bufslice[..=pos_char_last_newline],
+                        &bufslice[pos_char_last_newline + 1..]
+                    );
 
-                        return Ok(Some(allocres));
-                    } else {
-                        // No complete lines. Likely a malformed file
-                        Err(crate::runtime::Error::parse_error(
-                            "load_next_buf",
-                            Some("No complete lines found in buffer. Is this a valid file?"),
-                        ))
-                    }
+                    self.inner_buf_slice = buf_slice_truncated_use;
+                    // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
+                    self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
+
+                    self.inner_buf_truncated_line_len = buf_slice_truncated_line.len();
+                    // Store partial data in vec for comparison/debugging
+                    self.inner_buf_partial_data.clear();
+                    self.inner_buf_partial_data.extend_from_slice(buf_slice_truncated_line);
+                    self.inner_buf_cursor = 0;
+
+                    return Ok(Some(alloc_res));
+                } else {
+                    // No complete lines. Likely a malformed file
+                    Err(crate::runtime::Error::parse_error(
+                        "load_next_buf",
+                        Some("No complete lines found in buffer. Is this a valid file?"),
+                    ))
                 }
-                0 => {
-                    // EOF
-                    let totalbytes = writebytes as usize + self.partial_len;
-                    if totalbytes > 0 {
-                        let eofslice = std::slice::from_raw_parts(bufptr, totalbytes);
-                        self.inner_buf_slice = eofslice;
-                        self.inner_cursor = 0;
-                        // Store buffer page pointer for this buffer
-                        self.inner_buf_ptr = UnsafeMutPtr::new(allocres.buffer_page_ptr());
-
-                        self.partial_len = 0;
-                        return Ok(Some(allocres));
-                    } else {
-                        return Ok(None);
-                    }
-                }
-                _ => Err(crate::runtime::Error::parse_error(
-                    "bgzf_read",
-                    Some(format!("Read error: {}", writebytes)),
-                )),
             }
+            0 => {
+                // EOF
+                let buf_bytes_written = buf_bytes_written as usize;
+                let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
+                if buf_slice_len > 0 {
+                    let eofslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
+                    self.inner_buf_slice = eofslice;
+                    // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
+                    self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
+
+                    self.inner_buf_truncated_line_len = 0;
+                    self.inner_buf_partial_data.clear();
+                    self.inner_buf_cursor = 0;
+
+                    return Ok(Some(alloc_res));
+                } else {
+                    return Ok(None);
+                }
+            }
+            _ => Err(crate::runtime::Error::parse_error(
+                "bgzf_read",
+                Some(format!("Read error code: {}", buf_bytes_written)),
+            )),
         }
     }
 }
@@ -212,6 +227,22 @@ impl<T> Drop for Stream<T> {
             if !self.inner_htsfileptr.is_null() {
                 htslib::hts_close(self.inner_htsfileptr.mut_ptr());
             }
+        }
+
+        // HACK: Spin until all page refs are zero => otherwise stream gets dropped and the slices
+        // pointing to the page buffers are invalidated. Not the best solution but the most frictionless.
+        let mut spin_counter = 0;
+        loop {
+            if self
+                .inner_buf_pool
+                .inner_pages
+                .iter()
+                .all(|p| p.ref_count.load(Ordering::Relaxed) == 0)
+            {
+                break;
+            }
+            spin_counter += 1;
+            common::spin_or_park(&mut spin_counter, 100);
         }
     }
 }
@@ -232,31 +263,37 @@ where
         let mut next_id: &[u8] = &[];
         let mut builder = T::builder();
 
+        if !self.inner_buf_ptr.is_null() {
+            builder = builder.add_page_ref(self.inner_buf_ptr);
+        }
+
         loop {
-            while let Some(next_pos) = memchr::memchr(
+            while let Some(pos_char_next_newline) = memchr::memchr(
                 common::U8_CHAR_NEWLINE,
-                &self.inner_buf_slice[self.inner_cursor..],
+                &self.inner_buf_slice[self.inner_buf_cursor..],
             ) {
-                let line_start = self.inner_cursor;
-                let line_end = self.inner_cursor + next_pos;
-                self.inner_cursor = line_end + 1;
-
+                let line_start = self.inner_buf_cursor;
+                let line_end = self.inner_buf_cursor + pos_char_next_newline;
                 let line = &self.inner_buf_slice[line_start..line_end];
+                self.inner_buf_cursor = line_end + 1;
 
-                let (cell_id, cell_rp) = unsafe { tirp::parse_readpair(line).unwrap_unchecked() };
+                let (cell_id, cell_rp) = match tirp::parse_record(line) {
+                    Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
+                    Err(e) => {
+                        log_warning!("{e}"; "line" => ?String::from_utf8_lossy(line), "partial" => ?String::from_utf8_lossy(&self.inner_buf_partial_data),);
+                        continue;
+                    }
+                };
+
+                // SAFETY: Transmute slice to static lifetime; kept alive by buffer expiration tracking
+                let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                 if next_id.is_empty() {
-                    // SAFETY: Transmute slice to static lifetime; kept alive by buffer expiration tracking
-                    let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
-                    builder = builder
-                        .add_cell_id_slice(static_cell_id)
-                        .add_page_ref(self.inner_buf_ptr);
-
+                    builder = builder.add_cell_id_slice(static_cell_id);
+                    log_info!("New Cell"; "cell" => ?String::from_utf8_lossy(cell_id));
                     next_id = cell_id;
-                    // println!("new cell {:?} at buffer {:p}", String::from_utf8_lossy(cell_id), self.inner_buf.as_ptr());
                 } else if next_id != cell_id {
-                    // Different cell - back up cursor and return current cell
-                    self.inner_cursor = line_start;
-                    return Ok(Some(builder.build()));
+                    self.inner_buf_cursor = line_start;
+                return Ok(Some(builder.build()));
                 }
 
                 // SAFETY: Transmute slices to static static - kept alive by ref counter
@@ -272,24 +309,24 @@ where
                     .add_umi_slice(static_umi);
             }
 
-            // No more lines in current buffer - load next buffer
-            let previous_buf = self.inner_buf_ptr; // Capture before load_next_buf overwrites it
-            match self.load_next_buf()? {
+            // No more complete lines in current buffer
+            let previous_buf_ptr = self.inner_buf_ptr;
+            match unsafe { self.load_next_buf()? } {
+                Some(_) => {
+                    if self.inner_buf_ptr.mut_ptr() == previous_buf_ptr.mut_ptr() {
+                        log_info!("Continue Buffer Page");
+                        continue;
+                    }
+
+                    log_info!("New Buffer Page");
+                    builder = builder.add_page_ref(self.inner_buf_ptr);
+                }
                 None => {
                     // EOF
-                    return Ok(if next_id.is_empty() {
-                        None
-                    } else {
-                        Some(builder.build())
+                    return Ok(match next_id.is_empty() {
+                        true => None,
+                        false => Some(builder.build()),
                     });
-                }
-                Some(alloc_result) => {
-                    // Add reference to previous buffer on new page
-                    if let common::PageBufferAllocResult::NewPage { .. } = alloc_result {
-                        if !previous_buf.is_null() {
-                            builder = builder.add_page_ref(previous_buf);
-                        }
-                    }
                 }
             }
         }

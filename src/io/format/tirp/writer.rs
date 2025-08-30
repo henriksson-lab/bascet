@@ -44,25 +44,55 @@ where
             let umis = cell.get_umis().unwrap_or(&[]);
 
             for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
-                _ = writer.write_all(id);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
+                // Build the entire line first to check for double tabs
+                let mut line = Vec::new();
+                line.extend_from_slice(id);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.push(crate::common::U8_CHAR_1);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.push(crate::common::U8_CHAR_1);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.extend_from_slice(r1);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.extend_from_slice(r2);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.extend_from_slice(q1);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.extend_from_slice(q2);
+                line.push(crate::common::U8_CHAR_TAB);
+                line.extend_from_slice(umi);
+                line.push(crate::common::U8_CHAR_NEWLINE);
 
-                _ = writer.write_all(&[crate::common::U8_CHAR_1]);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
+                // Check for double tabs before writing
+                let line_str = String::from_utf8_lossy(&line);
+                if line_str.contains("\t\t") {
+                    let error_msg = format!(
+                        "ERROR: About to write line with double tabs!\n\
+                         Cell ID: {:?}\n\
+                         r1 length: {}, r2 length: {}, q1 length: {}, q2 length: {}, umi length: {}\n\
+                         r1 empty: {}, r2 empty: {}, q1 empty: {}, q2 empty: {}, umi empty: {}\n\
+                         Raw field contents:\n\
+                         r1: {:?}\n\
+                         r2: {:?}\n\
+                         q1: {:?}\n\
+                         q2: {:?}\n\
+                         umi: {:?}\n\
+                         Full line: {:?}",
+                        String::from_utf8_lossy(id),
+                        r1.len(), r2.len(), q1.len(), q2.len(), umi.len(),
+                        r1.is_empty(), r2.is_empty(), q1.is_empty(), q2.is_empty(), umi.is_empty(),
+                        String::from_utf8_lossy(r1),
+                        String::from_utf8_lossy(r2), 
+                        String::from_utf8_lossy(q1),
+                        String::from_utf8_lossy(q2),
+                        String::from_utf8_lossy(umi),
+                        line_str
+                    );
+                    panic!("{}", error_msg);
+                }
 
-                _ = writer.write_all(&[crate::common::U8_CHAR_1]);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
-
-                _ = writer.write_all(r1);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
-                _ = writer.write_all(r2);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
-                _ = writer.write_all(q1);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
-                _ = writer.write_all(q2);
-                _ = writer.write_all(&[crate::common::U8_CHAR_TAB]);
-                _ = writer.write_all(umi);
-                _ = writer.write_all(&[crate::common::U8_CHAR_NEWLINE]);
+                // Write the validated line
+                _ = writer.write_all(&line);
             }
         }
 
