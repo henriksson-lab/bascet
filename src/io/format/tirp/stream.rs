@@ -130,14 +130,19 @@ impl<T> Stream<T> {
                     // the partial is contained after the end of old_buf
                     let buf_previous = &self.inner_buf_slice;
                     let old_approach_ptr = buf_previous.as_ptr().add(buf_previous.len());
-                    
+
                     // For debugging: compare old pointer approach with vec approach
                     if self.inner_buf_truncated_line_len > 0 {
-                        let old_approach_slice = std::slice::from_raw_parts(old_approach_ptr, self.inner_buf_truncated_line_len);
-                        assert_eq!(old_approach_slice, &self.inner_buf_partial_data, 
-                            "Vec and pointer approaches should give same partial data");
+                        let old_approach_slice = std::slice::from_raw_parts(
+                            old_approach_ptr,
+                            self.inner_buf_truncated_line_len,
+                        );
+                        assert_eq!(
+                            old_approach_slice, &self.inner_buf_partial_data,
+                            "Vec and pointer approaches should give same partial data"
+                        );
                     }
-                    
+
                     // Use vec approach but return pointer for compatibility
                     (
                         0,
@@ -151,6 +156,9 @@ impl<T> Stream<T> {
         // copylen = 0 makes this compile down to noop => useful for when we dont want to copy
         let buf_slice_ptr = alloc_res.buffer_slice_mut_ptr().sub(alloc_ptr_offset);
         std::ptr::copy_nonoverlapping(partial_slice_ptr, buf_slice_ptr, partial_copy_len);
+        // SAFETY: as long as pages are of reasonable size (largest cell possible fits in one with some extra room)
+        // this will be safe.
+        self.inner_buf_pool.active_mut().alloc_unchecked(partial_copy_len);
 
         // Read new data after partial
         let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
@@ -172,7 +180,7 @@ impl<T> Stream<T> {
                 {
                     let (buf_slice_truncated_use, buf_slice_truncated_line) = (
                         &bufslice[..=pos_char_last_newline],
-                        &bufslice[pos_char_last_newline + 1..]
+                        &bufslice[pos_char_last_newline + 1..],
                     );
 
                     self.inner_buf_slice = buf_slice_truncated_use;
@@ -182,7 +190,8 @@ impl<T> Stream<T> {
                     self.inner_buf_truncated_line_len = buf_slice_truncated_line.len();
                     // Store partial data in vec for comparison/debugging
                     self.inner_buf_partial_data.clear();
-                    self.inner_buf_partial_data.extend_from_slice(buf_slice_truncated_line);
+                    self.inner_buf_partial_data
+                        .extend_from_slice(buf_slice_truncated_line);
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -289,11 +298,11 @@ where
                 let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                 if next_id.is_empty() {
                     builder = builder.add_cell_id_slice(static_cell_id);
-                    log_info!("New Cell"; "cell" => ?String::from_utf8_lossy(cell_id));
+                    // log_info!("New Cell"; "cell" => ?String::from_utf8_lossy(cell_id));
                     next_id = cell_id;
                 } else if next_id != cell_id {
                     self.inner_buf_cursor = line_start;
-                return Ok(Some(builder.build()));
+                    return Ok(Some(builder.build()));
                 }
 
                 // SAFETY: Transmute slices to static static - kept alive by ref counter
@@ -314,11 +323,9 @@ where
             match unsafe { self.load_next_buf()? } {
                 Some(_) => {
                     if self.inner_buf_ptr.mut_ptr() == previous_buf_ptr.mut_ptr() {
-                        log_info!("Continue Buffer Page");
                         continue;
                     }
 
-                    log_info!("New Buffer Page");
                     builder = builder.add_page_ref(self.inner_buf_ptr);
                 }
                 None => {

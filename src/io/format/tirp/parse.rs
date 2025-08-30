@@ -1,31 +1,31 @@
-use crate::{runtime, common};
+use crate::{common, runtime};
 
 #[inline]
 pub fn parse_record(buf_record: &[u8]) -> Result<(&[u8], common::ReadPair), crate::runtime::Error> {
     let mut column_iter = memchr::memchr_iter(common::U8_CHAR_TAB, buf_record);
 
     let columns: [usize; 7] = [
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
-        column_iter.next().ok_or_else(|| {
-            runtime::Error::parse_error("record", Some("malformed record"))
-        })?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
+        column_iter
+            .next()
+            .ok_or_else(|| runtime::Error::parse_error("record", Some("malformed record")))?,
     ];
 
     let id = &buf_record[0..columns[0]];
@@ -45,8 +45,10 @@ pub fn parse_record(buf_record: &[u8]) -> Result<(&[u8], common::ReadPair), crat
     Ok((
         id,
         common::ReadPair {
-            r1, r2,
-            q1, q2,
+            r1,
+            r2,
+            q1,
+            q2,
             umi,
         },
     ))
