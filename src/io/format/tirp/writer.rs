@@ -1,6 +1,5 @@
-use std::io::{BufWriter, Write};
+use std::io::Write;
 
-use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use itertools::izip;
 
 use crate::io::traits::{BascetCell, BascetWrite};

@@ -1,23 +1,22 @@
 use rust_htslib::htslib;
 
 use std::fs::File;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::common::{PageBuffer, UnsafeMutPtr};
 use crate::io::{
     self,
     format::tirp,
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
-use crate::{common, log_debug, log_info};
+use crate::common;
 
 pub struct Stream<T> {
-    inner_htsfileptr: *mut htslib::htsFile,
+    inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
     inner_pool: common::PageBufferPool,
-    inner_buf: &'static [u8],
+    inner_buf_ptr: common::UnsafeMutPtr<PageBuffer>,
+    inner_buf_slice: &'static [u8],
     inner_cursor: usize,
-    // Raw pointer to the ref counter for the current inner_buf
-    inner_buffer_ptr: *const AtomicUsize,
 
     partial_len: usize,
     _marker: std::marker::PhantomData<T>,
@@ -72,7 +71,7 @@ impl<T> Stream<T> {
             }
 
             Ok(Stream::<T> {
-                inner_htsfileptr: inner_hts_file,
+                inner_htsfileptr: UnsafeMutPtr::new(inner_hts_file),
                 // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
                 // the problem here is a cell getting allocated near the end of the buffer
                 // will keep the buffer marked as "in use" and as such the buffer cannot be
@@ -82,8 +81,8 @@ impl<T> Stream<T> {
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
                 inner_pool: common::PageBufferPool::new(64, 1024 * 1024 * 8),
                 inner_cursor: 0,
-                inner_buf: &[],
-                inner_buffer_ptr: std::ptr::null(),
+                inner_buf_slice: &[],
+                inner_buf_ptr: UnsafeMutPtr::null(),
                 partial_len: 0,
                 _marker: std::marker::PhantomData,
             })
@@ -94,7 +93,7 @@ impl<T> Stream<T> {
         &mut self,
     ) -> Result<Option<common::PageBufferAllocResult>, crate::runtime::Error> {
         unsafe {
-            let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr);
+            let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr.mut_ptr());
 
             // Allocate space for new read
             let allocres = match self.inner_pool.alloc(common::HUGE_PAGE_SIZE) {
@@ -129,7 +128,7 @@ impl<T> Stream<T> {
                         .active_mut()
                         .incr_ptr_unchecked(self.partial_len);
 
-                    let oldbuf = &self.inner_buf;
+                    let oldbuf = &self.inner_buf_slice;
                     // ok so this is kind of stupid but because the used buffer is truncated to last newline,
                     // the partial is contained after the end of old_buf
                     let partptr = oldbuf.as_ptr().add(oldbuf.len());
@@ -167,9 +166,9 @@ impl<T> Stream<T> {
                             (&bufslice[last_newline + 1..], &bufslice[..=last_newline]);
                         // println!("{:?}", String::from_utf8_lossy(partslc));
                         self.partial_len = partslc.len();
-                        self.inner_buf = bufslc;
+                        self.inner_buf_slice = bufslc;
                         // Store buffer page pointer for this buffer
-                        self.inner_buffer_ptr = allocres.buffer_page_ptr() as *const AtomicUsize;
+                        self.inner_buf_ptr = UnsafeMutPtr::new(allocres.buffer_page_ptr());
 
                         self.inner_cursor = 0;
 
@@ -187,10 +186,10 @@ impl<T> Stream<T> {
                     let totalbytes = writebytes as usize + self.partial_len;
                     if totalbytes > 0 {
                         let eofslice = std::slice::from_raw_parts(bufptr, totalbytes);
-                        self.inner_buf = eofslice;
+                        self.inner_buf_slice = eofslice;
                         self.inner_cursor = 0;
                         // Store buffer page pointer for this buffer
-                        self.inner_buffer_ptr = allocres.buffer_page_ptr() as *const AtomicUsize;
+                        self.inner_buf_ptr = UnsafeMutPtr::new(allocres.buffer_page_ptr());
 
                         self.partial_len = 0;
                         return Ok(Some(allocres));
@@ -209,10 +208,9 @@ impl<T> Stream<T> {
 
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
-        // println!("Stream being dropped at {:?}", std::time::SystemTime::now());
         unsafe {
             if !self.inner_htsfileptr.is_null() {
-                htslib::hts_close(self.inner_htsfileptr);
+                htslib::hts_close(self.inner_htsfileptr.mut_ptr());
             }
         }
     }
@@ -225,7 +223,7 @@ where
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
-            htslib::hts_set_threads(self.inner_htsfileptr, n_threads as i32);
+            htslib::hts_set_threads(self.inner_htsfileptr.mut_ptr(), n_threads as i32);
         }
         self
     }
@@ -237,13 +235,13 @@ where
         loop {
             while let Some(next_pos) = memchr::memchr(
                 common::U8_CHAR_NEWLINE,
-                &self.inner_buf[self.inner_cursor..],
+                &self.inner_buf_slice[self.inner_cursor..],
             ) {
                 let line_start = self.inner_cursor;
                 let line_end = self.inner_cursor + next_pos;
                 self.inner_cursor = line_end + 1;
 
-                let line = &self.inner_buf[line_start..line_end];
+                let line = &self.inner_buf_slice[line_start..line_end];
 
                 let (cell_id, cell_rp) = unsafe { tirp::parse_readpair(line).unwrap_unchecked() };
                 if next_id.is_empty() {
@@ -251,7 +249,7 @@ where
                     let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                     builder = builder
                         .add_cell_id_slice(static_cell_id)
-                        .add_page_ref(common::UnsafeMutPtr::new(self.inner_buffer_ptr as *mut common::PageBuffer));
+                        .add_page_ref(self.inner_buf_ptr);
 
                     next_id = cell_id;
                     // println!("new cell {:?} at buffer {:p}", String::from_utf8_lossy(cell_id), self.inner_buf.as_ptr());
@@ -275,6 +273,7 @@ where
             }
 
             // No more lines in current buffer - load next buffer
+            let previous_buf = self.inner_buf_ptr; // Capture before load_next_buf overwrites it
             match self.load_next_buf()? {
                 None => {
                     // EOF
@@ -285,13 +284,10 @@ where
                     });
                 }
                 Some(alloc_result) => {
-                    // Got new buffer data
+                    // Add reference to previous buffer on new page
                     if let common::PageBufferAllocResult::NewPage { .. } = alloc_result {
-                        // If we have an ongoing cell, add page ref for the previous page
-                        if !next_id.is_empty() {
-                            builder = builder.add_page_ref(common::UnsafeMutPtr::new(
-                                self.inner_buffer_ptr as *mut common::PageBuffer,
-                            ));
+                        if !previous_buf.is_null() {
+                            builder = builder.add_page_ref(previous_buf);
                         }
                     }
                 }

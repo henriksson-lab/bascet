@@ -278,7 +278,7 @@ impl Drop for ShardifyCell {
     fn drop(&mut self) {
         unsafe {
             for page_ptr in &self._page_refs {
-                (*page_ptr.as_ptr()).dec_ref();
+                (*page_ptr.mut_ptr()).dec_ref();
             }
         }
     }
@@ -336,7 +336,7 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     #[inline(always)]
     fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
         unsafe {
-            (*page_ptr.as_ptr()).inc_ref();
+            (*page_ptr.mut_ptr()).inc_ref();
         }
         self.page_refs.push(page_ptr);
         self
