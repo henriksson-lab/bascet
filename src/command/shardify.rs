@@ -139,11 +139,16 @@ impl ShardifyCMD {
         }
 
         let write_channels: Vec<_> = (0..count_writers)
-            .map(|_| channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16))
+            .map(|_| channel::unbounded::<Option<Vec<ShardifyCell>>>())
             .collect();
         let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
 
-        for (thread_output, (_, thread_rx)) in self.path_out.clone().into_iter().zip(write_channels.into_iter()) {
+        for (thread_output, (_, thread_rx)) in self
+            .path_out
+            .clone()
+            .into_iter()
+            .zip(write_channels.into_iter())
+        {
             let thread_output = ShardifyOutput::try_from_path(&thread_output).unwrap();
             let thread_file = std::fs::File::create(thread_output.path()).unwrap();
             let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
@@ -157,8 +162,8 @@ impl ShardifyCMD {
 
             let thread_handle = thread::spawn(move || {
                 while let Ok(Some(vec_records)) = thread_rx.recv() {
-                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.try_read().unwrap().first().unwrap().get_cell().unwrap()));
-                    for cell in &*vec_records.read().unwrap() {
+                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.first().unwrap().get_cell().unwrap()));
+                    for cell in &vec_records {
                         if let Err(e) = thread_shardify_writer.write_cell(cell) {
                             log_warning!("Failed to write cell"; "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
                         }
@@ -255,9 +260,8 @@ impl ShardifyCMD {
                 }
             }
 
-            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(std::mem::take(
-                &mut coordinator_vec_send,
-            )))));
+            let _ = write_senders[coordinator_writer_idx]
+                .send(Some(std::mem::take(&mut coordinator_vec_send)));
             coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
@@ -298,24 +302,9 @@ impl Drop for ShardifyCell {
 
 impl BascetCell for ShardifyCell {
     type Builder = ShardifyCellBuilder;
+    
     fn builder() -> Self::Builder {
         Self::Builder::new()
-    }
-
-    fn get_cell(&self) -> Option<&[u8]> {
-        Some(self.cell)
-    }
-
-    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
-        Some(&self.reads)
-    }
-
-    fn get_qualities(&self) -> Option<&[(&[u8], &[u8])]> {
-        Some(&self.qualities)
-    }
-
-    fn get_umis(&self) -> Option<&[&[u8]]> {
-        Some(&self.umis)
     }
 }
 struct ShardifyCellBuilder {
@@ -343,7 +332,7 @@ impl ShardifyCellBuilder {
 }
 
 impl BascetCellBuilder for ShardifyCellBuilder {
-    type Token = ShardifyCell;
+    type Cell = ShardifyCell;
 
     #[inline(always)]
     fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {

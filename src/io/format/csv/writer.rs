@@ -1,4 +1,4 @@
-use crate::{common, io::traits::BascetWrite};
+use crate::{common, io::traits::{BascetWrite, CellIdAccessor, CellPairedReadAccessor}};
 
 pub struct Writer<W>
 where
@@ -34,10 +34,10 @@ where
         countsketch: &crate::kmer::kmc_counter::CountSketch,
     ) -> Result<(), crate::runtime::Error>
     where
-        C: crate::io::traits::BascetCell,
+        C: CellIdAccessor,
     {
         if let Some(ref mut writer) = self.inner {
-            let id = match cell.get_cell() {
+            let id = match cell.get_id() {
                 Some(id) => id,
                 None => {
                     return Err(crate::runtime::Error::parse_error(
@@ -46,9 +46,10 @@ where
                     ))
                 }
             };
-            let n = match cell.get_reads() {
-                Some(reads) => reads.len().to_string().into_bytes(),
-                None => b"0".to_vec(),
+            // TODO: continue
+            let n = match countsketch.() {
+                Some(n) => n.to_string().into_bytes(),
+                None => vec![b"0"; 1],
             };
 
             // NOTE: in theory these can fail writing, however, for performance reasons, this is unchecked

@@ -11,21 +11,21 @@ where
     fn set_writer(self, _: W) -> Self;
     fn get_writer(self) -> Option<W>;
 
-    fn write_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
+    fn write_cell<Cell>(&mut self, cell: &Cell) -> Result<(), crate::runtime::Error>
     where
-        C: crate::io::traits::BascetCell,
+        Cell: crate::io::traits::BascetCell,
     {
-        todo!()
+        unimplemented!()
     }
 
-    fn write_countsketch<C>(
+    fn write_countsketch<Cell>(
         &mut self,
-        cell: &C,
+        cell: &Cell,
         countsketch: &crate::kmer::kmc_counter::CountSketch,
     ) -> Result<(), crate::runtime::Error>
     where
-        C: crate::io::traits::BascetCell,
+        Cell: crate::io::traits::CellIdAccessor,
     {
-        todo!()
+        unimplemented!()
     }
 }

@@ -151,9 +151,7 @@ impl CountsketchCMD {
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
                     // log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell), "open" => write_rx.len());
-                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch) {
-                        log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.cell), "error" => %e);
-                    }
+                    let _ = output_countsketch_writer.write_countsketch(&cell, &countsketch);
                 }
                 log_info!("Write finished!");
                 let _ = output_countsketch_writer.get_writer().unwrap().flush();
@@ -332,7 +330,7 @@ impl CountsketchCellBuilder {
 }
 
 impl BascetCellBuilder for CountsketchCellBuilder {
-    type Token = CountsketchCell;
+    type Cell = CountsketchCell;
 
     #[inline(always)]
     fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer>) -> Self {

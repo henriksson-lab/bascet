@@ -2,7 +2,10 @@ use std::io::Write;
 
 use itertools::izip;
 
-use crate::io::traits::{BascetCell, BascetWrite};
+use crate::io::traits::{
+    BascetCell, BascetWrite, CellIdAccessor, CellPairedQualityAccessor, CellPairedReadAccessor,
+    CellUmiAccessor,
+};
 
 pub struct Writer<W>
 where
@@ -33,13 +36,13 @@ where
     }
 
     #[inline(always)]
-    fn write_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
+    fn write_cell<Cell>(&mut self, cell: &Cell) -> Result<(), crate::runtime::Error>
     where
-        C: BascetCell,
+        Cell: CellIdAccessor + CellPairedReadAccessor + CellPairedQualityAccessor + CellUmiAccessor,
     {
-        let id = cell.get_cell().unwrap();
+        let id = cell.get_id();
         if let Some(ref mut writer) = self.inner {
-            let reads = cell.get_reads().unwrap_or(&[]);
+            let reads = cell.get_paired_read();
             let quals = cell.get_qualities().unwrap_or(&[]);
             let umis = cell.get_umis().unwrap_or(&[]);
 

@@ -7,16 +7,19 @@ use std::{
 use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
-    io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
+    io::traits::{
+        BascetCell, BascetCellBuilder, BascetFile, BascetStream, CellOwnedIdBuilder,
+        CellOwnedUnpairedReadBuilder,
+    },
     log_critical, log_info,
 };
 
-pub struct Stream<T> {
+pub struct Stream<C> {
     inner_archive: ZipArchive<std::fs::File>,
     inner_files: Vec<String>,
     inner_files_cursor: usize,
     inner_worker_threadpool: threadpool::ThreadPool,
-    _marker: std::marker::PhantomData<T>,
+    _marker: std::marker::PhantomData<C>,
 }
 
 impl<T> Stream<T> {
@@ -54,11 +57,12 @@ impl<T> Stream<T> {
     }
 }
 
-impl<T> BascetStream<T> for Stream<T>
+impl<C> BascetStream<C> for Stream<C>
 where
-    T: BascetCell + Send + 'static,
+    C: BascetCell + 'static,
+    C::Builder: BascetCellBuilder<Cell = C> + CellOwnedIdBuilder + CellOwnedUnpairedReadBuilder,
 {
-    fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
+    fn next_cell(&mut self) -> Result<Option<C>, crate::runtime::Error> {
         let archive = &mut self.inner_archive;
 
         if self.inner_files_cursor >= self.inner_files.len() {
@@ -100,7 +104,7 @@ where
         };
 
         let id = file_stem.as_encoded_bytes();
-        let mut builder = T::builder().add_cell_id_owned(id.to_vec());
+        let mut builder = C::builder().set_owned_id(id.to_vec());
         let mut cursor = 0;
         let mut buffer: Vec<u8> = Vec::new();
 
@@ -130,7 +134,7 @@ where
                             }
                         };
 
-                        builder = builder.add_sequence_owned(seq.to_vec());
+                        builder = builder.push_owned_unpaired_read(seq.to_vec());
                         cursor += next_pos + 1;
                     }
 
