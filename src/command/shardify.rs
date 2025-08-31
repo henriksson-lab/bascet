@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use clap::Args;
-use crossbeam::channel;
+use crossbeam::{channel, queue::ArrayQueue};
 use itertools::izip;
 use std::{
     fs::File,
@@ -116,6 +116,7 @@ impl ShardifyCMD {
                     // log_info!("Passed Filter!"; "cell" => %String::from_utf8_lossy(token_cell.cell));
 
                     let mut token_cell = token_cell;
+
                     let mut rtrb_count_spins = 0;
                     loop {
                         match thread_px.push(token_cell) {
@@ -137,12 +138,15 @@ impl ShardifyCMD {
             vec_reader_handles.push(thread_handle);
         }
 
-        let (write_tx, write_rx) = channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16);
-        for thread_output in self.path_out.clone() {
-            let thread_rx = write_rx.clone();
+        let write_channels: Vec<_> = (0..count_writers)
+            .map(|_| channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16))
+            .collect();
+        let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
+
+        for (thread_output, (_, thread_rx)) in self.path_out.clone().into_iter().zip(write_channels.into_iter()) {
             let thread_output = ShardifyOutput::try_from_path(&thread_output).unwrap();
             let thread_file = std::fs::File::create(thread_output.path()).unwrap();
-            let thread_buf_writer = BufWriter::new(thread_file);
+            let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
             let thread_bgzf_writer =
                 BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
 
@@ -155,7 +159,9 @@ impl ShardifyCMD {
                 while let Ok(Some(vec_records)) = thread_rx.recv() {
                     log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.try_read().unwrap().first().unwrap().get_cell().unwrap()));
                     for cell in &*vec_records.read().unwrap() {
-                        let _ = thread_shardify_writer.write_cell(cell);
+                        if let Err(e) = thread_shardify_writer.write_cell(cell) {
+                            log_warning!("Failed to write cell"; "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
+                        }
                     }
                 }
                 log_info!("Writer finished!");
@@ -166,6 +172,7 @@ impl ShardifyCMD {
 
         let mut coordinator_count_streams_finished = 0;
         let mut coordinator_count_spins = 0;
+        let mut coordinator_writer_idx = 0;
         let mut coordinator_all_ready;
         let mut coordinator_min_cell: Option<&[u8]>;
         let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(count_streams);
@@ -248,17 +255,18 @@ impl ShardifyCMD {
                 }
             }
 
-            let _ = write_tx.send(Some(Arc::new(RwLock::new(std::mem::take(
+            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(std::mem::take(
                 &mut coordinator_vec_send,
             )))));
+            coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
         for handle in vec_reader_handles {
             handle.join().expect("Stream thread panicked");
         }
         log_info!("Stream handles closed");
-        for _ in 0..count_writers {
-            let _ = write_tx.send(None);
+        for sender in &write_senders {
+            let _ = sender.send(None);
         }
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");

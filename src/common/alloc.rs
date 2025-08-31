@@ -40,11 +40,6 @@ impl PageBuffer {
     }
 
     #[inline(always)]
-    pub fn available(&self) -> bool {
-        self.ref_count.load(Ordering::Acquire) == 0
-    }
-
-    #[inline(always)]
     pub fn try_reset(&mut self) -> bool {
         if self.available() {
             self.inner_ptr = 0;
@@ -55,8 +50,13 @@ impl PageBuffer {
     }
 
     #[inline(always)]
+    pub fn available(&self) -> bool {
+        self.ref_count.load(Ordering::Acquire) == 0
+    }
+
+    #[inline(always)]
     pub fn inc_ref(&self) {
-        self.ref_count.fetch_add(1, Ordering::Relaxed);
+        self.ref_count.fetch_add(1, Ordering::AcqRel);
     }
 
     #[inline(always)]

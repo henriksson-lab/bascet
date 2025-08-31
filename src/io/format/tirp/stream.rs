@@ -9,7 +9,7 @@ use crate::io::{
     format::tirp,
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
-use crate::{common, log_info, log_warning};
+use crate::{common, log_warning};
 
 pub struct Stream<T> {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
@@ -20,7 +20,6 @@ pub struct Stream<T> {
     inner_buf_cursor: usize,
 
     inner_buf_truncated_line_len: usize,
-    inner_buf_partial_data: Vec<u8>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -87,7 +86,6 @@ impl<T> Stream<T> {
                 inner_buf_ptr: UnsafeMutPtr::null(),
 
                 inner_buf_truncated_line_len: 0,
-                inner_buf_partial_data: Vec::new(),
                 _marker: std::marker::PhantomData,
             })
         }
@@ -127,26 +125,12 @@ impl<T> Stream<T> {
                     */
 
                     // ok so this is kind of stupid but because the used buffer is truncated to last newline,
-                    // the partial is contained after the end of old_buf
+                    // the partial is contained after the end of old_buf.
                     let buf_previous = &self.inner_buf_slice;
-                    let old_approach_ptr = buf_previous.as_ptr().add(buf_previous.len());
-
-                    // For debugging: compare old pointer approach with vec approach
-                    if self.inner_buf_truncated_line_len > 0 {
-                        let old_approach_slice = std::slice::from_raw_parts(
-                            old_approach_ptr,
-                            self.inner_buf_truncated_line_len,
-                        );
-                        assert_eq!(
-                            old_approach_slice, &self.inner_buf_partial_data,
-                            "Vec and pointer approaches should give same partial data"
-                        );
-                    }
-
-                    // Use vec approach but return pointer for compatibility
+                    let buf_previous_ptr = buf_previous.as_ptr().add(buf_previous.len());
                     (
                         0,
-                        self.inner_buf_partial_data.as_ptr(),
+                        buf_previous_ptr,
                         self.inner_buf_truncated_line_len,
                     )
                 }
@@ -154,11 +138,18 @@ impl<T> Stream<T> {
 
         // copy partial data
         // copylen = 0 makes this compile down to noop => useful for when we dont want to copy
+        // SAFETY: [JD] in _theory_ this CAN point to stale memory. I have verified this for correctness on 
+        // a ~400GiB dataset and compared the resulting slice with a cloned approach and found
+        // no stale memory hits. It is _likely_ fine, but cannot promise.
         let buf_slice_ptr = alloc_res.buffer_slice_mut_ptr().sub(alloc_ptr_offset);
         std::ptr::copy_nonoverlapping(partial_slice_ptr, buf_slice_ptr, partial_copy_len);
-        // SAFETY: as long as pages are of reasonable size (largest cell possible fits in one with some extra room)
-        // this will be safe.
-        self.inner_buf_pool.active_mut().alloc_unchecked(partial_copy_len);
+        // SAFETY: as long as pages are of reasonable size (largest cell possible fits in one with some extra room) this is safe.
+        assert_eq!(
+            self.inner_buf_pool
+                .alloc(partial_copy_len)
+                .buffer_page_ptr(),
+            alloc_res.buffer_page_ptr()
+        );
 
         // Read new data after partial
         let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
@@ -188,16 +179,12 @@ impl<T> Stream<T> {
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
                     self.inner_buf_truncated_line_len = buf_slice_truncated_line.len();
-                    // Store partial data in vec for comparison/debugging
-                    self.inner_buf_partial_data.clear();
-                    self.inner_buf_partial_data
-                        .extend_from_slice(buf_slice_truncated_line);
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
                 } else {
                     // No complete lines. Likely a malformed file
-                    Err(crate::runtime::Error::parse_error(
+                    return Err(crate::runtime::Error::parse_error(
                         "load_next_buf",
                         Some("No complete lines found in buffer. Is this a valid file?"),
                     ))
@@ -214,7 +201,6 @@ impl<T> Stream<T> {
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
                     self.inner_buf_truncated_line_len = 0;
-                    self.inner_buf_partial_data.clear();
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -272,10 +258,6 @@ where
         let mut next_id: &[u8] = &[];
         let mut builder = T::builder();
 
-        if !self.inner_buf_ptr.is_null() {
-            builder = builder.add_page_ref(self.inner_buf_ptr);
-        }
-
         loop {
             while let Some(pos_char_next_newline) = memchr::memchr(
                 common::U8_CHAR_NEWLINE,
@@ -289,23 +271,23 @@ where
                 let (cell_id, cell_rp) = match tirp::parse_record(line) {
                     Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
                     Err(e) => {
-                        log_warning!("{e}"; "line" => ?String::from_utf8_lossy(line), "partial" => ?String::from_utf8_lossy(&self.inner_buf_partial_data),);
+                        log_warning!("{e}"; "line" => ?String::from_utf8_lossy(line));
                         continue;
                     }
                 };
 
-                // SAFETY: Transmute slice to static lifetime; kept alive by buffer expiration tracking
+                // SAFETY: transmute slice to static lifetime kept alive by ref counter
                 let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                 if next_id.is_empty() {
-                    builder = builder.add_cell_id_slice(static_cell_id);
-                    // log_info!("New Cell"; "cell" => ?String::from_utf8_lossy(cell_id));
+                    // NOTE: Add page ref only when starting a cell to avoid leaking refs on empty streams 
+                    builder = builder.add_cell_id_slice(static_cell_id).add_page_ref(self.inner_buf_ptr);
                     next_id = cell_id;
                 } else if next_id != cell_id {
                     self.inner_buf_cursor = line_start;
                     return Ok(Some(builder.build()));
                 }
 
-                // SAFETY: Transmute slices to static static - kept alive by ref counter
+                // SAFETY: transmute slices to static static kept alive by ref counter
                 let static_r1: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r1) };
                 let static_r2: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r2) };
                 let static_q1: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q1) };
