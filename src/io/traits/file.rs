@@ -95,76 +95,77 @@ pub trait BascetFile: Sized {
     }
 }
 
-// #[enum_dispatch::enum_dispatch]
-pub trait BascetTempFile: BascetFile {
-    /// Create temp file instance from NamedTempFile (implementors must provide this)
-    fn from_tempfile(temp_file: tempfile::NamedTempFile) -> Result<Self, crate::runtime::Error>
-    where
-        Self: Sized;
+// TODO: not implemented, more challanging
+// // #[enum_dispatch::enum_dispatch]
+// pub trait BascetTempFile: BascetFile {
+//     /// Create temp file instance from NamedTempFile (implementors must provide this)
+//     fn from_tempfile(temp_file: tempfile::NamedTempFile) -> Result<Self, crate::runtime::Error>
+//     where
+//         Self: Sized;
 
-    /// Prevent automatic deletion and return the path (consumes temp file)
-    fn preserve(self) -> std::path::PathBuf;
+//     /// Prevent automatic deletion and return the path (consumes temp file)
+//     fn preserve(self) -> std::path::PathBuf;
 
-    /// Manually trigger cleanup now (consumes self to prevent double-cleanup)
-    fn cleanup(self) -> Result<(), crate::runtime::Error> {
-        if self.path().exists() {
-            std::fs::remove_file(self.path()).map_err(|e| {
-                crate::runtime::Error::file_not_valid(
-                    self.path(),
-                    Some(format!("failed to delete temp file: {}", e)),
-                )
-            })?;
-        }
-        std::mem::forget(self);
-        Ok(())
-    }
+//     /// Manually trigger cleanup now (consumes self to prevent double-cleanup)
+//     fn cleanup(self) -> Result<(), crate::runtime::Error> {
+//         if self.path().exists() {
+//             std::fs::remove_file(self.path()).map_err(|e| {
+//                 crate::runtime::Error::file_not_valid(
+//                     self.path(),
+//                     Some(format!("failed to delete temp file: {}", e)),
+//                 )
+//             })?;
+//         }
+//         std::mem::forget(self);
+//         Ok(())
+//     }
 
-    /// Create temp file in system temp directory with auto-generated name
-    fn with_unique_name(extension: &str) -> Result<Self, crate::runtime::Error>
-    where
-        Self: Sized,
-    {
-        let suffix = if extension.starts_with('.') {
-            extension.to_string()
-        } else {
-            format!(".{}", extension)
-        };
+//     /// Create temp file in system temp directory with auto-generated name
+//     fn with_unique_name(extension: &str) -> Result<Self, crate::runtime::Error>
+//     where
+//         Self: Sized,
+//     {
+//         let suffix = if extension.starts_with('.') {
+//             extension.to_string()
+//         } else {
+//             format!(".{}", extension)
+//         };
 
-        let temp_file = tempfile::NamedTempFile::with_suffix(&suffix).map_err(|e| {
-            crate::runtime::Error::file_not_valid(
-                "temp_file",
-                Some(format!("failed to create temp file: {}", e)),
-            )
-        })?;
+//         let temp_file = tempfile::NamedTempFile::with_suffix(&suffix).map_err(|e| {
+//             crate::runtime::Error::file_not_valid(
+//                 "temp_file",
+//                 Some(format!("failed to create temp file: {}", e)),
+//             )
+//         })?;
 
-        let temp = Self::from_tempfile(temp_file)?;
-        temp.validate_extension()?;
-        Ok(temp)
-    }
+//         let temp = Self::from_tempfile(temp_file)?;
+//         temp.validate_extension()?;
+//         Ok(temp)
+//     }
 
-    /// Create temp file in specified directory with auto-generated name  
-    fn with_unique_name_in<P: AsRef<std::path::Path>>(
-        dir: P,
-        extension: &str,
-    ) -> Result<Self, crate::runtime::Error>
-    where
-        Self: Sized,
-    {
-        let suffix = if extension.starts_with('.') {
-            extension.to_string()
-        } else {
-            format!(".{}", extension)
-        };
+//     /// Create temp file in specified directory with auto-generated name  
+//     fn with_unique_name_in<P: AsRef<std::path::Path>>(
+//         dir: P,
+//         extension: &str,
+//     ) -> Result<Self, crate::runtime::Error>
+//     where
+//         Self: Sized,
+//     {
+//         let suffix = if extension.starts_with('.') {
+//             extension.to_string()
+//         } else {
+//             format!(".{}", extension)
+//         };
 
-        let temp_file = tempfile::NamedTempFile::with_suffix_in(&suffix, dir).map_err(|e| {
-            crate::runtime::Error::file_not_valid(
-                "temp_file",
-                Some(format!("failed to create temp file in directory: {}", e)),
-            )
-        })?;
+//         let temp_file = tempfile::NamedTempFile::with_suffix_in(&suffix, dir).map_err(|e| {
+//             crate::runtime::Error::file_not_valid(
+//                 "temp_file",
+//                 Some(format!("failed to create temp file in directory: {}", e)),
+//             )
+//         })?;
 
-        let temp = Self::from_tempfile(temp_file)?;
-        temp.validate_extension()?;
-        Ok(temp)
-    }
-}
+//         let temp = Self::from_tempfile(temp_file)?;
+//         temp.validate_extension()?;
+//         Ok(temp)
+//     }
+// }

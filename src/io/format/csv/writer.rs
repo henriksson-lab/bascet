@@ -1,4 +1,7 @@
-use crate::{common, io::traits::{BascetWrite, CellIdAccessor, CellPairedReadAccessor}};
+use crate::{
+    common,
+    io::traits::{BascetCellWrite, CellIdAccessor},
+};
 
 pub struct Writer<W>
 where
@@ -16,7 +19,7 @@ where
     }
 }
 
-impl<W> BascetWrite<W> for Writer<W>
+impl<W, C: CellIdAccessor> BascetCellWrite<W, C> for Writer<W>
 where
     W: std::io::Write,
 {
@@ -28,40 +31,21 @@ where
         self
     }
 
-    fn write_countsketch<C>(
+    fn write_countsketch(
         &mut self,
         cell: &C,
         countsketch: &crate::kmer::kmc_counter::CountSketch,
-    ) -> Result<(), crate::runtime::Error>
-    where
-        C: CellIdAccessor,
-    {
+    ) -> Result<(), crate::runtime::Error> {
         if let Some(ref mut writer) = self.inner {
-            let id = match cell.get_id() {
-                Some(id) => id,
-                None => {
-                    return Err(crate::runtime::Error::parse_error(
-                        "countsketch writer",
-                        Some("Missing cell ID"),
-                    ))
-                }
-            };
-            // TODO: continue
-            let n = match countsketch.() {
-                Some(n) => n.to_string().into_bytes(),
-                None => vec![b"0"; 1],
-            };
-
-            // NOTE: in theory these can fail writing, however, for performance reasons, this is unchecked
-            let _ = writer.write_all(id);
-            let _ = writer.write_all(&[common::U8_CHAR_TAB]);
-            let _ = writer.write_all(&n);
+            writer.write_all(cell.get_id())?;
+            writer.write_all(&[common::U8_CHAR_TAB])?;
+            writer.write_all(&countsketch.total.to_string().as_bytes())?;
 
             for value in countsketch.sketch.iter() {
-                let _ = writer.write_all(&[common::U8_CHAR_TAB]);
-                let _ = writer.write_all(value.to_string().as_bytes());
+                writer.write_all(&[common::U8_CHAR_TAB])?;
+                writer.write_all(value.to_string().as_bytes())?;
             }
-            let _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
+            writer.write_all(&[common::U8_CHAR_NEWLINE])?;
         }
 
         Ok(())

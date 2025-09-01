@@ -1,4 +1,4 @@
-pub trait BascetRead {
+pub trait BascetCellRead {
     // Check if a cell exists.
     fn has_cell(&self, cell: &str) -> bool;
 

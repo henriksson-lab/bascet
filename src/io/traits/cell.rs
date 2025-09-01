@@ -6,56 +6,56 @@ field_traits! {
         Builder::set(id: &'static [u8]),
     },
     OwnedId => {
-        Accessor::get_vec() -> &Vec<u8>,
+        Accessor::get() -> &Vec<u8>,
         Builder::set(data: Vec<u8>),
     },
 
-    PairedRead => {
+    PairedReads => {
         Accessor::get_vec() -> &Vec<(&'static [u8], &'static [u8])>,
         Builder::push(r1: &'static [u8], r2: &'static [u8]),
     },
-    OwnedPairedRead => {
+    OwnedPairedReads => {
         Accessor::get_vec() -> &Vec<(Vec<u8>, Vec<u8>)>,
         Builder::push(r1: Vec<u8>, r2: Vec<u8>),
     },
 
-    UnpairedRead => {
+    UnpairedReads => {
         Accessor::get_vec() -> &Vec<&'static [u8]>,
         Builder::push(r0: &'static [u8]),
     },
-    OwnedUnpairedRead => {
+    OwnedUnpairedReads => {
         Accessor::get_vec() -> &Vec<Vec<u8>>,
         Builder::push(r0: Vec<u8>),
     },
 
-    PairedQuality => {
+    PairedQualities => {
         Accessor::get_vec() -> &Vec<(&'static [u8], &'static [u8])>,
         Builder::push(q1: &'static [u8], q2: &'static [u8]),
     },
-    OwnedPairedQuality => {
+    OwnedPairedQualities => {
         Accessor::get_vec() -> &Vec<(Vec<u8>, Vec<u8>)>,
         Builder::push(q1: Vec<u8>, q2: Vec<u8>),
     },
 
-    UnpairedQuality => {
+    UnpairedQualities => {
         Accessor::get_vec() -> &Vec<&'static [u8]>,
         Builder::push(q0: &'static [u8]),
     },
-    OwnedUnpairedQuality => {
+    OwnedUnpairedQualities => {
         Accessor::get_vec() -> &Vec<Vec<u8>>,
         Builder::push(q0: Vec<u8>),
     },
 
-    Umi => {
+    Umis => {
         Accessor::get_vec() -> &Vec<&'static [u8]>,
         Builder::push(umi: &'static [u8]),
     },
-    OwnedUmi => {
+    OwnedUmis => {
         Accessor::get_vec() -> &Vec<Vec<u8>>,
         Builder::push(umi: Vec<u8>),
     },
 
-    Pageref => {
+    Pagerefs => {
         Accessor::get_vec() -> &common::UnsafeMutPtr<common::PageBuffer>,
         Builder::push(ptr: common::UnsafeMutPtr<common::PageBuffer>)
     }

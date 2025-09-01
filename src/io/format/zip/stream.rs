@@ -8,21 +8,20 @@ use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
     io::traits::{
-        BascetCell, BascetCellBuilder, BascetFile, BascetStream, CellOwnedIdBuilder,
-        CellOwnedUnpairedReadBuilder,
+        BascetCell, BascetCellBuilder, BascetFile, BascetCellStream, CellOwnedIdBuilder,
+        CellOwnedUnpairedReadsBuilder,
     },
     log_critical, log_info,
 };
 
-pub struct Stream<C> {
+pub struct Stream {
     inner_archive: ZipArchive<std::fs::File>,
     inner_files: Vec<String>,
     inner_files_cursor: usize,
-    inner_worker_threadpool: threadpool::ThreadPool,
-    _marker: std::marker::PhantomData<C>,
+    inner_worker_threadpool: threadpool::ThreadPool
 }
 
-impl<T> Stream<T> {
+impl Stream {
     pub fn new(file: &crate::io::format::zip::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
@@ -47,20 +46,19 @@ impl<T> Stream<T> {
             .map(|s| String::from(s))
             .collect();
 
-        Ok(Stream::<T> {
+        Ok(Stream {
             inner_archive: archive,
             inner_files: files,
             inner_files_cursor: 0,
-            inner_worker_threadpool: threadpool::ThreadPool::new(1),
-            _marker: std::marker::PhantomData,
+            inner_worker_threadpool: threadpool::ThreadPool::new(1)
         })
     }
 }
 
-impl<C> BascetStream<C> for Stream<C>
+impl<C> BascetCellStream<C> for Stream
 where
     C: BascetCell + 'static,
-    C::Builder: BascetCellBuilder<Cell = C> + CellOwnedIdBuilder + CellOwnedUnpairedReadBuilder,
+    C::Builder: BascetCellBuilder<Cell = C> + CellOwnedIdBuilder + CellOwnedUnpairedReadsBuilder,
 {
     fn next_cell(&mut self) -> Result<Option<C>, crate::runtime::Error> {
         let archive = &mut self.inner_archive;

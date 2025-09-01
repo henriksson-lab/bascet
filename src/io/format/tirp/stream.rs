@@ -5,17 +5,17 @@ use std::sync::atomic::Ordering;
 
 use crate::common::{PageBuffer, UnsafeMutPtr};
 use crate::io::traits::{
-    CellIdBuilder, CellPagerefBuilder, CellPairedQualityBuilder, CellPairedReadBuilder,
-    CellUmiBuilder,
+    CellIdBuilder, CellPagerefsBuilder, CellPairedQualitiesBuilder, CellPairedReadsBuilder,
+    CellUmisBuilder,
 };
 use crate::io::{
     self,
     format::tirp,
-    traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
+    traits::{BascetCell, BascetCellBuilder, BascetFile, BascetCellStream},
 };
 use crate::{common, log_warning};
 
-pub struct Stream<Cell> {
+pub struct Stream {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
     inner_buf_pool: common::PageBufferPool,
@@ -23,11 +23,10 @@ pub struct Stream<Cell> {
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
 
-    inner_buf_truncated_line_len: usize,
-    _marker: std::marker::PhantomData<Cell>,
+    inner_buf_truncated_line_len: usize
 }
 
-impl<Cell> Stream<Cell> {
+impl Stream {
     pub fn new(file: &io::format::tirp::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
@@ -75,7 +74,7 @@ impl<Cell> Stream<Cell> {
                 ));
             }
 
-            Ok(Stream::<Cell> {
+            Ok(Stream {
                 inner_htsfileptr: UnsafeMutPtr::new(inner_hts_file),
                 // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
                 // the problem here is a cell getting allocated near the end of the buffer
@@ -89,8 +88,7 @@ impl<Cell> Stream<Cell> {
                 inner_buf_slice: &[],
                 inner_buf_ptr: UnsafeMutPtr::null(),
 
-                inner_buf_truncated_line_len: 0,
-                _marker: std::marker::PhantomData,
+                inner_buf_truncated_line_len: 0
             })
         }
     }
@@ -216,7 +214,7 @@ impl<Cell> Stream<Cell> {
     }
 }
 
-impl<Cell> Drop for Stream<Cell> {
+impl Drop for Stream {
     fn drop(&mut self) {
         unsafe {
             if !self.inner_htsfileptr.is_null() {
@@ -242,15 +240,15 @@ impl<Cell> Drop for Stream<Cell> {
     }
 }
 
-impl<Cell> BascetStream<Cell> for Stream<Cell>
+impl<C> BascetCellStream<C> for Stream
 where
-    Cell: BascetCell + 'static,
-    Cell::Builder: BascetCellBuilder<Cell = Cell>
+    C: BascetCell + 'static,
+    C::Builder: BascetCellBuilder<Cell = C>
         + CellIdBuilder
-        + CellPairedReadBuilder
-        + CellPairedQualityBuilder
-        + CellUmiBuilder
-        + CellPagerefBuilder,
+        + CellPairedReadsBuilder
+        + CellPairedQualitiesBuilder
+        + CellUmisBuilder
+        + CellPagerefsBuilder,
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
@@ -259,9 +257,9 @@ where
         self
     }
 
-    fn next_cell(&mut self) -> Result<Option<Cell>, crate::runtime::Error> {
+    fn next_cell(&mut self) -> Result<Option<C>, crate::runtime::Error> {
         let mut next_id: &[u8] = &[];
-        let mut builder = Cell::builder();
+        let mut builder = C::builder();
 
         loop {
             while let Some(pos_char_next_newline) = memchr::memchr(
