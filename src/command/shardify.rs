@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use clap::Args;
-use crossbeam::channel;
+use crossbeam::{channel, queue::ArrayQueue};
 use itertools::izip;
 use std::{
     fs::File,
@@ -23,11 +23,11 @@ pub const DEFAULT_THREADS_WORK: usize = 2;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
 support_which_stream! {
-    ShardifyInput => ShardifyStream
+    ShardifyInput => ShardifyStream<T: BascetCell>
     for formats [tirp]
 }
 support_which_writer! {
-    ShardifyOutput => ShardifyWriter<W: std::io::Write, C: BascetCell>
+    ShardifyOutput => ShardifyWriter<W: std::io::Write>
     for formats [tirp]
 }
 /// Commandline option: Take parsed reads and organize them as shards
@@ -94,7 +94,7 @@ impl ShardifyCMD {
 
             let thread_handle = thread::spawn(move || {
                 let thread_input = ShardifyInput::try_from_path(thread_input).unwrap();
-                let thread_stream: ShardifyStream =
+                let thread_stream: ShardifyStream<ShardifyCell> =
                     ShardifyStream::try_from_input(thread_input)
                         .unwrap()
                         .set_reader_threads(count_threads_per_stream);
@@ -139,16 +139,11 @@ impl ShardifyCMD {
         }
 
         let write_channels: Vec<_> = (0..count_writers)
-            .map(|_| channel::unbounded::<Option<Vec<ShardifyCell>>>())
+            .map(|_| channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16))
             .collect();
         let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
 
-        for (thread_output, (_, thread_rx)) in self
-            .path_out
-            .clone()
-            .into_iter()
-            .zip(write_channels.into_iter())
-        {
+        for (thread_output, (_, thread_rx)) in self.path_out.clone().into_iter().zip(write_channels.into_iter()) {
             let thread_output = ShardifyOutput::try_from_path(&thread_output).unwrap();
             let thread_file = std::fs::File::create(thread_output.path()).unwrap();
             let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
@@ -162,8 +157,8 @@ impl ShardifyCMD {
 
             let thread_handle = thread::spawn(move || {
                 while let Ok(Some(vec_records)) = thread_rx.recv() {
-                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.first().unwrap().get_cell().unwrap()));
-                    for cell in &vec_records {
+                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.try_read().unwrap().first().unwrap().get_cell().unwrap()));
+                    for cell in &*vec_records.read().unwrap() {
                         if let Err(e) = thread_shardify_writer.write_cell(cell) {
                             log_warning!("Failed to write cell"; "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
                         }
@@ -260,8 +255,9 @@ impl ShardifyCMD {
                 }
             }
 
-            let _ = write_senders[coordinator_writer_idx]
-                .send(Some(std::mem::take(&mut coordinator_vec_send)));
+            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(std::mem::take(
+                &mut coordinator_vec_send,
+            )))));
             coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
@@ -302,9 +298,24 @@ impl Drop for ShardifyCell {
 
 impl BascetCell for ShardifyCell {
     type Builder = ShardifyCellBuilder;
-
     fn builder() -> Self::Builder {
         Self::Builder::new()
+    }
+
+    fn get_cell(&self) -> Option<&[u8]> {
+        Some(self.cell)
+    }
+
+    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
+        Some(&self.reads)
+    }
+
+    fn get_qualities(&self) -> Option<&[(&[u8], &[u8])]> {
+        Some(&self.qualities)
+    }
+
+    fn get_umis(&self) -> Option<&[&[u8]]> {
+        Some(&self.umis)
     }
 }
 struct ShardifyCellBuilder {
@@ -332,85 +343,85 @@ impl ShardifyCellBuilder {
 }
 
 impl BascetCellBuilder for ShardifyCellBuilder {
-    type Cell = ShardifyCell;
+    type Token = ShardifyCell;
 
-    // #[inline(always)]
-    // fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
-    //     unsafe {
-    //         (*page_ptr.mut_ptr()).inc_ref();
-    //     }
-    //     self.page_refs.push(page_ptr);
-    //     self
-    // }
+    #[inline(always)]
+    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
+        unsafe {
+            (*page_ptr.mut_ptr()).inc_ref();
+        }
+        self.page_refs.push(page_ptr);
+        self
+    }
 
-    // // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
-    // // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
-    // fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
-    //     self.owned.push(id);
-    //     let slice = self.owned.last().unwrap().as_slice();
-    //     // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-    //     // and the CountsketchCell holds the _owned field to maintain this invariant
-    //     let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-    //     self.cell = Some(slice_with_lifetime);
-    //     self
-    // }
+    // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
+    // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
+    fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
+        self.owned.push(id);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        // and the CountsketchCell holds the _owned field to maintain this invariant
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.cell = Some(slice_with_lifetime);
+        self
+    }
 
-    // #[inline(always)]
-    // fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
-    //     self.owned.push(seq);
-    //     let slice = self.owned.last().unwrap().as_slice();
-    //     // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-    //     let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-    //     self.reads.push((slice_with_lifetime, &[]));
-    //     self
-    // }
+    #[inline(always)]
+    fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
+        self.owned.push(seq);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.reads.push((slice_with_lifetime, &[]));
+        self
+    }
 
-    // #[inline(always)]
-    // fn add_quality_owned(mut self, qual: Vec<u8>) -> Self {
-    //     self.owned.push(qual);
-    //     let slice = self.owned.last().unwrap().as_slice();
-    //     // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-    //     let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-    //     self.qualities.push((slice_with_lifetime, &[]));
-    //     self
-    // }
+    #[inline(always)]
+    fn add_quality_owned(mut self, qual: Vec<u8>) -> Self {
+        self.owned.push(qual);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.qualities.push((slice_with_lifetime, &[]));
+        self
+    }
 
-    // // NOTE: Here the idea is that for as long as the stream tokens are alive the underlying memory will be kept alive
-    // // by Arcs. For as long as these are valid the memory can be considered static even if it technically is not
-    // // this is a bit of a hack to make the underlying trait easier to use.
-    // // has the benefit of being much faster and more memory efficient since there is no copy overhead
-    // #[inline(always)]
-    // fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
-    //     self.cell = Some(slice);
-    //     self
-    // }
+    // NOTE: Here the idea is that for as long as the stream tokens are alive the underlying memory will be kept alive
+    // by Arcs. For as long as these are valid the memory can be considered static even if it technically is not
+    // this is a bit of a hack to make the underlying trait easier to use.
+    // has the benefit of being much faster and more memory efficient since there is no copy overhead
+    #[inline(always)]
+    fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
+        self.cell = Some(slice);
+        self
+    }
 
-    // #[inline(always)]
-    // fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
-    //     self.reads.push((r1, r2));
-    //     self
-    // }
-    // #[inline(always)]
-    // fn add_qp_slice(mut self, q1: &'static [u8], q2: &'static [u8]) -> Self {
-    //     self.qualities.push((q1, q2));
-    //     self
-    // }
+    #[inline(always)]
+    fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
+        self.reads.push((r1, r2));
+        self
+    }
+    #[inline(always)]
+    fn add_qp_slice(mut self, q1: &'static [u8], q2: &'static [u8]) -> Self {
+        self.qualities.push((q1, q2));
+        self
+    }
 
-    // #[inline(always)]
-    // fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
-    //     self.reads.push((slice, &[]));
-    //     self
-    // }
-    // #[inline(always)]
-    // fn add_quality_slice(mut self, slice: &'static [u8]) -> Self {
-    //     self.qualities.push((slice, &[]));
-    //     self
-    // }
+    #[inline(always)]
+    fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
+        self.reads.push((slice, &[]));
+        self
+    }
+    #[inline(always)]
+    fn add_quality_slice(mut self, slice: &'static [u8]) -> Self {
+        self.qualities.push((slice, &[]));
+        self
+    }
 
-    // fn add_umi_slice(mut self, umi: &'static [u8]) -> Self {
-    //     self.umis.push(umi);
-    //     self
-    // }
+    fn add_umi_slice(mut self, umi: &'static [u8]) -> Self {
+        self.umis.push(umi);
+        self
+    }
 
     #[inline(always)]
     fn build(self) -> ShardifyCell {

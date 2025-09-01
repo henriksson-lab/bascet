@@ -2,10 +2,7 @@ use std::io::Write;
 
 use itertools::izip;
 
-use crate::io::traits::{
-    BascetCellWrite, CellIdAccessor, CellPairedQualitiesAccessor, CellPairedReadsAccessor,
-    CellUmisAccessor,
-};
+use crate::io::traits::{BascetCell, BascetWrite};
 
 pub struct Writer<W>
 where
@@ -23,10 +20,7 @@ where
     }
 }
 
-impl<
-        W,
-        C: CellIdAccessor + CellPairedReadsAccessor + CellPairedQualitiesAccessor + CellUmisAccessor,
-    > BascetCellWrite<W, C> for Writer<W>
+impl<W> BascetWrite<W> for Writer<W>
 where
     W: std::io::Write,
 {
@@ -39,12 +33,15 @@ where
     }
 
     #[inline(always)]
-    fn write_cell(&mut self, cell: &C) -> Result<(), crate::runtime::Error> {
-        let id = cell.get_id();
+    fn write_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
+    where
+        C: BascetCell,
+    {
+        let id = cell.get_cell().unwrap();
         if let Some(ref mut writer) = self.inner {
-            let reads = cell.get_vec_paired_reads();
-            let quals = cell.get_vec_paired_qualities();
-            let umis = cell.get_vec_umis();
+            let reads = cell.get_reads().unwrap_or(&[]);
+            let quals = cell.get_qualities().unwrap_or(&[]);
+            let umis = cell.get_umis().unwrap_or(&[]);
 
             for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
                 // Write each component directly to avoid vector allocation

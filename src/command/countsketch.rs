@@ -27,11 +27,11 @@ pub const DEFAULT_KMER_SIZE: usize = 31;
 pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
 support_which_stream! {
-    CountsketchInput => CountsketchStream<C: BascetCell>
+    CountsketchInput => CountsketchStream<T: BascetCell>
     for formats [tirp, zip]
 }
 support_which_writer! {
-    CountsketchOutput => CountsketchWriter<W: std::io::Write, C: BascetCell>
+    CountsketchOutput => CountsketchWriter<W: std::io::Write>
     for formats [csv]
 }
 #[derive(Args)]
@@ -151,7 +151,9 @@ impl CountsketchCMD {
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
                     // log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell), "open" => write_rx.len());
-                    let _ = output_countsketch_writer.write_countsketch(&cell, &countsketch);
+                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch) {
+                        log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.cell), "error" => %e);
+                    }
                 }
                 log_info!("Write finished!");
                 let _ = output_countsketch_writer.get_writer().unwrap().flush();
@@ -299,6 +301,14 @@ impl BascetCell for CountsketchCell {
     fn builder() -> Self::Builder {
         CountsketchCellBuilder::new()
     }
+
+    fn get_cell(&self) -> Option<&[u8]> {
+        Some(self.cell)
+    }
+
+    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
+        Some(&self.reads)
+    }
 }
 
 struct CountsketchCellBuilder {
@@ -322,7 +332,54 @@ impl CountsketchCellBuilder {
 }
 
 impl BascetCellBuilder for CountsketchCellBuilder {
-    type Cell = CountsketchCell;
+    type Token = CountsketchCell;
+
+    #[inline(always)]
+    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer>) -> Self {
+        unsafe {
+            (*page_ptr.mut_ptr()).inc_ref();
+        }
+        self.page_refs.push(page_ptr);
+        self
+    }
+
+    fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
+        self.owned.push(id);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        // and the CountsketchCell holds the _owned field to maintain this invariant
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.cell = Some(slice_with_lifetime);
+        self
+    }
+
+    #[inline(always)]
+    fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
+        self.owned.push(seq);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.reads.push((slice_with_lifetime, &[]));
+        self
+    }
+
+    #[inline(always)]
+    fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
+        self.cell = Some(slice);
+        self
+    }
+
+    #[inline(always)]
+    fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
+        self.reads.push((slice, &[]));
+        self
+    }
+
+    #[inline(always)]
+    fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
+        self.reads.push((r1, r2));
+        self
+    }
 
     #[inline(always)]
     fn build(self) -> CountsketchCell {

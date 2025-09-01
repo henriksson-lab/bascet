@@ -1,11 +1,15 @@
 #[macro_export]
 macro_rules! support_which_stream {
     (
-        $input_enum:ident => $stream_enum:ident
+        $input_enum:ident => $stream_enum:ident<$generic:ident: $trait_bound:path>
         for formats [$($format:ident),* $(,)?]
     ) => {
         $crate::__generate_input_enum! {
             $input_enum for formats [$($format),*]
+        }
+
+        $crate::__generate_stream_enum! {
+            $input_enum => $stream_enum<$generic: $trait_bound> for formats [$($format),*]
         }
     };
 }
@@ -144,7 +148,7 @@ macro_rules! __generate_stream_enum {
             where
                 $generic: $trait_bound + 'static,
             {
-                $([<$format:camel>](crate::io::format::$format::Stream),)*
+                $([<$format:camel>](crate::io::format::$format::Stream<$generic>),)*
             }
 
             impl<$generic> $stream_enum<$generic>
@@ -155,7 +159,7 @@ macro_rules! __generate_stream_enum {
                     $(
                         if let $input_enum::[<$format:camel>](file) = input {
                             return Ok(Self::[<$format:camel>](
-                                crate::io::format::$format::Stream::new(&file)?
+                                crate::io::format::$format::Stream::<$generic>::new(&file)?
                             ));
                         }
                     )*

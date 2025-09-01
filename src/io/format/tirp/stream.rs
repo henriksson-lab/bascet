@@ -4,18 +4,14 @@ use std::fs::File;
 use std::sync::atomic::Ordering;
 
 use crate::common::{PageBuffer, UnsafeMutPtr};
-use crate::io::traits::{
-    CellIdBuilder, CellPagerefsBuilder, CellPairedQualitiesBuilder, CellPairedReadsBuilder,
-    CellUmisBuilder,
-};
 use crate::io::{
     self,
     format::tirp,
-    traits::{BascetCell, BascetCellBuilder, BascetFile, BascetCellStream},
+    traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
 use crate::{common, log_warning};
 
-pub struct Stream {
+pub struct Stream<T> {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
     inner_buf_pool: common::PageBufferPool,
@@ -23,10 +19,11 @@ pub struct Stream {
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
 
-    inner_buf_truncated_line_len: usize
+    inner_buf_truncated_line_len: usize,
+    _marker: std::marker::PhantomData<T>,
 }
 
-impl Stream {
+impl<T> Stream<T> {
     pub fn new(file: &io::format::tirp::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
@@ -74,7 +71,7 @@ impl Stream {
                 ));
             }
 
-            Ok(Stream {
+            Ok(Stream::<T> {
                 inner_htsfileptr: UnsafeMutPtr::new(inner_hts_file),
                 // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
                 // the problem here is a cell getting allocated near the end of the buffer
@@ -88,7 +85,8 @@ impl Stream {
                 inner_buf_slice: &[],
                 inner_buf_ptr: UnsafeMutPtr::null(),
 
-                inner_buf_truncated_line_len: 0
+                inner_buf_truncated_line_len: 0,
+                _marker: std::marker::PhantomData,
             })
         }
     }
@@ -130,13 +128,17 @@ impl Stream {
                     // the partial is contained after the end of old_buf.
                     let buf_previous = &self.inner_buf_slice;
                     let buf_previous_ptr = buf_previous.as_ptr().add(buf_previous.len());
-                    (0, buf_previous_ptr, self.inner_buf_truncated_line_len)
+                    (
+                        0,
+                        buf_previous_ptr,
+                        self.inner_buf_truncated_line_len,
+                    )
                 }
             };
 
         // copy partial data
         // copylen = 0 makes this compile down to noop => useful for when we dont want to copy
-        // SAFETY: [JD] in _theory_ this CAN point to stale memory. I have verified this for correctness on
+        // SAFETY: [JD] in _theory_ this CAN point to stale memory. I have verified this for correctness on 
         // a ~400GiB dataset and compared the resulting slice with a cloned approach and found
         // no stale memory hits. It is _likely_ fine, but cannot promise.
         let buf_slice_ptr = alloc_res.buffer_slice_mut_ptr().sub(alloc_ptr_offset);
@@ -185,7 +187,7 @@ impl Stream {
                     return Err(crate::runtime::Error::parse_error(
                         "load_next_buf",
                         Some("No complete lines found in buffer. Is this a valid file?"),
-                    ));
+                    ))
                 }
             }
             0 => {
@@ -214,7 +216,7 @@ impl Stream {
     }
 }
 
-impl Drop for Stream {
+impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
         unsafe {
             if !self.inner_htsfileptr.is_null() {
@@ -240,15 +242,10 @@ impl Drop for Stream {
     }
 }
 
-impl<C> BascetCellStream<C> for Stream
+impl<T> BascetStream<T> for Stream<T>
 where
-    C: BascetCell + 'static,
-    C::Builder: BascetCellBuilder<Cell = C>
-        + CellIdBuilder
-        + CellPairedReadsBuilder
-        + CellPairedQualitiesBuilder
-        + CellUmisBuilder
-        + CellPagerefsBuilder,
+    T: BascetCell + 'static,
+    T::Builder: BascetCellBuilder<Token = T>,
 {
     fn set_reader_threads(self, n_threads: usize) -> Self {
         unsafe {
@@ -257,9 +254,9 @@ where
         self
     }
 
-    fn next_cell(&mut self) -> Result<Option<C>, crate::runtime::Error> {
+    fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
         let mut next_id: &[u8] = &[];
-        let mut builder = C::builder();
+        let mut builder = T::builder();
 
         loop {
             while let Some(pos_char_next_newline) = memchr::memchr(
@@ -282,11 +279,8 @@ where
                 // SAFETY: transmute slice to static lifetime kept alive by ref counter
                 let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
                 if next_id.is_empty() {
-                    // NOTE: Add page ref only when starting a cell to avoid leaking refs on empty streams
-                    builder = builder
-                        .add_id(static_cell_id)
-                        .add_pageref(self.inner_buf_ptr);
-
+                    // NOTE: Add page ref only when starting a cell to avoid leaking refs on empty streams 
+                    builder = builder.add_cell_id_slice(static_cell_id).add_page_ref(self.inner_buf_ptr);
                     next_id = cell_id;
                 } else if next_id != cell_id {
                     self.inner_buf_cursor = line_start;
@@ -301,9 +295,9 @@ where
                 let static_umi: &'static [u8] = unsafe { std::mem::transmute(cell_rp.umi) };
 
                 builder = builder
-                    .add_paired_read(static_r1, static_r2)
-                    .add_paired_quality(static_q1, static_q2)
-                    .add_umi(static_umi);
+                    .add_rp_slice(static_r1, static_r2)
+                    .add_qp_slice(static_q1, static_q2)
+                    .add_umi_slice(static_umi);
             }
 
             // No more complete lines in current buffer
@@ -314,7 +308,7 @@ where
                         continue;
                     }
 
-                    builder = builder.add_pageref(self.inner_buf_ptr);
+                    builder = builder.add_page_ref(self.inner_buf_ptr);
                 }
                 None => {
                     // EOF

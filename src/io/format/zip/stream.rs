@@ -7,21 +7,19 @@ use std::{
 use zip::{HasZipMetadata, ZipArchive};
 
 use crate::{
-    io::traits::{
-        BascetCell, BascetCellBuilder, BascetFile, BascetCellStream, CellOwnedIdBuilder,
-        CellOwnedUnpairedReadsBuilder,
-    },
+    io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
     log_critical, log_info,
 };
 
-pub struct Stream {
+pub struct Stream<T> {
     inner_archive: ZipArchive<std::fs::File>,
     inner_files: Vec<String>,
     inner_files_cursor: usize,
-    inner_worker_threadpool: threadpool::ThreadPool
+    inner_worker_threadpool: threadpool::ThreadPool,
+    _marker: std::marker::PhantomData<T>,
 }
 
-impl Stream {
+impl<T> Stream<T> {
     pub fn new(file: &crate::io::format::zip::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
@@ -46,21 +44,21 @@ impl Stream {
             .map(|s| String::from(s))
             .collect();
 
-        Ok(Stream {
+        Ok(Stream::<T> {
             inner_archive: archive,
             inner_files: files,
             inner_files_cursor: 0,
-            inner_worker_threadpool: threadpool::ThreadPool::new(1)
+            inner_worker_threadpool: threadpool::ThreadPool::new(1),
+            _marker: std::marker::PhantomData,
         })
     }
 }
 
-impl<C> BascetCellStream<C> for Stream
+impl<T> BascetStream<T> for Stream<T>
 where
-    C: BascetCell + 'static,
-    C::Builder: BascetCellBuilder<Cell = C> + CellOwnedIdBuilder + CellOwnedUnpairedReadsBuilder,
+    T: BascetCell + Send + 'static,
 {
-    fn next_cell(&mut self) -> Result<Option<C>, crate::runtime::Error> {
+    fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
         let archive = &mut self.inner_archive;
 
         if self.inner_files_cursor >= self.inner_files.len() {
@@ -102,7 +100,7 @@ where
         };
 
         let id = file_stem.as_encoded_bytes();
-        let mut builder = C::builder().set_owned_id(id.to_vec());
+        let mut builder = T::builder().add_cell_id_owned(id.to_vec());
         let mut cursor = 0;
         let mut buffer: Vec<u8> = Vec::new();
 
@@ -132,7 +130,7 @@ where
                             }
                         };
 
-                        builder = builder.push_owned_unpaired_read(seq.to_vec());
+                        builder = builder.add_sequence_owned(seq.to_vec());
                         cursor += next_pos + 1;
                     }
 

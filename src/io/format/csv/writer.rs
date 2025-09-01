@@ -1,7 +1,4 @@
-use crate::{
-    common,
-    io::traits::{BascetCellWrite, CellIdAccessor},
-};
+use crate::{common, io::traits::BascetWrite};
 
 pub struct Writer<W>
 where
@@ -19,7 +16,7 @@ where
     }
 }
 
-impl<W, C: CellIdAccessor> BascetCellWrite<W, C> for Writer<W>
+impl<W> BascetWrite<W> for Writer<W>
 where
     W: std::io::Write,
 {
@@ -31,21 +28,39 @@ where
         self
     }
 
-    fn write_countsketch(
+    fn write_countsketch<C>(
         &mut self,
         cell: &C,
         countsketch: &crate::kmer::kmc_counter::CountSketch,
-    ) -> Result<(), crate::runtime::Error> {
+    ) -> Result<(), crate::runtime::Error>
+    where
+        C: crate::io::traits::BascetCell,
+    {
         if let Some(ref mut writer) = self.inner {
-            writer.write_all(cell.get_id())?;
-            writer.write_all(&[common::U8_CHAR_TAB])?;
-            writer.write_all(&countsketch.total.to_string().as_bytes())?;
+            let id = match cell.get_cell() {
+                Some(id) => id,
+                None => {
+                    return Err(crate::runtime::Error::parse_error(
+                        "countsketch writer",
+                        Some("Missing cell ID"),
+                    ))
+                }
+            };
+            let n = match cell.get_reads() {
+                Some(reads) => reads.len().to_string().into_bytes(),
+                None => b"0".to_vec(),
+            };
+
+            // NOTE: in theory these can fail writing, however, for performance reasons, this is unchecked
+            let _ = writer.write_all(id);
+            let _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            let _ = writer.write_all(&n);
 
             for value in countsketch.sketch.iter() {
-                writer.write_all(&[common::U8_CHAR_TAB])?;
-                writer.write_all(value.to_string().as_bytes())?;
+                let _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                let _ = writer.write_all(value.to_string().as_bytes());
             }
-            writer.write_all(&[common::U8_CHAR_NEWLINE])?;
+            let _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
         }
 
         Ok(())
