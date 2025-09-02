@@ -86,3 +86,4 @@ smallvec = "1.15.1"
 fraction = "0.15.3"
 
 memory-stats = "1.0.0"
+rtrb = "0.3.2"
