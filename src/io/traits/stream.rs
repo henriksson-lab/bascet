@@ -1,6 +1,6 @@
 use crate::command::countsketch::CountsketchStream;
 use crate::command::shardify::ShardifyStream;
-use crate::log_debug;
+use crate::{common, log_debug};
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetStream<T>: Sized
@@ -13,6 +13,8 @@ where
         self
     }
 }
+
+pub trait BascetCellGuard {}
 
 pub trait BascetCell: Send + Sized {
     type Builder: BascetCellBuilder<Token = Self>;
@@ -31,6 +33,7 @@ pub trait BascetCell: Send + Sized {
         None
     }
 }
+
 pub trait BascetCellBuilder: Sized {
     type Token: BascetCell;
 
@@ -38,41 +41,44 @@ pub trait BascetCellBuilder: Sized {
     fn build(self) -> Self::Token;
 
     // Optional methods with default implementations
-    fn add_cell_id_slice(self, id: &[u8]) -> Self {
+
+    fn add_page_ref(self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
+        log_debug!("Method 'add_page_ref' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
+        self
+    }
+
+    // Methods that take slices from buffer pages (with 'page lifetime)
+    fn add_cell_id_slice(self, id: &'static [u8]) -> Self {
         log_debug!("Method 'add_cell_id_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
-    fn add_rp_slice(self, r1: &[u8], r2: &[u8]) -> Self {
+    fn add_rp_slice(self, r1: &'static [u8], r2: &'static [u8]) -> Self {
         log_debug!("Method 'add_rp_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
-    fn add_qp_slice(self, q1: &[u8], q2: &[u8]) -> Self {
+    fn add_qp_slice(self, q1: &'static [u8], q2: &'static [u8]) -> Self {
         log_debug!("Method 'add_qp_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
-    fn add_sequence_slice(self, sequence: &[u8]) -> Self {
+    fn add_sequence_slice(self, sequence: &'static [u8]) -> Self {
         log_debug!("Method 'add_sequence_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
-    fn add_quality_slice(self, qualities: &[u8]) -> Self {
+    fn add_quality_slice(self, qualities: &'static [u8]) -> Self {
         log_debug!("Method 'add_quality_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
-    fn add_umi_slice(self, umi: &[u8]) -> Self {
+    fn add_umi_slice(self, umi: &'static [u8]) -> Self {
         log_debug!("Method 'add_umi_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
-    fn add_underlying(self, other: std::sync::Arc<Vec<u8>>) -> Self {
-        log_debug!("Method 'add_underlying' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
-        self
-    }
-
+    // Lower performance, since these would often require copies in some way.
     fn add_cell_id_owned(self, id: Vec<u8>) -> Self {
         log_debug!("Method 'add_cell_id_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
@@ -103,7 +109,7 @@ pub trait BascetCellBuilder: Sized {
         self
     }
 
-    fn add_metadata_slice(self, meta: &[u8]) -> Self {
+    fn add_metadata_slice(self, meta: &'static [u8]) -> Self {
         log_debug!("Method 'add_metadata_slice' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
