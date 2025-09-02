@@ -55,10 +55,26 @@ pub struct ShardifyCMD {
 
 impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
+        log_info!("Starting Shardify";
+            "input files" => self.path_in.len(),
+            "output files" => self.path_out.len(),
+            "include list" => ?self.path_include,
+            "total threads" => self.threads_total,
+            "read threads" => self.threads_read,
+            "work threads" => self.threads_work
+        );
+
         let filter = read_filter(self.path_include.as_deref());
         let count_streams = self.path_in.len();
         let count_writers = self.path_out.len();
         let count_threads_per_stream = (self.threads_read / count_streams).max(1);
+
+        log_info!("Thread allocation";
+            "streams" => count_streams,
+            "writers" => count_writers,
+            "threads per stream" => count_threads_per_stream,
+            "cells in filter" => filter.len()
+        );
 
         let (vec_coordinator_producers, vec_coordinator_consumers): (
             &'static mut Vec<rtrb::Producer<ShardifyCell>>,
@@ -93,27 +109,47 @@ impl ShardifyCMD {
             let thread_tx = stream_tx.clone();
 
             let thread_handle = thread::spawn(move || {
-                let thread_input = ShardifyInput::try_from_path(thread_input).unwrap();
-                let thread_stream: ShardifyStream<ShardifyCell> =
-                    ShardifyStream::try_from_input(thread_input)
-                        .unwrap()
-                        .set_reader_threads(count_threads_per_stream);
+                log_info!("Starting stream reader"; "thread" => thread_idx, "path" => ?thread_input);
+                
+                let thread_input_path = thread_input.clone();
+                let thread_input = match ShardifyInput::try_from_path(&thread_input) {
+                    Ok(input) => input,
+                    Err(e) => {
+                        log_critical!("Failed to open input file"; "path" => ?thread_input_path, "error" => %e);
+                    }
+                };
+                
+                let thread_stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(thread_input) {
+                    Ok(stream) => stream.set_reader_threads(count_threads_per_stream),
+                    Err(e) => {
+                        log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
+                    }
+                };
                 let thread_px = thread_px;
+
+                let mut cells_processed = 0;
+                let mut cells_filtered = 0;
+                let mut parse_errors = 0;
 
                 for token_cell_result in thread_stream {
                     let token_cell = match token_cell_result {
                         Ok(token_cell) => token_cell,
-                        Err(_) => todo!(),
+                        Err(e) => match e {
+                            crate::runtime::Error::ParseError { .. } => {
+                                log_warning!("Parse error"; "thread" => thread_idx, "error" => %e);
+                                parse_errors += 1;
+                                continue;
+                            }
+                            _ => {
+                                log_critical!("Stream error"; "thread" => thread_idx, "error" => %e);
+                            }
+                        },
                     };
-                    // log_info!("Filtering"; "cell" => %String::from_utf8_lossy(token_cell.cell));
                     if !thread_filter.contains(token_cell.cell) {
+                        cells_filtered += 1;
                         drop(token_cell);
                         continue;
                     }
-                    // NOTE: this gets a valid cell but between here and pop/peeking from rtrb,
-                    // data corruption occurs
-                    // println!("");
-                    // log_info!("Passed Filter!"; "cell" => %String::from_utf8_lossy(token_cell.cell));
 
                     let mut token_cell = token_cell;
 
@@ -130,10 +166,25 @@ impl ShardifyCMD {
                         }
                     }
                     let _ = thread_tx.send(Some(()));
+                    cells_processed += 1;
+
+                    if cells_processed % 1000 == 0 {
+                        log_info!("Processing progress"; 
+                            "thread" => thread_idx, 
+                            "cells processed" => cells_processed,
+                            "cells filtered" => cells_filtered,
+                            "parse errors" => parse_errors
+                        );
+                    }
                 }
                 thread_expired.write().unwrap().push(thread_idx);
                 let _ = thread_tx.send(None);
-                log_info!("Stream finished!");
+                log_info!("Stream reader completed"; 
+                    "thread" => thread_idx,
+                    "total processed" => cells_processed,
+                    "filtered out" => cells_filtered,
+                    "parse errors" => parse_errors
+                );
             });
             vec_reader_handles.push(thread_handle);
         }
@@ -143,28 +194,54 @@ impl ShardifyCMD {
             .collect();
         let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
 
-        for (thread_output, (_, thread_rx)) in self.path_out.clone().into_iter().zip(write_channels.into_iter()) {
-            let thread_output = ShardifyOutput::try_from_path(&thread_output).unwrap();
-            let thread_file = std::fs::File::create(thread_output.path()).unwrap();
+        for (thread_idx, (thread_output, (_, thread_rx))) in self.path_out.clone().into_iter().zip(write_channels.into_iter()).enumerate() {
+            log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => ?thread_output);
+            
+            let thread_output_path = thread_output.clone();
+            let thread_output = match ShardifyOutput::try_from_path(&thread_output) {
+                Ok(output) => output,
+                Err(e) => {
+                    log_critical!("Failed to identify output file"; "path" => ?thread_output_path, "error" => %e);
+                }
+            };
+            
+            let thread_file = match std::fs::File::create(thread_output.path()) {
+                Ok(file) => file,
+                Err(e) => {
+                    log_critical!("Failed to create output file"; "path" => ?thread_output.path(), "error" => %e);
+                }
+            };
+            
             let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
-            let thread_bgzf_writer =
-                BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
+            let thread_bgzf_writer = BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
 
             let mut thread_shardify_writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
-                ShardifyWriter::try_from_output(thread_output)
-                    .unwrap()
-                    .set_writer(thread_bgzf_writer);
+                match ShardifyWriter::try_from_output(thread_output) {
+                    Ok(writer) => writer.set_writer(thread_bgzf_writer),
+                    Err(e) => {
+                        log_critical!("Failed to create output writer"; "path" => ?thread_output_path, "error" => %e);
+                    }
+                };
 
             let thread_handle = thread::spawn(move || {
+                let mut cells_written = 0;
+                
                 while let Ok(Some(vec_records)) = thread_rx.recv() {
-                    log_info!("Writing"; "cell" => %String::from_utf8_lossy(vec_records.try_read().unwrap().first().unwrap().get_cell().unwrap()));
+                    let batch_size = vec_records.read().unwrap().len();
+                    
                     for cell in &*vec_records.read().unwrap() {
                         if let Err(e) = thread_shardify_writer.write_cell(cell) {
-                            log_warning!("Failed to write cell"; "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
+                            log_warning!("Failed to write cell"; "thread" => thread_idx, "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
                         }
                     }
+                    
+                    cells_written += 1;
+                    
+                    if cells_written % 100 == 0 {
+                        log_info!("Writer progress"; "thread" => thread_idx, "cells written" => cells_written);
+                    }
                 }
-                log_info!("Writer finished!");
+                log_info!("Writer thread completed"; "thread" => thread_idx, "total cells" => cells_written);
                 let _ = thread_shardify_writer.get_writer().unwrap().flush();
             });
             vec_writer_handles.push(thread_handle);
@@ -183,9 +260,9 @@ impl ShardifyCMD {
                 Ok(Some(())) => {}
                 Ok(None) => {
                     coordinator_count_streams_finished += 1;
-                    println!("incr {coordinator_count_streams_finished}/{count_streams}");
+                    log_info!("Stream finished"; "finished" => coordinator_count_streams_finished, "total" => count_streams);
                     if coordinator_count_streams_finished == count_streams {
-                        println!("Closing reciever");
+                        log_info!("All streams completed, closing coordinator");
                         break;
                     }
                 }
@@ -272,6 +349,13 @@ impl ShardifyCMD {
             handle.join().expect("Writer thread panicked");
         }
         log_info!("Write handles closed");
+        
+        log_info!("Shardify complete"; 
+            "input files processed" => self.path_in.len(),
+            "output files created" => self.path_out.len(),
+            "filter cells" => filter.len()
+        );
+        
         Ok(())
     }
 }
