@@ -33,9 +33,6 @@ pub enum Error {
         context: String,
         msg: Option<String>,
     },
-
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
 }
 
 impl Error {
@@ -83,11 +80,6 @@ impl Error {
             context: context.into(),
             msg: msg.map(|m| m.into()),
         }
-    }
-
-    #[cold]
-    pub fn io_error(error: std::io::Error) -> Self {
-        Error::IoError(error)
     }
 
     pub fn format_msg_as_detail(msg: &Option<String>) -> String {
