@@ -51,8 +51,8 @@ impl ConstructFromPath<TirpBascetShardReader> for TirpBascetShardReaderFactory {
 ///////////////////////////////
 /// A reader of TIRPs as shards
 pub struct TirpBascetShardReader {
-    pub tabix_reader: TabixReader, // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
-    current_cell: CellID,
+    pub tabix_reader: TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    current_cell: CellID
 }
 impl TirpBascetShardReader {
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {

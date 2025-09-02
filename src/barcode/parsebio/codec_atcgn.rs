@@ -24,27 +24,28 @@ const NT1_LOOKUP: [u8; 256 as usize] = {
     table
 };
 
+
 ///////////////////////////////
 /// Lookup table for NN where N is any of ATCGN.
 /// Maps compressed 2xN, where N is any of ATCGN, to 0..255.
 /// ie compresses it to a single byte
-const fn generate_nt2_table() -> [u8; 256 * 256] {
+const fn generate_nt2_table() -> [u8; 256*256] {
     const NUCLEOTIDES: [u8; 5] = [b'A', b'T', b'G', b'C', b'N'];
-    let mut table = [0u8; 256 * 256];
+    let mut table = [0u8;256*256];
 
     const fn generate_nt2_value(a: u8, b: u8) -> u8 {
         (NT1_LOOKUP[(a) as usize] << 4) | NT1_LOOKUP[(b) as usize]
     }
 
-    let mut i = 0;
-    while i < 5 * 5 {
-        let n1 = NUCLEOTIDES[i / 5];
-        let n2 = NUCLEOTIDES[i % 5];
-        let idx_u8 = [n1, n2];
+    let mut i=0;
+    while i<5*5 {
+        let n1 = NUCLEOTIDES[i/5];
+        let n2 = NUCLEOTIDES[i%5];
+        let idx_u8=[n1,n2];
         let idx_u16 = concat_u8_u16(&idx_u8);
 
         //let idx = calculate_index(n1, n2);
-
+        
         table[idx_u16 as usize] = generate_nt2_value(n1, n2);
 
         i += 1;
@@ -57,20 +58,24 @@ const fn generate_nt2_table() -> [u8; 256 * 256] {
 /// Map compressed NN => single byte
 const NT2_LOOKUP: [u8; 256 * 256] = generate_nt2_table();
 
+
 ///////////////////////////////
-///
+/// 
 /// Hot-encode ATCGN as 4-bits per base
-///
+/// 
 /// N will be encoded as 0, meaning that it has equal hamming distance to all other bases
-///
+/// 
 #[derive(Clone, Copy)]
-pub struct HotEncodeATCGN {}
+pub struct HotEncodeATCGN {
+}
 impl HotEncodeATCGN {
+
     ///////////////////////////////
     /// Encode 8bp, in total 32 bits
     #[inline(always)]
     pub fn encode_8bp(bytes: &[u8; 8]) -> u32 {
-        //This code contains no unsafe blocks but assumes that the rust compiler is able to optimize
+        
+        //This code contains no unsafe blocks but assumes that the rust compiler is able to optimize 
 
         //Option for masking here
         //https://doc.rust-lang.org/nightly/core/simd/struct.Mask.html
@@ -89,28 +94,28 @@ impl HotEncodeATCGN {
         let idx2 = concat_u8_u16(&sub2);
         let idx3 = concat_u8_u16(&sub3);
         let idx4 = concat_u8_u16(&sub4);
-
-        let mut lookup = [0, 0, 0, 0 as u8];
+        
+        let mut lookup = [0,0,0,0 as u8];
         lookup[0] = NT2_LOOKUP[idx1 as usize];
         lookup[1] = NT2_LOOKUP[idx2 as usize];
         lookup[2] = NT2_LOOKUP[idx3 as usize];
         lookup[3] = NT2_LOOKUP[idx4 as usize];
 
-        let ret = u32::from(lookup[0])
-            | (u32::from(lookup[1]) << 8)
-            | (u32::from(lookup[2]) << 16)
-            | (u32::from(lookup[3]) << 24);
+        let ret = u32::from(lookup[0]) | (u32::from(lookup[1])<<8) | (u32::from(lookup[2])<<16) | (u32::from(lookup[3])<<24);       
 
         ret
     }
 
+
+
+
+
     ///////////////////////////////
     /// Encode 16bp, in total 64 bits
     #[inline(always)]
-    pub fn encode_16bp(bytes: &[u8]) -> u64 {
-        //; 16
-
-        //This code contains no unsafe blocks but assumes that the rust compiler is able to optimize
+    pub fn encode_16bp(bytes: &[u8]) -> u64 { //; 16
+        
+        //This code contains no unsafe blocks but assumes that the rust compiler is able to optimize 
         let idx1 = u16::from_ne_bytes([bytes[0], bytes[1]]);
         let idx2 = u16::from_ne_bytes([bytes[2], bytes[3]]);
         let idx3 = u16::from_ne_bytes([bytes[4], bytes[5]]);
@@ -120,7 +125,8 @@ impl HotEncodeATCGN {
         let idx7 = u16::from_ne_bytes([bytes[12], bytes[13]]);
         let idx8 = u16::from_ne_bytes([bytes[14], bytes[15]]);
 
-        let mut lookup = [0, 0, 0, 0, 0, 0, 0, 0 as u8];
+
+        let mut lookup = [0,0,0,0, 0,0,0,0 as u8];
         lookup[0] = NT2_LOOKUP[idx1 as usize];
         lookup[1] = NT2_LOOKUP[idx2 as usize];
         lookup[2] = NT2_LOOKUP[idx3 as usize];
@@ -137,7 +143,17 @@ impl HotEncodeATCGN {
         ret
     }
 
-    pub fn closest_by_hamming_u32(query: u32, candidates: &[u32]) -> (usize, u32) {
+
+
+
+
+
+
+
+    pub fn closest_by_hamming_u32(
+        query: u32, 
+        candidates: &[u32]) -> (usize, u32) {
+
         //Compute each hamming distance first. We need it later.
         //By doing this separate from testing, this hopefully gets vectorized
         let all_dist: Vec<u32> = candidates
@@ -149,16 +165,23 @@ impl HotEncodeATCGN {
         let (min_index, min_dist) = all_dist
             .iter()
             .enumerate()
-            .min_by_key(|(_index, &this_dist)| this_dist)
+            .min_by_key(|(_index,&this_dist)| this_dist)
             .unwrap();
         //Note that there is SIMD for finding index of smallest entry. this requires memory alignment!
-        //https://doc.rust-lang.org/beta/core/arch/x86/fn._mm_minpos_epu16.html
+        //https://doc.rust-lang.org/beta/core/arch/x86/fn._mm_minpos_epu16.html 
         //https://www.felixcloutier.com/x86/phminposuw
+
 
         (min_index, *min_dist)
     }
 
-    pub fn closest_by_hamming_u64(query: u64, candidates: &[u64]) -> (usize, u32) {
+
+
+
+    pub fn closest_by_hamming_u64(
+        query: u64, 
+        candidates: &[u64]) -> (usize, u32) {
+
         //Compute each hamming distance first. We need it later.
         //By doing this separate from testing, this hopefully gets vectorized
         let all_dist: Vec<u32> = candidates
@@ -170,48 +193,58 @@ impl HotEncodeATCGN {
         let (min_index, min_dist) = all_dist
             .iter()
             .enumerate()
-            .min_by_key(|(_index, &this_dist)| this_dist)
+            .min_by_key(|(_index,&this_dist)| this_dist)
             .unwrap();
 
         (min_index, *min_dist)
     }
 
+
+
     ///////////////////////////////
     /// Computes the bitwise Hamming distance between two hot-encoded barcodes.
     /// Not XOR; we check how many bits agree, then subtract this from the maximum.
-    ///
+    /// 
     /// Could speed up by instead returning similarity and maximizing in the caller
     #[inline(always)]
     pub fn bitwise_hamming_distance_u32(a: u32, b: u32) -> u32 {
-        let ret = 8 - (a & b).count_ones(); //Distance can be at most 8
-                                            /*
-                                            println!("{:b}", a);
-                                            println!("{:b}", b);
-                                            println!("{:}", ret);
-                                            panic!("ad");
-                                             */
+        let ret = 8 - (a & b).count_ones();  //Distance can be at most 8
+        /*
+        println!("{:b}", a);
+        println!("{:b}", b);
+        println!("{:}", ret);
+        panic!("ad");
+         */
 
         ret
     }
+
+
 
     ///////////////////////////////
     /// Computes the bitwise Hamming distance between two hot-encoded barcodes.
     /// Not XOR; we check how many bits agree, then subtract this from the maximum
     #[inline(always)]
     pub fn bitwise_hamming_distance_u64(a: u64, b: u64) -> u32 {
-        let ret = 16 - (a & b).count_ones(); //Distance can be at most 16
-                                             /*
-                                             println!("{:b}", a);
-                                             println!("{:b}", b);
-                                             println!("{:}", ret);
-                                             panic!("ad");
-                                              */
+        let ret = 16 - (a & b).count_ones();  //Distance can be at most 16
+        /*
+        println!("{:b}", a);
+        println!("{:b}", b);
+        println!("{:}", ret);
+        panic!("ad");
+         */
 
         ret
     }
+
+
+
 }
+
 
 #[inline(always)]
 pub const fn concat_u8_u16(vec: &[u8; 2]) -> u16 {
-    ((vec[1] as u16) << 8) | (vec[0] as u16)
+    ((vec[1] as u16) <<8)  | (vec[0] as u16)
 }
+
+

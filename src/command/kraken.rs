@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
-use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 
 #[derive(Args)]
 pub struct KrakenCMD {
@@ -52,7 +52,7 @@ impl Kraken {
     /// Run the algorithm
     pub fn run(params: &Arc<Kraken>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
-        let mut mm = SparseMatrixAnnDataWriter::new();
+        let mut mm = SparseMatrixAnnDataBuilder::new();
 
         //Open input file
         let file_in = File::open(&params.path_input).unwrap();

@@ -8,7 +8,7 @@ use rust_htslib::bam::record::Record as BamRecord;
 use rust_htslib::bam::Read;
 use rust_htslib::htslib::uint;
 
-use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 
 use super::determine_thread_counts_1;
 
@@ -69,7 +69,7 @@ pub struct CountChrom {
 impl CountChrom {
     /// Run the algorithm
     pub fn run(params: &CountChrom) -> anyhow::Result<()> {
-        let mut cnt_mat = SparseMatrixAnnDataWriter::new();
+        let mut cnt_mat = SparseMatrixAnnDataBuilder::new();
 
         //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads.
         //cannot be TIRF; if we divide up reads we risk double counting
