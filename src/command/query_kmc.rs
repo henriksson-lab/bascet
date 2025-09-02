@@ -6,7 +6,7 @@ use std::io::BufReader;
 use std::io::Read;
 use std::sync::Arc;
 
-use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
 use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
@@ -79,7 +79,7 @@ pub struct QueryKmc {}
 impl QueryKmc {
     pub fn run(params: &Arc<QueryKmcParams>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
-        let mut mm = SparseMatrixAnnDataBuilder::new();
+        let mut mm = SparseMatrixAnnDataWriter::new();
 
         //crate::utils::check_kmc_tools().unwrap();
 
@@ -186,7 +186,7 @@ impl QueryKmc {
 pub fn count_from_dump(
     cell_index: u32,
     features_reference: &HashMap<String, u32>,
-    mm: &mut SparseMatrixAnnDataBuilder,
+    mm: &mut SparseMatrixAnnDataWriter,
     reader: &mut BufReader<impl Read>,
 ) {
     for (_feature_index, rline) in reader.lines().enumerate() {

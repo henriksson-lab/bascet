@@ -6,8 +6,7 @@ From: deps.sif
     . "$HOME/.cargo/env"
 
 %files
-    ../src        /src/bascet/src
-    ../.cargo     /src/bascet/.cargo
+    ../src /src/bascet/src
     ../Cargo.toml /src/bascet/Cargo.toml
 
 %post
@@ -16,12 +15,12 @@ From: deps.sif
     ### build bascet
     . "$HOME/.cargo/env"
     cd /src/bascet
-    cargo +nightly build --profile=release
-    #cargo +nightly build
+    #cargo +nightly build --profile=release
+    cargo +nightly build
 
     ### link bascet to where it should be
-    cp /src/bascet/target/release/bascet /bin/bascet
-    #cp /src/bascet/target/debug/bascet /bin/bascet
+    #cp /src/bascet/target/release/bascet /bin/bascet
+    cp /src/bascet/target/debug/bascet /bin/bascet
 
     ### cleanup
     rm -Rf /src/bascet
