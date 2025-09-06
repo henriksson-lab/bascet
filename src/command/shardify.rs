@@ -51,6 +51,12 @@ pub struct ShardifyCMD {
     threads_read: usize,
     #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
     threads_work: usize,
+    
+    // Stream buffer configuration
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
+    pub buffer_size_mb: usize,
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
+    pub page_size_mb: usize,
 }
 
 impl ShardifyCMD {
@@ -103,6 +109,11 @@ impl ShardifyCMD {
         let global_cells_processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let global_cells_kept = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
+        // Extract buffer configuration before the loop
+        let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
+        let page_size_bytes = self.page_size_mb * 1024 * 1024;
+        let num_pages = buffer_size_bytes / page_size_bytes;
+
         // bounds given by rtrb, this is only a notifier
         let (stream_tx, stream_rx) = channel::unbounded::<Option<()>>();
         for (thread_idx, (thread_input, thread_px)) in
@@ -126,7 +137,9 @@ impl ShardifyCMD {
                 };
                 
                 let thread_stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(thread_input) {
-                    Ok(stream) => stream.set_reader_threads(count_threads_per_stream),
+                    Ok(stream) => stream
+                        .set_reader_threads(count_threads_per_stream)
+                        .set_pagebuffer_config(num_pages, page_size_bytes),
                     Err(e) => {
                         log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
                     }
@@ -148,20 +161,26 @@ impl ShardifyCMD {
                     };
                     
                     let global_processed = global_processed_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    
                     if !thread_filter.contains(token_cell.cell) {
                         drop(token_cell);
                         continue;
                     }
 
                     let global_kept = global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if global_kept % 100 == 0 {
+                        log_info!("Processing"; 
+                            "cells processed" => global_processed,
+                            "cells kept" => global_kept
+                        );
+                    }
+
 
                     let mut token_cell = token_cell;
-
                     let mut rtrb_count_spins = 0;
                     loop {
                         match thread_px.push(token_cell) {
                             Ok(_) => {
+                                let _ = thread_tx.send(Some(()));
                                 break;
                             }
                             Err(rtrb::PushError::Full(ret)) => {
@@ -169,14 +188,6 @@ impl ShardifyCMD {
                                 spin_or_park(&mut rtrb_count_spins, 100);
                             }
                         }
-                    }
-                    let _ = thread_tx.send(Some(()));
-
-                    if global_kept % 100 == 0 {
-                        log_info!("Processing"; 
-                            "cells processed" => global_processed,
-                            "cells kept" => global_kept
-                        );
                     }
                 }
                 thread_expired.write().unwrap().push(thread_idx);

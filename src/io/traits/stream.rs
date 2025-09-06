@@ -12,6 +12,9 @@ where
     fn set_reader_threads(self, _: usize) -> Self {
         self
     }
+    fn set_pagebuffer_config(self, _num_pages: usize, _page_size: usize) -> Self {
+        self
+    }
 }
 
 pub trait BascetCellGuard {}
