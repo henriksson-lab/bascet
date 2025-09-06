@@ -20,6 +20,8 @@ pub struct Stream<T> {
     inner_buf_cursor: usize,
 
     inner_buf_truncated_line_len: usize,
+    buffer_num_pages: usize,
+    buffer_page_size: usize,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -80,12 +82,14 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_buf_pool: common::PageBufferPool::new(64, 1024 * 1024 * 8),
+                inner_buf_pool: common::PageBufferPool::new(512, 1024 * 1024 * 8),
                 inner_buf_cursor: 0,
                 inner_buf_slice: &[],
                 inner_buf_ptr: UnsafeMutPtr::null(),
 
                 inner_buf_truncated_line_len: 0,
+                buffer_num_pages: 512,
+                buffer_page_size: 1024 * 1024 * 8,
                 _marker: std::marker::PhantomData,
             })
         }
@@ -251,6 +255,13 @@ where
         unsafe {
             htslib::hts_set_threads(self.inner_htsfileptr.mut_ptr(), n_threads as i32);
         }
+        self
+    }
+
+    fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
+        self.buffer_num_pages = num_pages;
+        self.buffer_page_size = page_size;
+        self.inner_buf_pool = common::PageBufferPool::new(num_pages, page_size);
         self
     }
 

@@ -56,8 +56,13 @@ pub struct CountsketchCMD {
     #[arg(short = 'k', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_KMER_SIZE)]
     pub kmer_size: usize,
     // Channel buffer size
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_CHANNEL_BUFFER_SIZE)]
+    #[arg(long = "channel-buffer-size", value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_CHANNEL_BUFFER_SIZE)]
     pub channel_buffer_size: usize,
+    // Stream buffer configuration
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 4096)]
+    pub buffer_size_mb: usize,
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
+    pub page_size_mb: usize,
 }
 
 impl CountsketchCMD {
@@ -111,7 +116,14 @@ impl CountsketchCMD {
                         continue;
                     }
                 };
-            stream = stream.set_reader_threads(n_readers);
+            
+            let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
+            let page_size_bytes = self.page_size_mb * 1024 * 1024;
+            let num_pages = buffer_size_bytes / page_size_bytes;
+            
+            stream = stream
+                .set_reader_threads(n_readers)
+                .set_pagebuffer_config(num_pages, page_size_bytes);
 
             let output_path = self.path_out.join(format!("countsketch.{i}.csv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {

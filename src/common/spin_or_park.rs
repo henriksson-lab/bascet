@@ -5,7 +5,7 @@ pub fn spin_or_park(spin_counter: &mut usize, max_spins: usize) {
         std::hint::spin_loop();
     } else {
         // yield CPU for a few us
-        *spin_counter = 0;
+        // *spin_counter = 0;
         std::thread::park_timeout(std::time::Duration::from_micros(50));
     }
 }
