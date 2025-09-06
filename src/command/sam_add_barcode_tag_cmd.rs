@@ -26,8 +26,12 @@ impl PipeSamAddTagsCMD {
                 writer.write_all(line.as_bytes())?;
                 writer.write_all(b"\tCB:Z:")?;
                 writer.write_all(cell_id)?;
-                writer.write_all(b"\tUB:Z:")?;
-                writer.write_all(umi)?;
+
+                if !umi.is_empty() {
+                    //The SAM specification does not allow empty tags. The UMI can be empty
+                    writer.write_all(b"\tUB:Z:")?;
+                    writer.write_all(umi)?;
+                }
                 writer.write_all(b"\n")?;
 
                 //Typical 10x read
