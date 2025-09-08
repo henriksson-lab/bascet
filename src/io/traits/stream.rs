@@ -1,5 +1,7 @@
 use crate::command::countsketch::CountsketchStream;
 use crate::command::shardify::ShardifyStream;
+use crate::command::trim_experimental::TrimExperimentalStream;
+
 use crate::{common, log_debug};
 
 #[enum_dispatch::enum_dispatch]

@@ -3,8 +3,7 @@ use crate::{
     common::{self, PageBuffer},
     io::traits::*,
     kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_stream, support_which_temp,
-    support_which_writer,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
 };
 
 use clap::Args;
@@ -28,7 +27,7 @@ pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
 support_which_stream! {
     CountsketchInput => CountsketchStream<T: BascetCell>
-    for formats [tirp, zip]
+    for formats [tirp_bgzf, zip]
 }
 support_which_writer! {
     CountsketchOutput => CountsketchWriter<W: std::io::Write>
@@ -116,11 +115,11 @@ impl CountsketchCMD {
                         continue;
                     }
                 };
-            
+
             let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
             let page_size_bytes = self.page_size_mb * 1024 * 1024;
             let num_pages = buffer_size_bytes / page_size_bytes;
-            
+
             stream = stream
                 .set_reader_threads(n_readers)
                 .set_pagebuffer_config(num_pages, page_size_bytes);
@@ -163,7 +162,8 @@ impl CountsketchCMD {
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
                     // log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell), "open" => write_rx.len());
-                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch) {
+                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch)
+                    {
                         log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.cell), "error" => %e);
                     }
                 }
@@ -181,11 +181,13 @@ impl CountsketchCMD {
                     let mut cells_processed = 0;
 
                     while let Ok(Some(cell)) = work_rx.recv() {
-                        // println!("Worker {} receiving cell {} at {:?}", 
+                        // println!("Worker {} receiving cell {} at {:?}",
                         //         worker_id,
                         //         String::from_utf8_lossy(cell.get_cell().unwrap()),
                         //         std::time::SystemTime::now());
-                        let Some(reads) = cell.get_reads() else { continue };
+                        let Some(reads) = cell.get_reads() else {
+                            continue;
+                        };
 
                         for (r1, r2) in reads {
                             for kmer in r1.windows(kmer_size) {
@@ -197,8 +199,10 @@ impl CountsketchCMD {
                             let mut rev_r1 = Vec::with_capacity(r1.len());
                             for &base in r1.iter().rev() {
                                 rev_r1.push(match base {
-                                    b'A' => b'T', b'T' => b'A',
-                                    b'G' => b'C', b'C' => b'G',
+                                    b'A' => b'T',
+                                    b'T' => b'A',
+                                    b'G' => b'C',
+                                    b'C' => b'G',
                                     _ => base,
                                 });
                             }
@@ -209,8 +213,10 @@ impl CountsketchCMD {
                             let mut rev_r2 = Vec::with_capacity(r2.len());
                             for &base in r2.iter().rev() {
                                 rev_r2.push(match base {
-                                    b'A' => b'T', b'T' => b'A',
-                                    b'G' => b'C', b'C' => b'G',
+                                    b'A' => b'T',
+                                    b'T' => b'A',
+                                    b'G' => b'C',
+                                    b'C' => b'G',
                                     _ => base,
                                 });
                             }

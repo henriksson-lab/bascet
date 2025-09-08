@@ -24,11 +24,11 @@ pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
 support_which_stream! {
     ShardifyInput => ShardifyStream<T: BascetCell>
-    for formats [tirp]
+    for formats [tirp_bgzf]
 }
 support_which_writer! {
     ShardifyOutput => ShardifyWriter<W: std::io::Write>
-    for formats [tirp]
+    for formats [tirp_bgzf]
 }
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
@@ -51,7 +51,7 @@ pub struct ShardifyCMD {
     threads_read: usize,
     #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
     threads_work: usize,
-    
+
     // Stream buffer configuration
     #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
     pub buffer_size_mb: usize,
@@ -127,7 +127,7 @@ impl ShardifyCMD {
 
             let thread_handle = thread::spawn(move || {
                 log_info!("Starting stream reader"; "thread index" => thread_idx, "path" => ?thread_input);
-                
+
                 let thread_input_path = thread_input.clone();
                 let thread_input = match ShardifyInput::try_from_path(&thread_input) {
                     Ok(input) => input,
@@ -135,15 +135,16 @@ impl ShardifyCMD {
                         log_critical!("Failed to open input file"; "path" => ?thread_input_path, "error" => %e);
                     }
                 };
-                
-                let thread_stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(thread_input) {
-                    Ok(stream) => stream
-                        .set_reader_threads(count_threads_per_stream)
-                        .set_pagebuffer_config(num_pages, page_size_bytes),
-                    Err(e) => {
-                        log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
-                    }
-                };
+
+                let thread_stream: ShardifyStream<ShardifyCell> =
+                    match ShardifyStream::try_from_input(thread_input) {
+                        Ok(stream) => stream
+                            .set_reader_threads(count_threads_per_stream)
+                            .set_pagebuffer_config(num_pages, page_size_bytes),
+                        Err(e) => {
+                            log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
+                        }
+                    };
                 let thread_px = thread_px;
 
                 for token_cell_result in thread_stream {
@@ -159,21 +160,23 @@ impl ShardifyCMD {
                             }
                         },
                     };
-                    
-                    let global_processed = global_processed_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+                    let global_processed = global_processed_counter
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
                     if !thread_filter.contains(token_cell.cell) {
                         drop(token_cell);
                         continue;
                     }
 
-                    let global_kept = global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let global_kept =
+                        global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if global_kept % 100 == 0 {
-                        log_info!("Processing"; 
+                        log_info!("Processing";
                             "cells processed" => global_processed,
                             "cells kept" => global_kept
                         );
                     }
-
 
                     let mut token_cell = token_cell;
                     let mut rtrb_count_spins = 0;
@@ -200,12 +203,18 @@ impl ShardifyCMD {
             .map(|_| channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16))
             .collect();
         let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
-        
+
         let global_cells_written = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        for (thread_idx, (thread_output, (_, thread_rx))) in self.path_out.clone().into_iter().zip(write_channels.into_iter()).enumerate() {
+        for (thread_idx, (thread_output, (_, thread_rx))) in self
+            .path_out
+            .clone()
+            .into_iter()
+            .zip(write_channels.into_iter())
+            .enumerate()
+        {
             log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => ?thread_output);
-            
+
             let thread_output_path = thread_output.clone();
             let thread_output = match ShardifyOutput::try_from_path(&thread_output) {
                 Ok(output) => output,
@@ -213,16 +222,17 @@ impl ShardifyCMD {
                     log_critical!("Failed to identify output file"; "path" => ?thread_output_path, "error" => %e);
                 }
             };
-            
+
             let thread_file = match std::fs::File::create(thread_output.path()) {
                 Ok(file) => file,
                 Err(e) => {
                     log_critical!("Failed to create output file"; "path" => ?thread_output.path(), "error" => %e);
                 }
             };
-            
+
             let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
-            let thread_bgzf_writer = BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
+            let thread_bgzf_writer =
+                BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
 
             let mut thread_shardify_writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
                 match ShardifyWriter::try_from_output(thread_output) {
@@ -240,8 +250,9 @@ impl ShardifyCMD {
                             log_warning!("Failed to write cell"; "thread" => thread_idx, "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
                         }
                     }
-                    
-                    let global_count = global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+                    let global_count =
+                        global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if global_count % 100 == 0 {
                         log_info!("Writing"; "cells merged and written" => global_count);
                     }
@@ -336,9 +347,9 @@ impl ShardifyCMD {
                 }
             }
 
-            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(std::mem::take(
-                &mut coordinator_vec_send,
-            )))));
+            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(
+                std::mem::take(&mut coordinator_vec_send),
+            ))));
             coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
@@ -353,12 +364,12 @@ impl ShardifyCMD {
             handle.join().expect("Writer thread panicked");
         }
         log_info!("Write handles closed");
-        
-        log_info!("Shardify complete"; 
+
+        log_info!("Shardify complete";
             "input files processed" => self.path_in.len(),
             "output files created" => self.path_out.len()
         );
-        
+
         Ok(())
     }
 }

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::{fs::File, usize};
 
 // use super::kmer_codec::KMERandCount;
-use super::{KMERCodec};
+use super::KMERCodec;
 
 // \t[0-9]{10}\n
 // (4 294 967 296) is max value for kmer counts, thats 10 digits :)
