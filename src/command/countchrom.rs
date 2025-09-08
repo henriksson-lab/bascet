@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -28,6 +29,10 @@ pub struct CountChromCMD {
     /// Minimum M-bases to be considered
     pub min_matching: u32,
 
+    #[arg(long = "remove-duplicates", value_parser, default_value = "false")]
+    /// Remove reads for a cell if they are duplicates
+    pub remove_duplicates: bool,
+
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     //Not used, but kept here for consistency with other commands
@@ -50,6 +55,7 @@ impl CountChromCMD {
             path_out: self.path_out.clone(),
             num_threads: num_threads_total,
             min_matching: self.min_matching,
+            remove_duplicates: self.remove_duplicates
         })
         .unwrap();
 
@@ -65,6 +71,7 @@ pub struct CountChrom {
     pub path_out: std::path::PathBuf,
     pub num_threads: usize,
     pub min_matching: u32,
+    pub remove_duplicates: bool
 }
 impl CountChrom {
     /// Run the algorithm
@@ -84,6 +91,9 @@ impl CountChrom {
         //Map cellid -> count. Note that we do not have a list of cellid's at start; we need to harmonize this later
         let mut map_cell_count: BTreeMap<Cellid, uint> = BTreeMap::new();
         let mut map_cell_unclassified_count: BTreeMap<u32, uint> = BTreeMap::new();
+
+        //To remove doublets, keep track of last position
+        let mut map_cell_lastread: HashMap<Cellid, i64> = HashMap::new();
 
         let mut num_reads = 0;
 
@@ -111,6 +121,9 @@ impl CountChrom {
 
                 //Check if we now work on a new chromosome
                 if chr != last_chr {
+                    //Clear set of last read position
+                    map_cell_lastread.clear();
+
                     //Store counts for this cell
                     if !map_cell_count.is_empty() {
                         //Only empty the first loop
@@ -130,25 +143,39 @@ impl CountChrom {
                     }
                 }
 
-                //Get number of matching bases
-                let mut num_matching = 0;
-                let cigar = record.cigar();
-                for cigar_part in cigar.iter() {
-                    if let Cigar::Match(x) = cigar_part {
-                        num_matching += x;
-                    }
-                }
 
-                //Filter out reads that don't match well enough
-                if num_matching >= params.min_matching {
-                    //Count this read as mapping
-                    let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
-                    *values += 1;
-                } else {
-                    //Count non-mapping reads
-                    let cell_index = cnt_mat.get_or_create_cell(&cell_id);
-                    *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
-                }
+                //Remove duplicate reads
+                let lastpos = map_cell_lastread.get(cell_id);
+                if let Some(lastpos) = lastpos {
+                    let rpos = record.pos();
+                    if rpos==*lastpos && params.remove_duplicates {
+                        map_cell_lastread.insert(cell_id.to_vec(), rpos);
+
+
+                        //Get number of matching bases
+                        let mut num_matching = 0;
+                        let cigar = record.cigar();
+                        for cigar_part in cigar.iter() {
+                            if let Cigar::Match(x) = cigar_part {
+                                num_matching += x;
+                            }
+                        }
+
+
+                        //Filter out reads that don't match well enough
+                        if num_matching >= params.min_matching {
+                            //Count this read as mapping
+                            let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
+                            *values += 1;
+                        } else {
+                            //Count non-mapping reads
+                            let cell_index = cnt_mat.get_or_create_cell(&cell_id);
+                            *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
+                        }
+
+
+                    }
+                }                
             } else {
                 //Count non-mapping reads
                 let cell_index = cnt_mat.get_or_create_cell(&cell_id);
