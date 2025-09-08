@@ -3,20 +3,18 @@ use anyhow::Result;
 use clap::Args;
 use itertools::Itertools;
 use std::fs::File;
+use std::io;
 use std::io::BufRead;
-use std::path::PathBuf;
 use std::io::BufReader;
 use std::io::BufWriter;
-use std::io;
+use std::path::PathBuf;
 use zip::read::ZipArchive;
 
-use crate::fileformat::ZipBascetShardReader;
-use crate::fileformat::TirpBascetShardReader;
 use crate::fileformat::ShardCellDictionary;
+use crate::fileformat::TirpBascetShardReader;
+use crate::fileformat::ZipBascetShardReader;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
-
-
 
 #[derive(Args)]
 pub struct ExtractStreamCMD {
@@ -60,10 +58,7 @@ pub struct ExtractStream {
     curfile: Option<(String, ZipArchive<BufReader<File>>)>,
 }
 impl ExtractStream {
-
-
     fn print_listcellsanyfile(tabix_reader: &mut impl ShardCellDictionary) {
-
         let cellids = tabix_reader.get_cell_ids();
         if let Ok(cellids) = cellids {
             println!("{}", cellids.len());
@@ -74,8 +69,6 @@ impl ExtractStream {
             println!("error could not list cells in file provided as argument");
         }
     }
-
-
 
     /// Set which file is currently open
     pub fn open(&mut self, path_in: &String) -> Result<()> {
@@ -102,44 +95,36 @@ impl ExtractStream {
             let buffer = buffer.trim();
 
             //Start parsing the command
-            let mut splitter=buffer.split_whitespace();
+            let mut splitter = buffer.split_whitespace();
             let cmd = splitter.next().expect("error No command given");
 
-            if cmd=="help" {
-
+            if cmd == "help" {
                 /////////////////////////////// help
                 println!("Available commands: exit ls showtext extract_to");
                 println!("Note that this system is optimized for streaming data to Zorn, and not for being user friendly to terminal users!");
-
-            } else if cmd=="listcellsanyfile" {
+            } else if cmd == "listcellsanyfile" {
                 /////////////////////////////// listcellsanyfile /////////////////////////////// --- list cells in a tabix file, zip file, or any. by design, takes an argument
 
                 let path_in = splitter.next().expect("error Did not get file name");
 
                 if path_in.ends_with(".tirp.gz") {
-
                     let mut reader = TirpBascetShardReader::new(&PathBuf::from(path_in));
                     if let Ok(reader) = &mut reader {
                         ExtractStream::print_listcellsanyfile(reader);
                     } else {
                         println!("error could not list cells in file provided as argument");
                     }
-
                 } else if path_in.ends_with(".zip") {
-
                     let mut reader = ZipBascetShardReader::new(&PathBuf::from(path_in));
                     if let Ok(reader) = &mut reader {
                         ExtractStream::print_listcellsanyfile(reader);
                     } else {
                         println!("error could not open file provided as argument {}", path_in);
                     }
-
                 } else {
-                        println!("error unknown file type {}", path_in);
+                    println!("error unknown file type {}", path_in);
                 }
-
-            } else if cmd=="ls" {
-
+            } else if cmd == "ls" {
                 /////////////////////////////// ls /////////////////////////////// --- list files in currently open file
                 if let Some((_, zip_shard)) = &self.curfile {
                     let list_files = zip_shard.file_names().collect_vec();
@@ -150,10 +135,7 @@ impl ExtractStream {
                 } else {
                     println!("error no file open");
                 }
-
-
-            } else if cmd=="open" {
-
+            } else if cmd == "open" {
                 /////////////////////////////// open ///////////////////////////////
                 let path_in = splitter.next().expect("error Did not get file name");
 
@@ -175,15 +157,13 @@ impl ExtractStream {
                 } else {
                     println!("ok");
                 }
-
-            } else if cmd=="showtext" {
-
+            } else if cmd == "showtext" {
                 /////////////////////////////// showtext ///////////////////////////////
                 if let Some((_, zip_shard)) = &mut self.curfile {
                     let mut splitter = buffer.split_whitespace();
                     splitter.next();
                     let zip_entry_name = splitter.next().expect("error Did not get zip entry name");
-    
+
                     let entry = zip_shard.by_name(&zip_entry_name);
                     if let Ok(entry) = entry {
                         if entry.is_file() {
@@ -208,9 +188,7 @@ impl ExtractStream {
                 } else {
                     println!("error no file open");
                 }
-
-            } else if cmd=="extract_to" {
-
+            } else if cmd == "extract_to" {
                 /////////////////////////////// extract_to ///////////////////////////////
                 if let Some((_, zip_shard)) = &mut self.curfile {
                     let mut splitter = buffer.split_whitespace();
@@ -236,9 +214,7 @@ impl ExtractStream {
                 } else {
                     println!("error No file open");
                 }
-
-            } else if cmd=="exit" {
-
+            } else if cmd == "exit" {
                 /////////////////////////////// exit ///////////////////////////////
                 break;
             } else {

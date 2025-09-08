@@ -112,10 +112,10 @@ where
                 }
                 _ => {
                     while let Some(next_pos) =
-                        memchr::memchr(crate::common::U8_CHAR_FASTA_IDEN, &buffer[cursor..])
+                        memchr::memchr(crate::common::U8_CHAR_FASTA_RECORD, &buffer[cursor..])
                     {
                         let line = match memchr::memchr(
-                            crate::common::U8_CHAR_FASTA_IDEN,
+                            crate::common::U8_CHAR_FASTA_RECORD,
                             &buffer[cursor..],
                         ) {
                             Some(eor) => &buffer[cursor..(cursor + eor).saturating_sub(1)],

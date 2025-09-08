@@ -2,9 +2,9 @@ use anyhow::bail;
 use log::debug;
 use log::info;
 use semver::{Version, VersionReq};
-use std::process::Command;
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
+use std::process::Command;
 
 ///////////////////////////////
 /// Get directory where all Bascet data files are stored. These are kept separate
@@ -17,7 +17,6 @@ pub fn get_bascet_datadir() -> PathBuf {
         PathBuf::from("./data/")
     }
 }
-
 
 ///////////////////////////////
 /// Check if KMC is installed

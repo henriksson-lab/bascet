@@ -3,6 +3,8 @@ use crate::command::countsketch::CountsketchWriter;
 
 use crate::command::shardify::ShardifyWriter;
 
+use crate::command::trim_experimental::TrimExperimentalWriter;
+
 #[enum_dispatch::enum_dispatch]
 pub trait BascetWrite<W>: Sized
 where
