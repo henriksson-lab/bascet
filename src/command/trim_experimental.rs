@@ -4,7 +4,9 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::{
-    common, io::traits::{BascetCell, BascetCellBuilder, BascetStream}, log_warning, support_which_stream, support_which_writer
+    common,
+    io::traits::{BascetCell, BascetCellBuilder, BascetStream},
+    log_warning, support_which_stream, support_which_writer,
 };
 
 support_which_stream! {
@@ -54,16 +56,19 @@ pub struct AtrandiArgs {}
 impl TrimExperimentalCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let paths_in = &self.path_in;
+        let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
+        let page_size_bytes = self.page_size_mb * 1024 * 1024;
+        let num_pages = buffer_size_bytes / page_size_bytes;
+
         for path_in in paths_in {
             let input = TrimExperimentalInput::try_from_path(path_in).unwrap();
             let mut stream =
                 TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
-            stream = stream.set_pagebuffer_config(8196, 8);
+            stream = stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
             match &self.chemistry {
                 Chemistry::Atrandi(_args) => {
                     for token in stream {
-                        println!("Got token!");
                         println!("{:?}", String::from_utf8_lossy(token.unwrap().cell))
                     }
                 }

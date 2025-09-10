@@ -26,7 +26,11 @@ pub struct Stream<T> {
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T> Stream<T> {
+impl<T> Stream<T>
+where
+    T: BascetCell + 'static,
+    T::Builder: BascetCellBuilder<Token = T>,
+{
     pub fn new(file: &io::format::fastq_gz::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
@@ -62,6 +66,9 @@ impl<T> Stream<T> {
     unsafe fn load_next_buf(
         &mut self,
     ) -> Result<Option<common::PageBufferAllocResult>, crate::runtime::Error> {
+        println!("LOAD_NEXT_BUF: cursor={}, slice_len={}, truncated_len={}", 
+            self.inner_buf_cursor, self.inner_buf_slice.len(), self.inner_buf_truncated_line_len);
+        
         // Allocates space for new read but does NOT write anything
         let alloc_res = self.inner_buf_pool.alloc(common::HUGE_PAGE_SIZE);
         // let (incramt, partptr, copylen, ptroffset) =
@@ -105,6 +112,15 @@ impl<T> Stream<T> {
         // a ~400GiB dataset and compared the resulting slice with a cloned approach and found
         // no stale memory hits. It is _likely_ fine, but cannot promise.
         let buf_slice_ptr = alloc_res.buffer_slice_mut_ptr().sub(alloc_ptr_offset);
+        
+        // DEBUG: Print what we're copying across page boundary
+        if partial_copy_len > 0 {
+            let partial_data = unsafe { std::slice::from_raw_parts(partial_slice_ptr, partial_copy_len) };
+            println!("COPYING {} bytes across page boundary: {:?}", 
+                partial_copy_len, 
+                String::from_utf8_lossy(partial_data));
+        }
+        
         std::ptr::copy_nonoverlapping(partial_slice_ptr, buf_slice_ptr, partial_copy_len);
         // SAFETY: as long as pages are of reasonable size (largest cell possible fits in one with some extra room) this is safe.
         assert_eq!(
@@ -115,14 +131,19 @@ impl<T> Stream<T> {
         );
 
         // Read new data after partial
-        let mut buf_temp = vec![0u8; common::HUGE_PAGE_SIZE];
-        let buf_bytes_written = self.inner_decoder.read(&mut buf_temp);
-
+        let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
+        println!("alloc_slice_ptr: {:p}, truncated_len: {}, HUGE_PAGE_SIZE: {}", alloc_res.buffer_slice_mut_ptr(), self.inner_buf_truncated_line_len, common::HUGE_PAGE_SIZE);
+        println!("buf_write_ptr: {:p}", buf_write_ptr);
+        let write_slice = unsafe {
+            std::slice::from_raw_parts_mut(buf_write_ptr, common::HUGE_PAGE_SIZE)
+        };
+        write_slice.fill(0);
+        println!("created slice");
+        let buf_bytes_written = self.inner_decoder.read(write_slice);
+        println!("read slice");
         match buf_bytes_written {
             Ok(buf_bytes_written) if buf_bytes_written > 0 => {
-                let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
-
-                std::ptr::copy_nonoverlapping(buf_temp.as_ptr(), buf_write_ptr, buf_bytes_written);
+                // std::ptr::copy_nonoverlapping(buf_temp.as_ptr(), buf_write_ptr, buf_bytes_written);
 
                 let buf_bytes_written = buf_bytes_written as usize;
                 let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
@@ -190,6 +211,58 @@ impl<T> Stream<T> {
             _ => unreachable!(),
         }
     }
+
+    fn try_parse_record(
+        &mut self,
+        builder: T::Builder,
+    ) -> Result<Option<T>, crate::runtime::Error> {
+        let remaining_slice = &self.inner_buf_slice[self.inner_buf_cursor..];
+        let mut newline_iter = memchr::memchr_iter(common::U8_CHAR_NEWLINE, remaining_slice);
+
+        let line_positions = match (
+            newline_iter.next(),
+            newline_iter.next(),
+            newline_iter.next(),
+            newline_iter.next(),
+        ) {
+            (Some(p1), Some(p2), Some(p3), Some(p4)) => [p1, p2, p3, p4],
+            _ => {
+                self.inner_buf_truncated_line_len += remaining_slice.len();
+                return Ok(None);
+            }
+        };
+
+        let line_ends: [usize; 4] = line_positions.map(|pos| self.inner_buf_cursor + pos);
+        let hdr = &self.inner_buf_slice[self.inner_buf_cursor..line_ends[0]];
+        let seq = &self.inner_buf_slice[line_ends[0] + 1..line_ends[1]];
+        let sep = &self.inner_buf_slice[line_ends[1] + 1..line_ends[2]];
+        let qal = &self.inner_buf_slice[line_ends[2] + 1..line_ends[3]];
+
+        // Parse record
+        let (cell_id, cell_rp) = match fastq_gz::parse_record(hdr, seq, sep, qal) {
+            Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
+            Err(e) => {
+                log_warning!("{e}"; "header" => ?String::from_utf8_lossy(hdr));
+                self.inner_buf_cursor = line_ends[3] + 1;
+                return Ok(None);
+            }
+        };
+
+        // SAFETY: transmute slices to static lifetime kept alive by ref counter
+        let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
+        let static_r: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r1) };
+        let static_q: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q1) };
+
+        let cell = builder
+            .add_page_ref(self.inner_buf_ptr)
+            .add_cell_id_slice(static_cell_id)
+            .add_sequence_slice(static_r)
+            .add_quality_slice(static_q)
+            .build();
+
+        self.inner_buf_cursor = line_ends[3] + 1;
+        Ok(Some(cell))
+    }
 }
 
 impl<T> Drop for Stream<T> {
@@ -218,8 +291,8 @@ where
     T::Builder: BascetCellBuilder<Token = T>,
 {
     fn set_reader_threads(self, _n_threads: usize) -> Self {
-        // flate2 doesn't support setting thread count directly like htslib
-        // MultiGzDecoder is single-threaded by design
+        // MultiGzDecoder is single-threaded
+        log_warning!("flate2 doesn't support setting thread count directly");
         self
     }
 
@@ -231,87 +304,24 @@ where
     }
 
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
-        let mut builder = T::builder();
+       
 
         loop {
-            println!("Loop start: cursor={}, slice_len={}", self.inner_buf_cursor, self.inner_buf_slice.len());
-            let mut newline_iter = memchr::memchr_iter(
-                common::U8_CHAR_NEWLINE,
-                &self.inner_buf_slice[self.inner_buf_cursor..],
-            );
-            println!("Created newline_iter");
-            // TRY to get 4 newlines for a complete FASTQ record
-            if let (
-                Some(pos_maybe_nl1),
-                Some(pos_maybe_nl2),
-                Some(pos_maybe_nl3),
-                Some(pos_maybe_nl4),
-            ) = (
-                newline_iter.next(),
-                newline_iter.next(),
-                newline_iter.next(),
-                newline_iter.next(),
-            ) {
-                // Adjust positions to be relative to buffer start
-                let line_ends = [
-                    self.inner_buf_cursor + pos_maybe_nl1,
-                    self.inner_buf_cursor + pos_maybe_nl2,
-                    self.inner_buf_cursor + pos_maybe_nl3,
-                    self.inner_buf_cursor + pos_maybe_nl4,
-                ];
-                println!("line ends {:?}", line_ends);
-                let hdr = &self.inner_buf_slice[self.inner_buf_cursor..line_ends[0]]; // @header
-                let seq = &self.inner_buf_slice[line_ends[0] + 1..line_ends[1]]; // sequence
-                let sep = &self.inner_buf_slice[line_ends[1] + 1..line_ends[2]]; // +
-                let qal = &self.inner_buf_slice[line_ends[2] + 1..line_ends[3]]; // quality
-                println!("header {:?}, seq {:?}, sep {:?}, qal {:?}", String::from_utf8_lossy(hdr), String::from_utf8_lossy(seq), String::from_utf8_lossy(sep), String::from_utf8_lossy(qal));
-                let (cell_id, cell_rp) = match fastq_gz::parse_record(hdr, seq, sep, qal) {
-                    Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
-                    Err(e) => {
-                        log_warning!("{e}"; "header" => ?String::from_utf8_lossy(hdr));
-                        self.inner_buf_cursor = line_ends[3] + 1;
-                        continue;
-                    }
-                };
-                println!("parsed successfully");
-                // SAFETY: transmute slice to static lifetime kept alive by ref counter
-                let static_cell_id: &'static [u8] = unsafe { std::mem::transmute(cell_id) };
-                let static_r: &'static [u8] = unsafe { std::mem::transmute(cell_rp.r1) };
-                let static_q: &'static [u8] = unsafe { std::mem::transmute(cell_rp.q1) };
-                println!("transmute successfully");
-
-                builder = builder
-                    .add_cell_id_slice(static_cell_id)
-                    .add_page_ref(self.inner_buf_ptr)
-                    .add_sequence_slice(static_r)
-                    .add_quality_slice(static_q);
-
-                self.inner_buf_cursor = line_ends[3] + 1;
-                println!("incr line successfully");
-                return Ok(Some(builder.build()));
-            } else {
-                // extend truncated len to encompass incomplete record
-                self.inner_buf_truncated_line_len +=
-                    self.inner_buf_slice.len() - self.inner_buf_cursor;
-                println!("{}", self.inner_buf_truncated_line_len);
+            let builder = T::builder();
+            if let Some(cell) = self.try_parse_record(builder)? {
+                return Ok(Some(cell));
             }
-            // No more complete records in current buffer
             println!("Loading next buffer");
-            let previous_buf_ptr = self.inner_buf_ptr;
+            // records do not cross pages. no need to do this here!
+            // let previous_buf_ptr = self.inner_buf_ptr;
             match unsafe { self.load_next_buf()? } {
                 Some(_) => {
-                    if self.inner_buf_ptr.mut_ptr() == previous_buf_ptr.mut_ptr() {
-                        continue;
-                    }
-
-                    builder = builder.add_page_ref(self.inner_buf_ptr);
+                    // if self.inner_buf_ptr.mut_ptr() != previous_buf_ptr.mut_ptr() {
+                    //     builder = builder.add_page_ref(self.inner_buf_ptr);
+                    // }
                 }
-                None => {
-                    // EOF: probably ok to return None? I dont think anything should be here
-                    return Ok(None);   
-                }
+                None => return Ok(None), // EOF
             }
-            println!("Finished loading next buffer");
         }
     }
 }
