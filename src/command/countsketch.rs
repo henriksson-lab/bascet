@@ -296,7 +296,7 @@ struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer>; 2]>,
+    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -331,7 +331,7 @@ struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer>; 2]>,
+    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -351,7 +351,7 @@ impl BascetCellBuilder for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer>) -> Self {
+    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer<u8>>) -> Self {
         unsafe {
             (*page_ptr.mut_ptr()).inc_ref();
         }

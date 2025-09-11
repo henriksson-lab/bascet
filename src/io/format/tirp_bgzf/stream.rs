@@ -14,8 +14,8 @@ use crate::{common, log_warning};
 pub struct Stream<T> {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
-    inner_buf_pool: common::PageBufferPool,
-    inner_buf_ptr: common::UnsafeMutPtr<PageBuffer>,
+    inner_buf_pool: common::PageBufferPool<u8, 512>,
+    inner_buf_ptr: common::UnsafeMutPtr<PageBuffer<u8>>,
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
 
@@ -97,7 +97,7 @@ impl<T> Stream<T> {
 
     unsafe fn load_next_buf(
         &mut self,
-    ) -> Result<Option<common::PageBufferAllocResult>, crate::runtime::Error> {
+    ) -> Result<Option<common::PageBufferAllocResult<u8>>, crate::runtime::Error> {
         let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr.mut_ptr());
         // Allocates space for new read but does NOT write anything
         let alloc_res = self.inner_buf_pool.alloc(common::HUGE_PAGE_SIZE);
@@ -153,13 +153,12 @@ impl<T> Stream<T> {
 
         // Read new data after partial
         let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
-        let buf_bytes_written = htslib::bgzf_read(
+
+        match htslib::bgzf_read(
             fileptr,
             buf_write_ptr as *mut std::os::raw::c_void,
             common::HUGE_PAGE_SIZE,
-        );
-
-        match buf_bytes_written {
+        ) {
             buf_bytes_written if buf_bytes_written > 0 => {
                 let buf_bytes_written = buf_bytes_written as usize;
                 let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
@@ -192,8 +191,7 @@ impl<T> Stream<T> {
             }
             0 => {
                 // EOF
-                let buf_bytes_written = buf_bytes_written as usize;
-                let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
+                let buf_slice_len = self.inner_buf_truncated_line_len;
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
                     self.inner_buf_slice = eofslice;
@@ -208,9 +206,9 @@ impl<T> Stream<T> {
                     return Ok(None);
                 }
             }
-            _ => Err(crate::runtime::Error::parse_error(
+            err => Err(crate::runtime::Error::parse_error(
                 "bgzf_read",
-                Some(format!("Read error code: {}", buf_bytes_written)),
+                Some(format!("Read error code: {}", err)),
             )),
         }
     }
@@ -222,22 +220,6 @@ impl<T> Drop for Stream<T> {
             if !self.inner_htsfileptr.is_null() {
                 htslib::hts_close(self.inner_htsfileptr.mut_ptr());
             }
-        }
-
-        // HACK: Spin until all page refs are zero => otherwise stream gets dropped and the slices
-        // pointing to the page buffers are invalidated. Not the best solution but the most frictionless.
-        let mut spin_counter = 0;
-        loop {
-            if self
-                .inner_buf_pool
-                .inner_pages
-                .iter()
-                .all(|p| p.ref_count.load(Ordering::Relaxed) == 0)
-            {
-                break;
-            }
-            spin_counter += 1;
-            common::spin_or_park(&mut spin_counter, 100);
         }
     }
 }

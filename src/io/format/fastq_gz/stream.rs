@@ -15,12 +15,13 @@ use crate::{common, log_warning};
 pub struct Stream<T> {
     inner_decoder: MultiGzDecoder<BufReader<File>>,
 
-    inner_buf_pool: common::PageBufferPool,
-    inner_buf_ptr: common::UnsafeMutPtr<PageBuffer>,
+    inner_buf_pool: common::PageBufferPool<u8, 512>,
+    inner_buf_ptr: common::UnsafeMutPtr<PageBuffer<u8>>,
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
 
-    inner_buf_truncated_line_len: usize,
+    inner_buf_truncated_len: usize,
+    inner_buf_incomplete_len: usize,
     buffer_num_pages: usize,
     buffer_page_size: usize,
     _marker: std::marker::PhantomData<T>,
@@ -56,7 +57,8 @@ where
             inner_buf_slice: &[],
             inner_buf_ptr: UnsafeMutPtr::null(),
 
-            inner_buf_truncated_line_len: 0,
+            inner_buf_truncated_len: 0,
+            inner_buf_incomplete_len: 0,
             buffer_num_pages: 512,
             buffer_page_size: 1024 * 1024 * 8,
             _marker: std::marker::PhantomData,
@@ -65,10 +67,14 @@ where
 
     unsafe fn load_next_buf(
         &mut self,
-    ) -> Result<Option<common::PageBufferAllocResult>, crate::runtime::Error> {
-        println!("LOAD_NEXT_BUF: cursor={}, slice_len={}, truncated_len={}", 
-            self.inner_buf_cursor, self.inner_buf_slice.len(), self.inner_buf_truncated_line_len);
-        
+    ) -> Result<Option<common::PageBufferAllocResult<u8>>, crate::runtime::Error> {
+        println!(
+            "LOAD_NEXT_BUF: cursor={}, slice_len={}, truncated_len={}",
+            self.inner_buf_cursor,
+            self.inner_buf_slice.len(),
+            self.inner_buf_truncated_len
+        );
+
         // Allocates space for new read but does NOT write anything
         let alloc_res = self.inner_buf_pool.alloc(common::HUGE_PAGE_SIZE);
         // let (incramt, partptr, copylen, ptroffset) =
@@ -83,7 +89,7 @@ where
                             3. not copy any partial data
                     */
                     (
-                        self.inner_buf_truncated_line_len,
+                        self.inner_buf_truncated_len + self.inner_buf_incomplete_len,
                         alloc_res.buffer_slice_ptr(),
                         0,
                     )
@@ -101,8 +107,15 @@ where
                     // ok so this is kind of stupid but because the used buffer is truncated to last newline,
                     // the partial is contained after the end of old_buf.
                     let buf_previous = &self.inner_buf_slice;
-                    let buf_previous_ptr = buf_previous.as_ptr().add(buf_previous.len());
-                    (0, buf_previous_ptr, self.inner_buf_truncated_line_len)
+                    // point to start of incomplete data if present
+                    let buf_previous_last_complete_line_ptr = buf_previous
+                        .as_ptr_range().end
+                        .sub(self.inner_buf_incomplete_len);
+                    (
+                        0,
+                        buf_previous_last_complete_line_ptr,
+                        self.inner_buf_truncated_len + self.inner_buf_incomplete_len,
+                    )
                 }
             };
 
@@ -112,41 +125,23 @@ where
         // a ~400GiB dataset and compared the resulting slice with a cloned approach and found
         // no stale memory hits. It is _likely_ fine, but cannot promise.
         let buf_slice_ptr = alloc_res.buffer_slice_mut_ptr().sub(alloc_ptr_offset);
-        
-        // DEBUG: Print what we're copying across page boundary
-        if partial_copy_len > 0 {
-            let partial_data = unsafe { std::slice::from_raw_parts(partial_slice_ptr, partial_copy_len) };
-            println!("COPYING {} bytes across page boundary: {:?}", 
-                partial_copy_len, 
-                String::from_utf8_lossy(partial_data));
-        }
-        
-        std::ptr::copy_nonoverlapping(partial_slice_ptr, buf_slice_ptr, partial_copy_len);
         // SAFETY: as long as pages are of reasonable size (largest cell possible fits in one with some extra room) this is safe.
-        assert_eq!(
-            self.inner_buf_pool
-                .alloc(partial_copy_len)
-                .buffer_page_ptr(),
-            alloc_res.buffer_page_ptr()
-        );
+        std::ptr::copy_nonoverlapping(partial_slice_ptr, buf_slice_ptr, partial_copy_len);
 
-        // Read new data after partial
-        let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
-        println!("alloc_slice_ptr: {:p}, truncated_len: {}, HUGE_PAGE_SIZE: {}", alloc_res.buffer_slice_mut_ptr(), self.inner_buf_truncated_line_len, common::HUGE_PAGE_SIZE);
-        println!("buf_write_ptr: {:p}", buf_write_ptr);
-        let write_slice = unsafe {
-            std::slice::from_raw_parts_mut(buf_write_ptr, common::HUGE_PAGE_SIZE)
-        };
-        write_slice.fill(0);
-        println!("created slice");
-        let buf_bytes_written = self.inner_decoder.read(write_slice);
-        println!("read slice");
-        match buf_bytes_written {
+        // Read new data after partial. Here we add the entire truncated line len as partial_copy_len only
+        // partains to COPY length => i.e a non-copy case will not copy the data but still need to be incremented.
+        let buf_write_ptr =
+            buf_slice_ptr.add(self.inner_buf_truncated_len + self.inner_buf_incomplete_len);
+        let write_slice =
+            unsafe { std::slice::from_raw_parts_mut(buf_write_ptr, common::HUGE_PAGE_SIZE) };
+
+        match self.inner_decoder.read(write_slice) {
             Ok(buf_bytes_written) if buf_bytes_written > 0 => {
-                // std::ptr::copy_nonoverlapping(buf_temp.as_ptr(), buf_write_ptr, buf_bytes_written);
-
                 let buf_bytes_written = buf_bytes_written as usize;
-                let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
+                let buf_slice_len = buf_bytes_written
+                    + self.inner_buf_truncated_len
+                    + self.inner_buf_incomplete_len;
+
                 let bufslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
 
                 // Find last \n@ sequence (FASTQ record boundary)
@@ -169,11 +164,20 @@ where
                         &bufslice[boundary_pos + 1..], // Everything after \n (starts with @)
                     );
 
+                    println!(
+                        "FASTQ boundary at {}, truncated data: {:?}",
+                        boundary_pos,
+                        String::from_utf8_lossy(
+                            &buf_slice_truncated_line[..50.min(buf_slice_truncated_line.len())]
+                        )
+                    );
+
                     self.inner_buf_slice = buf_slice_truncated_use;
                     // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
-                    self.inner_buf_truncated_line_len = buf_slice_truncated_line.len();
+                    self.inner_buf_truncated_len = buf_slice_truncated_line.len();
+                    self.inner_buf_incomplete_len = 0;
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -187,16 +191,22 @@ where
                     ));
                 }
             }
-            Ok(buf_bytes_written) if buf_bytes_written == 0 => {
-                // EOF
-                let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
+
+            // EOF; buf_bytes_written == 0
+            Ok(buf_bytes_written) => {
+                assert_eq!(buf_bytes_written, 0);
+                let buf_slice_len = buf_bytes_written
+                    + self.inner_buf_truncated_len
+                    + self.inner_buf_incomplete_len;
+
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
                     self.inner_buf_slice = eofslice;
                     // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
-                    self.inner_buf_truncated_line_len = 0;
+                    self.inner_buf_truncated_len = 0;
+                    self.inner_buf_incomplete_len = 0;
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -208,7 +218,6 @@ where
                 "decoder_read",
                 Some(format!("Read error code: {:?}", e)),
             )),
-            _ => unreachable!(),
         }
     }
 
@@ -216,8 +225,12 @@ where
         &mut self,
         builder: T::Builder,
     ) -> Result<Option<T>, crate::runtime::Error> {
-        let remaining_slice = &self.inner_buf_slice[self.inner_buf_cursor..];
-        let mut newline_iter = memchr::memchr_iter(common::U8_CHAR_NEWLINE, remaining_slice);
+        let buf_remaining = &self.inner_buf_slice[self.inner_buf_cursor..];
+        // if buf_remaining.is_empty() {
+        //     return Ok(None);
+        // }
+
+        let mut newline_iter = memchr::memchr_iter(common::U8_CHAR_NEWLINE, buf_remaining);
 
         let line_positions = match (
             newline_iter.next(),
@@ -227,7 +240,27 @@ where
         ) {
             (Some(p1), Some(p2), Some(p3), Some(p4)) => [p1, p2, p3, p4],
             _ => {
-                self.inner_buf_truncated_line_len += remaining_slice.len();
+                // Track incomplete data length (data within current slice)
+                self.inner_buf_incomplete_len = buf_remaining.len();
+                println!(
+                    "Set incomplete data length to {} bytes",
+                    self.inner_buf_incomplete_len
+                );
+                // Construct slice that includes both incomplete and truncated data
+                unsafe {
+                    let incomplete_start_ptr =
+                        self.inner_buf_slice.as_ptr().add(self.inner_buf_slice.len() - self.inner_buf_incomplete_len);
+                    let total_partial_len =
+                        self.inner_buf_incomplete_len + self.inner_buf_truncated_len;
+                    let combined_data = std::slice::from_raw_parts(incomplete_start_ptr, total_partial_len);
+
+                    println!(
+                        "Combined incomplete+truncated ({} bytes): {:?}",
+                        total_partial_len,
+                        String::from_utf8_lossy(combined_data)
+                    );
+                }
+
                 return Ok(None);
             }
         };
@@ -237,13 +270,13 @@ where
         let seq = &self.inner_buf_slice[line_ends[0] + 1..line_ends[1]];
         let sep = &self.inner_buf_slice[line_ends[1] + 1..line_ends[2]];
         let qal = &self.inner_buf_slice[line_ends[2] + 1..line_ends[3]];
+        self.inner_buf_cursor = line_ends[3] + 1;
 
         // Parse record
         let (cell_id, cell_rp) = match fastq_gz::parse_record(hdr, seq, sep, qal) {
             Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
             Err(e) => {
                 log_warning!("{e}"; "header" => ?String::from_utf8_lossy(hdr));
-                self.inner_buf_cursor = line_ends[3] + 1;
                 return Ok(None);
             }
         };
@@ -260,28 +293,7 @@ where
             .add_quality_slice(static_q)
             .build();
 
-        self.inner_buf_cursor = line_ends[3] + 1;
         Ok(Some(cell))
-    }
-}
-
-impl<T> Drop for Stream<T> {
-    fn drop(&mut self) {
-        // HACK: Spin until all page refs are zero => otherwise stream gets dropped and the slices
-        // pointing to the page buffers are invalidated. Not the best solution but the most frictionless.
-        let mut spin_counter = 0;
-        loop {
-            if self
-                .inner_buf_pool
-                .inner_pages
-                .iter()
-                .all(|p| p.ref_count.load(Ordering::Relaxed) == 0)
-            {
-                break;
-            }
-            spin_counter += 1;
-            common::spin_or_park(&mut spin_counter, 100);
-        }
     }
 }
 
@@ -304,23 +316,13 @@ where
     }
 
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
-       
-
         loop {
             let builder = T::builder();
             if let Some(cell) = self.try_parse_record(builder)? {
                 return Ok(Some(cell));
             }
-            println!("Loading next buffer");
-            // records do not cross pages. no need to do this here!
-            // let previous_buf_ptr = self.inner_buf_ptr;
-            match unsafe { self.load_next_buf()? } {
-                Some(_) => {
-                    // if self.inner_buf_ptr.mut_ptr() != previous_buf_ptr.mut_ptr() {
-                    //     builder = builder.add_page_ref(self.inner_buf_ptr);
-                    // }
-                }
-                None => return Ok(None), // EOF
+            unsafe {
+                self.load_next_buf()?;
             }
         }
     }

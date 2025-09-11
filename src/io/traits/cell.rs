@@ -56,8 +56,8 @@ field_traits! {
     },
 
     Pagerefs => {
-        Accessor::get_vec() -> &common::UnsafeMutPtr<common::PageBuffer>,
-        Builder::push(ptr: common::UnsafeMutPtr<common::PageBuffer>)
+        Accessor::get_vec() -> &common::UnsafeMutPtr<common::PageBuffer<u8>>,
+        Builder::push(ptr: common::UnsafeMutPtr<common::PageBuffer<u8>>)
     }
 }
 
