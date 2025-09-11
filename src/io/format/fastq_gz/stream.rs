@@ -109,7 +109,8 @@ where
                     let buf_previous = &self.inner_buf_slice;
                     // point to start of incomplete data if present
                     let buf_previous_last_complete_line_ptr = buf_previous
-                        .as_ptr_range().end
+                        .as_ptr_range()
+                        .end
                         .sub(self.inner_buf_incomplete_len);
                     (
                         0,
@@ -248,11 +249,14 @@ where
                 );
                 // Construct slice that includes both incomplete and truncated data
                 unsafe {
-                    let incomplete_start_ptr =
-                        self.inner_buf_slice.as_ptr().add(self.inner_buf_slice.len() - self.inner_buf_incomplete_len);
+                    let incomplete_start_ptr = self
+                        .inner_buf_slice
+                        .as_ptr()
+                        .add(self.inner_buf_slice.len() - self.inner_buf_incomplete_len);
                     let total_partial_len =
                         self.inner_buf_incomplete_len + self.inner_buf_truncated_len;
-                    let combined_data = std::slice::from_raw_parts(incomplete_start_ptr, total_partial_len);
+                    let combined_data =
+                        std::slice::from_raw_parts(incomplete_start_ptr, total_partial_len);
 
                     println!(
                         "Combined incomplete+truncated ({} bytes): {:?}",

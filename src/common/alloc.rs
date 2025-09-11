@@ -1,27 +1,24 @@
 use crate::common;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::alloc::{dealloc, Layout};
 use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct PageBuffer<T> {
-    pub inner: Box<[T]>,
+    inner: Vec<T>,
     inner_ptr: usize,
-    capacity: usize,
     pub ref_count: AtomicUsize,
 }
 
 impl<T> PageBuffer<T> {
-    pub fn with_capacity(cap: usize) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
+        let mut inner = Vec::with_capacity(capacity);
         unsafe {
-            let layout = Layout::array::<T>(cap).unwrap();
-            let ptr = std::alloc::alloc(layout) as *mut T;
-            let buffer = Box::from_raw(std::slice::from_raw_parts_mut(ptr, cap));
-            Self {
-                inner: buffer,
-                inner_ptr: 0,
-                capacity: cap,
-                ref_count: AtomicUsize::new(0),
-            }
+            inner.set_len(capacity);
+        }
+
+        Self {
+            inner,
+            inner_ptr: 0,
+            ref_count: AtomicUsize::new(0),
         }
     }
 
@@ -29,7 +26,7 @@ impl<T> PageBuffer<T> {
     pub fn alloc(&mut self, count: usize) -> *mut T {
         let start = self.inner_ptr;
         let end = start + count;
-        assert!(end <= self.capacity);
+        assert!(end <= self.inner.len());
 
         self.inner_ptr = end;
         unsafe { self.inner.as_mut_ptr().add(start) }
@@ -37,12 +34,12 @@ impl<T> PageBuffer<T> {
 
     #[inline(always)]
     pub fn remaining(&self) -> usize {
-        self.capacity - self.inner_ptr
+        self.inner.len() - self.inner_ptr
     }
 
     #[inline(always)]
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.inner.len()
     }
 
     #[inline(always)]
@@ -68,16 +65,6 @@ impl<T> PageBuffer<T> {
     #[inline(always)]
     pub fn dec_ref(&self) {
         self.ref_count.fetch_sub(1, Ordering::Release);
-    }
-}
-
-impl<T> Drop for PageBuffer<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let layout = Layout::array::<T>(self.capacity).unwrap();
-            let ptr = Box::into_raw(std::mem::take(&mut self.inner));
-            dealloc(ptr as *mut u8, layout);
-        }
     }
 }
 
@@ -118,14 +105,15 @@ impl<T> PageBufferAllocResult<T> {
 impl<T, const N: usize> PageBufferPool<T, N> {
     pub fn new(num_pages: usize, page_size: usize) -> Self {
         assert!(num_pages <= N, "num_pages cannot exceed const N");
-        
-        let mut pages: [MaybeUninit<PageBuffer<T>>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-        
+
+        let mut pages: [MaybeUninit<PageBuffer<T>>; N] =
+            unsafe { MaybeUninit::uninit().assume_init() };
+
         // Initialize only the pages we need
         for i in 0..num_pages {
             pages[i] = MaybeUninit::new(PageBuffer::with_capacity(page_size));
         }
-        
+
         Self {
             inner_pages: pages,
             inner_index: 0,
@@ -185,17 +173,22 @@ impl<T, const N: usize> Drop for PageBufferPool<T, N> {
         // HACK: Spin until all page refs are zero => otherwise stream gets dropped and the slices
         // pointing to the page buffers are invalidated. Not the best solution but the most frictionless.
         let mut spin_counter = 0;
-        loop {
-            if self
-                .inner_pages
-                .iter()
-                .take(self.num_pages)
-                .all(|p| unsafe { p.assume_init_ref().ref_count.load(Ordering::Relaxed) == 0 })
-            {
-                break;
-            }
+        while (0..self.num_pages).any(|i| unsafe {
+            self.inner_pages[i]
+                .assume_init_ref()
+                .ref_count
+                .load(Ordering::Relaxed)
+                != 0
+        }) {
             spin_counter += 1;
             common::spin_or_park(&mut spin_counter, 100);
+        }
+
+        // drop initialized pages
+        for i in 0..self.num_pages {
+            unsafe {
+                self.inner_pages[i].assume_init_drop();
+            }
         }
     }
 }
