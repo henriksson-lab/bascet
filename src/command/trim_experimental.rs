@@ -85,7 +85,7 @@ struct TrimExperimentalCell {
     read: &'static [u8],
     quality: &'static [u8],
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer>; 2]>,
+    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 impl Drop for TrimExperimentalCell {
@@ -110,7 +110,7 @@ struct TrimExperimentalCellBuilder {
     read: Option<&'static [u8]>,
     quality: Option<&'static [u8]>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer>; 2]>,
+    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -131,7 +131,7 @@ impl BascetCellBuilder for TrimExperimentalCellBuilder {
     type Token = TrimExperimentalCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
+    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer<u8>>) -> Self {
         unsafe {
             (*page_ptr.mut_ptr()).inc_ref();
         }

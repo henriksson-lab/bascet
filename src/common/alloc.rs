@@ -1,42 +1,48 @@
-use crate::common::spin_or_park;
+use crate::common;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::alloc::{dealloc, Layout};
+use std::mem::MaybeUninit;
 
-pub struct PageBuffer {
-    pub inner: Vec<u8>,
+pub struct PageBuffer<T> {
+    pub inner: Box<[T]>,
     inner_ptr: usize,
+    capacity: usize,
     pub ref_count: AtomicUsize,
 }
 
-impl PageBuffer {
+impl<T> PageBuffer<T> {
     pub fn with_capacity(cap: usize) -> Self {
-        let mut data = Vec::with_capacity(cap);
         unsafe {
-            data.set_len(cap);
-        }
-        Self {
-            inner: data,
-            inner_ptr: 0,
-            ref_count: AtomicUsize::new(0),
+            let layout = Layout::array::<T>(cap).unwrap();
+            let ptr = std::alloc::alloc(layout) as *mut T;
+            let buffer = Box::from_raw(std::slice::from_raw_parts_mut(ptr, cap));
+            Self {
+                inner: buffer,
+                inner_ptr: 0,
+                capacity: cap,
+                ref_count: AtomicUsize::new(0),
+            }
         }
     }
 
     #[inline(always)]
-    pub fn alloc_unchecked(&mut self, size: usize) -> *const u8 {
+    pub fn alloc(&mut self, count: usize) -> *mut T {
         let start = self.inner_ptr;
-        let end = start + size;
-        self.inner_ptr = end;
+        let end = start + count;
+        assert!(end <= self.capacity);
 
+        self.inner_ptr = end;
         unsafe { self.inner.as_mut_ptr().add(start) }
     }
 
     #[inline(always)]
     pub fn remaining(&self) -> usize {
-        self.inner.capacity() - self.inner_ptr
+        self.capacity - self.inner_ptr
     }
 
     #[inline(always)]
     pub fn capacity(&self) -> usize {
-        self.inner.capacity()
+        self.capacity
     }
 
     #[inline(always)]
@@ -65,95 +71,131 @@ impl PageBuffer {
     }
 }
 
-pub struct PageBufferPool {
-    pub inner_pages: Vec<PageBuffer>,
+impl<T> Drop for PageBuffer<T> {
+    fn drop(&mut self) {
+        unsafe {
+            let layout = Layout::array::<T>(self.capacity).unwrap();
+            let ptr = Box::into_raw(std::mem::take(&mut self.inner));
+            dealloc(ptr as *mut u8, layout);
+        }
+    }
+}
+
+pub struct PageBufferPool<T, const N: usize> {
+    pub inner_pages: [MaybeUninit<PageBuffer<T>>; N],
     pub inner_index: usize,
+    pub num_pages: usize,
 }
 
-pub struct PageBufferAllocResult {
-    buffer_slice_ptr: *const u8,
+pub struct PageBufferAllocResult<T> {
+    buffer_slice_ptr: *mut T,
     buffer_slice_len: usize,
-    buffer_page_ptr: *mut PageBuffer,
+    buffer_page_ptr: *mut PageBuffer<T>,
 }
 
-impl PageBufferAllocResult {
-    pub fn buffer_slice_ptr(&self) -> *const u8 {
+impl<T> PageBufferAllocResult<T> {
+    pub fn buffer_slice_ptr(&self) -> *const T {
         self.buffer_slice_ptr
     }
 
-    pub fn buffer_slice_mut_ptr(&self) -> *mut u8 {
-        self.buffer_slice_ptr as *mut u8
+    pub fn buffer_slice_mut_ptr(&self) -> *mut T {
+        self.buffer_slice_ptr
     }
 
     pub fn buffer_slice_len(&self) -> usize {
         self.buffer_slice_len
     }
 
-    pub fn buffer_page_ptr(&self) -> *const PageBuffer {
+    pub fn buffer_page_ptr(&self) -> *const PageBuffer<T> {
         self.buffer_page_ptr
     }
 
-    pub fn buffer_page_mut_ptr(&self) -> *mut PageBuffer {
+    pub fn buffer_page_mut_ptr(&self) -> *mut PageBuffer<T> {
         self.buffer_page_ptr
     }
 }
 
-impl PageBufferPool {
+impl<T, const N: usize> PageBufferPool<T, N> {
     pub fn new(num_pages: usize, page_size: usize) -> Self {
-        let mut pages = Vec::with_capacity(num_pages);
-        for _ in 0..num_pages {
-            pages.push(PageBuffer::with_capacity(page_size));
+        assert!(num_pages <= N, "num_pages cannot exceed const N");
+        
+        let mut pages: [MaybeUninit<PageBuffer<T>>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        
+        // Initialize only the pages we need
+        for i in 0..num_pages {
+            pages[i] = MaybeUninit::new(PageBuffer::with_capacity(page_size));
         }
-
+        
         Self {
             inner_pages: pages,
             inner_index: 0,
+            num_pages,
         }
     }
 
-    pub fn active(&self) -> &PageBuffer {
-        return &self.inner_pages[self.inner_index];
+    pub fn active(&self) -> &PageBuffer<T> {
+        unsafe { self.inner_pages[self.inner_index].assume_init_ref() }
     }
 
-    pub fn active_mut(&mut self) -> &mut PageBuffer {
-        return &mut self.inner_pages[self.inner_index];
+    pub fn active_mut(&mut self) -> &mut PageBuffer<T> {
+        unsafe { self.inner_pages[self.inner_index].assume_init_mut() }
     }
 
-    pub fn active_mut_ptr(&mut self) -> *mut PageBuffer {
-        return &mut self.inner_pages[self.inner_index] as *mut PageBuffer;
+    pub fn active_mut_ptr(&mut self) -> *mut PageBuffer<T> {
+        unsafe { self.inner_pages[self.inner_index].assume_init_mut() as *mut PageBuffer<T> }
     }
 
-    pub fn alloc(&mut self, bytes: usize) -> PageBufferAllocResult {
-        let current_page = &mut self.inner_pages[self.inner_index];
+    pub fn alloc(&mut self, count: usize) -> PageBufferAllocResult<T> {
+        let current_page = unsafe { self.inner_pages[self.inner_index].assume_init_mut() };
 
-        if current_page.remaining() >= bytes {
-            let ptr = current_page.alloc_unchecked(bytes);
+        if current_page.remaining() >= count {
+            let ptr = current_page.alloc(count);
             return PageBufferAllocResult {
                 buffer_slice_ptr: ptr,
-                buffer_slice_len: bytes,
-                buffer_page_ptr: current_page as *mut PageBuffer,
+                buffer_slice_len: count,
+                buffer_page_ptr: current_page as *mut PageBuffer<T>,
             };
         }
 
         // Need new page
         let mut spin_counter = 0;
         loop {
-            for i in 0..self.inner_pages.len() {
-                let idx = (self.inner_index + i) % self.inner_pages.len();
-                let new_page = &mut self.inner_pages[idx];
-                if new_page.remaining() >= bytes || new_page.try_reset() {
+            for i in 0..self.num_pages {
+                let idx = (self.inner_index + i) % self.num_pages;
+                let new_page = unsafe { self.inner_pages[idx].assume_init_mut() };
+                if new_page.remaining() >= count || new_page.try_reset() {
                     self.inner_index = idx;
 
-                    let ptr = new_page.alloc_unchecked(bytes);
+                    let ptr = new_page.alloc(count);
                     return PageBufferAllocResult {
                         buffer_slice_ptr: ptr,
-                        buffer_slice_len: bytes,
-                        buffer_page_ptr: new_page as *mut PageBuffer,
+                        buffer_slice_len: count,
+                        buffer_page_ptr: new_page as *mut PageBuffer<T>,
                     };
                 }
             }
 
-            spin_or_park(&mut spin_counter, 100);
+            common::spin_or_park(&mut spin_counter, 100);
+        }
+    }
+}
+
+impl<T, const N: usize> Drop for PageBufferPool<T, N> {
+    fn drop(&mut self) {
+        // HACK: Spin until all page refs are zero => otherwise stream gets dropped and the slices
+        // pointing to the page buffers are invalidated. Not the best solution but the most frictionless.
+        let mut spin_counter = 0;
+        loop {
+            if self
+                .inner_pages
+                .iter()
+                .take(self.num_pages)
+                .all(|p| unsafe { p.assume_init_ref().ref_count.load(Ordering::Relaxed) == 0 })
+            {
+                break;
+            }
+            spin_counter += 1;
+            common::spin_or_park(&mut spin_counter, 100);
         }
     }
 }
