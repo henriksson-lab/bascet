@@ -58,7 +58,7 @@ pub struct CountsketchCMD {
     #[arg(long = "channel-buffer-size", value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_CHANNEL_BUFFER_SIZE)]
     pub channel_buffer_size: usize,
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 4096)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 1024)]
     pub buffer_size_mb: usize,
     #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
     pub page_size_mb: usize,

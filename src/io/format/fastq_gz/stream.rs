@@ -79,10 +79,7 @@ where
                         .inner_buf_truncated_end_ptr
                         .offset_from(self.inner_buf_incomplete_start_ptr)
                         as usize;
-                    (
-                        alloc_res.buffer_slice_mut_ptr(),
-                        partial_copy_len,
-                    )
+                    (alloc_res.buffer_slice_mut_ptr(), partial_copy_len)
                 }
             };
 
@@ -90,12 +87,16 @@ where
         // SAFETY: [JD] in _theory_ this CAN point to stale memory. I have verified this for correctness on
         // a ~400GiB dataset and compared the resulting slice with a cloned approach and found
         // no stale memory hits. It is _likely_ fine, but cannot promise.
-        std::ptr::copy_nonoverlapping(self.inner_buf_incomplete_start_ptr, buf_ptr, partial_copy_len);
+        std::ptr::copy_nonoverlapping(
+            self.inner_buf_incomplete_start_ptr,
+            buf_ptr,
+            partial_copy_len,
+        );
 
         // Read new data after partial data
-        let carry_data_len =
-            self.inner_buf_truncated_end_ptr
-                .offset_from(self.inner_buf_incomplete_start_ptr) as usize;
+        let carry_data_len = self
+            .inner_buf_truncated_end_ptr
+            .offset_from(self.inner_buf_incomplete_start_ptr) as usize;
         let buf_write_ptr = buf_ptr.add(carry_data_len);
         let write_slice =
             unsafe { std::slice::from_raw_parts_mut(buf_write_ptr, common::HUGE_PAGE_SIZE) };
@@ -248,7 +249,7 @@ where
                 self.inner_buf_truncated_end_ptr = buf_start;
                 self.inner_buf_slice = unsafe { std::slice::from_raw_parts(buf_start, 0) };
                 pool
-            },
+            }
             Err(e) => {
                 log_critical!("Failed to create PageBufferPool: {e}");
             }
