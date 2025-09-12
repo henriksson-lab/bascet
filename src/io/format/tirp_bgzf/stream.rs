@@ -9,7 +9,7 @@ use crate::io::{
     format::tirp_bgzf,
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
-use crate::{common, log_warning};
+use crate::{common, log_critical, log_warning};
 
 pub struct Stream<T> {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
@@ -19,7 +19,7 @@ pub struct Stream<T> {
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
 
-    inner_buf_truncated_line_len: usize,
+    inner_buf_truncated_end_ptr: *const u8,
     buffer_num_pages: usize,
     buffer_page_size: usize,
     _marker: std::marker::PhantomData<T>,
@@ -82,12 +82,12 @@ impl<T> Stream<T> {
                 // because the buffer cannot be reset this stalls get_next()
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-                inner_buf_pool: common::PageBufferPool::new(512, 1024 * 1024 * 8),
+                inner_buf_pool: common::PageBufferPool::new(0, 0)?,
                 inner_buf_cursor: 0,
                 inner_buf_slice: &[],
                 inner_buf_ptr: UnsafeMutPtr::null(),
 
-                inner_buf_truncated_line_len: 0,
+                inner_buf_truncated_end_ptr: std::ptr::null(),
                 buffer_num_pages: 512,
                 buffer_page_size: 1024 * 1024 * 8,
                 _marker: std::marker::PhantomData,
@@ -104,35 +104,23 @@ impl<T> Stream<T> {
         // let (incramt, partptr, copylen, ptroffset) =
         let (alloc_ptr_offset, partial_slice_ptr, partial_copy_len) =
             match alloc_res.buffer_page_ptr() == self.inner_buf_ptr.mut_ptr() {
-                // Continue case
+                // Continue case: move buffer pointer back to include truncated data
                 true => {
-                    /*
-                        if the buffer is the same we want to:
-                            1. decrement the slice pointer with length = self.partial_len
-                            2. increase the slice length with length = self.partial_len
-                            3. not copy any partial data
-                    */
+                    let truncated_len = self.inner_buf_truncated_end_ptr.offset_from(
+                        self.inner_buf_slice.as_ptr_range().end
+                    ) as usize;
                     (
-                        self.inner_buf_truncated_line_len,
+                        truncated_len,
                         alloc_res.buffer_slice_ptr(),
                         0,
                     )
                 }
-                // Newpage case
+                // New page case: copy truncated data from end of previous buffer
                 false => {
-                    /*
-                        if the buffer is a new one we want to:
-                            1. leave slice ptr unchanged
-                            2. increase the slice length with length = self.partial_len
-                            3. allocate extra space for partial
-                            4. copy partial (needs ptr)
-                    */
-
-                    // ok so this is kind of stupid but because the used buffer is truncated to last newline,
-                    // the partial is contained after the end of old_buf.
                     let buf_previous = &self.inner_buf_slice;
-                    let buf_previous_ptr = buf_previous.as_ptr().add(buf_previous.len());
-                    (0, buf_previous_ptr, self.inner_buf_truncated_line_len)
+                    let truncated_start_ptr = buf_previous.as_ptr_range().end;
+                    let truncated_len = self.inner_buf_truncated_end_ptr.offset_from(truncated_start_ptr) as usize;
+                    (0, truncated_start_ptr, truncated_len)
                 }
             };
 
@@ -151,8 +139,11 @@ impl<T> Stream<T> {
             alloc_res.buffer_page_ptr()
         );
 
-        // Read new data after partial
-        let buf_write_ptr = buf_slice_ptr.add(self.inner_buf_truncated_line_len);
+        // Read new data after truncated data
+        let truncated_len = self.inner_buf_truncated_end_ptr.offset_from(
+            self.inner_buf_slice.as_ptr_range().end
+        ) as usize;
+        let buf_write_ptr = buf_slice_ptr.add(truncated_len);
 
         match htslib::bgzf_read(
             fileptr,
@@ -161,7 +152,7 @@ impl<T> Stream<T> {
         ) {
             buf_bytes_written if buf_bytes_written > 0 => {
                 let buf_bytes_written = buf_bytes_written as usize;
-                let buf_slice_len = buf_bytes_written + self.inner_buf_truncated_line_len;
+                let buf_slice_len = buf_bytes_written + truncated_len;
                 let bufslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
 
                 // Find last complete line (simplifies parsing) (mem**r**chr)
@@ -177,7 +168,7 @@ impl<T> Stream<T> {
                     // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
-                    self.inner_buf_truncated_line_len = buf_slice_truncated_line.len();
+                    self.inner_buf_truncated_end_ptr = buf_slice_truncated_line.as_ptr_range().end;
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -191,14 +182,16 @@ impl<T> Stream<T> {
             }
             0 => {
                 // EOF
-                let buf_slice_len = self.inner_buf_truncated_line_len;
+                let buf_slice_len = self.inner_buf_truncated_end_ptr.offset_from(
+                    self.inner_buf_slice.as_ptr_range().end
+                ) as usize;
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
                     self.inner_buf_slice = eofslice;
                     // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
-                    self.inner_buf_truncated_line_len = 0;
+                    self.inner_buf_truncated_end_ptr = std::ptr::null();
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -239,7 +232,19 @@ where
     fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
         self.buffer_num_pages = num_pages;
         self.buffer_page_size = page_size;
-        self.inner_buf_pool = common::PageBufferPool::new(num_pages, page_size);
+        let inner_buf_pool_res = common::PageBufferPool::new(num_pages, page_size);
+        self.inner_buf_pool = match inner_buf_pool_res {
+            Ok(mut pool) => {
+                // Initialize pointer and slice to buffer start to avoid null pointer arithmetic
+                let buf_start = pool.alloc(0).buffer_slice_ptr();
+                self.inner_buf_truncated_end_ptr = buf_start;
+                self.inner_buf_slice = unsafe { std::slice::from_raw_parts(buf_start, 0) };
+                pool
+            },
+            Err(e) => {
+                log_critical!("Failed to create PageBufferPool: {e}");
+            }
+        };
         self
     }
 

@@ -1,6 +1,7 @@
 use crate::common;
+use crate::runtime::Error;
 use bytemuck::Pod;
-use std::alloc::{alloc, dealloc, Layout};
+use memmap2::MmapMut;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -68,8 +69,8 @@ impl<T: Pod> PageBuffer<T> {
 }
 
 pub struct PageBufferPool<T: Pod, const N: usize> {
-    inner_buf: *mut T,
-    total_capacity: usize,
+    _inner_mmap: MmapMut,
+    _inner_capacity: usize,
     inner_pages_n: usize,
     inner_pages: [MaybeUninit<PageBuffer<T>>; N],
     inner_page_active_index: usize,
@@ -104,30 +105,31 @@ impl<T: Pod> PageBufferAllocResult<T> {
 }
 
 impl<T: Pod, const N: usize> PageBufferPool<T, N> {
-    pub fn new(num_pages: usize, page_size: usize) -> Self {
+    pub fn new(num_pages: usize, page_size: usize) -> Result<Self, Error> {
         assert!(num_pages <= N, "num_pages cannot exceed const N");
-        
-        let total_capacity = num_pages * page_size;
-        
+
+        let mut mmap = MmapMut::map_anon(num_pages * page_size * std::mem::size_of::<T>())
+            .map_err(|e| Error::io_error(e))?;
+        let mmap_mut_ptr = mmap.as_mut_ptr() as *mut T;
+
         unsafe {
-            let layout = Layout::array::<T>(total_capacity).unwrap();
-            let buffer_memory = alloc(layout) as *mut T;
-            
             let mut pages: [MaybeUninit<PageBuffer<T>>; N] = MaybeUninit::uninit().assume_init();
-            
-            // Give each page a slice of the large buffer
+
+            // Give each page a slice of the large buffer for contigous access!
             for i in 0..num_pages {
-                let page_start = buffer_memory.add(i * page_size);
+                let page_start = mmap_mut_ptr.add(i * page_size);
+
+                // SAFETY: MaybeUninit does NOT drop the pagebuffer. Manual drop REQUIRED!
                 pages[i] = MaybeUninit::new(PageBuffer::from_slice(page_start, page_size));
             }
-            
-            Self {
-                inner_buf: buffer_memory,
-                total_capacity,
+
+            Ok(Self {
+                _inner_mmap: mmap,
+                _inner_capacity: num_pages * page_size,
                 inner_pages: pages,
                 inner_page_active_index: 0,
                 inner_pages_n: num_pages,
-            }
+            })
         }
     }
 
@@ -140,11 +142,14 @@ impl<T: Pod, const N: usize> PageBufferPool<T, N> {
     }
 
     pub fn active_mut_ptr(&mut self) -> *mut PageBuffer<T> {
-        unsafe { self.inner_pages[self.inner_page_active_index].assume_init_mut() as *mut PageBuffer<T> }
+        unsafe {
+            self.inner_pages[self.inner_page_active_index].assume_init_mut() as *mut PageBuffer<T>
+        }
     }
 
     pub fn alloc(&mut self, count: usize) -> PageBufferAllocResult<T> {
-        let current_page = unsafe { self.inner_pages[self.inner_page_active_index].assume_init_mut() };
+        let current_page =
+            unsafe { self.inner_pages[self.inner_page_active_index].assume_init_mut() };
 
         if current_page.remaining() >= count {
             let ptr = current_page.alloc(count);
@@ -198,11 +203,7 @@ impl<T: Pod, const N: usize> Drop for PageBufferPool<T, N> {
                 self.inner_pages[i].assume_init_drop();
             }
         }
-        
-        // Deallocate the single large buffer
-        unsafe {
-            let layout = Layout::array::<T>(self.total_capacity).unwrap();
-            dealloc(self.inner_buf as *mut u8, layout);
-        }
+
+        // MmapMut will automatically unmap when dropped
     }
 }
