@@ -66,10 +66,18 @@ impl TrimExperimentalCMD {
                 TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
             stream = stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
+            let mut i: i128 = 0;
             match &self.chemistry {
                 Chemistry::Atrandi(_args) => {
                     for token in stream {
-                        println!("{:?}", String::from_utf8_lossy(token.unwrap().cell))
+                        i += 1;
+                        if i % 1_000_000 == 0 {
+                            println!(
+                                "{:?} million records parsed. Current cell: {:?}",
+                                i / 1_000_000,
+                                token.unwrap()
+                            )
+                        }
                     }
                 }
                 _ => todo!(),
@@ -88,6 +96,19 @@ struct TrimExperimentalCell {
     _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
+
+impl std::fmt::Debug for TrimExperimentalCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrimExperimentalCell")
+            .field("cell", &String::from_utf8_lossy(self.cell))
+            .field("read", &String::from_utf8_lossy(self.read))
+            .field("quality", &String::from_utf8_lossy(self.quality))
+            .field("_page_refs", &format!("{} refs", self._page_refs.len()))
+            .field("_owned", &format!("{} owned", self._owned.len()))
+            .finish()
+    }
+}
+
 impl Drop for TrimExperimentalCell {
     #[inline(always)]
     fn drop(&mut self) {

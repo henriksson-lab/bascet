@@ -53,9 +53,9 @@ pub struct ShardifyCMD {
     threads_work: usize,
 
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 2048)]
     pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 16)]
     pub page_size_mb: usize,
 }
 
@@ -200,7 +200,7 @@ impl ShardifyCMD {
         }
 
         let write_channels: Vec<_> = (0..count_writers)
-            .map(|_| channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16))
+            .map(|_| channel::bounded::<Option<Box<Vec<ShardifyCell>>>>(128))
             .collect();
         let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
 
@@ -230,7 +230,7 @@ impl ShardifyCMD {
                 }
             };
 
-            let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
+            let thread_buf_writer = BufWriter::with_capacity(1024 * 1024 * 32, thread_file);
             let thread_bgzf_writer =
                 BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
 
@@ -245,7 +245,7 @@ impl ShardifyCMD {
             let global_counter = Arc::clone(&global_cells_written);
             let thread_handle = thread::spawn(move || {
                 while let Ok(Some(vec_records)) = thread_rx.recv() {
-                    for cell in &*vec_records.read().unwrap() {
+                    for cell in &*vec_records {
                         if let Err(e) = thread_shardify_writer.write_cell(cell) {
                             log_warning!("Failed to write cell"; "thread" => thread_idx, "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
                         }
@@ -347,9 +347,8 @@ impl ShardifyCMD {
                 }
             }
 
-            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(
-                std::mem::take(&mut coordinator_vec_send),
-            ))));
+            let _ = write_senders[coordinator_writer_idx]
+                .send(Some(Box::new(std::mem::take(&mut coordinator_vec_send))));
             coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
