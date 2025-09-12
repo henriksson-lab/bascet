@@ -20,8 +20,6 @@ pub struct Stream<T> {
     inner_buf_cursor: usize,
 
     inner_buf_truncated_end_ptr: *const u8,
-    buffer_num_pages: usize,
-    buffer_page_size: usize,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -83,13 +81,11 @@ impl<T> Stream<T> {
                 // => cell is kept alive and never used, keeping the buffer alive.
                 // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
                 inner_buf_pool: common::PageBufferPool::new(0, 0)?,
+                inner_buf_ptr: UnsafeMutPtr::null(),
                 inner_buf_cursor: 0,
                 inner_buf_slice: &[],
-                inner_buf_ptr: UnsafeMutPtr::null(),
 
                 inner_buf_truncated_end_ptr: std::ptr::null(),
-                buffer_num_pages: 512,
-                buffer_page_size: 1024 * 1024 * 8,
                 _marker: std::marker::PhantomData,
             })
         }
@@ -106,20 +102,19 @@ impl<T> Stream<T> {
             match alloc_res.buffer_page_ptr() == self.inner_buf_ptr.mut_ptr() {
                 // Continue case: move buffer pointer back to include truncated data
                 true => {
-                    let truncated_len = self.inner_buf_truncated_end_ptr.offset_from(
-                        self.inner_buf_slice.as_ptr_range().end
-                    ) as usize;
-                    (
-                        truncated_len,
-                        alloc_res.buffer_slice_ptr(),
-                        0,
-                    )
+                    let truncated_len = self
+                        .inner_buf_truncated_end_ptr
+                        .offset_from(self.inner_buf_slice.as_ptr_range().end)
+                        as usize;
+                    (truncated_len, alloc_res.buffer_slice_ptr(), 0)
                 }
                 // New page case: copy truncated data from end of previous buffer
                 false => {
                     let buf_previous = &self.inner_buf_slice;
                     let truncated_start_ptr = buf_previous.as_ptr_range().end;
-                    let truncated_len = self.inner_buf_truncated_end_ptr.offset_from(truncated_start_ptr) as usize;
+                    let truncated_len =
+                        self.inner_buf_truncated_end_ptr
+                            .offset_from(truncated_start_ptr) as usize;
                     (0, truncated_start_ptr, truncated_len)
                 }
             };
@@ -140,9 +135,9 @@ impl<T> Stream<T> {
         );
 
         // Read new data after truncated data
-        let truncated_len = self.inner_buf_truncated_end_ptr.offset_from(
-            self.inner_buf_slice.as_ptr_range().end
-        ) as usize;
+        let truncated_len =
+            self.inner_buf_truncated_end_ptr
+                .offset_from(self.inner_buf_slice.as_ptr_range().end) as usize;
         let buf_write_ptr = buf_slice_ptr.add(truncated_len);
 
         match htslib::bgzf_read(
@@ -182,9 +177,10 @@ impl<T> Stream<T> {
             }
             0 => {
                 // EOF
-                let buf_slice_len = self.inner_buf_truncated_end_ptr.offset_from(
-                    self.inner_buf_slice.as_ptr_range().end
-                ) as usize;
+                let buf_slice_len = self
+                    .inner_buf_truncated_end_ptr
+                    .offset_from(self.inner_buf_slice.as_ptr_range().end)
+                    as usize;
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts(buf_slice_ptr, buf_slice_len);
                     self.inner_buf_slice = eofslice;
@@ -203,6 +199,65 @@ impl<T> Stream<T> {
                 "bgzf_read",
                 Some(format!("Read error code: {}", err)),
             )),
+        }
+    }
+
+    pub fn reset(
+        &mut self,
+        file: &io::format::tirp_bgzf::Input,
+    ) -> Result<(), crate::runtime::Error> {
+        let path = file.path();
+
+        let _file = match File::open(&path) {
+            Ok(f) => f,
+            Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
+        };
+
+        unsafe {
+            let path_str = match path.to_str() {
+                Some(s) => s,
+                None => {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        path,
+                        Some("Invalid UTF-8 in path"),
+                    ))
+                }
+            };
+
+            let c_path = match std::ffi::CString::new(path_str.as_bytes()) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        path,
+                        Some("Path contains null bytes"),
+                    ))
+                }
+            };
+
+            let mode = match std::ffi::CString::new("r") {
+                Ok(m) => m,
+                Err(_) => {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        path,
+                        Some("Failed to create mode string"),
+                    ))
+                }
+            };
+
+            let inner_hts_file = htslib::hts_open(c_path.as_ptr(), mode.as_ptr());
+            if inner_hts_file.is_null() {
+                return Err(crate::runtime::Error::file_not_valid(
+                    path,
+                    Some("hts_open returned null"),
+                ));
+            }
+
+            if !self.inner_htsfileptr.is_null() {
+                htslib::hts_close(self.inner_htsfileptr.mut_ptr());
+            }
+
+            self.inner_htsfileptr = UnsafeMutPtr::new(inner_hts_file);
+            Ok(())
         }
     }
 }
@@ -230,8 +285,6 @@ where
     }
 
     fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
-        self.buffer_num_pages = num_pages;
-        self.buffer_page_size = page_size;
         let inner_buf_pool_res = common::PageBufferPool::new(num_pages, page_size);
         self.inner_buf_pool = match inner_buf_pool_res {
             Ok(mut pool) => {
@@ -240,7 +293,7 @@ where
                 self.inner_buf_truncated_end_ptr = buf_start;
                 self.inner_buf_slice = unsafe { std::slice::from_raw_parts(buf_start, 0) };
                 pool
-            },
+            }
             Err(e) => {
                 log_critical!("Failed to create PageBufferPool: {e}");
             }
