@@ -33,6 +33,10 @@ pub struct CountChromCMD {
     /// Remove reads for a cell if they are duplicates
     pub remove_duplicates: bool,
 
+    #[arg(long = "remove-multimapper", value_parser, default_value = "true")]
+    /// Remove reads for a cell if they map to multiple places. BWA support so far
+    pub remove_multimapper: bool,
+
     // Temp file directory
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     //Not used, but kept here for consistency with other commands
@@ -55,7 +59,8 @@ impl CountChromCMD {
             path_out: self.path_out.clone(),
             num_threads: num_threads_total,
             min_matching: self.min_matching,
-            remove_duplicates: self.remove_duplicates
+            remove_duplicates: self.remove_duplicates,
+            remove_multimapper: self.remove_multimapper
         })
         .unwrap();
 
@@ -71,7 +76,8 @@ pub struct CountChrom {
     pub path_out: std::path::PathBuf,
     pub num_threads: usize,
     pub min_matching: u32,
-    pub remove_duplicates: bool
+    pub remove_duplicates: bool,
+    pub remove_multimapper: bool,
 }
 impl CountChrom {
     /// Run the algorithm
@@ -157,6 +163,23 @@ impl CountChrom {
                 } else {
                     true
                 };
+
+
+                //Remove multimapper
+                //TODO tons of if's; can we reduce somehow?
+                let map_uniquely = if params.remove_multimapper  {                
+                    let tag_xa = record.aux(b"XA");
+                    if let Ok(_t)=tag_xa  {
+                        //For BWA: XA-tag is produced for multimappers
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+                let count_read = count_read && map_uniquely;
+
                     
                 if count_read {
                     //Update position of last read for this cell
