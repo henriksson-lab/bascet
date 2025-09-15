@@ -93,7 +93,8 @@ test_pipe_sam_add_tags:
 #########
 
 
-
+test_countfeature_bed:
+	rm -Rf temp; cargo +nightly run countfeature -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.1.h5 -g testdata/features.bed
 
 test_countfeature2:
 	rm -Rf temp; cargo +nightly run countfeature -i testdata/sorted_aligned.1.bam -o testdata/cnt_al.1.h5 -g counttest/all.gff3
