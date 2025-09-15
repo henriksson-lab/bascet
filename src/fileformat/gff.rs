@@ -1,6 +1,7 @@
 use flate2::read::GzDecoder;
 use noodles::gff::feature::RecordBuf;
 use std::fs::File;
+use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
 
@@ -158,8 +159,62 @@ impl FeatureCollection {
     }
 
 
+
+
     /// 
-    /// Read a GFF or GTF file
+    /// Read a BED file
+    /// 
+    fn read_bed(
+        fname: &PathBuf,
+        _params: &GFFparseSettings
+    ) -> anyhow::Result<FeatureCollection> {
+        let mut gff = FeatureCollection::new();
+
+
+        let file = File::open(fname)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line=line.expect("Failed to read BED line");
+            let mut parts = line.split("\t");
+
+            //Get first 4 columns
+            let cur_chr = parts.next().expect("could not get bed:chr");
+            let cur_from = parts.next().expect("could not get bed:from");
+            let cur_to = parts.next().expect("could not get bed:to");
+            let attr_id = parts.next().expect("could not get bed:to");
+
+            //Parse integer ranges
+            let cur_from = cur_from.parse::<i64>()?;
+            let cur_to = cur_to.parse::<i64>()?;
+
+            //Strand info; unclear how to best handle
+            let cur_strand = Strand::None;
+
+            let gene_meta = GeneMeta {
+                gene_chr: cur_chr.as_bytes().to_vec(),
+                gene_start: cur_from,
+                gene_end: cur_to,
+                gene_strand: cur_strand,
+    
+                gene_id: attr_id.as_bytes().to_vec(),
+                gene_name: cur_chr.as_bytes().to_vec(),
+            };
+
+            gff.add_feature(gene_meta);
+        }
+
+        anyhow::Ok(gff)
+    }
+
+
+
+
+
+
+
+    /// 
+    /// Read a GFF-like file
     /// 
     pub fn read_file(path_gff: &PathBuf, params: &GFFparseSettings) -> anyhow::Result<FeatureCollection> {
 
@@ -199,7 +254,12 @@ impl FeatureCollection {
                 .map(BufReader::new)
                 .map(gtf::io::Reader::new)?;
             Self::read_gtf_from_reader(&mut reader, params)
-            
+
+        } else if spath.ends_with("bed") {
+
+            println!("Reading BED: {:?}",path_gff);
+            Self::read_bed(&path_gff, params)
+                        
         } else {
             anyhow::bail!("Could not tell file format for GFF/GTF file {:?}", path_gff);
         }?;
