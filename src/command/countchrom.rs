@@ -145,37 +145,44 @@ impl CountChrom {
 
 
                 //Remove duplicate reads
+                let rpos = record.pos();
                 let lastpos = map_cell_lastread.get(cell_id);
-                if let Some(lastpos) = lastpos {
-                    let rpos = record.pos();
+                let count_read = if let Some(lastpos) = lastpos {
                     if rpos==*lastpos && params.remove_duplicates {
-                        map_cell_lastread.insert(cell_id.to_vec(), rpos);
+                        //Skip this read
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+                    
+                if count_read {
+                    //Update position of last read for this cell
+                    map_cell_lastread.insert(cell_id.to_vec(), rpos);
 
-
-                        //Get number of matching bases
-                        let mut num_matching = 0;
-                        let cigar = record.cigar();
-                        for cigar_part in cigar.iter() {
-                            if let Cigar::Match(x) = cigar_part {
-                                num_matching += x;
-                            }
+                    //Get number of matching bases
+                    let mut num_matching = 0;
+                    let cigar = record.cigar();
+                    for cigar_part in cigar.iter() {
+                        if let Cigar::Match(x) = cigar_part {
+                            num_matching += x;
                         }
+                    }
 
-
-                        //Filter out reads that don't match well enough
-                        if num_matching >= params.min_matching {
-                            //Count this read as mapping
-                            let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
-                            *values += 1;
-                        } else {
-                            //Count non-mapping reads
-                            let cell_index = cnt_mat.get_or_create_cell(&cell_id);
-                            *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
-                        }
-
-
+                    //Filter out reads that don't match well enough
+                    if num_matching >= params.min_matching {
+                        //Count this read as mapping
+                        let values = map_cell_count.entry(cell_id.to_vec()).or_insert(0);
+                        *values += 1;
+                    } else {
+                        //Count non-mapping reads
+                        let cell_index = cnt_mat.get_or_create_cell(&cell_id);
+                        *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
                     }
                 }                
+
             } else {
                 //Count non-mapping reads
                 let cell_index = cnt_mat.get_or_create_cell(&cell_id);

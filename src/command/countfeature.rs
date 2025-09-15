@@ -235,8 +235,8 @@ impl CountFeature {
             anyhow::bail!(format!("Input BAI does not exist: {:?}", path_bam_index));
         }
 
-        //Parse GFF file
-        println!("Reading feature GFF file");
+        //Parse GFF-like file
+        println!("Reading feature file");
         let gff = FeatureCollection::read_file(
             &path_gff,
             &gff_settings
@@ -483,8 +483,6 @@ impl CountFeature {
 
 
         println!("- Store as anndata");
-//        sprs::io::write_matrix_market(&path_out, &compressed_mat)?;
-        
 
         let mut file = SparseMatrixAnnDataWriter::create_anndata(path_out)?;
       
