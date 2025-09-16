@@ -2,7 +2,7 @@ use rust_htslib::htslib;
 
 use std::fs::File;
 
-use crate::common::{PageBuffer, UnsafeMutPtr};
+use crate::common::{PageBuffer, PageBufferPool, UnsafeMutPtr, UnsafePtr};
 use crate::{common, log_critical, log_warning};
 
 use crate::io;
@@ -17,8 +17,8 @@ pub struct Stream<T> {
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
 
-    inner_buf_incomplete_start_ptr: *const u8,
-    inner_buf_truncated_end_ptr: *const u8,
+    inner_buf_incomplete_start_ptr: UnsafePtr<u8>,
+    inner_buf_truncated_end_ptr: UnsafePtr<u8>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -76,13 +76,13 @@ where
 
             Ok(Stream::<T> {
                 inner_htsfileptr: UnsafeMutPtr::new(inner_hts_file),
-                inner_buf_pool: common::PageBufferPool::new(0, 0)?,
+                inner_buf_pool: PageBufferPool::new(0, 0)?,
                 inner_buf_cursor: 0,
                 inner_buf_slice: &[],
                 inner_buf_ptr: UnsafeMutPtr::null(),
 
-                inner_buf_incomplete_start_ptr: std::ptr::null(),
-                inner_buf_truncated_end_ptr: std::ptr::null(),
+                inner_buf_incomplete_start_ptr: UnsafePtr::null(),
+                inner_buf_truncated_end_ptr: UnsafePtr::null(),
                 _marker: std::marker::PhantomData,
             })
         }
@@ -95,25 +95,25 @@ where
         let alloc_res = self.inner_buf_pool.alloc(common::HUGE_PAGE_SIZE);
         let (buf_ptr, partial_copy_len) =
             match alloc_res.buffer_page_ptr() == self.inner_buf_ptr.mut_ptr() {
-                true => (self.inner_buf_incomplete_start_ptr as *mut u8, 0),
+                true => (*self.inner_buf_incomplete_start_ptr as *mut u8, 0),
                 false => {
                     let partial_copy_len = self
                         .inner_buf_truncated_end_ptr
-                        .offset_from(self.inner_buf_incomplete_start_ptr)
+                        .offset_from(*self.inner_buf_incomplete_start_ptr)
                         as usize;
                     (alloc_res.buffer_slice_mut_ptr(), partial_copy_len)
                 }
             };
 
         std::ptr::copy_nonoverlapping(
-            self.inner_buf_incomplete_start_ptr,
+            *self.inner_buf_incomplete_start_ptr,
             buf_ptr,
             partial_copy_len,
         );
 
-        let carry_data_len = self
-            .inner_buf_truncated_end_ptr
-            .offset_from(self.inner_buf_incomplete_start_ptr) as usize;
+        let carry_data_len =
+            self.inner_buf_truncated_end_ptr
+                .offset_from(*self.inner_buf_incomplete_start_ptr) as usize;
         let buf_write_ptr = buf_ptr.add(carry_data_len);
 
         match htslib::bgzf_read(
@@ -148,7 +148,9 @@ where
 
                     self.inner_buf_slice = buf_slice_truncated_use;
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
-                    self.inner_buf_truncated_end_ptr = buf_slice_truncated_line.as_ptr_range().end;
+                    self.inner_buf_truncated_end_ptr =
+                        UnsafePtr::new(buf_slice_truncated_line.as_ptr_range().end);
+
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -167,9 +169,9 @@ where
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts(buf_ptr, buf_slice_len);
                     self.inner_buf_slice = eofslice;
-                    self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
-
-                    self.inner_buf_truncated_end_ptr = std::ptr::null();
+                    self.inner_buf_ptr = UnsafeMutPtr::null();
+                    self.inner_buf_incomplete_start_ptr = UnsafePtr::null();
+                    self.inner_buf_truncated_end_ptr = UnsafePtr::null();
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
@@ -203,7 +205,7 @@ where
         ) {
             (Some(p1), Some(p2), Some(p3), Some(p4)) => [p1, p2, p3, p4],
             _ => {
-                self.inner_buf_incomplete_start_ptr = buf_remaining.as_ptr();
+                self.inner_buf_incomplete_start_ptr = UnsafePtr::new(buf_remaining.as_ptr());
                 return Ok(None);
             }
         };
@@ -219,7 +221,7 @@ where
         let (cell_id, cell_rp) = match fastq_gz::parse_record(hdr, seq, sep, qal) {
             Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
             Err(e) => {
-                log_warning!("{e}"; "header" => ?String::from_utf8_lossy(hdr));
+                log_warning!("{e}"; "header" => ?String::from_utf8_lossy(hdr), "seq" => ?String::from_utf8_lossy(seq), "sep" => ?String::from_utf8_lossy(sep), "qal" => ?String::from_utf8_lossy(qal));
                 return Ok(None);
             }
         };
@@ -263,12 +265,11 @@ where
     }
 
     fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
-        let inner_buf_pool_res = common::PageBufferPool::new(num_pages, page_size);
-        self.inner_buf_pool = match inner_buf_pool_res {
+        self.inner_buf_pool = match common::PageBufferPool::new(num_pages, page_size) {
             Ok(mut pool) => {
                 let buf_start = pool.alloc(0).buffer_slice_ptr();
-                self.inner_buf_incomplete_start_ptr = buf_start;
-                self.inner_buf_truncated_end_ptr = buf_start;
+                self.inner_buf_incomplete_start_ptr = UnsafePtr::new(buf_start);
+                self.inner_buf_truncated_end_ptr = UnsafePtr::new(buf_start);
                 self.inner_buf_slice = unsafe { std::slice::from_raw_parts(buf_start, 0) };
                 pool
             }

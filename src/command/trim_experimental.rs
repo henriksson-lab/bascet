@@ -1,12 +1,14 @@
 use std::path::PathBuf;
+use std::thread;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
+use itertools::izip;
 
 use crate::{
     common,
     io::traits::{BascetCell, BascetCellBuilder, BascetStream},
-    log_warning, support_which_stream, support_which_writer,
+    log_critical, log_warning, support_which_stream, support_which_writer,
 };
 
 support_which_stream! {
@@ -23,9 +25,13 @@ pub struct TrimExperimentalCMD {
     #[command(subcommand)]
     pub chemistry: Chemistry,
 
-    // Input bascets (comma separated; ok with PathBuf???)
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
-    pub path_in: Vec<PathBuf>,
+    // Input R1 files
+    #[arg(short = '1', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    pub paths_r1: Vec<PathBuf>,
+
+    // Input R2 files
+    #[arg(short = '2', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    pub paths_r2: Vec<PathBuf>,
 
     // Output bascets
     #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
@@ -55,35 +61,91 @@ pub struct AtrandiArgs {}
 
 impl TrimExperimentalCMD {
     pub fn try_execute(&mut self) -> Result<()> {
-        let paths_in = &self.path_in;
+        let paths_r1 = &self.paths_r1;
+        let paths_r2 = &self.paths_r2;
         let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
         let page_size_bytes = self.page_size_mb * 1024 * 1024;
         let num_pages = buffer_size_bytes / page_size_bytes;
 
-        for path_in in paths_in {
-            let input = TrimExperimentalInput::try_from_path(path_in).unwrap();
-            let mut stream =
-                TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
-            stream = stream
-                .set_pagebuffer_config(num_pages, page_size_bytes)
-                .set_reader_threads(16);
+        for (path_r1, path_r2) in izip!(paths_r1, paths_r2) {
+            let (mut r1_producer, mut r1_consumer) = rtrb::RingBuffer::new(1024);
+            // let (mut r2_producer, mut r2_consumer) = rtrb::RingBuffer::new(1024);
 
-            let mut i: i128 = 0;
-            match &self.chemistry {
-                Chemistry::Atrandi(_args) => {
-                    for token in stream {
-                        i += 1;
-                        if i % 1_000_000 == 0 {
-                            println!(
-                                "{:?} million records parsed. Current cell: {:?}",
-                                i / 1_000_000,
-                                token.unwrap()
-                            )
+            let path_r1 = path_r1.clone();
+            let path_r2 = path_r2.clone();
+
+            let r1_handle = thread::spawn(move || -> Result<()> {
+                let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
+                let stream_r1 =
+                    TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?
+                        .set_reader_threads(8)
+                        .set_pagebuffer_config(num_pages, page_size_bytes);
+
+                for token in stream_r1 {
+                    let mut cell = token?;
+                    let mut spin_counter = 0;
+                    loop {
+                        match r1_producer.push(cell) {
+                            Ok(()) => break,
+                            Err(rtrb::PushError::Full(returned_cell)) => {
+                                cell = returned_cell;
+                                common::spin_or_park(&mut spin_counter, 100);
+                            }
                         }
                     }
                 }
-                _ => todo!(),
+                Ok(())
+            });
+
+            // let r2_handle = thread::spawn(move || -> Result<()> {
+            //     let input_r2 = TrimExperimentalInput::try_from_path(&path_r2)?;
+            //     let stream_r2 =
+            //         TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r2)?
+            //             .set_reader_threads(8)
+            //             .set_pagebuffer_config(num_pages, page_size_bytes);
+
+            //     for token in stream_r2 {
+            //         let mut cell = token?;
+            //         let mut spin_counter = 0;
+            //         loop {
+            //             match r2_producer.push(cell) {
+            //                 Ok(()) => break,
+            //                 Err(rtrb::PushError::Full(returned_cell)) => {
+            //                     cell = returned_cell;
+            //                     common::spin_or_park(&mut spin_counter, 100);
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     Ok(())
+            // });
+
+            let mut i: i128 = 0;
+            let mut spin_counter = 0;
+            match &self.chemistry {
+                Chemistry::Atrandi(_args) => loop {
+                    match r1_consumer.peek() {
+                        Ok(_) => {
+                            let r1 = r1_consumer.pop().unwrap();
+                            spin_counter = 0;
+
+                            i += 1;
+                            if i % 1_000_000 == 0 {
+                                println!("{:?} million R1 records parsed: {:?}", i / 1_000_000, r1)
+                            }
+                        }
+                        _ => {
+                            if r1_handle.is_finished() {
+                                break;
+                            }
+                            common::spin_or_park(&mut spin_counter, 100);
+                        }
+                    }
+                },
             }
+
+            r1_handle.join().unwrap()?;
+            // r2_handle.join().unwrap()?;
         }
 
         Ok(())
