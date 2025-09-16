@@ -285,8 +285,7 @@ where
     }
 
     fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
-        let inner_buf_pool_res = common::PageBufferPool::new(num_pages, page_size);
-        self.inner_buf_pool = match inner_buf_pool_res {
+        self.inner_buf_pool = match common::PageBufferPool::new(num_pages, page_size) {
             Ok(mut pool) => {
                 // Initialize pointer and slice to buffer start to avoid null pointer arithmetic
                 let buf_start = pool.alloc(0).buffer_slice_ptr();
