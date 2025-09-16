@@ -64,7 +64,9 @@ impl TrimExperimentalCMD {
             let input = TrimExperimentalInput::try_from_path(path_in).unwrap();
             let mut stream =
                 TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
-            stream = stream.set_pagebuffer_config(num_pages, page_size_bytes);
+            stream = stream
+                .set_pagebuffer_config(num_pages, page_size_bytes)
+                .set_reader_threads(16);
 
             let mut i: i128 = 0;
             match &self.chemistry {
