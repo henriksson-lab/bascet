@@ -1,6 +1,6 @@
-use flate2::read::MultiGzDecoder;
+use rust_htslib::htslib;
+
 use std::fs::File;
-use std::io::{BufReader, Read};
 
 use crate::common::{PageBuffer, UnsafeMutPtr};
 use crate::{common, log_critical, log_warning};
@@ -10,7 +10,7 @@ use crate::io::format::fastq_gz;
 use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream};
 
 pub struct Stream<T> {
-    inner_decoder: MultiGzDecoder<BufReader<File>>,
+    inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
     inner_buf_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
     inner_buf_ptr: common::UnsafeMutPtr<PageBuffer<u8>>,
@@ -30,50 +30,72 @@ where
     pub fn new(file: &io::format::fastq_gz::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
-        let file_handle = match File::open(&path) {
+        let _file_handle = match File::open(&path) {
             Ok(f) => f,
             Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
         };
 
-        let buf_reader = BufReader::new(file_handle);
-        let decoder = MultiGzDecoder::new(buf_reader);
+        unsafe {
+            let path_str = match path.to_str() {
+                Some(s) => s,
+                None => {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        path,
+                        Some("Invalid UTF-8 in path"),
+                    ))
+                }
+            };
 
-        Ok(Stream::<T> {
-            inner_decoder: decoder,
-            // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
-            // the problem here is a cell getting allocated near the end of the buffer
-            // will keep the buffer marked as "in use" and as such the buffer cannot be
-            // reset to fit the new data
-            // because the buffer cannot be reset this stalls get_next()
-            // => cell is kept alive and never used, keeping the buffer alive.
-            // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
-            inner_buf_pool: common::PageBufferPool::new(0, 0)?,
-            inner_buf_cursor: 0,
-            inner_buf_slice: &[],
-            inner_buf_ptr: UnsafeMutPtr::null(),
+            let c_path = match std::ffi::CString::new(path_str.as_bytes()) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        path,
+                        Some("Path contains null bytes"),
+                    ))
+                }
+            };
 
-            inner_buf_incomplete_start_ptr: std::ptr::null(),
-            inner_buf_truncated_end_ptr: std::ptr::null(),
-            _marker: std::marker::PhantomData,
-        })
+            let mode = match std::ffi::CString::new("r") {
+                Ok(m) => m,
+                Err(_) => {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        path,
+                        Some("Failed to create mode string"),
+                    ))
+                }
+            };
+
+            let inner_hts_file = htslib::hts_open(c_path.as_ptr(), mode.as_ptr());
+            if inner_hts_file.is_null() {
+                return Err(crate::runtime::Error::file_not_valid(
+                    path,
+                    Some("hts_open returned null"),
+                ));
+            }
+
+            Ok(Stream::<T> {
+                inner_htsfileptr: UnsafeMutPtr::new(inner_hts_file),
+                inner_buf_pool: common::PageBufferPool::new(0, 0)?,
+                inner_buf_cursor: 0,
+                inner_buf_slice: &[],
+                inner_buf_ptr: UnsafeMutPtr::null(),
+
+                inner_buf_incomplete_start_ptr: std::ptr::null(),
+                inner_buf_truncated_end_ptr: std::ptr::null(),
+                _marker: std::marker::PhantomData,
+            })
+        }
     }
 
     unsafe fn load_next_buf(
         &mut self,
     ) -> Result<Option<common::PageBufferAllocResult<u8>>, crate::runtime::Error> {
-        // Allocates space for new read but does NOT write anything
+        let fileptr = htslib::hts_get_bgzfp(self.inner_htsfileptr.mut_ptr());
         let alloc_res = self.inner_buf_pool.alloc(common::HUGE_PAGE_SIZE);
-
         let (buf_ptr, partial_copy_len) =
             match alloc_res.buffer_page_ptr() == self.inner_buf_ptr.mut_ptr() {
-                // Continue case: use existing incomplete data pointer as slice start
-                true => {
-                    (
-                        self.inner_buf_incomplete_start_ptr as *mut u8,
-                        0, // No copy needed
-                    )
-                }
-                // New page case: copy partial data to new buffer
+                true => (self.inner_buf_incomplete_start_ptr as *mut u8, 0),
                 false => {
                     let partial_copy_len = self
                         .inner_buf_truncated_end_ptr
@@ -83,29 +105,25 @@ where
                 }
             };
 
-        // Copy partial data (no-op in continue case where partial_copy_len = 0)
-        // SAFETY: [JD] in _theory_ this CAN point to stale memory. I have verified this for correctness on
-        // a ~400GiB dataset and compared the resulting slice with a cloned approach and found
-        // no stale memory hits. It is _likely_ fine, but cannot promise.
         std::ptr::copy_nonoverlapping(
             self.inner_buf_incomplete_start_ptr,
             buf_ptr,
             partial_copy_len,
         );
 
-        // Read new data after partial data
         let carry_data_len = self
             .inner_buf_truncated_end_ptr
             .offset_from(self.inner_buf_incomplete_start_ptr) as usize;
         let buf_write_ptr = buf_ptr.add(carry_data_len);
-        let write_slice =
-            unsafe { std::slice::from_raw_parts_mut(buf_write_ptr, common::HUGE_PAGE_SIZE) };
 
-        match self.inner_decoder.read(write_slice) {
-            Ok(buf_bytes_written) if buf_bytes_written > 0 => {
+        match htslib::bgzf_read(
+            fileptr,
+            buf_write_ptr as *mut std::os::raw::c_void,
+            common::HUGE_PAGE_SIZE,
+        ) {
+            buf_bytes_written if buf_bytes_written > 0 => {
                 let buf_bytes_written = buf_bytes_written as usize;
                 let buf_slice_len = buf_bytes_written + carry_data_len;
-
                 let bufslice = std::slice::from_raw_parts(buf_ptr, buf_slice_len);
 
                 // Find last \n@ sequence (FASTQ record boundary)
@@ -129,14 +147,12 @@ where
                     );
 
                     self.inner_buf_slice = buf_slice_truncated_use;
-                    // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
                     self.inner_buf_truncated_end_ptr = buf_slice_truncated_line.as_ptr_range().end;
                     self.inner_buf_cursor = 0;
 
                     return Ok(Some(alloc_res));
                 } else {
-                    // No FASTQ record boundary found. Likely a malformed file or first buffer
                     return Err(crate::runtime::Error::parse_error(
                         "load_next_buf",
                         Some(
@@ -146,15 +162,11 @@ where
                 }
             }
 
-            // EOF; buf_bytes_written == 0
-            Ok(buf_bytes_written) => {
-                assert_eq!(buf_bytes_written, 0);
-                let buf_slice_len = buf_bytes_written + carry_data_len;
-
+            0 => {
+                let buf_slice_len = carry_data_len;
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts(buf_ptr, buf_slice_len);
                     self.inner_buf_slice = eofslice;
-                    // SAFETY: wrap buf ptr in Send + Sync able struct. Safety is guaranteed by page buffer ref counts
                     self.inner_buf_ptr = UnsafeMutPtr::new(alloc_res.buffer_page_mut_ptr());
 
                     self.inner_buf_truncated_end_ptr = std::ptr::null();
@@ -165,9 +177,9 @@ where
                     return Ok(None);
                 }
             }
-            Err(e) => Err(crate::runtime::Error::parse_error(
-                "decoder_read",
-                Some(format!("Read error code: {:?}", e)),
+            err => Err(crate::runtime::Error::parse_error(
+                "bgzf_read",
+                Some(format!("Read error code: {}", err)),
             )),
         }
     }
@@ -228,14 +240,25 @@ where
     }
 }
 
+impl<T> Drop for Stream<T> {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.inner_htsfileptr.is_null() {
+                htslib::hts_close(self.inner_htsfileptr.mut_ptr());
+            }
+        }
+    }
+}
+
 impl<T> BascetStream<T> for Stream<T>
 where
     T: BascetCell + 'static,
     T::Builder: BascetCellBuilder<Token = T>,
 {
-    fn set_reader_threads(self, _n_threads: usize) -> Self {
-        // MultiGzDecoder is single-threaded
-        log_warning!("flate2 doesn't support setting thread count directly");
+    fn set_reader_threads(self, n_threads: usize) -> Self {
+        unsafe {
+            htslib::hts_set_threads(self.inner_htsfileptr.mut_ptr(), n_threads as i32);
+        }
         self
     }
 
@@ -243,7 +266,6 @@ where
         let inner_buf_pool_res = common::PageBufferPool::new(num_pages, page_size);
         self.inner_buf_pool = match inner_buf_pool_res {
             Ok(mut pool) => {
-                // Initialize both pointers to buffer start to avoid null pointers
                 let buf_start = pool.alloc(0).buffer_slice_ptr();
                 self.inner_buf_incomplete_start_ptr = buf_start;
                 self.inner_buf_truncated_end_ptr = buf_start;

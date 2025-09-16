@@ -14,7 +14,7 @@ use crate::{common, log_critical, log_warning};
 pub struct Stream<T> {
     inner_htsfileptr: common::UnsafeMutPtr<htslib::htsFile>,
 
-    inner_buf_pool: common::PageBufferPool<u8, 512>,
+    inner_buf_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
     inner_buf_ptr: common::UnsafeMutPtr<PageBuffer<u8>>,
     inner_buf_slice: &'static [u8],
     inner_buf_cursor: usize,
