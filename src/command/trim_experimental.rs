@@ -46,7 +46,7 @@ pub struct TrimExperimentalCMD {
     threads_work: usize,
 
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 16384)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8096)]
     pub buffer_size_mb: usize,
     #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
     pub page_size_mb: usize,
@@ -68,99 +68,45 @@ impl TrimExperimentalCMD {
         let page_size_bytes = self.page_size_mb * 1024 * 1024;
         let num_pages = buffer_size_bytes / page_size_bytes;
 
-        for (path_r1, path_r2) in izip!(paths_r1, paths_r2) {
-            let (mut r1_producer, mut r1_consumer) = rtrb::RingBuffer::new(1024);
-            let (mut r2_producer, mut r2_consumer) = rtrb::RingBuffer::new(1024);
-
-            let path_r1 = path_r1.clone();
-            let path_r2 = path_r2.clone();
-
-            let r1_handle = thread::spawn(move || -> Result<()> {
-                let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
-                let stream_r1 =
-                    TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?
-                        .set_reader_threads(8)
-                        .set_pagebuffer_config(num_pages, page_size_bytes);
-
-                for token in stream_r1 {
-                    let mut cell = token?;
-                    let mut spin_counter = 0;
-                    loop {
-                        match r1_producer.push(cell) {
-                            Ok(()) => break,
-                            Err(rtrb::PushError::Full(returned_cell)) => {
-                                cell = returned_cell;
-                                common::spin_or_park(&mut spin_counter, 100);
-                            }
-                        }
-                    }
-                }
-                Ok(())
-            });
-
-            let r2_handle = thread::spawn(move || -> Result<()> {
-                let input_r2 = TrimExperimentalInput::try_from_path(&path_r2)?;
-                let stream_r2 =
-                    TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r2)?
-                        .set_reader_threads(8)
-                        .set_pagebuffer_config(num_pages, page_size_bytes);
-
-                for token in stream_r2 {
-                    let mut cell = token?;
-                    let mut spin_counter = 0;
-                    loop {
-                        match r2_producer.push(cell) {
-                            Ok(()) => break,
-                            Err(rtrb::PushError::Full(returned_cell)) => {
-                                cell = returned_cell;
-                                common::spin_or_park(&mut spin_counter, 100);
-                            }
-                        }
-                    }
-                }
-                Ok(())
-            });
+        for path_r1 in paths_r1 {
+            let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
+            let stream_r1 =
+                TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?
+                    .set_reader_threads(16)
+                    .set_pagebuffer_config(num_pages, page_size_bytes);
 
             let mut i: i128 = 0;
-            let mut spin_counter = 0;
             let start_time = Instant::now();
             let mut last_log_time = start_time;
+
             match &self.chemistry {
-                Chemistry::Atrandi(_args) => loop {
-                    match (r1_consumer.peek(), r2_consumer.peek()) {
-                        (Ok(_), Ok(_)) => {
-                            let r1 = r1_consumer.pop().unwrap();
-                            let r2 = r2_consumer.pop().unwrap();
-                            spin_counter = 0;
+                Chemistry::Atrandi(_args) => {
+                    for token in stream_r1 {
+                        let r1 = token?;
 
-                            i += 1;
-                            if i % 1_000_000 == 0 {
-                                let now = Instant::now();
-                                
-                                let interval_secs = now.duration_since(last_log_time).as_secs_f64();
-                                let instant_rate = 60.0 / interval_secs;
+                        i += 1;
+                        if i % 1_000_000 == 0 {
+                            let now = Instant::now();
 
-                                let total_secs = now.duration_since(start_time).as_secs_f64();
-                                let avg_rate = (i as f64 / total_secs) * 60.0 / 1_000_000.0;
-                                
-                                println!("{:?}M records ({:.2}M/min current, {:.2}M/min avg)", 
-                                         i / 1_000_000, instant_rate, avg_rate);
-                                
-                                last_log_time = now;
-                            }
-                        }
-                        _ => {
-                            if r1_handle.is_finished() && r2_handle.is_finished() {
-                                break;
-                            }
-                            common::spin_or_park(&mut spin_counter, 100);
+                            let interval_secs = now.duration_since(last_log_time).as_secs_f64();
+                            let instant_rate = 60.0 / interval_secs;
+
+                            let total_secs = now.duration_since(start_time).as_secs_f64();
+                            let avg_rate = (i as f64 / total_secs) * 60.0 / 1_000_000.0;
+
+                            println!(
+                                "{:?}M records ({:.2}M/min current, {:.2}M/min avg): {:?}",
+                                i / 1_000_000,
+                                instant_rate,
+                                avg_rate,
+                                r1
+                            );
+
+                            last_log_time = now;
                         }
                     }
-                },
+                }
             }
-
-            r1_handle.join().unwrap()?;
-            r2_handle.join().unwrap()?;
         }
 
         Ok(())
