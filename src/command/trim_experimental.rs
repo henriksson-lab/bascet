@@ -47,7 +47,7 @@ pub struct TrimExperimentalCMD {
     // Stream buffer configuration
     #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
     pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 16)]
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
     pub page_size_mb: usize,
 }
 
@@ -69,7 +69,7 @@ impl TrimExperimentalCMD {
 
         for (path_r1, path_r2) in izip!(paths_r1, paths_r2) {
             let (mut r1_producer, mut r1_consumer) = rtrb::RingBuffer::new(1024);
-            // let (mut r2_producer, mut r2_consumer) = rtrb::RingBuffer::new(1024);
+            let (mut r2_producer, mut r2_consumer) = rtrb::RingBuffer::new(1024);
 
             let path_r1 = path_r1.clone();
             let path_r2 = path_r2.clone();
@@ -78,7 +78,7 @@ impl TrimExperimentalCMD {
                 let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
                 let stream_r1 =
                     TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?
-                        .set_reader_threads(16)
+                        .set_reader_threads(8)
                         .set_pagebuffer_config(num_pages, page_size_bytes);
 
                 for token in stream_r1 {
@@ -97,45 +97,47 @@ impl TrimExperimentalCMD {
                 Ok(())
             });
 
-            // let r2_handle = thread::spawn(move || -> Result<()> {
-            //     let input_r2 = TrimExperimentalInput::try_from_path(&path_r2)?;
-            //     let stream_r2 =
-            //         TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r2)?
-            //             .set_reader_threads(8)
-            //             .set_pagebuffer_config(num_pages, page_size_bytes);
+            let r2_handle = thread::spawn(move || -> Result<()> {
+                let input_r2 = TrimExperimentalInput::try_from_path(&path_r2)?;
+                let stream_r2 =
+                    TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r2)?
+                        .set_reader_threads(8)
+                        .set_pagebuffer_config(num_pages, page_size_bytes);
 
-            //     for token in stream_r2 {
-            //         let mut cell = token?;
-            //         let mut spin_counter = 0;
-            //         loop {
-            //             match r2_producer.push(cell) {
-            //                 Ok(()) => break,
-            //                 Err(rtrb::PushError::Full(returned_cell)) => {
-            //                     cell = returned_cell;
-            //                     common::spin_or_park(&mut spin_counter, 100);
-            //                 }
-            //             }
-            //         }
-            //     }
-            //     Ok(())
-            // });
+                for token in stream_r2 {
+                    let mut cell = token?;
+                    let mut spin_counter = 0;
+                    loop {
+                        match r2_producer.push(cell) {
+                            Ok(()) => break,
+                            Err(rtrb::PushError::Full(returned_cell)) => {
+                                cell = returned_cell;
+                                common::spin_or_park(&mut spin_counter, 100);
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            });
 
             let mut i: i128 = 0;
             let mut spin_counter = 0;
             match &self.chemistry {
                 Chemistry::Atrandi(_args) => loop {
-                    match r1_consumer.peek() {
-                        Ok(_) => {
+                    // Try to get both R1 and R2 records
+                    match (r1_consumer.peek(), r2_consumer.peek()) {
+                        (Ok(_), Ok(_)) => {
                             let r1 = r1_consumer.pop().unwrap();
+                            let r2 = r2_consumer.pop().unwrap();
                             spin_counter = 0;
 
                             i += 1;
                             if i % 1_000_000 == 0 {
-                                println!("{:?} million R1 records parsed: {:?}", i / 1_000_000, r1)
+                                println!("{:?} million paired records parsed: R1={:?}, R2={:?}", i / 1_000_000, r1, r2)
                             }
                         }
                         _ => {
-                            if r1_handle.is_finished() {
+                            if r1_handle.is_finished() && r2_handle.is_finished() {
                                 break;
                             }
                             common::spin_or_park(&mut spin_counter, 100);
@@ -145,7 +147,7 @@ impl TrimExperimentalCMD {
             }
 
             r1_handle.join().unwrap()?;
-            // r2_handle.join().unwrap()?;
+            r2_handle.join().unwrap()?;
         }
 
         Ok(())
