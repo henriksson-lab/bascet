@@ -24,3 +24,6 @@ zorn
 
 # bascet log
 latest.log
+
+# heaptrack files
+heaptrack.*

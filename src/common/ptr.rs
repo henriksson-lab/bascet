@@ -1,64 +1,13 @@
-#[derive(PartialEq)]
-pub struct UnsafePtr<T>(*const T);
-
-#[derive(PartialEq)]
-pub struct UnsafeMutPtr<T>(*mut T);
-
-unsafe impl<T> Send for UnsafePtr<T> {}
-unsafe impl<T> Sync for UnsafePtr<T> {}
-unsafe impl<T> Send for UnsafeMutPtr<T> {}
-unsafe impl<T> Sync for UnsafeMutPtr<T> {}
-
-impl<T> Clone for UnsafePtr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Clone for UnsafeMutPtr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for UnsafePtr<T> {}
-impl<T> Copy for UnsafeMutPtr<T> {}
-
+pub struct UnsafePtr<T>(*mut T);
 impl<T> UnsafePtr<T> {
-    #[inline(always)]
-    pub fn new(ptr: *const T) -> Self {
-        Self(ptr)
-    }
-
-    #[inline(always)]
-    pub fn null() -> Self {
-        Self(std::ptr::null())
-    }
-
-    #[inline(always)]
-    pub fn ptr(self) -> *const T {
-        self.0
-    }
-
-    #[inline(always)]
-    pub fn is_null(&self) -> bool {
-        self.0.is_null()
-    }
-}
-
-impl<T> std::ops::Deref for UnsafePtr<T> {
-    type Target = *const T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> UnsafeMutPtr<T> {
     #[inline(always)]
     pub fn new(ptr: *mut T) -> Self {
         Self(ptr)
+    }
+
+    #[inline(always)]
+    pub fn from_const(ptr: *const T) -> Self {
+        Self(ptr as *mut T)
     }
 
     #[inline(always)]
@@ -67,7 +16,12 @@ impl<T> UnsafeMutPtr<T> {
     }
 
     #[inline(always)]
-    pub fn mut_ptr(self) -> *mut T {
+    pub fn as_ptr(self) -> *const T {
+        self.0 as *const T
+    }
+
+    #[inline(always)]
+    pub fn as_mut_ptr(self) -> *mut T {
         self.0
     }
 
@@ -75,9 +29,22 @@ impl<T> UnsafeMutPtr<T> {
     pub fn is_null(&self) -> bool {
         self.0.is_null()
     }
+
+    #[inline(always)]
+    pub unsafe fn offset_from(&self, other: Self) -> isize {
+        self.0.offset_from(*other)
+    }
+
+    #[inline(always)]
+    pub unsafe fn offset_from_raw_ptr(&self, other: *const T) -> isize {
+        self.0.offset_from(other)
+    }
 }
 
-impl<T> std::ops::Deref for UnsafeMutPtr<T> {
+unsafe impl<T> Send for UnsafePtr<T> {}
+unsafe impl<T> Sync for UnsafePtr<T> {}
+
+impl<T> std::ops::Deref for UnsafePtr<T> {
     type Target = *mut T;
 
     #[inline(always)]
@@ -86,9 +53,16 @@ impl<T> std::ops::Deref for UnsafeMutPtr<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for UnsafeMutPtr<T> {
+impl<T> std::ops::DerefMut for UnsafePtr<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
+
+impl<T> Clone for UnsafePtr<T> {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+impl<T> Copy for UnsafePtr<T> {}

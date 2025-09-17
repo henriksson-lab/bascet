@@ -47,7 +47,7 @@ pub struct TrimExperimentalCMD {
     // Stream buffer configuration
     #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
     pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 16)]
     pub page_size_mb: usize,
 }
 
@@ -78,7 +78,7 @@ impl TrimExperimentalCMD {
                 let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
                 let stream_r1 =
                     TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?
-                        .set_reader_threads(8)
+                        .set_reader_threads(16)
                         .set_pagebuffer_config(num_pages, page_size_bytes);
 
                 for token in stream_r1 {
@@ -157,7 +157,7 @@ struct TrimExperimentalCell {
     read: &'static [u8],
     quality: &'static [u8],
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
+    _page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -178,7 +178,7 @@ impl Drop for TrimExperimentalCell {
     fn drop(&mut self) {
         unsafe {
             for page_ptr in &self._page_refs {
-                (*page_ptr.mut_ptr()).dec_ref();
+                (***page_ptr).dec_ref();
             }
         }
     }
@@ -195,7 +195,7 @@ struct TrimExperimentalCellBuilder {
     read: Option<&'static [u8]>,
     quality: Option<&'static [u8]>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
+    page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -216,9 +216,9 @@ impl BascetCellBuilder for TrimExperimentalCellBuilder {
     type Token = TrimExperimentalCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer<u8>>) -> Self {
+    fn add_page_ref(mut self, page_ptr: common::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         unsafe {
-            (*page_ptr.mut_ptr()).inc_ref();
+            (**page_ptr).inc_ref();
         }
         self.page_refs.push(page_ptr);
         self
