@@ -231,7 +231,6 @@ impl<T> Stream<T> {
             }
         };
 
-        // Create slices using pointer arithmetic (bounds-check free)
         let hdr = unsafe { std::slice::from_raw_parts(*self.inner_cursor_ptr, line_positions[0]) };
         let seq = unsafe {
             std::slice::from_raw_parts(
