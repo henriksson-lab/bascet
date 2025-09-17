@@ -127,11 +127,14 @@ impl<T> Stream<T> {
         std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
         // free ref count to last page, data has been copied already
         (**last_page).dec_ref();
-        match htslib::bgzf_read(
+        let start = std::time::Instant::now();
+        let result = htslib::bgzf_read(
             fileptr,
             *buf_write_ptr as *mut std::os::raw::c_void,
             common::HUGE_PAGE_SIZE,
-        ) {
+        );
+        println!("bgzf_read took: {:?}", start.elapsed());
+        match result {
             buf_bytes_written if buf_bytes_written > 0 => {
                 let buf_bytes_written = buf_bytes_written as usize;
                 let buf_slice_len = buf_bytes_written + carry_offset;

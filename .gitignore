@@ -25,5 +25,6 @@ zorn
 # bascet log
 latest.log
 
-# heaptrack files
+# profiling files
 heaptrack.*
+perf.data
