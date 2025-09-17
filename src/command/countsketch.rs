@@ -58,7 +58,7 @@ pub struct CountsketchCMD {
     #[arg(long = "channel-buffer-size", value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_CHANNEL_BUFFER_SIZE)]
     pub channel_buffer_size: usize,
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 1024)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 4096)]
     pub buffer_size_mb: usize,
     #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
     pub page_size_mb: usize,
@@ -296,7 +296,7 @@ struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer<u8>>; 2]>,
+    _page_refs: smallvec::SmallVec<[common::UnsafePtr<PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -305,7 +305,7 @@ impl Drop for CountsketchCell {
     fn drop(&mut self) {
         unsafe {
             for page_ptr in &self._page_refs {
-                (*page_ptr.mut_ptr()).dec_ref();
+                (***page_ptr).dec_ref();
             }
         }
     }
@@ -331,7 +331,7 @@ struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer<u8>>; 2]>,
+    page_refs: smallvec::SmallVec<[common::UnsafePtr<PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -351,9 +351,9 @@ impl BascetCellBuilder for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer<u8>>) -> Self {
+    fn add_page_ref(mut self, page_ptr: common::UnsafePtr<PageBuffer<u8>>) -> Self {
         unsafe {
-            (*page_ptr.mut_ptr()).inc_ref();
+            (**page_ptr).inc_ref();
         }
         self.page_refs.push(page_ptr);
         self

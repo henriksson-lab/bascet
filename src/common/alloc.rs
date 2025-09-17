@@ -1,4 +1,4 @@
-use crate::common;
+use crate::common::{self, UnsafePtr};
 use crate::runtime::Error;
 use bytemuck::Pod;
 use memmap2::MmapMut;
@@ -9,7 +9,7 @@ pub struct PageBuffer<T> {
     inner_ptr_base: *mut T,
     inner_capacity: usize,
     inner_ptr: usize,
-    pub ref_count: AtomicUsize,
+    inner_ref_count: AtomicUsize,
 }
 
 impl<T: Pod> PageBuffer<T> {
@@ -18,7 +18,7 @@ impl<T: Pod> PageBuffer<T> {
             inner_ptr_base: ptr,
             inner_capacity: capacity,
             inner_ptr: 0,
-            ref_count: AtomicUsize::new(0),
+            inner_ref_count: AtomicUsize::new(0),
         }
     }
 
@@ -54,17 +54,17 @@ impl<T: Pod> PageBuffer<T> {
 
     #[inline(always)]
     pub fn available(&self) -> bool {
-        self.ref_count.load(Ordering::Acquire) == 0
+        self.inner_ref_count.load(Ordering::Acquire) == 0
     }
 
     #[inline(always)]
     pub fn inc_ref(&self) {
-        self.ref_count.fetch_add(1, Ordering::AcqRel);
+        self.inner_ref_count.fetch_add(1, Ordering::AcqRel);
     }
 
     #[inline(always)]
     pub fn dec_ref(&self) {
-        self.ref_count.fetch_sub(1, Ordering::Release);
+        self.inner_ref_count.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -77,31 +77,9 @@ pub struct PageBufferPool<T: Pod, const N: usize> {
 }
 
 pub struct PageBufferAllocResult<T: Pod> {
-    buffer_slice_ptr: *mut T,
-    buffer_slice_len: usize,
-    buffer_page_ptr: *mut PageBuffer<T>,
-}
-
-impl<T: Pod> PageBufferAllocResult<T> {
-    pub fn buffer_slice_ptr(&self) -> *const T {
-        self.buffer_slice_ptr
-    }
-
-    pub fn buffer_slice_mut_ptr(&self) -> *mut T {
-        self.buffer_slice_ptr
-    }
-
-    pub fn buffer_slice_len(&self) -> usize {
-        self.buffer_slice_len
-    }
-
-    pub fn buffer_page_ptr(&self) -> *const PageBuffer<T> {
-        self.buffer_page_ptr
-    }
-
-    pub fn buffer_page_mut_ptr(&self) -> *mut PageBuffer<T> {
-        self.buffer_page_ptr
-    }
+    buf_len: usize,
+    pub buf_ptr: UnsafePtr<T>,
+    pub page_ptr: UnsafePtr<PageBuffer<T>>,
 }
 
 impl<T: Pod, const N: usize> PageBufferPool<T, N> {
@@ -154,9 +132,9 @@ impl<T: Pod, const N: usize> PageBufferPool<T, N> {
         if current_page.remaining() >= count {
             let ptr = current_page.alloc(count);
             return PageBufferAllocResult {
-                buffer_slice_ptr: ptr,
-                buffer_slice_len: count,
-                buffer_page_ptr: current_page as *mut PageBuffer<T>,
+                buf_len: count,
+                buf_ptr: UnsafePtr::new(ptr),
+                page_ptr: UnsafePtr::new(current_page as *mut PageBuffer<T>),
             };
         }
 
@@ -171,9 +149,9 @@ impl<T: Pod, const N: usize> PageBufferPool<T, N> {
 
                     let ptr = new_page.alloc(count);
                     return PageBufferAllocResult {
-                        buffer_slice_ptr: ptr,
-                        buffer_slice_len: count,
-                        buffer_page_ptr: new_page as *mut PageBuffer<T>,
+                        buf_len: count,
+                        buf_ptr: UnsafePtr::new(ptr),
+                        page_ptr: UnsafePtr::new(new_page as *mut PageBuffer<T>),
                     };
                 }
             }
@@ -185,25 +163,23 @@ impl<T: Pod, const N: usize> PageBufferPool<T, N> {
 
 impl<T: Pod, const N: usize> Drop for PageBufferPool<T, N> {
     fn drop(&mut self) {
-        // Wait for all refs to reach zero
+        // MmapMut will automatically unmap when dropped, no need to manage this here
+        // HACK: Wait for all refs to reach zero, otherwise this results in a segfault
         let mut spin_counter = 0;
         while (0..self.inner_pages_n).any(|i| unsafe {
             self.inner_pages[i]
                 .assume_init_ref()
-                .ref_count
+                .inner_ref_count
                 .load(Ordering::Relaxed)
                 != 0
         }) {
             common::spin_or_park(&mut spin_counter, 100);
         }
 
-        // Drop initialized PageBuffer instances
         for i in 0..self.inner_pages_n {
             unsafe {
                 self.inner_pages[i].assume_init_drop();
             }
         }
-
-        // MmapMut will automatically unmap when dropped
     }
 }

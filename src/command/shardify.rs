@@ -379,7 +379,7 @@ struct ShardifyCell {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
+    _page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 impl Drop for ShardifyCell {
@@ -387,7 +387,7 @@ impl Drop for ShardifyCell {
     fn drop(&mut self) {
         unsafe {
             for page_ptr in &self._page_refs {
-                (*page_ptr.mut_ptr()).dec_ref();
+                (***page_ptr).dec_ref();
             }
         }
     }
@@ -421,7 +421,7 @@ struct ShardifyCellBuilder {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer<u8>>; 2]>,
+    page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -443,9 +443,9 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     type Token = ShardifyCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer<u8>>) -> Self {
+    fn add_page_ref(mut self, page_ptr: common::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         unsafe {
-            (*page_ptr.mut_ptr()).inc_ref();
+            (**page_ptr).inc_ref();
         }
         self.page_refs.push(page_ptr);
         self
