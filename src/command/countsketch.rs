@@ -183,7 +183,7 @@ impl CountsketchCMD {
                     while let Ok(Some(cell)) = work_rx.recv() {
                         // println!("Worker {} receiving cell {} at {:?}",
                         //         worker_id,
-                        //         String::from_utf8_lossy(cell.get_cell().unwrap()),
+                        //         String::from_utf8_lossy(cell.cell),
                         //         std::time::SystemTime::now());
                         let Some(reads) = cell.get_reads() else {
                             continue;

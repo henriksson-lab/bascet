@@ -99,23 +99,20 @@ where
             .inner_truncated_end_ptr
             .offset_from(self.inner_incomplete_start_ptr) as usize;
 
-        let (buf_ptr, partial_copy_len) = match *alloc_res.page_ptr == *self.inner_page_ptr {
+        let (buf_ptr, carry_copy_len) = match *alloc_res.page_ptr == *self.inner_page_ptr {
             true => (self.inner_incomplete_start_ptr, 0),
             false => (alloc_res.buf_ptr, carry_offset),
         };
 
-        std::ptr::copy_nonoverlapping(
-            *self.inner_incomplete_start_ptr,
-            *buf_ptr,
-            partial_copy_len as usize,
-        );
+        self.inner_pool.alloc(carry_copy_len);
+        std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
 
         let buf_write_ptr = buf_ptr.add(carry_offset);
         let fileptr = htslib::hts_get_bgzfp(*self.inner_htsfile_ptr);
         // println!("DEBUG: about to call bgzf_read, fileptr: {:p}, buf_write_ptr: {:p}", fileptr, buf_write_ptr);
         match htslib::bgzf_read(
             fileptr,
-            buf_write_ptr as *mut std::os::raw::c_void,
+            *buf_write_ptr as *mut std::os::raw::c_void,
             common::HUGE_PAGE_SIZE,
         ) {
             buf_bytes_written if buf_bytes_written > 0 => {

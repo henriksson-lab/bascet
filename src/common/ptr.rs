@@ -36,8 +36,8 @@ impl<T> UnsafePtr<T> {
     }
 
     #[inline(always)]
-    pub unsafe fn offset_from_raw_ptr(&self, other: *const T) -> isize {
-        self.0.offset_from(other)
+    pub unsafe fn add(&self, count: usize) -> Self {
+        Self(self.0.add(count))
     }
 }
 
