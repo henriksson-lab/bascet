@@ -1,10 +1,7 @@
 use rust_htslib::htslib;
 
+use likely_stable::{likely, unlikely};
 use std::fs::File;
-use std::hint::assert_unchecked;
-use std::sync::atomic::Ordering;
-
-use likely_stable::{if_likely, if_unlikely, likely, unlikely};
 
 use crate::common::{PageBuffer, UnsafePtr};
 use crate::io::{
@@ -99,9 +96,12 @@ impl<T> Stream<T> {
         &mut self,
     ) -> Result<Option<common::PageBufferAllocResult<u8>>, crate::runtime::Error> {
         unsafe {
+            std::hint::assert_unchecked(!self.inner_page_ptr.is_null());
             std::hint::assert_unchecked(!self.inner_truncated_end_ptr.is_null());
             std::hint::assert_unchecked(!self.inner_incomplete_start_ptr.is_null());
         }
+
+        // incr ref count to last page, data may need to be copied
         let last_page = self.inner_page_ptr;
         (**last_page).inc_ref();
 
@@ -115,19 +115,18 @@ impl<T> Stream<T> {
             false => (alloc_res.buf_ptr, carry_offset),
         };
 
-        unsafe {
-            std::hint::assert_unchecked(!buf_ptr.is_null());
-        }
-        self.inner_pool.alloc(carry_copy_len);
-        std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
-        (**last_page).dec_ref();
-
         let buf_write_ptr = buf_ptr.add(carry_offset);
         let fileptr = htslib::hts_get_bgzfp(*self.inner_htsfile_ptr);
         unsafe {
+            std::hint::assert_unchecked(!buf_ptr.is_null());
             std::hint::assert_unchecked(!fileptr.is_null());
             std::hint::assert_unchecked(!buf_write_ptr.is_null());
         }
+
+        self.inner_pool.alloc(carry_copy_len);
+        std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
+        // free ref count to last page, data has been copied already
+        (**last_page).dec_ref();
         match htslib::bgzf_read(
             fileptr,
             *buf_write_ptr as *mut std::os::raw::c_void,
@@ -136,11 +135,6 @@ impl<T> Stream<T> {
             buf_bytes_written if buf_bytes_written > 0 => {
                 let buf_bytes_written = buf_bytes_written as usize;
                 let buf_slice_len = buf_bytes_written + carry_offset;
-                unsafe {
-                    std::hint::assert_unchecked(
-                        buf_slice_len <= common::HUGE_PAGE_SIZE + carry_offset,
-                    );
-                }
                 let buf_slice = std::slice::from_raw_parts_mut(*buf_ptr, buf_slice_len);
 
                 // Find last complete line (simplifies parsing) (mem**r**chr)
@@ -194,65 +188,6 @@ impl<T> Stream<T> {
             )),
         }
     }
-
-    pub fn reset(
-        &mut self,
-        file: &io::format::tirp_bgzf::Input,
-    ) -> Result<(), crate::runtime::Error> {
-        let path = file.path();
-
-        let _file = match File::open(&path) {
-            Ok(f) => f,
-            Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
-        };
-
-        unsafe {
-            let path_str = match path.to_str() {
-                Some(s) => s,
-                None => {
-                    return Err(crate::runtime::Error::file_not_valid(
-                        path,
-                        Some("Invalid UTF-8 in path"),
-                    ))
-                }
-            };
-
-            let c_path = match std::ffi::CString::new(path_str.as_bytes()) {
-                Ok(p) => p,
-                Err(_) => {
-                    return Err(crate::runtime::Error::file_not_valid(
-                        path,
-                        Some("Path contains null bytes"),
-                    ))
-                }
-            };
-
-            let mode = match std::ffi::CString::new("r") {
-                Ok(m) => m,
-                Err(_) => {
-                    return Err(crate::runtime::Error::file_not_valid(
-                        path,
-                        Some("Failed to create mode string"),
-                    ))
-                }
-            };
-
-            let inner_hts_file = htslib::hts_open(c_path.as_ptr(), mode.as_ptr());
-            if inner_hts_file.is_null() {
-                return Err(crate::runtime::Error::file_not_valid(
-                    path,
-                    Some("hts_open returned null"),
-                ));
-            }
-
-            if !self.inner_htsfile_ptr.is_null() {
-                htslib::hts_close(*self.inner_htsfile_ptr);
-            }
-
-            self.inner_htsfile_ptr = UnsafePtr::new(inner_hts_file);
-            Ok(())
-        }
-    }
 }
 
 impl<T> Drop for Stream<T> {
@@ -282,11 +217,12 @@ where
             Ok(mut pool) => {
                 // Initialize pointer and slice to buffer start to avoid null ptr branches
                 let alloc = pool.alloc(0);
+                self.inner_page_ptr = alloc.page_ptr;
+
                 let buf_start = alloc.buf_ptr;
                 self.inner_cursor_ptr = buf_start;
                 self.inner_incomplete_start_ptr = buf_start;
                 self.inner_truncated_end_ptr = buf_start;
-                self.inner_page_ptr = alloc.page_ptr;
                 self.inner_buf = unsafe { std::slice::from_raw_parts(*buf_start, 0) };
                 pool
             }
@@ -328,8 +264,6 @@ where
                     )
                 };
                 pos_char_last_newline = pos_char_next_newline + 1;
-                // println!("Line: {:?}", String::from_utf8_lossy(line));
-
                 let (cell_id, cell_rp) = match tirp_bgzf::parse_record(line) {
                     Ok((cell_id, cell_rp)) => (cell_id, cell_rp),
                     Err(e) => {
@@ -350,7 +284,8 @@ where
                         .add_cell_id_slice(static_cell_id)
                         .add_page_ref(self.inner_page_ptr);
                     next_id = cell_id;
-                } else if unlikely(next_id != cell_id) {
+                }
+                if unlikely(next_id != cell_id) {
                     unsafe {
                         self.inner_cursor_ptr = self.inner_cursor_ptr.add(pos_char_last_newline)
                     }

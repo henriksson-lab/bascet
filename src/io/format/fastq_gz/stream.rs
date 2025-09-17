@@ -2,7 +2,7 @@ use rust_htslib::htslib;
 
 use std::fs::File;
 
-use crate::common::{PageBuffer, PageBufferPool, UnsafePtr};
+use crate::common::{PageBuffer, UnsafePtr};
 use crate::{common, log_critical, log_warning};
 
 use crate::io;
@@ -12,25 +12,20 @@ use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream}
 pub struct Stream<T> {
     inner_htsfile_ptr: common::UnsafePtr<htslib::htsFile>,
     inner_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
+    inner_buf: &'static [u8],
 
-    inner_buf: &'static mut [u8],
-    inner_cursor: usize,
-
+    inner_cursor_ptr: common::UnsafePtr<u8>,
     inner_page_ptr: common::UnsafePtr<PageBuffer<u8>>,
     inner_incomplete_start_ptr: common::UnsafePtr<u8>,
     inner_truncated_end_ptr: common::UnsafePtr<u8>,
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T> Stream<T>
-where
-    T: BascetCell + 'static,
-    T::Builder: BascetCellBuilder<Token = T>,
-{
+impl<T> Stream<T> {
     pub fn new(file: &io::format::fastq_gz::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
-        let _file_handle = match File::open(&path) {
+        let _file = match File::open(&path) {
             Ok(f) => f,
             Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
         };
@@ -76,11 +71,17 @@ where
 
             Ok(Stream::<T> {
                 inner_htsfile_ptr: UnsafePtr::new(inner_hts_file),
-                inner_pool: PageBufferPool::new(0, 0)?,
+                // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
+                // the problem here is a cell getting allocated near the end of the buffer
+                // will keep the buffer marked as "in use" and as such the buffer cannot be
+                // reset to fit the new data
+                // because the buffer cannot be reset this stalls get_next()
+                // => cell is kept alive and never used, keeping the buffer alive.
+                // this could be fixed at the cost of speed in some way, though i am unaware of an elegant solution
+                inner_pool: common::PageBufferPool::new(0, 0)?,
+                inner_buf: &[],
 
-                inner_buf: &mut [],
-                inner_cursor: 0,
-
+                inner_cursor_ptr: UnsafePtr::null(),
                 inner_page_ptr: UnsafePtr::null(),
                 inner_incomplete_start_ptr: UnsafePtr::null(),
                 inner_truncated_end_ptr: UnsafePtr::null(),
@@ -92,24 +93,38 @@ where
     unsafe fn load_next_buf(
         &mut self,
     ) -> Result<Option<common::PageBufferAllocResult<u8>>, crate::runtime::Error> {
-        // println!("DEBUG: load_next_buf entry");
-        let alloc_res = self.inner_pool.alloc(common::HUGE_PAGE_SIZE);
-        // println!("DEBUG: alloc_res page_ptr: {:p}, buf_ptr: {:p}", *alloc_res.page_ptr, *alloc_res.buf_ptr);
+        unsafe {
+            std::hint::assert_unchecked(!self.inner_page_ptr.is_null());
+            std::hint::assert_unchecked(!self.inner_truncated_end_ptr.is_null());
+            std::hint::assert_unchecked(!self.inner_incomplete_start_ptr.is_null());
+        }
+
+        // incr ref count to last page, data may need to be copied
+        let last_page = self.inner_page_ptr;
+        (**last_page).inc_ref();
+
         let carry_offset = self
             .inner_truncated_end_ptr
             .offset_from(self.inner_incomplete_start_ptr) as usize;
 
+        let alloc_res = self.inner_pool.alloc(common::HUGE_PAGE_SIZE);
         let (buf_ptr, carry_copy_len) = match *alloc_res.page_ptr == *self.inner_page_ptr {
             true => (self.inner_incomplete_start_ptr, 0),
             false => (alloc_res.buf_ptr, carry_offset),
         };
 
-        self.inner_pool.alloc(carry_copy_len);
-        std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
-
         let buf_write_ptr = buf_ptr.add(carry_offset);
         let fileptr = htslib::hts_get_bgzfp(*self.inner_htsfile_ptr);
-        // println!("DEBUG: about to call bgzf_read, fileptr: {:p}, buf_write_ptr: {:p}", fileptr, buf_write_ptr);
+        unsafe {
+            std::hint::assert_unchecked(!buf_ptr.is_null());
+            std::hint::assert_unchecked(!fileptr.is_null());
+            std::hint::assert_unchecked(!buf_write_ptr.is_null());
+        }
+
+        self.inner_pool.alloc(carry_copy_len);
+        std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
+        // free ref count to last page, data has been copied already
+        (**last_page).dec_ref();
         match htslib::bgzf_read(
             fileptr,
             *buf_write_ptr as *mut std::os::raw::c_void,
@@ -135,44 +150,41 @@ where
                 }
 
                 if let Some(found_pos_char_maybe_last_record) = found_pos_char_maybe_last_record {
+                    unsafe {
+                        std::hint::assert_unchecked(
+                            found_pos_char_maybe_last_record < buf_slice.len(),
+                        );
+                    }
                     let (buf_slice, buf_slice_truncated) =
                         buf_slice.split_at_mut(found_pos_char_maybe_last_record + 1);
 
                     self.inner_page_ptr = alloc_res.page_ptr;
+                    self.inner_cursor_ptr = UnsafePtr::new(buf_slice.as_mut_ptr_range().start);
                     self.inner_incomplete_start_ptr =
                         UnsafePtr::new(buf_slice_truncated.as_mut_ptr_range().start);
                     self.inner_truncated_end_ptr =
                         UnsafePtr::new(buf_slice_truncated.as_mut_ptr_range().end);
 
                     self.inner_buf = buf_slice;
-                    self.inner_cursor = 0;
-
-                    // println!("DEBUG: load_next_buf returning success");
                     return Ok(Some(alloc_res));
                 } else {
-                    // println!("DEBUG: no record boundary found in buffer");
                     return Err(crate::runtime::Error::parse_error(
                         "load_next_buf",
-                        Some(
-                            "No FASTQ record boundary found in buffer. Is this a valid FASTQ file?",
-                        ),
+                        Some("No tirp record boundary found in buffer. Is this a valid tirp file?"),
                     ));
                 }
             }
             0 => {
-                // println!("DEBUG: bgzf_read EOF, carry_offset={}", carry_offset);
                 let buf_slice_len = carry_offset;
                 if buf_slice_len > 0 {
                     let eofslice = std::slice::from_raw_parts_mut(*buf_ptr, buf_slice_len);
-
                     self.inner_page_ptr = alloc_res.page_ptr;
+                    self.inner_cursor_ptr = UnsafePtr::new(eofslice.as_mut_ptr_range().start);
                     self.inner_incomplete_start_ptr =
                         UnsafePtr::new(eofslice.as_mut_ptr_range().start);
                     self.inner_truncated_end_ptr = UnsafePtr::new(eofslice.as_mut_ptr_range().end);
 
                     self.inner_buf = eofslice;
-                    self.inner_cursor = 0;
-
                     return Ok(Some(alloc_res));
                 } else {
                     return Ok(None);
@@ -185,14 +197,24 @@ where
         }
     }
 
-    fn try_parse_record(
-        &mut self,
-        builder: T::Builder,
-    ) -> Result<Option<T>, crate::runtime::Error> {
-        let buf_remaining = &mut self.inner_buf[self.inner_cursor..];
-        if buf_remaining.is_empty() {
+    fn try_parse_record(&mut self, builder: T::Builder) -> Result<Option<T>, crate::runtime::Error>
+    where
+        T: BascetCell + 'static,
+        T::Builder: BascetCellBuilder<Token = T>,
+    {
+        let remaining_len = unsafe {
+            self.inner_buf
+                .as_ptr_range()
+                .end
+                .offset_from(*self.inner_cursor_ptr) as usize
+        };
+
+        if remaining_len == 0 {
             return Ok(None);
         }
+
+        let buf_remaining =
+            unsafe { std::slice::from_raw_parts(*self.inner_cursor_ptr, remaining_len) };
 
         let mut newline_iter = memchr::memchr_iter(common::U8_CHAR_NEWLINE, buf_remaining);
 
@@ -204,18 +226,35 @@ where
         ) {
             (Some(p1), Some(p2), Some(p3), Some(p4)) => [p1, p2, p3, p4],
             _ => {
-                self.inner_incomplete_start_ptr =
-                    UnsafePtr::new(buf_remaining.as_mut_ptr_range().start);
+                self.inner_incomplete_start_ptr = self.inner_cursor_ptr;
                 return Ok(None);
             }
         };
 
-        let line_ends: [usize; 4] = line_positions.map(|pos| self.inner_cursor + pos);
-        let hdr = &self.inner_buf[self.inner_cursor..line_ends[0]];
-        let seq = &self.inner_buf[line_ends[0] + 1..line_ends[1]];
-        let sep = &self.inner_buf[line_ends[1] + 1..line_ends[2]];
-        let qal = &self.inner_buf[line_ends[2] + 1..line_ends[3]];
-        self.inner_cursor = line_ends[3] + 1;
+        // Create slices using pointer arithmetic (bounds-check free)
+        let hdr = unsafe { std::slice::from_raw_parts(*self.inner_cursor_ptr, line_positions[0]) };
+        let seq = unsafe {
+            std::slice::from_raw_parts(
+                *self.inner_cursor_ptr.add(line_positions[0] + 1),
+                line_positions[1] - line_positions[0] - 1,
+            )
+        };
+        let sep = unsafe {
+            std::slice::from_raw_parts(
+                *self.inner_cursor_ptr.add(line_positions[1] + 1),
+                line_positions[2] - line_positions[1] - 1,
+            )
+        };
+        let qal = unsafe {
+            std::slice::from_raw_parts(
+                *self.inner_cursor_ptr.add(line_positions[2] + 1),
+                line_positions[3] - line_positions[2] - 1,
+            )
+        };
+
+        unsafe {
+            self.inner_cursor_ptr = self.inner_cursor_ptr.add(line_positions[3] + 1);
+        }
 
         // Parse record
         let (cell_id, cell_rp) = match fastq_gz::parse_record(hdr, seq, sep, qal) {
@@ -273,10 +312,15 @@ where
     fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
         self.inner_pool = match common::PageBufferPool::new(num_pages, page_size) {
             Ok(mut pool) => {
-                let buf_start = pool.alloc(0).buf_ptr;
+                // Initialize pointer and slice to buffer start to avoid null ptr branches
+                let alloc = pool.alloc(0);
+                self.inner_page_ptr = alloc.page_ptr;
+
+                let buf_start = alloc.buf_ptr;
+                self.inner_cursor_ptr = buf_start;
                 self.inner_incomplete_start_ptr = buf_start;
                 self.inner_truncated_end_ptr = buf_start;
-                self.inner_buf = unsafe { std::slice::from_raw_parts_mut(*buf_start, 0) };
+                self.inner_buf = unsafe { std::slice::from_raw_parts(*buf_start, 0) };
                 pool
             }
             Err(e) => {
