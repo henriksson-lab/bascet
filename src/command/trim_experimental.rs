@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::thread;
+use std::time::Instant;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -45,7 +46,7 @@ pub struct TrimExperimentalCMD {
     threads_work: usize,
 
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 16384)]
     pub buffer_size_mb: usize,
     #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
     pub page_size_mb: usize,
@@ -122,9 +123,10 @@ impl TrimExperimentalCMD {
 
             let mut i: i128 = 0;
             let mut spin_counter = 0;
+            let start_time = Instant::now();
+            let mut last_log_time = start_time;
             match &self.chemistry {
                 Chemistry::Atrandi(_args) => loop {
-                    // Try to get both R1 and R2 records
                     match (r1_consumer.peek(), r2_consumer.peek()) {
                         (Ok(_), Ok(_)) => {
                             let r1 = r1_consumer.pop().unwrap();
@@ -133,7 +135,18 @@ impl TrimExperimentalCMD {
 
                             i += 1;
                             if i % 1_000_000 == 0 {
-                                println!("{:?} million paired records parsed: R1={:?}, R2={:?}", i / 1_000_000, r1, r2)
+                                let now = Instant::now();
+                                
+                                let interval_secs = now.duration_since(last_log_time).as_secs_f64();
+                                let instant_rate = 60.0 / interval_secs;
+
+                                let total_secs = now.duration_since(start_time).as_secs_f64();
+                                let avg_rate = (i as f64 / total_secs) * 60.0 / 1_000_000.0;
+                                
+                                println!("{:?}M records ({:.2}M/min current, {:.2}M/min avg)", 
+                                         i / 1_000_000, instant_rate, avg_rate);
+                                
+                                last_log_time = now;
                             }
                         }
                         _ => {
