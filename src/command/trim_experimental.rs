@@ -104,7 +104,7 @@ impl TrimExperimentalCMD {
                             last_log_time = now;
                         }
 
-                        if i == 500_000_000 {
+                        if i == 5_000_000_000 {
                             break;
                         }
                     }
