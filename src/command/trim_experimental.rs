@@ -95,14 +95,17 @@ impl TrimExperimentalCMD {
                             let avg_rate = (i as f64 / total_secs) * 60.0 / 1_000_000.0;
 
                             println!(
-                                "{:?}M records ({:.2}M/min current, {:.2}M/min avg): {:?}",
+                                "{:?}M records ({:.2}M/min current, {:.2}M/min avg)",
                                 i / 1_000_000,
                                 instant_rate,
                                 avg_rate,
-                                r1
                             );
 
                             last_log_time = now;
+                        }
+
+                        if i == 500_000_000 {
+                            break;
                         }
                     }
                 }
