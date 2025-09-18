@@ -11,12 +11,8 @@ where
     T::Builder: BascetCellBuilder<Token = T>,
 {
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error>;
-    fn set_reader_threads(self, _: usize) -> Self {
-        self
-    }
-    fn set_pagebuffer_config(self, _num_pages: usize, _page_size: usize) -> Self {
-        self
-    }
+    fn set_reader_threads(&mut self, _: usize);
+    fn set_pagebuffer_config(&mut self, _num_pages: usize, _page_size: usize);
 }
 
 pub trait BascetCellGuard {}

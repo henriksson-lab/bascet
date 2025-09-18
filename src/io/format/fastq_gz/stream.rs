@@ -11,6 +11,8 @@ use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream}
 
 pub struct Stream<T> {
     inner_htsfile_ptr: common::UnsafePtr<htslib::htsFile>,
+    inner_hts_tpool: htslib::htsThreadPool,
+
     inner_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
     inner_buf: &'static [u8],
 
@@ -71,6 +73,10 @@ impl<T> Stream<T> {
 
             Ok(Stream::<T> {
                 inner_htsfile_ptr: UnsafePtr::new(inner_hts_file),
+               inner_hts_tpool: htslib::htsThreadPool {
+                    pool: std::ptr::null::<htslib::hts_tpool>() as *mut htslib::hts_tpool,
+                    qsize: 0,
+                },
                 // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
                 // the problem here is a cell getting allocated near the end of the buffer
                 // will keep the buffer marked as "in use" and as such the buffer cannot be
@@ -289,9 +295,11 @@ impl<T> Stream<T> {
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
         unsafe {
-            if !self.inner_htsfile_ptr.is_null() {
-                htslib::hts_close(*self.inner_htsfile_ptr);
-            }
+            std::hint::assert_unchecked(!self.inner_htsfile_ptr.is_null());
+            std::hint::assert_unchecked(!self.inner_hts_tpool.pool.is_null());
+
+            htslib::hts_close(*self.inner_htsfile_ptr);
+            htslib::hts_tpool_destroy(self.inner_hts_tpool.pool);
         }
     }
 }
@@ -301,14 +309,26 @@ where
     T: BascetCell + 'static,
     T::Builder: BascetCellBuilder<Token = T>,
 {
-    fn set_reader_threads(self, n_threads: usize) -> Self {
+    fn set_reader_threads(&mut self, n_threads: usize) {
         unsafe {
-            htslib::hts_set_threads(*self.inner_htsfile_ptr, n_threads as i32);
+            let inner_tpool = htslib::hts_tpool_init(n_threads as i32);
+            let mut tpool = htslib::htsThreadPool {
+                pool: inner_tpool,
+                qsize: 0,
+            };
+
+            self.inner_hts_tpool = tpool;
+            if htslib::hts_set_thread_pool(
+                *self.inner_htsfile_ptr,
+                &mut tpool as *mut htslib::htsThreadPool,
+            ) < 0 {
+                log_critical!("Failed to create threadpool"; "n_threads" => n_threads);
+            }
+           
         }
-        self
     }
 
-    fn set_pagebuffer_config(mut self, num_pages: usize, page_size: usize) -> Self {
+    fn set_pagebuffer_config(&mut self, num_pages: usize, page_size: usize) {
         self.inner_pool = match common::PageBufferPool::new(num_pages, page_size) {
             Ok(mut pool) => {
                 // Initialize pointer and slice to buffer start to avoid null ptr branches
@@ -326,7 +346,6 @@ where
                 log_critical!("Failed to create PageBufferPool: {e}");
             }
         };
-        self
     }
 
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {

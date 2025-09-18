@@ -70,10 +70,10 @@ impl TrimExperimentalCMD {
 
         for path_r1 in paths_r1 {
             let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
-            let stream_r1 =
-                TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?
-                    .set_reader_threads(16)
-                    .set_pagebuffer_config(num_pages, page_size_bytes);
+            let mut stream_r1 =
+                TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?;
+            stream_r1.set_reader_threads(16);
+            stream_r1.set_pagebuffer_config(num_pages, page_size_bytes);
 
             let mut i: i128 = 0;
             let start_time = Instant::now();
