@@ -329,10 +329,11 @@ where
             if htslib::hts_set_thread_pool(
                 *self.inner_htsfile_ptr,
                 &mut tpool as *mut htslib::htsThreadPool,
-            ) < 0 {
+            ) < 0
+            {
                 log_critical!("Failed to create threadpool"; "n_threads" => n_threads);
             }
-           
+            self.inner_hts_block_size *= n_threads;
         }
     }
 
