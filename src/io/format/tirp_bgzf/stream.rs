@@ -2,6 +2,7 @@ use rust_htslib::htslib;
 
 use likely_stable::{likely, unlikely};
 use std::fs::File;
+use std::io::Read;
 
 use crate::common::{PageBuffer, UnsafePtr};
 use crate::io::{
@@ -14,6 +15,7 @@ use crate::{common, log_critical, log_warning};
 pub struct Stream<T> {
     inner_htsfile_ptr: common::UnsafePtr<htslib::htsFile>,
     inner_hts_tpool: htslib::htsThreadPool,
+    inner_hts_block_size: usize,
 
     inner_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
     inner_buf: &'static [u8],
@@ -29,10 +31,14 @@ impl<T> Stream<T> {
     pub fn new(file: &io::format::tirp_bgzf::Input) -> Result<Self, crate::runtime::Error> {
         let path = file.path();
 
-        let _file = match File::open(&path) {
+        let mut file = match File::open(path) {
             Ok(f) => f,
             Err(_) => return Err(crate::runtime::Error::file_not_found(path)),
         };
+
+        let mut hdr = [0u8; 18];
+        file.read_exact(&mut hdr)?;
+        let block_size = u16::from_le_bytes([hdr[16], hdr[17]]) + 1;
 
         unsafe {
             let path_str = match path.to_str() {
@@ -79,6 +85,7 @@ impl<T> Stream<T> {
                     pool: std::ptr::null::<htslib::hts_tpool>() as *mut htslib::hts_tpool,
                     qsize: 0,
                 },
+                inner_hts_block_size: block_size as usize,
                 // HACK: [JD] n pools must be > 1! Otherwise inner_pool.alloc() WILL stall!
                 // the problem here is a cell getting allocated near the end of the buffer
                 // will keep the buffer marked as "in use" and as such the buffer cannot be
@@ -115,7 +122,7 @@ impl<T> Stream<T> {
             .inner_truncated_end_ptr
             .offset_from(self.inner_incomplete_start_ptr) as usize;
 
-        let alloc_res = self.inner_pool.alloc(common::HUGE_PAGE_SIZE);
+        let alloc_res = self.inner_pool.alloc(self.inner_hts_block_size);
         let (buf_ptr, carry_copy_len) = match *alloc_res.page_ptr == *self.inner_page_ptr {
             true => (self.inner_incomplete_start_ptr, 0),
             false => (alloc_res.buf_ptr, carry_offset),
@@ -137,7 +144,7 @@ impl<T> Stream<T> {
         let result = htslib::bgzf_read(
             fileptr,
             *buf_write_ptr as *mut std::os::raw::c_void,
-            common::HUGE_PAGE_SIZE,
+            self.inner_hts_block_size,
         );
         // println!("bgzf_read took: {:?}", start.elapsed());
         match result {

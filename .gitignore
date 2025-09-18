@@ -28,3 +28,4 @@ latest.log
 # profiling files
 heaptrack.*
 perf.data
+perf.data.old
