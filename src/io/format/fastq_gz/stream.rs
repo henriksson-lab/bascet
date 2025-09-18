@@ -131,6 +131,7 @@ impl<T> Stream<T> {
         std::ptr::copy_nonoverlapping(*self.inner_incomplete_start_ptr, *buf_ptr, carry_copy_len);
         // free ref count to last page, data has been copied already
         (**last_page).dec_ref();
+
         match htslib::bgzf_read(
             fileptr,
             *buf_write_ptr as *mut std::os::raw::c_void,
