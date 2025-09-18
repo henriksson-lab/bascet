@@ -120,9 +120,8 @@ impl CountsketchCMD {
             let page_size_bytes = self.page_size_mb * 1024 * 1024;
             let num_pages = buffer_size_bytes / page_size_bytes;
 
-            stream = stream
-                .set_reader_threads(n_readers)
-                .set_pagebuffer_config(num_pages, page_size_bytes);
+            stream.set_reader_threads(n_readers);
+            stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
             let output_path = self.path_out.join(format!("countsketch.{i}.csv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
@@ -142,7 +141,7 @@ impl CountsketchCMD {
                 }
             };
 
-            let mut output_countsketch_writer =  match CountsketchWriter::try_from_output(output_auto) {
+            let mut output_countsketch_writer = match CountsketchWriter::try_from_output(output_auto) {
                 Ok(writer) => writer,
                 Err(e) => {
                     log_warning!("Failed to create output writer, skipping"; "path" => ?output_path, "error" => %e);

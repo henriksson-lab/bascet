@@ -146,4 +146,12 @@ where
             }
         }
     }
+
+    fn set_reader_threads(&mut self, _: usize) {
+        unimplemented!()
+    }
+
+    fn set_pagebuffer_config(&mut self, _num_pages: usize, _page_size: usize) {
+        unimplemented!()
+    }
 }

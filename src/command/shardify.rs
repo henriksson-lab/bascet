@@ -136,15 +136,16 @@ impl ShardifyCMD {
                     }
                 };
 
-                let thread_stream: ShardifyStream<ShardifyCell> =
+                let mut thread_stream: ShardifyStream<ShardifyCell> =
                     match ShardifyStream::try_from_input(thread_input) {
-                        Ok(stream) => stream
-                            .set_reader_threads(count_threads_per_stream)
-                            .set_pagebuffer_config(num_pages, page_size_bytes),
+                        Ok(stream) => stream,
                         Err(e) => {
                             log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
                         }
                     };
+                thread_stream.set_reader_threads(count_threads_per_stream);
+                thread_stream.set_pagebuffer_config(num_pages, page_size_bytes);
+
                 let thread_px = thread_px;
 
                 for token_cell_result in thread_stream {
