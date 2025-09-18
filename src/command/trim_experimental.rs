@@ -76,6 +76,7 @@ impl TrimExperimentalCMD {
             stream_r1.set_pagebuffer_config(num_pages, page_size_bytes);
 
             let mut i: i128 = 0;
+            let mut total_size: i128 = 0;
             let start_time = Instant::now();
             let mut last_log_time = start_time;
 
@@ -85,6 +86,8 @@ impl TrimExperimentalCMD {
                         let r1 = token?;
 
                         i += 1;
+                        total_size += (r1.cell.len() + r1.quality.len() + r1.read.len()) as i128;
+
                         if i % 1_000_000 == 0 {
                             let now = Instant::now();
 
@@ -95,10 +98,12 @@ impl TrimExperimentalCMD {
                             let avg_rate = (i as f64 / total_secs) * 60.0 / 1_000_000.0;
 
                             println!(
-                                "{:?}M records ({:.2}M/min current, {:.2}M/min avg)",
+                                "{:?}M records ({:.2}M/min current, {:.2}M/min avg). {:.2} GiB parsed, {:.2} Avg record size (bytes)",
                                 i / 1_000_000,
                                 instant_rate,
                                 avg_rate,
+                                total_size as f64 / 1024.0 as f64 / 1024.0 as f64 / 1024.0 as f64,
+                                total_size as f64 / i as f64
                             );
 
                             last_log_time = now;

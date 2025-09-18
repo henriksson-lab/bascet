@@ -211,7 +211,7 @@ impl<T> Drop for Stream<T> {
         unsafe {
             std::hint::assert_unchecked(!self.inner_htsfile_ptr.is_null());
             std::hint::assert_unchecked(!self.inner_hts_tpool.pool.is_null());
-
+            
             htslib::hts_close(*self.inner_htsfile_ptr);
             htslib::hts_tpool_destroy(self.inner_hts_tpool.pool);
         }
