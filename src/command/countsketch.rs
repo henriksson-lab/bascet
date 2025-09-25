@@ -3,7 +3,7 @@ use crate::{
     common::{self, PageBuffer},
     io::traits::*,
     kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
 };
 
 use clap::Args;
@@ -295,7 +295,7 @@ struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafePtr<PageBuffer<u8>>; 2]>,
+    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -330,7 +330,7 @@ struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafePtr<PageBuffer<u8>>; 2]>,
+    page_refs: smallvec::SmallVec<[threading::UnsafePtr<PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -350,7 +350,7 @@ impl BascetCellBuilder for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafePtr<PageBuffer<u8>>) -> Self {
+    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<PageBuffer<u8>>) -> Self {
         unsafe {
             (**page_ptr).inc_ref();
         }

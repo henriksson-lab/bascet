@@ -13,7 +13,7 @@ use std::{
 use crate::{
     common::{self, spin_or_park},
     io::traits::*,
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
 };
 
 use std::thread;
@@ -89,7 +89,7 @@ impl ShardifyCMD {
             let mut producers = Vec::with_capacity(count_streams);
             let consumers: Vec<UnsafeSyncConsumer> = (0..count_streams)
                 .map(|_| {
-                    let (px, cx) = rtrb::RingBuffer::new(1024);
+                    let (px, cx) = rtrb::RingBuffer::new(2 ^ 16);
                     producers.push(px);
                     UnsafeSyncConsumer(cx)
                 })
@@ -380,7 +380,7 @@ struct ShardifyCell {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
+    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 impl Drop for ShardifyCell {
@@ -422,7 +422,7 @@ struct ShardifyCellBuilder {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
+    page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -444,7 +444,7 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     type Token = ShardifyCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafePtr<common::PageBuffer<u8>>) -> Self {
+    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         unsafe {
             (**page_ptr).inc_ref();
         }

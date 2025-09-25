@@ -2,7 +2,7 @@ use crate::command::countsketch::CountsketchStream;
 use crate::command::shardify::ShardifyStream;
 use crate::command::trim_experimental::TrimExperimentalStream;
 
-use crate::{common, log_debug};
+use crate::{common, log_debug, threading};
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetStream<T>: Sized
@@ -43,7 +43,7 @@ pub trait BascetCellBuilder: Sized {
 
     // Optional methods with default implementations
 
-    fn add_page_ref(self, page_ptr: common::UnsafePtr<common::PageBuffer<u8>>) -> Self {
+    fn add_page_ref(self, page_ptr: threading::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         log_debug!("Method 'add_page_ref' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
