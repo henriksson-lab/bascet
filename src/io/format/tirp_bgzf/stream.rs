@@ -4,26 +4,27 @@ use likely_stable::{likely, unlikely};
 use std::fs::File;
 use std::io::Read;
 
-use crate::common::{PageBuffer, UnsafePtr};
+use crate::common::{self, PageBuffer};
 use crate::io::{
     self,
     format::tirp_bgzf,
     traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
 };
-use crate::{common, log_critical, log_warning};
+use crate::threading::{self, UnsafePtr};
+use crate::{log_critical, log_warning};
 
 pub struct Stream<T> {
-    inner_htsfile_ptr: common::UnsafePtr<htslib::htsFile>,
+    inner_htsfile_ptr: threading::UnsafePtr<htslib::htsFile>,
     inner_hts_tpool: htslib::htsThreadPool,
     inner_hts_block_size: usize,
 
     inner_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
     inner_buf: &'static [u8],
 
-    inner_cursor_ptr: common::UnsafePtr<u8>,
-    inner_page_ptr: common::UnsafePtr<PageBuffer<u8>>,
-    inner_incomplete_start_ptr: common::UnsafePtr<u8>,
-    inner_truncated_end_ptr: common::UnsafePtr<u8>,
+    inner_cursor_ptr: threading::UnsafePtr<u8>,
+    inner_page_ptr: threading::UnsafePtr<PageBuffer<u8>>,
+    inner_incomplete_start_ptr: threading::UnsafePtr<u8>,
+    inner_truncated_end_ptr: threading::UnsafePtr<u8>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -211,7 +212,7 @@ impl<T> Drop for Stream<T> {
         unsafe {
             std::hint::assert_unchecked(!self.inner_htsfile_ptr.is_null());
             std::hint::assert_unchecked(!self.inner_hts_tpool.pool.is_null());
-            
+
             htslib::hts_close(*self.inner_htsfile_ptr);
             htslib::hts_tpool_destroy(self.inner_hts_tpool.pool);
         }

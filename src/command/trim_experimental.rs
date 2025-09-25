@@ -9,7 +9,7 @@ use itertools::izip;
 use crate::{
     common,
     io::traits::{BascetCell, BascetCellBuilder, BascetStream},
-    log_critical, log_warning, support_which_stream, support_which_writer,
+    log_critical, log_warning, support_which_stream, support_which_writer, threading,
 };
 
 support_which_stream! {
@@ -108,10 +108,6 @@ impl TrimExperimentalCMD {
 
                             last_log_time = now;
                         }
-
-                        if i == 5_000_000_000 {
-                            break;
-                        }
                     }
                 }
             }
@@ -126,7 +122,7 @@ struct TrimExperimentalCell {
     read: &'static [u8],
     quality: &'static [u8],
 
-    _page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
+    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -164,7 +160,7 @@ struct TrimExperimentalCellBuilder {
     read: Option<&'static [u8]>,
     quality: Option<&'static [u8]>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafePtr<common::PageBuffer<u8>>; 2]>,
+    page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -185,7 +181,7 @@ impl BascetCellBuilder for TrimExperimentalCellBuilder {
     type Token = TrimExperimentalCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafePtr<common::PageBuffer<u8>>) -> Self {
+    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         unsafe {
             (**page_ptr).inc_ref();
         }

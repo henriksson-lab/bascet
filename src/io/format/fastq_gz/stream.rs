@@ -3,25 +3,26 @@ use rust_htslib::htslib;
 use std::fs::File;
 use std::io::Read;
 
-use crate::common::{PageBuffer, UnsafePtr};
-use crate::{common, log_critical, log_warning};
+use crate::common::{self, PageBuffer};
+use crate::threading::{self, UnsafePtr};
+use crate::{log_critical, log_warning};
 
 use crate::io;
 use crate::io::format::fastq_gz;
 use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream};
 
 pub struct Stream<T> {
-    inner_htsfile_ptr: common::UnsafePtr<htslib::htsFile>,
+    inner_htsfile_ptr: threading::UnsafePtr<htslib::htsFile>,
     inner_hts_tpool: htslib::htsThreadPool,
     inner_hts_block_size: usize,
 
     inner_pool: common::PageBufferPool<u8, { common::PAGE_BUFFER_MAX_PAGES }>,
     inner_buf: &'static [u8],
 
-    inner_cursor_ptr: common::UnsafePtr<u8>,
-    inner_page_ptr: common::UnsafePtr<PageBuffer<u8>>,
-    inner_incomplete_start_ptr: common::UnsafePtr<u8>,
-    inner_truncated_end_ptr: common::UnsafePtr<u8>,
+    inner_cursor_ptr: threading::UnsafePtr<u8>,
+    inner_page_ptr: threading::UnsafePtr<PageBuffer<u8>>,
+    inner_incomplete_start_ptr: threading::UnsafePtr<u8>,
+    inner_truncated_end_ptr: threading::UnsafePtr<u8>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -222,10 +223,6 @@ impl<T> Stream<T> {
                 .end
                 .offset_from(*self.inner_cursor_ptr) as usize
         };
-
-        if remaining_len == 0 {
-            return Ok(None);
-        }
 
         let buf_remaining =
             unsafe { std::slice::from_raw_parts(*self.inner_cursor_ptr, remaining_len) };

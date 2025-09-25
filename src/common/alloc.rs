@@ -1,5 +1,7 @@
-use crate::common::{self, UnsafePtr};
+use crate::common;
 use crate::runtime::Error;
+use crate::threading::UnsafePtr;
+
 use bytemuck::Pod;
 use memmap2::MmapMut;
 use std::mem::MaybeUninit;
