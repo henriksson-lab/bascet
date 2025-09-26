@@ -60,6 +60,10 @@ pub struct GetRawCMD {
     #[arg(long = "chemistry", value_parser, default_value = DEFAULT_CHEMISTRY)]
     pub chemistry: String,
 
+    // Optional: subchemistry with barcodes to use
+    #[arg(long = "subchemistry", value_parser, default_value = "")]
+    pub subchemistry: String,
+
     // Optional: file with barcodes to use
     #[arg(long = "barcodes", value_parser)]
     pub path_barcodes: Option<PathBuf>,
@@ -158,6 +162,7 @@ impl GetRawCMD {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut ParseBioChemistry3::new(
+                    &self.subchemistry
                     //TODO: option to be more specific
                 )
             );
