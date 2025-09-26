@@ -98,7 +98,7 @@ impl Chemistry for AtrandiWGSChemistry {
             //update: 12b, 1bp mismatch
             //If this part is not present then we can ignore any type of overlap
             let overlap_size = 12; //10
-
+            
             let adapter_seq = &r2_seq[(r2_seq.len() - overlap_size)..(r2_seq.len())];
 
             //Revcomp adapter for comparison. It is cheaper to revcomp the adapter than the whole other read

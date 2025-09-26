@@ -5,6 +5,9 @@ pub struct PeekableReceiver<T> {
     peeked: Option<T>,
 }
 
+unsafe impl<T: Send> Send for PeekableReceiver<T> {}
+unsafe impl<T: Send> Sync for PeekableReceiver<T> {}
+
 impl<T> PeekableReceiver<T> {
     #[inline(always)]
     pub fn new(receiver: Receiver<T>) -> Self {
