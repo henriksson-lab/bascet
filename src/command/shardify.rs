@@ -14,6 +14,7 @@ use crate::{
     common::{self, spin_or_park},
     io::traits::*,
     log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
+    threading::PeekableReceiver,
 };
 
 use std::thread;
@@ -55,7 +56,7 @@ pub struct ShardifyCMD {
     // Stream buffer configuration
     #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 2048)]
     pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 16)]
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 32)]
     pub page_size_mb: usize,
 }
 
@@ -82,24 +83,15 @@ impl ShardifyCMD {
             "cells in filter" => filter.len()
         );
 
-        let (vec_coordinator_producers, vec_coordinator_consumers): (
-            &'static mut Vec<rtrb::Producer<ShardifyCell>>,
-            &'static mut Vec<UnsafeSyncConsumer>,
-        ) = {
-            let mut producers = Vec::with_capacity(count_streams);
-            let consumers: Vec<UnsafeSyncConsumer> = (0..count_streams)
-                .map(|_| {
-                    let (px, cx) = rtrb::RingBuffer::new(2 ^ 16);
-                    producers.push(px);
-                    UnsafeSyncConsumer(cx)
-                })
-                .collect();
-
-            (
-                Box::leak(Box::new(producers)),
-                Box::leak(Box::new(consumers)),
-            )
-        };
+        let (vec_coordinator_senders, mut vec_coordinator_receivers): (
+            Vec<channel::Sender<ShardifyCell>>,
+            Vec<PeekableReceiver<ShardifyCell>>,
+        ) = (0..count_streams)
+            .map(|_| {
+                let (tx, rx) = channel::unbounded::<ShardifyCell>();
+                (tx, PeekableReceiver::new(rx))
+            })
+            .unzip();
         let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(count_streams)));
         let mut vec_reader_handles = Vec::with_capacity(count_streams);
         // let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
@@ -116,12 +108,12 @@ impl ShardifyCMD {
 
         // bounds given by rtrb, this is only a notifier
         let (stream_tx, stream_rx) = channel::unbounded::<Option<()>>();
-        for (thread_idx, (thread_input, thread_px)) in
-            izip!(self.path_in.clone(), vec_coordinator_producers).enumerate()
+        for (thread_idx, (thread_input, thread_tx)) in
+            izip!(self.path_in.clone(), vec_coordinator_senders).enumerate()
         {
             let thread_filter = Arc::clone(&filter);
             let thread_expired = Arc::clone(&vec_consumers_states);
-            let thread_tx = stream_tx.clone();
+            let thread_stream_tx = stream_tx.clone();
             let global_processed_counter = Arc::clone(&global_cells_processed);
             let global_kept_counter = Arc::clone(&global_cells_kept);
 
@@ -145,8 +137,6 @@ impl ShardifyCMD {
                     };
                 thread_stream.set_reader_threads(count_threads_per_stream);
                 thread_stream.set_pagebuffer_config(num_pages, page_size_bytes);
-
-                let thread_px = thread_px;
 
                 for token_cell_result in thread_stream {
                     let token_cell = match token_cell_result {
@@ -179,23 +169,12 @@ impl ShardifyCMD {
                         );
                     }
 
-                    let mut token_cell = token_cell;
-                    let mut rtrb_count_spins = 0;
-                    loop {
-                        match thread_px.push(token_cell) {
-                            Ok(_) => {
-                                let _ = thread_tx.send(Some(()));
-                                break;
-                            }
-                            Err(rtrb::PushError::Full(ret)) => {
-                                token_cell = ret;
-                                spin_or_park(&mut rtrb_count_spins, 100);
-                            }
-                        }
+                    if thread_tx.send(token_cell).is_ok() {
+                        let _ = thread_stream_tx.send(Some(()));
                     }
                 }
                 thread_expired.write().unwrap().push(thread_idx);
-                let _ = thread_tx.send(None);
+                let _ = thread_stream_tx.send(None);
             });
             vec_reader_handles.push(thread_handle);
         }
@@ -296,7 +275,8 @@ impl ShardifyCMD {
             coordinator_vec_take.clear();
             coordinator_vec_send.clear();
 
-            for (sweep_consumer_idx, sweep_consumer) in vec_coordinator_consumers.iter().enumerate()
+            for (sweep_consumer_idx, sweep_consumer) in
+                vec_coordinator_receivers.iter_mut().enumerate()
             {
                 // Skip streams marked done/expired
                 if vec_consumers_states
@@ -307,9 +287,9 @@ impl ShardifyCMD {
                     continue;
                 }
 
-                let sweep_token = match unsafe { sweep_consumer.peek() } {
+                let sweep_token = match sweep_consumer.peek() {
                     Ok(token) => token,
-                    Err(rtrb::PeekError::Empty) => {
+                    Err(channel::RecvError) => {
                         // Stream not ready
                         coordinator_all_ready = false;
                         break;
@@ -339,12 +319,12 @@ impl ShardifyCMD {
             }
 
             for take_idx in &coordinator_vec_take {
-                let take_consumer = &mut vec_coordinator_consumers[*take_idx];
-                match unsafe { take_consumer.pop() } {
+                let take_consumer = &mut vec_coordinator_receivers[*take_idx];
+                match take_consumer.recv() {
                     Ok(take_cell) => {
                         coordinator_vec_send.push(take_cell);
                     }
-                    Err(_) => unreachable!("Token disappeared between peek and pop"),
+                    Err(_) => unreachable!("Token disappeared between peek and recv"),
                 }
             }
 
@@ -570,34 +550,4 @@ fn read_filter(input: Option<&Path>) -> ShardifyFilter {
         );
     }
     return Arc::new(filter);
-}
-
-struct UnsafeSyncConsumer(rtrb::Consumer<ShardifyCell>);
-unsafe impl Sync for UnsafeSyncConsumer {}
-unsafe impl Send for UnsafeSyncConsumer {}
-
-impl UnsafeSyncConsumer {
-    unsafe fn peek(&self) -> Result<&ShardifyCell, rtrb::PeekError> {
-        self.0.peek()
-    }
-
-    unsafe fn pop(&mut self) -> Result<ShardifyCell, rtrb::PopError> {
-        self.0.pop()
-    }
-}
-
-#[derive(Clone)]
-struct UnsafeSyncConsumerPtr {
-    ptr: *mut RwLock<UnsafeSyncConsumer>,
-    len: usize,
-}
-
-unsafe impl Send for UnsafeSyncConsumerPtr {}
-unsafe impl Sync for UnsafeSyncConsumerPtr {}
-
-impl UnsafeSyncConsumerPtr {
-    unsafe fn get(&self, index: usize) -> &RwLock<UnsafeSyncConsumer> {
-        debug_assert!(index < self.len);
-        &*self.ptr.add(index)
-    }
 }

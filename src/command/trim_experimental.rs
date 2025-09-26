@@ -9,7 +9,8 @@ use itertools::izip;
 use crate::{
     common,
     io::traits::{BascetCell, BascetCellBuilder, BascetStream},
-    log_critical, log_warning, support_which_stream, support_which_writer, threading,
+    log_critical, log_warning, support_which_stream, support_which_writer,
+    threading::{self, PeekableReceiver},
 };
 
 support_which_stream! {
@@ -66,51 +67,61 @@ impl TrimExperimentalCMD {
         let paths_r2 = &self.paths_r2;
         let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
         let page_size_bytes = self.page_size_mb * 1024 * 1024;
+        let threads_stream = self.threads_read / 2;
         let num_pages = buffer_size_bytes / page_size_bytes;
 
-        for path_r1 in paths_r1 {
-            let input_r1 = TrimExperimentalInput::try_from_path(&path_r1)?;
-            let mut stream_r1 =
-                TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input_r1)?;
-            stream_r1.set_reader_threads(16);
-            stream_r1.set_pagebuffer_config(num_pages, page_size_bytes);
+        for (path_r1, path_r2) in izip!(paths_r1, paths_r2) {
+            let (r1_tx, r1_rx) = crossbeam::channel::unbounded();
+            let mut r1_rx = PeekableReceiver::new(r1_rx);
 
-            let mut i: i128 = 0;
-            let mut total_size: i128 = 0;
-            let start_time = Instant::now();
-            let mut last_log_time = start_time;
+            let path_r1 = path_r1.clone();
+            let r1_handle = std::thread::spawn(move || {
+                let input = TrimExperimentalInput::try_from_path(&path_r1).unwrap();
+                let mut stream =
+                    TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
+                stream.set_reader_threads(threads_stream);
+                stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
-            match &self.chemistry {
-                Chemistry::Atrandi(_args) => {
-                    for token in stream_r1 {
-                        let r1 = token?;
+                for token in stream {
+                    let token = token.unwrap();
+                    let _ = r1_tx.send(token);
+                }
+            });
 
-                        i += 1;
-                        total_size += (r1.cell.len() + r1.quality.len() + r1.read.len()) as i128;
+            let (r2_tx, r2_rx) = crossbeam::channel::unbounded();
+            let mut r2_rx = PeekableReceiver::new(r2_rx);
 
-                        if i % 1_000_000 == 0 {
-                            let now = Instant::now();
+            let path_r2 = path_r2.clone();
+            let r2_handle = std::thread::spawn(move || {
+                let input = TrimExperimentalInput::try_from_path(&path_r2).unwrap();
+                let mut stream =
+                    TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
+                stream.set_reader_threads(threads_stream);
+                stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
-                            let interval_secs = now.duration_since(last_log_time).as_secs_f64();
-                            let instant_rate = 60.0 / interval_secs;
+                for token in stream {
+                    let token = token.unwrap();
+                    let _ = r2_tx.send(token);
+                }
+            });
 
-                            let total_secs = now.duration_since(start_time).as_secs_f64();
-                            let avg_rate = (i as f64 / total_secs) * 60.0 / 1_000_000.0;
 
-                            println!(
-                                "{:?}M records ({:.2}M/min current, {:.2}M/min avg). {:.2} GiB parsed, {:.2} Avg record size (bytes)",
-                                i / 1_000_000,
-                                instant_rate,
-                                avg_rate,
-                                total_size as f64 / 1024.0 as f64 / 1024.0 as f64 / 1024.0 as f64,
-                                total_size as f64 / i as f64
-                            );
-
-                            last_log_time = now;
-                        }
-                    }
+            let mut i = 0;
+            loop {
+                let (r1, r2) = (r1_rx.recv(), r2_rx.recv());
+                if r1_handle.is_finished() || r2_handle.is_finished() {
+                    break;
+                }
+                i += 1;
+                if i % 1_000_000 == 0 {
+                    println!("{}M reads parsed", i / 1_000_000);
                 }
             }
+            // match &self.chemistry {
+            //     Chemistry::Atrandi(_args) => {
+
+            //     }
+            // }
         }
 
         Ok(())
