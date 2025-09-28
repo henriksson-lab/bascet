@@ -284,7 +284,8 @@ impl ParseBioChemistry3 {
             let record: BarcodeCsvFileRow = result.unwrap();
 
             cb.add_bc(
-                format!("{}", record.bci).as_str(),
+                record.well.as_str(), //////////// Note: seems parse is mixing TCR and regular RNA barcodes in file. unclear how to best handle. this gives easy-to-interpret barcodes back
+                //format!("{}", record.bci).as_str(),
                 record.sequence.as_str()
             );
         }
@@ -315,7 +316,7 @@ impl ParseBioChemistry3 {
         for result in reader.deserialize() {
             let record: ChemistryDefCsvFileRow = result.unwrap();
 
-            let chemname = format!("{} {}",record.kit, record.chem);
+            let chemname = record.kit; //format!("{} {}",record.kit, record.chem);
 
             let mut bc_setup = CombinatorialBarcode8bp::new();
 
