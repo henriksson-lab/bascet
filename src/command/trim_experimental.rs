@@ -1,14 +1,21 @@
-use std::path::PathBuf;
+use std::io::BufRead;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::Instant;
+use std::{io::Cursor, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use crossbeam::channel::Receiver;
-use itertools::izip;
+use itertools::{izip, Itertools};
 
+use crate::common::ReadPair;
+use crate::log_info;
 use crate::{
-    barcode::{atrandi_wgs_barcode::AtrandiWGSChemistry, Chemistry},
+    barcode::{atrandi_wgs_barcode::AtrandiWGSChemistry, combinatorial_barcode_8bp, Chemistry},
     common,
     io::traits::{BascetCell, BascetCellBuilder, BascetStream},
     log_critical, log_warning, support_which_stream, support_which_writer,
@@ -43,9 +50,9 @@ pub struct TrimExperimentalCMD {
 
     #[arg(short = '@', value_parser = clap::value_parser!(usize), default_value_t = 16)]
     threads_total: usize,
-    #[arg(short = 'r', value_parser = clap::value_parser!(usize), default_value_t = 12)]
+    #[arg(short = 'r', value_parser = clap::value_parser!(usize), default_value_t = 8)]
     threads_read: usize,
-    #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = 4)]
+    #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = 8)]
     threads_work: usize,
 
     // Stream buffer configuration
@@ -63,6 +70,63 @@ pub enum TrimChemistry {
 #[derive(Clone, Copy, Args)]
 pub struct AtrandiArgs {}
 
+#[derive(Clone)]
+pub struct AtrandiExpChemistry {
+    barcode: combinatorial_barcode_8bp::CombinatorialBarcode8bp,
+}
+impl AtrandiExpChemistry {
+    fn detect_barcode_and_trim(
+        &mut self,
+        r1_seq: &'static [u8],
+        r1_qual: &'static [u8],
+        r2_seq: &'static [u8],
+        r2_qual: &'static [u8],
+    ) -> (bool, String, ReadPair) {
+        //Detect barcode, which for parse is in R2
+        let total_distance_cutoff = 4;
+        let part_distance_cutoff = 1;
+
+        let (isok, bc, _match_score) =
+            self.barcode
+                .detect_barcode(r2_seq, true, total_distance_cutoff, part_distance_cutoff);
+
+        if isok {
+            //R2 need to have the first part with barcodes removed. Figure out total size!
+            //TODO search for the truseq adapter that may appear toward the end
+            let r2_from = self.barcode.trim_bcread_len;
+            let r2_to = r2_seq.len();
+
+            //Get UMI position
+            let umi_from = self.barcode.umi_from;
+            let umi_to = self.barcode.umi_to;
+
+            (
+                true,
+                bc,
+                ReadPair {
+                    r1: &r1_seq,
+                    r2: &r2_seq[r2_from..r2_to],
+                    q1: &r1_qual,
+                    q2: &r2_qual[r2_from..r2_to],
+                    umi: &r2_seq[umi_from..umi_to],
+                },
+            )
+        } else {
+            //Just return the sequence as-is
+            (
+                false,
+                "".to_string(),
+                ReadPair {
+                    r1: &r1_seq,
+                    r2: &r2_seq,
+                    q1: &r1_qual,
+                    q2: &r2_qual,
+                    umi: &[],
+                },
+            )
+        }
+    }
+}
 impl TrimExperimentalCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let paths_r1 = &self.paths_r1;
@@ -73,23 +137,48 @@ impl TrimExperimentalCMD {
         let num_pages = buffer_size_bytes / page_size_bytes;
 
         for (path_r1, path_r2) in izip!(paths_r1, paths_r2) {
+            let mut chemistry = AtrandiExpChemistry {
+                barcode: combinatorial_barcode_8bp::CombinatorialBarcode8bp::new(),
+            };
+
+            let reader = Cursor::new(include_bytes!("../barcode/atrandi_barcodes.tsv"));
+            for (index, line) in reader.lines().enumerate() {
+                if index == 0 {
+                    continue;
+                }
+
+                let line = line?;
+                let parts: Vec<&str> = line.split('\t').collect();
+                chemistry.barcode.add_bc(parts[1], parts[0], parts[2]);
+            }
+            chemistry.barcode.pools[3].quick_testpos = (8 + 4) * 0;
+            chemistry.barcode.pools[3].all_test_pos = vec![0, 1];
+
+            chemistry.barcode.pools[2].quick_testpos = (8 + 4) * 1;
+            chemistry.barcode.pools[2].all_test_pos = vec![0, 1];
+
+            chemistry.barcode.pools[1].quick_testpos = (8 + 4) * 2;
+            chemistry.barcode.pools[1].all_test_pos = vec![0, 1];
+
+            chemistry.barcode.pools[0].quick_testpos = (8 + 4) * 3;
+            chemistry.barcode.pools[0].all_test_pos = vec![0, 1];
+
             // prepare chemistry using r2
-            // let input = TrimExperimentalInput::try_from_path(&path_r2).unwrap();
-            // let mut stream =
-            //     TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
-            // stream.set_reader_threads(threads_stream);
-            // stream.set_pagebuffer_config(num_pages, page_size_bytes);
+            let input = TrimExperimentalInput::try_from_path(&path_r2).unwrap();
+            let mut stream =
+                TrimExperimentalStream::<TrimExperimentalCell>::try_from_input(input).unwrap();
+            stream.set_reader_threads(threads_stream);
+            stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
-            // let mut buffer = Vec::with_capacity(1000);
-            // for token in stream {
-            //     let token = token.unwrap();
-            //     buffer.push(token.read.to_vec());
+            let mut buffer = Vec::with_capacity(1000);
+            for token in stream {
+                let token = token.unwrap();
+                buffer.push(token.read.to_vec());
 
-            //     if buffer.len() >= 1000 {
-            //         break;
-            //     }
-            // }
-
+                if buffer.len() >= 1000 {
+                    break;
+                }
+            }
 
             let (r1_tx, r1_rx) = crossbeam::channel::unbounded();
             let path_r1 = path_r1.clone();
@@ -120,30 +209,41 @@ impl TrimExperimentalCMD {
                     let _ = r2_tx.send(token);
                 }
             });
-            
+
             let (rp_tx, rp_rx) = crossbeam::channel::unbounded();
-            let chemistry = self.chemistry;
+            let success_counter = Arc::new(AtomicUsize::new(0));
+            let total_counter = Arc::new(AtomicUsize::new(0));
+
             for _worker_thread_index in 0..self.threads_work {
                 let rp_rx: Receiver<(TrimExperimentalCell, TrimExperimentalCell)> = rp_rx.clone();
+                let mut chemistry = chemistry.clone();
+                let success_counter = Arc::clone(&success_counter);
+                let total_counter = Arc::clone(&total_counter);
+
                 let _worker_handle = std::thread::spawn(move || {
                     while let Ok((r1, r2)) = rp_rx.recv() {
-                        // let mut chem = AtrandiWGSChemistry::new(None, None);
-                        // let (ok, id, rp) = chem.detect_barcode_and_trim(r1.read, r1.quality, r2.read, r2.quality);
-                        // if ok {
-                        //     println!("{:?}", id);
-                        // }
-                        println!("{:?}", String::from_utf8_lossy(r1.read))
+                        let (ok, id, _rp) = chemistry
+                            .detect_barcode_and_trim(r1.read, r1.quality, r2.read, r2.quality);
+
+                        let total = total_counter.fetch_add(1, Ordering::Relaxed);
+
+                        if ok {
+                            let success = success_counter.fetch_add(1, Ordering::Relaxed);
+                            if success % 1_000_000 == 0 {
+                                log_info!(
+                                    "{:.2}M/{:.2}M reads successfully debarcoded: current BC: {:?}",
+                                    success as f64 / 1_000_000.0,
+                                    total as f64 / 1_000_000.0,
+                                    id
+                                );
+                            }
+                        }
                     }
                 });
             }
-
-            let mut i = 0;
+            
             while let (Ok(r1), Ok(r2)) = (r1_rx.recv(), r2_rx.recv()) {
                 let _ = rp_tx.send((r1, r2));
-                i += 1;
-                if i % 1_000_000 == 0 {
-                    println!("{}M rps parsed", i / 1_000_000);
-                }
             }
         }
 
