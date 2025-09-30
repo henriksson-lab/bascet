@@ -4,6 +4,7 @@ use std::io::Read;
 
 use crate::barcode::parsebio::HotEncodeATCGN;
 use crate::fileformat::shard::CellID;
+use crate::log_info;
 
 ///////////////////////////////
 /// Convert string, assumed to be 8bp, to a packed barcode
@@ -23,7 +24,7 @@ pub struct CombinatorialBarcode8bp {
     map_poolname_to_index: HashMap<String, usize>,
 
     //Each barcode set in the combination
-    pools: Vec<CombinatorialBarcodePart8bp>,
+    pub pools: Vec<CombinatorialBarcodePart8bp>,
 
     //How much to trim from this read
     pub trim_bcread_len: usize,
@@ -205,7 +206,8 @@ impl CombinatorialBarcodePart8bp {
         let mut all_hits: Vec<(usize, u32)> = Vec::new(); //encoded barcode index, score
         for current_pos in self.all_test_pos.iter() {
             //Extract the barcode for one position
-            let bytes = &read_seq[self.quick_testpos..(current_pos + bc_length)];
+            let bytes = &read_seq[*current_pos..(current_pos + bc_length)];
+
             let optimistic_seq = [
                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             ];
