@@ -1,3 +1,5 @@
+![Bascet logo](./assets/img/Bascet.png)
+
 # Bascet (Bacterial Single CEll Toolkit)
 
 Bascet is a complete solution for single-cell analysis, with focus on microbial analysis.
