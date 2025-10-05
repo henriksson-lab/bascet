@@ -1,4 +1,4 @@
-![Bascet logo](./assets/img/Bascet.png)
+<img src="./assets/img/Bascet.png" style="width: 50%; height: 50%"/>
 
 # Bascet (Bacterial Single CEll Toolkit)
 
