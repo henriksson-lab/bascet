@@ -1,4 +1,6 @@
-<img src="./assets/img/Bascet.png" style="width: 50%; height: 50%"/>
+<p align="center">
+<img src="./assets/img/Bascet.png" alt="Bascet logo" style="height: auto; width: auto;"/>
+</p>
 
 # Bascet (Bacterial Single CEll Toolkit)
 
