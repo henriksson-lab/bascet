@@ -129,7 +129,7 @@ impl ShardifyCMD {
                 };
 
                 let mut thread_stream: ShardifyStream<ShardifyCell> =
-                    match ShardifyStream::try_from_input(thread_input) {
+                    match ShardifyStream::try_from_input(&thread_input) {
                         Ok(stream) => stream,
                         Err(e) => {
                             log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
@@ -215,7 +215,7 @@ impl ShardifyCMD {
                 BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
 
             let mut thread_shardify_writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
-                match ShardifyWriter::try_from_output(thread_output) {
+                match ShardifyWriter::try_from_output(&thread_output) {
                     Ok(writer) => writer.set_writer(thread_bgzf_writer),
                     Err(e) => {
                         log_critical!("Failed to create output writer"; "path" => ?thread_output_path, "error" => %e);

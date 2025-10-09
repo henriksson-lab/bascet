@@ -1,6 +1,7 @@
 use crate::command::countsketch::CountsketchStream;
+use crate::command::debarcode::DebarcodeMergeStream;
+use crate::command::debarcode::DebarcodeReadsStream;
 use crate::command::shardify::ShardifyStream;
-use crate::command::trim_experimental::TrimExperimentalStream;
 
 use crate::{common, log_debug, threading};
 
@@ -90,13 +91,18 @@ pub trait BascetCellBuilder: Sized {
         self
     }
 
-    fn add_rp_owned(self, rp: (Vec<u8>, Vec<u8>)) -> Self {
+    fn add_rp_owned(self, r1: Vec<u8>, r2: Vec<u8>) -> Self {
         log_debug!("Method 'add_rp_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
     fn add_quality_owned(self, scores: Vec<u8>) -> Self {
         log_debug!("Method 'add_quality_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
+        self
+    }
+
+    fn add_qp_owned(self, q1: Vec<u8>, q2: Vec<u8>) -> Self {
+        log_debug!("Method 'add_qp_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 

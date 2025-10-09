@@ -5,7 +5,7 @@ use std::io::Read;
 
 use crate::common::{self, PageBuffer};
 use crate::threading::{self, UnsafePtr};
-use crate::{log_critical, log_warning};
+use crate::{log_critical, log_info, log_warning};
 
 use crate::io;
 use crate::io::format::fastq_gz;
@@ -112,7 +112,6 @@ impl<T> Stream<T> {
             std::hint::assert_unchecked(!self.inner_truncated_end_ptr.is_null());
             std::hint::assert_unchecked(!self.inner_incomplete_start_ptr.is_null());
         }
-
         // incr ref count to last page, data may need to be copied
         let last_page = self.inner_page_ptr;
         (**last_page).inc_ref();
@@ -183,10 +182,18 @@ impl<T> Stream<T> {
                     self.inner_buf = buf_slice;
                     return Ok(Some(alloc_res));
                 } else {
-                    return Err(crate::runtime::Error::parse_error(
-                        "load_next_buf",
-                        Some("No tirp record boundary found in buffer. Is this a valid tirp file?"),
-                    ));
+                    self.inner_page_ptr = alloc_res.page_ptr;
+                    self.inner_cursor_ptr = UnsafePtr::new(buf_slice.as_mut_ptr_range().start);
+                    self.inner_incomplete_start_ptr =
+                        UnsafePtr::new(buf_slice.as_mut_ptr_range().end);
+                    self.inner_truncated_end_ptr = UnsafePtr::new(buf_slice.as_mut_ptr_range().end);
+
+                    self.inner_buf = buf_slice;
+                    return Ok(Some(alloc_res));
+                    // return Err(crate::runtime::Error::parse_error(
+                    //     "load_next_buf",
+                    //     Some("No fastq record boundary found in buffer. Is this a valid fastq file?"),
+                    // ));
                 }
             }
             0 => {
@@ -196,12 +203,20 @@ impl<T> Stream<T> {
                     self.inner_page_ptr = alloc_res.page_ptr;
                     self.inner_cursor_ptr = UnsafePtr::new(eofslice.as_mut_ptr_range().start);
                     self.inner_incomplete_start_ptr =
-                        UnsafePtr::new(eofslice.as_mut_ptr_range().start);
+                        UnsafePtr::new(eofslice.as_mut_ptr_range().end);
                     self.inner_truncated_end_ptr = UnsafePtr::new(eofslice.as_mut_ptr_range().end);
 
                     self.inner_buf = eofslice;
                     return Ok(Some(alloc_res));
                 } else {
+                    let eofslice = &mut [];
+                    self.inner_page_ptr = alloc_res.page_ptr;
+                    self.inner_cursor_ptr = UnsafePtr::new(eofslice.as_mut_ptr_range().end);
+                    self.inner_incomplete_start_ptr =
+                        UnsafePtr::new(eofslice.as_mut_ptr_range().end);
+                    self.inner_truncated_end_ptr = UnsafePtr::new(eofslice.as_mut_ptr_range().end);
+
+                    self.inner_buf = eofslice;
                     return Ok(None);
                 }
             }
@@ -355,14 +370,17 @@ where
     }
 
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error> {
+        // TODO: probably gets hung up here (:
         loop {
             let builder = T::builder();
             if let Some(cell) = self.try_parse_record(builder)? {
                 return Ok(Some(cell));
             }
+
             unsafe {
                 if self.load_next_buf()?.is_none() {
-                    return Ok(None); // EOF reached
+                    log_info!("load_next_buf returned None, exiting");
+                    return Ok(None);
                 }
             }
         }

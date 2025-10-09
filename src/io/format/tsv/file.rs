@@ -1,7 +1,7 @@
 use crate::io::traits::BascetFile;
 use crate::utils::expand_and_resolve;
 
-const VALID_EXTENSIONS: &[&str] = &["csv"];
+const VALID_EXTENSIONS: &[&str] = &["tsv"];
 
 /// CSV input file - must exist, have content, and match extensions
 #[derive(Debug)]

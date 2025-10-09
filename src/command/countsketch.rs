@@ -31,7 +31,7 @@ support_which_stream! {
 }
 support_which_writer! {
     CountsketchOutput => CountsketchWriter<W: std::io::Write>
-    for formats [csv]
+    for formats [tsv]
 }
 #[derive(Args)]
 pub struct CountsketchCMD {
@@ -107,7 +107,7 @@ impl CountsketchCMD {
             };
 
             let mut stream: CountsketchStream<CountsketchCell> =
-                match CountsketchStream::try_from_input(file) {
+                match CountsketchStream::try_from_input(&file) {
                     Ok(stream) => stream,
                     Err(e) => {
                         log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
@@ -123,11 +123,11 @@ impl CountsketchCMD {
             stream.set_reader_threads(n_readers);
             stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
-            let output_path = self.path_out.join(format!("countsketch.{i}.csv"));
+            let output_path = self.path_out.join(format!("countsketch.{i}.tsv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
                 Ok(output) => output,
                 Err(e) => {
-                    log_warning!("Failed to identify output file, skipping"; "path" => ?output_path, "error" => %e);
+                    log_warning!("Failed to verify output file, skipping"; "path" => ?output_path, "error" => %e);
                     total_errors += 1;
                     continue;
                 }
@@ -141,7 +141,7 @@ impl CountsketchCMD {
                 }
             };
 
-            let mut output_countsketch_writer = match CountsketchWriter::try_from_output(output_auto) {
+            let mut output_countsketch_writer = match CountsketchWriter::try_from_output(&output_auto) {
                 Ok(writer) => writer,
                 Err(e) => {
                     log_warning!("Failed to create output writer, skipping"; "path" => ?output_path, "error" => %e);

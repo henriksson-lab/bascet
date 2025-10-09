@@ -4,8 +4,11 @@ use crate::command::countsketch::CountsketchOutput;
 use crate::command::shardify::ShardifyInput;
 use crate::command::shardify::ShardifyOutput;
 
-use crate::command::trim_experimental::TrimExperimentalInput;
-use crate::command::trim_experimental::TrimExperimentalOutput;
+use crate::command::debarcode::DebarcodeHistOutput;
+use crate::command::debarcode::DebarcodeMergeInput;
+use crate::command::debarcode::DebarcodeMergeOutput;
+use crate::command::debarcode::DebarcodeReadsInput;
+// use crate::command::trim_experimental::TrimExperimentalOutput;
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetFile: Sized {
