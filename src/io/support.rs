@@ -67,13 +67,21 @@ macro_rules! __generate_input_enum {
             impl $enum_name {
                 pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
                     let path = path.as_ref();
+                    let mut last_error: Option<crate::runtime::Error> = None;
                     $(
-                        if let Ok(inner) = crate::io::format::$format::Input::new(path) {
-                            crate::log_info!("Detected input format: {}", stringify!($format));
-                            return Ok(Self::[<$format:camel>](inner));
+                        match crate::io::format::$format::Input::new(path) {
+                            Ok(inner) => {
+                                crate::log_info!("Detected input format: {}", stringify!($format));
+                                return Ok(Self::[<$format:camel>](inner));
+                            }
+                            Err(e) => {
+                                last_error = Some(e);
+                            }
                         }
                     )*
-                    Err(crate::runtime::Error::file_not_valid(path, Some("No supported input format could handle this file")))
+                    Err(last_error.unwrap_or_else(||
+                        crate::runtime::Error::file_not_valid(path, Some("No supported input format could handle this file"))
+                    ))
                 }
             }
         }
@@ -91,51 +99,59 @@ macro_rules! __generate_output_enum {
             impl $enum_name {
                 pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
                     let path = path.as_ref();
+                    let mut last_error: Option<crate::runtime::Error> = None;
                     $(
-                        if let Ok(inner) = crate::io::format::$format::Output::new(path) {
-                            crate::log_info!("Detected output format: {}", stringify!($format));
-                            return Ok(Self::[<$format:camel>](inner));
+                        match crate::io::format::$format::Output::new(path) {
+                            Ok(inner) => {
+                                crate::log_info!("Detected output format: {}", stringify!($format));
+                                return Ok(Self::[<$format:camel>](inner));
+                            }
+                            Err(e) => {
+                                last_error = Some(e);
+                            }
                         }
                     )*
-                    Err(crate::runtime::Error::file_not_valid(path, Some("No supported output format could handle this file")))
+                    Err(last_error.unwrap_or_else(||
+                        crate::runtime::Error::file_not_valid(path, Some("No supported output format could handle this file"))
+                    ))
                 }
             }
         }
     };
 }
-#[macro_export]
-macro_rules! __generate_temp_enum {
-    ($enum_name:ident for formats [$($format:ident),* $(,)?]) => {
-        paste::paste! {
-            #[enum_dispatch::enum_dispatch(BascetFile, BascetTempFile)]
-            pub enum $enum_name {
-                $([<$format:camel>](crate::io::format::$format::Temp),)*
-            }
+// #[macro_export]
+// macro_rules! __generate_temp_enum {
+//     ($enum_name:ident for formats [$($format:ident),* $(,)?]) => {
+//         paste::paste! {
+//             #[enum_dispatch::enum_dispatch(BascetFile, BascetTempFile)]
+//             pub enum $enum_name {
+//                 $([<$format:camel>](crate::io::format::$format::Temp),)*
+//             }
 
-            impl $enum_name {
-                pub fn with_unique_name(extension: &str) -> Result<Self, crate::runtime::Error> {
-                    $(
-                        if let Ok(inner) = crate::io::format::$format::Temp::with_unique_name(extension) {
-                            crate::log_info!("Using temp format: {}", stringify!($format));
-                            return Ok(Self::[<$format:camel>](inner));
-                        }
-                    )*
-                    Err(crate::runtime::Error::file_not_valid("temp", Some("No supported temp format could create file".to_string())))
-                }
+//             impl $enum_name {
+//                 pub fn with_unique_name(extension: &str) -> Result<Self, crate::runtime::Error> {
+//                     $(
+//                         if let Ok(inner) = crate::io::format::$format::Temp::with_unique_name(extension) {
+//                             crate::log_info!("Using temp format: {}", stringify!($format));
+//                             return Ok(Self::[<$format:camel>](inner));
+//                         }
+//                     )*
+//                     Err(crate::runtime::Error::file_not_valid("temp", Some("No supported temp format could create file".to_string())))
+//                 }
 
-                pub fn with_unique_name_in<P: AsRef<std::path::Path>>(dir: P, extension: &str) -> Result<Self, crate::runtime::Error> {
-                    $(
-                        if let Ok(inner) = crate::io::format::$format::Temp::with_unique_name_in(&dir, extension) {
-                            crate::log_info!("Using temp format: {}", stringify!($format));
-                            return Ok(Self::[<$format:camel>](inner));
-                        }
-                    )*
-                    Err(crate::runtime::Error::file_not_valid("temp", Some("No supported temp format could create file".to_string())))
-                }
-            }
-        }
-    };
-}
+//                 pub fn with_unique_name_in<P: AsRef<std::path::Path>>(dir: P, extension: &str) -> Result<Self, crate::runtime::Error> {
+//                     $(
+//                         if let Ok(inner) = crate::io::format::$format::Temp::with_unique_name_in(&dir, extension) {
+//                             crate::log_info!("Using temp format: {}", stringify!($format));
+//                             return Ok(Self::[<$format:camel>](inner));
+//                         }
+//                     )*
+//                     Err(crate::runtime::Error::file_not_valid("temp", Some("No supported temp format could create file".to_string())))
+//                 }
+//             }
+//         }
+//     };
+// }
 #[macro_export]
 macro_rules! __generate_stream_enum {
     (
@@ -155,7 +171,7 @@ macro_rules! __generate_stream_enum {
             where
                 $generic: $trait_bound + 'static,
             {
-                pub fn try_from_input(input: $input_enum) -> Result<Self, crate::runtime::Error> {
+                pub fn try_from_input(input: &$input_enum) -> Result<Self, crate::runtime::Error> {
                     $(
                         if let $input_enum::[<$format:camel>](file) = input {
                             return Ok(Self::[<$format:camel>](
@@ -188,7 +204,7 @@ macro_rules! __generate_writer_enum {
             where
                 $generic: $trait_bound + 'static,
             {
-                pub fn try_from_output(output: $output_enum) -> Result<Self, crate::runtime::Error> {
+                pub fn try_from_output(output: &$output_enum) -> Result<Self, crate::runtime::Error> {
                     $(
                         if let $output_enum::[<$format:camel>](_) = output {
                             return Ok(Self::[<$format:camel>](

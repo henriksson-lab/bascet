@@ -4,6 +4,7 @@ pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
 pub mod countsketch_mat;
+pub mod debarcode;
 pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
@@ -18,7 +19,6 @@ pub mod shardify;
 pub mod snpcall;
 pub mod threadcount;
 pub mod transform;
-pub mod trim_experimental;
 
 // BAM/SAM operations
 pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
@@ -60,5 +60,6 @@ pub use threadcount::{
     determine_thread_counts_1, determine_thread_counts_2, determine_thread_counts_3,
 };
 
-// trimming
-pub use trim_experimental::TrimExperimentalCMD;
+// debarcoding
+// pub use trim_experimental::TrimExperimentalCMD;
+pub use debarcode::DebarcodeCMD;

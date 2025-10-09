@@ -25,7 +25,7 @@ pub enum Commands {
     Countsketch(command::CountsketchCMD),
     CountsketchMat(command::CountsketchMatCMD),
     ExtractStream(command::ExtractStreamCMD),
-    TrimExperimental(command::TrimExperimentalCMD),
+    Debarcode(command::DebarcodeCMD),
 }
 
 impl fmt::Debug for Commands {
@@ -48,7 +48,7 @@ impl fmt::Debug for Commands {
             Commands::Countsketch(_) => "Countsketch",
             Commands::ExtractStream(_) => "ExtractStream",
             Commands::CountsketchMat(_) => "Countsketch Mat",
-            Commands::TrimExperimental(_) => "TrimExperimental",
+            Commands::Debarcode(_) => "Debarcode",
         };
         write!(f, "{}", cmd)
     }
