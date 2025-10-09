@@ -94,6 +94,7 @@ fn main() -> std::process::ExitCode {
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(mut cmd) => cmd.try_execute(),
         Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
+        Commands::Debarcode(mut cmd) => cmd.try_execute(),
     };
 
     if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {

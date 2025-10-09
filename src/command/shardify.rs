@@ -13,7 +13,8 @@ use std::{
 use crate::{
     common::{self, spin_or_park},
     io::traits::*,
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
+    threading::PeekableReceiver,
 };
 
 use std::thread;
@@ -24,11 +25,11 @@ pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
 support_which_stream! {
     ShardifyInput => ShardifyStream<T: BascetCell>
-    for formats [tirp]
+    for formats [tirp_bgzf]
 }
 support_which_writer! {
     ShardifyOutput => ShardifyWriter<W: std::io::Write>
-    for formats [tirp]
+    for formats [tirp_bgzf]
 }
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
@@ -51,11 +52,11 @@ pub struct ShardifyCMD {
     threads_read: usize,
     #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
     threads_work: usize,
-    
+
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 8196)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 2048)]
     pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
+    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 32)]
     pub page_size_mb: usize,
 }
 
@@ -82,24 +83,15 @@ impl ShardifyCMD {
             "cells in filter" => filter.len()
         );
 
-        let (vec_coordinator_producers, vec_coordinator_consumers): (
-            &'static mut Vec<rtrb::Producer<ShardifyCell>>,
-            &'static mut Vec<UnsafeSyncConsumer>,
-        ) = {
-            let mut producers = Vec::with_capacity(count_streams);
-            let consumers: Vec<UnsafeSyncConsumer> = (0..count_streams)
-                .map(|_| {
-                    let (px, cx) = rtrb::RingBuffer::new(1024);
-                    producers.push(px);
-                    UnsafeSyncConsumer(cx)
-                })
-                .collect();
-
-            (
-                Box::leak(Box::new(producers)),
-                Box::leak(Box::new(consumers)),
-            )
-        };
+        let (vec_coordinator_senders, mut vec_coordinator_receivers): (
+            Vec<channel::Sender<ShardifyCell>>,
+            Vec<PeekableReceiver<ShardifyCell>>,
+        ) = (0..count_streams)
+            .map(|_| {
+                let (tx, rx) = channel::unbounded::<ShardifyCell>();
+                (tx, PeekableReceiver::new(rx))
+            })
+            .unzip();
         let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(count_streams)));
         let mut vec_reader_handles = Vec::with_capacity(count_streams);
         // let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
@@ -116,18 +108,18 @@ impl ShardifyCMD {
 
         // bounds given by rtrb, this is only a notifier
         let (stream_tx, stream_rx) = channel::unbounded::<Option<()>>();
-        for (thread_idx, (thread_input, thread_px)) in
-            izip!(self.path_in.clone(), vec_coordinator_producers).enumerate()
+        for (thread_idx, (thread_input, thread_tx)) in
+            izip!(self.path_in.clone(), vec_coordinator_senders).enumerate()
         {
             let thread_filter = Arc::clone(&filter);
             let thread_expired = Arc::clone(&vec_consumers_states);
-            let thread_tx = stream_tx.clone();
+            let thread_stream_tx = stream_tx.clone();
             let global_processed_counter = Arc::clone(&global_cells_processed);
             let global_kept_counter = Arc::clone(&global_cells_kept);
 
             let thread_handle = thread::spawn(move || {
                 log_info!("Starting stream reader"; "thread index" => thread_idx, "path" => ?thread_input);
-                
+
                 let thread_input_path = thread_input.clone();
                 let thread_input = match ShardifyInput::try_from_path(&thread_input) {
                     Ok(input) => input,
@@ -135,16 +127,16 @@ impl ShardifyCMD {
                         log_critical!("Failed to open input file"; "path" => ?thread_input_path, "error" => %e);
                     }
                 };
-                
-                let thread_stream: ShardifyStream<ShardifyCell> = match ShardifyStream::try_from_input(thread_input) {
-                    Ok(stream) => stream
-                        .set_reader_threads(count_threads_per_stream)
-                        .set_pagebuffer_config(num_pages, page_size_bytes),
-                    Err(e) => {
-                        log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
-                    }
-                };
-                let thread_px = thread_px;
+
+                let mut thread_stream: ShardifyStream<ShardifyCell> =
+                    match ShardifyStream::try_from_input(&thread_input) {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
+                        }
+                    };
+                thread_stream.set_reader_threads(count_threads_per_stream);
+                thread_stream.set_pagebuffer_config(num_pages, page_size_bytes);
 
                 for token_cell_result in thread_stream {
                     let token_cell = match token_cell_result {
@@ -159,53 +151,50 @@ impl ShardifyCMD {
                             }
                         },
                     };
-                    
-                    let global_processed = global_processed_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+                    let global_processed = global_processed_counter
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
                     if !thread_filter.contains(token_cell.cell) {
                         drop(token_cell);
                         continue;
                     }
 
-                    let global_kept = global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let global_kept =
+                        global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if global_kept % 100 == 0 {
-                        log_info!("Processing"; 
+                        log_info!("Processing";
                             "cells processed" => global_processed,
                             "cells kept" => global_kept
                         );
                     }
 
-
-                    let mut token_cell = token_cell;
-                    let mut rtrb_count_spins = 0;
-                    loop {
-                        match thread_px.push(token_cell) {
-                            Ok(_) => {
-                                let _ = thread_tx.send(Some(()));
-                                break;
-                            }
-                            Err(rtrb::PushError::Full(ret)) => {
-                                token_cell = ret;
-                                spin_or_park(&mut rtrb_count_spins, 100);
-                            }
-                        }
+                    if thread_tx.send(token_cell).is_ok() {
+                        let _ = thread_stream_tx.send(Some(()));
                     }
                 }
                 thread_expired.write().unwrap().push(thread_idx);
-                let _ = thread_tx.send(None);
+                let _ = thread_stream_tx.send(None);
             });
             vec_reader_handles.push(thread_handle);
         }
 
         let write_channels: Vec<_> = (0..count_writers)
-            .map(|_| channel::bounded::<Option<Arc<RwLock<Vec<ShardifyCell>>>>>(16))
+            .map(|_| channel::bounded::<Option<Box<Vec<ShardifyCell>>>>(128))
             .collect();
         let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
-        
+
         let global_cells_written = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        for (thread_idx, (thread_output, (_, thread_rx))) in self.path_out.clone().into_iter().zip(write_channels.into_iter()).enumerate() {
+        for (thread_idx, (thread_output, (_, thread_rx))) in self
+            .path_out
+            .clone()
+            .into_iter()
+            .zip(write_channels.into_iter())
+            .enumerate()
+        {
             log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => ?thread_output);
-            
+
             let thread_output_path = thread_output.clone();
             let thread_output = match ShardifyOutput::try_from_path(&thread_output) {
                 Ok(output) => output,
@@ -213,19 +202,20 @@ impl ShardifyCMD {
                     log_critical!("Failed to identify output file"; "path" => ?thread_output_path, "error" => %e);
                 }
             };
-            
+
             let thread_file = match std::fs::File::create(thread_output.path()) {
                 Ok(file) => file,
                 Err(e) => {
                     log_critical!("Failed to create output file"; "path" => ?thread_output.path(), "error" => %e);
                 }
             };
-            
-            let thread_buf_writer = BufWriter::with_capacity(1024 * 1024, thread_file);
-            let thread_bgzf_writer = BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
+
+            let thread_buf_writer = BufWriter::with_capacity(1024 * 1024 * 32, thread_file);
+            let thread_bgzf_writer =
+                BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
 
             let mut thread_shardify_writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
-                match ShardifyWriter::try_from_output(thread_output) {
+                match ShardifyWriter::try_from_output(&thread_output) {
                     Ok(writer) => writer.set_writer(thread_bgzf_writer),
                     Err(e) => {
                         log_critical!("Failed to create output writer"; "path" => ?thread_output_path, "error" => %e);
@@ -235,13 +225,14 @@ impl ShardifyCMD {
             let global_counter = Arc::clone(&global_cells_written);
             let thread_handle = thread::spawn(move || {
                 while let Ok(Some(vec_records)) = thread_rx.recv() {
-                    for cell in &*vec_records.read().unwrap() {
+                    for cell in &*vec_records {
                         if let Err(e) = thread_shardify_writer.write_cell(cell) {
                             log_warning!("Failed to write cell"; "thread" => thread_idx, "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
                         }
                     }
-                    
-                    let global_count = global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+                    let global_count =
+                        global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if global_count % 100 == 0 {
                         log_info!("Writing"; "cells merged and written" => global_count);
                     }
@@ -284,7 +275,8 @@ impl ShardifyCMD {
             coordinator_vec_take.clear();
             coordinator_vec_send.clear();
 
-            for (sweep_consumer_idx, sweep_consumer) in vec_coordinator_consumers.iter().enumerate()
+            for (sweep_consumer_idx, sweep_consumer) in
+                vec_coordinator_receivers.iter_mut().enumerate()
             {
                 // Skip streams marked done/expired
                 if vec_consumers_states
@@ -295,9 +287,9 @@ impl ShardifyCMD {
                     continue;
                 }
 
-                let sweep_token = match unsafe { sweep_consumer.peek() } {
+                let sweep_token = match sweep_consumer.peek() {
                     Ok(token) => token,
-                    Err(rtrb::PeekError::Empty) => {
+                    Err(channel::RecvError) => {
                         // Stream not ready
                         coordinator_all_ready = false;
                         break;
@@ -327,18 +319,17 @@ impl ShardifyCMD {
             }
 
             for take_idx in &coordinator_vec_take {
-                let take_consumer = &mut vec_coordinator_consumers[*take_idx];
-                match unsafe { take_consumer.pop() } {
+                let take_consumer = &mut vec_coordinator_receivers[*take_idx];
+                match take_consumer.recv() {
                     Ok(take_cell) => {
                         coordinator_vec_send.push(take_cell);
                     }
-                    Err(_) => unreachable!("Token disappeared between peek and pop"),
+                    Err(_) => unreachable!("Token disappeared between peek and recv"),
                 }
             }
 
-            let _ = write_senders[coordinator_writer_idx].send(Some(Arc::new(RwLock::new(std::mem::take(
-                &mut coordinator_vec_send,
-            )))));
+            let _ = write_senders[coordinator_writer_idx]
+                .send(Some(Box::new(std::mem::take(&mut coordinator_vec_send))));
             coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
@@ -353,12 +344,12 @@ impl ShardifyCMD {
             handle.join().expect("Writer thread panicked");
         }
         log_info!("Write handles closed");
-        
-        log_info!("Shardify complete"; 
+
+        log_info!("Shardify complete";
             "input files processed" => self.path_in.len(),
             "output files created" => self.path_out.len()
         );
-        
+
         Ok(())
     }
 }
@@ -369,7 +360,7 @@ struct ShardifyCell {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer>; 2]>,
+    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 impl Drop for ShardifyCell {
@@ -377,7 +368,7 @@ impl Drop for ShardifyCell {
     fn drop(&mut self) {
         unsafe {
             for page_ptr in &self._page_refs {
-                (*page_ptr.mut_ptr()).dec_ref();
+                (***page_ptr).dec_ref();
             }
         }
     }
@@ -411,7 +402,7 @@ struct ShardifyCellBuilder {
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<common::PageBuffer>; 2]>,
+    page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -433,9 +424,9 @@ impl BascetCellBuilder for ShardifyCellBuilder {
     type Token = ShardifyCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
+    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         unsafe {
-            (*page_ptr.mut_ptr()).inc_ref();
+            (**page_ptr).inc_ref();
         }
         self.page_refs.push(page_ptr);
         self
@@ -559,34 +550,4 @@ fn read_filter(input: Option<&Path>) -> ShardifyFilter {
         );
     }
     return Arc::new(filter);
-}
-
-struct UnsafeSyncConsumer(rtrb::Consumer<ShardifyCell>);
-unsafe impl Sync for UnsafeSyncConsumer {}
-unsafe impl Send for UnsafeSyncConsumer {}
-
-impl UnsafeSyncConsumer {
-    unsafe fn peek(&self) -> Result<&ShardifyCell, rtrb::PeekError> {
-        self.0.peek()
-    }
-
-    unsafe fn pop(&mut self) -> Result<ShardifyCell, rtrb::PopError> {
-        self.0.pop()
-    }
-}
-
-#[derive(Clone)]
-struct UnsafeSyncConsumerPtr {
-    ptr: *mut RwLock<UnsafeSyncConsumer>,
-    len: usize,
-}
-
-unsafe impl Send for UnsafeSyncConsumerPtr {}
-unsafe impl Sync for UnsafeSyncConsumerPtr {}
-
-impl UnsafeSyncConsumerPtr {
-    unsafe fn get(&self, index: usize) -> &RwLock<UnsafeSyncConsumer> {
-        debug_assert!(index < self.len);
-        &*self.ptr.add(index)
-    }
 }

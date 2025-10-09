@@ -1,7 +1,12 @@
+use std::io::Write;
+
 use crate::command::countsketch::CountsketchOutput;
 use crate::command::countsketch::CountsketchWriter;
 
 use crate::command::shardify::ShardifyWriter;
+
+use crate::command::debarcode::DebarcodeHistWriter;
+use crate::command::debarcode::DebarcodeMergeWriter;
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetWrite<W>: Sized
@@ -10,6 +15,15 @@ where
 {
     fn set_writer(self, _: W) -> Self;
     fn get_writer(self) -> Option<W>;
+
+    fn write_counts<H, K, V>(&mut self, counts: H) -> Result<(), crate::runtime::Error>
+    where
+        H: IntoIterator<Item = (K, V)>,
+        K: AsRef<[u8]>,
+        V: std::fmt::Display,
+    {
+        todo!()
+    }
 
     fn write_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
     where

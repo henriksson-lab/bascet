@@ -1,6 +1,6 @@
 use crate::{common, runtime};
 
-#[inline]
+#[inline(always)]
 pub fn parse_record(buf_record: &[u8]) -> Result<(&[u8], common::ReadPair), crate::runtime::Error> {
     let mut column_iter = memchr::memchr_iter(common::U8_CHAR_TAB, buf_record);
 

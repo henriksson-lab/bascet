@@ -2,10 +2,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("File at {:?} not found.", path)]
+    #[error("File at {:?} not found", path)]
     FileNotFound { path: std::path::PathBuf },
 
-    #[error("File at {:?} is invalid{}.", path, Error::format_msg_as_detail(msg))]
+    #[error("File at {:?} is invalid{}", path, Error::format_msg_as_detail(msg))]
     FileNotValid {
         path: std::path::PathBuf,
         msg: Option<String>,

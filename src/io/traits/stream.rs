@@ -1,6 +1,9 @@
 use crate::command::countsketch::CountsketchStream;
+use crate::command::debarcode::DebarcodeMergeStream;
+use crate::command::debarcode::DebarcodeReadsStream;
 use crate::command::shardify::ShardifyStream;
-use crate::{common, log_debug};
+
+use crate::{common, log_debug, threading};
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetStream<T>: Sized
@@ -9,12 +12,8 @@ where
     T::Builder: BascetCellBuilder<Token = T>,
 {
     fn next_cell(&mut self) -> Result<Option<T>, crate::runtime::Error>;
-    fn set_reader_threads(self, _: usize) -> Self {
-        self
-    }
-    fn set_pagebuffer_config(self, _num_pages: usize, _page_size: usize) -> Self {
-        self
-    }
+    fn set_reader_threads(&mut self, _: usize);
+    fn set_pagebuffer_config(&mut self, _num_pages: usize, _page_size: usize);
 }
 
 pub trait BascetCellGuard {}
@@ -45,7 +44,7 @@ pub trait BascetCellBuilder: Sized {
 
     // Optional methods with default implementations
 
-    fn add_page_ref(self, page_ptr: common::UnsafeMutPtr<common::PageBuffer>) -> Self {
+    fn add_page_ref(self, page_ptr: threading::UnsafePtr<common::PageBuffer<u8>>) -> Self {
         log_debug!("Method 'add_page_ref' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
@@ -92,13 +91,18 @@ pub trait BascetCellBuilder: Sized {
         self
     }
 
-    fn add_rp_owned(self, rp: (Vec<u8>, Vec<u8>)) -> Self {
+    fn add_rp_owned(self, r1: Vec<u8>, r2: Vec<u8>) -> Self {
         log_debug!("Method 'add_rp_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
     fn add_quality_owned(self, scores: Vec<u8>) -> Self {
         log_debug!("Method 'add_quality_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
+        self
+    }
+
+    fn add_qp_owned(self, q1: Vec<u8>, q2: Vec<u8>) -> Self {
+        log_debug!("Method 'add_qp_owned' called on a BascetCellBuilder implementation that does not implement this method. Data will be ignored.");
         self
     }
 
