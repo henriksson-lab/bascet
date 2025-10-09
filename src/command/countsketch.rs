@@ -3,8 +3,7 @@ use crate::{
     common::{self, PageBuffer},
     io::traits::*,
     kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_stream, support_which_temp,
-    support_which_writer,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
 };
 
 use clap::Args;
@@ -28,11 +27,11 @@ pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
 support_which_stream! {
     CountsketchInput => CountsketchStream<T: BascetCell>
-    for formats [tirp, zip]
+    for formats [tirp_bgzf, zip]
 }
 support_which_writer! {
     CountsketchOutput => CountsketchWriter<W: std::io::Write>
-    for formats [csv]
+    for formats [tsv]
 }
 #[derive(Args)]
 pub struct CountsketchCMD {
@@ -108,7 +107,7 @@ impl CountsketchCMD {
             };
 
             let mut stream: CountsketchStream<CountsketchCell> =
-                match CountsketchStream::try_from_input(file) {
+                match CountsketchStream::try_from_input(&file) {
                     Ok(stream) => stream,
                     Err(e) => {
                         log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
@@ -116,20 +115,19 @@ impl CountsketchCMD {
                         continue;
                     }
                 };
-            
+
             let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
             let page_size_bytes = self.page_size_mb * 1024 * 1024;
             let num_pages = buffer_size_bytes / page_size_bytes;
-            
-            stream = stream
-                .set_reader_threads(n_readers)
-                .set_pagebuffer_config(num_pages, page_size_bytes);
 
-            let output_path = self.path_out.join(format!("countsketch.{i}.csv"));
+            stream.set_reader_threads(n_readers);
+            stream.set_pagebuffer_config(num_pages, page_size_bytes);
+
+            let output_path = self.path_out.join(format!("countsketch.{i}.tsv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
                 Ok(output) => output,
                 Err(e) => {
-                    log_warning!("Failed to identify output file, skipping"; "path" => ?output_path, "error" => %e);
+                    log_warning!("Failed to verify output file, skipping"; "path" => ?output_path, "error" => %e);
                     total_errors += 1;
                     continue;
                 }
@@ -143,7 +141,7 @@ impl CountsketchCMD {
                 }
             };
 
-            let mut output_countsketch_writer =  match CountsketchWriter::try_from_output(output_auto) {
+            let mut output_countsketch_writer = match CountsketchWriter::try_from_output(&output_auto) {
                 Ok(writer) => writer,
                 Err(e) => {
                     log_warning!("Failed to create output writer, skipping"; "path" => ?output_path, "error" => %e);
@@ -163,7 +161,8 @@ impl CountsketchCMD {
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
                     // log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell), "open" => write_rx.len());
-                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch) {
+                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch)
+                    {
                         log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.cell), "error" => %e);
                     }
                 }
@@ -181,11 +180,13 @@ impl CountsketchCMD {
                     let mut cells_processed = 0;
 
                     while let Ok(Some(cell)) = work_rx.recv() {
-                        // println!("Worker {} receiving cell {} at {:?}", 
+                        // println!("Worker {} receiving cell {} at {:?}",
                         //         worker_id,
-                        //         String::from_utf8_lossy(cell.get_cell().unwrap()),
+                        //         String::from_utf8_lossy(cell.cell),
                         //         std::time::SystemTime::now());
-                        let Some(reads) = cell.get_reads() else { continue };
+                        let Some(reads) = cell.get_reads() else {
+                            continue;
+                        };
 
                         for (r1, r2) in reads {
                             for kmer in r1.windows(kmer_size) {
@@ -197,8 +198,10 @@ impl CountsketchCMD {
                             let mut rev_r1 = Vec::with_capacity(r1.len());
                             for &base in r1.iter().rev() {
                                 rev_r1.push(match base {
-                                    b'A' => b'T', b'T' => b'A',
-                                    b'G' => b'C', b'C' => b'G',
+                                    b'A' => b'T',
+                                    b'T' => b'A',
+                                    b'G' => b'C',
+                                    b'C' => b'G',
                                     _ => base,
                                 });
                             }
@@ -209,8 +212,10 @@ impl CountsketchCMD {
                             let mut rev_r2 = Vec::with_capacity(r2.len());
                             for &base in r2.iter().rev() {
                                 rev_r2.push(match base {
-                                    b'A' => b'T', b'T' => b'A',
-                                    b'G' => b'C', b'C' => b'G',
+                                    b'A' => b'T',
+                                    b'T' => b'A',
+                                    b'G' => b'C',
+                                    b'C' => b'G',
                                     _ => base,
                                 });
                             }
@@ -290,7 +295,7 @@ struct CountsketchCell {
     cell: &'static [u8],
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    _page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer>; 2]>,
+    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
 
@@ -299,7 +304,7 @@ impl Drop for CountsketchCell {
     fn drop(&mut self) {
         unsafe {
             for page_ptr in &self._page_refs {
-                (*page_ptr.mut_ptr()).dec_ref();
+                (***page_ptr).dec_ref();
             }
         }
     }
@@ -325,7 +330,7 @@ struct CountsketchCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
 
-    page_refs: smallvec::SmallVec<[common::UnsafeMutPtr<PageBuffer>; 2]>,
+    page_refs: smallvec::SmallVec<[threading::UnsafePtr<PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
 }
 
@@ -345,9 +350,9 @@ impl BascetCellBuilder for CountsketchCellBuilder {
     type Token = CountsketchCell;
 
     #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: common::UnsafeMutPtr<PageBuffer>) -> Self {
+    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<PageBuffer<u8>>) -> Self {
         unsafe {
-            (*page_ptr.mut_ptr()).inc_ref();
+            (**page_ptr).inc_ref();
         }
         self.page_refs.push(page_ptr);
         self

@@ -4,6 +4,12 @@ use crate::command::countsketch::CountsketchOutput;
 use crate::command::shardify::ShardifyInput;
 use crate::command::shardify::ShardifyOutput;
 
+use crate::command::debarcode::DebarcodeHistOutput;
+use crate::command::debarcode::DebarcodeMergeInput;
+use crate::command::debarcode::DebarcodeMergeOutput;
+use crate::command::debarcode::DebarcodeReadsInput;
+// use crate::command::trim_experimental::TrimExperimentalOutput;
+
 #[enum_dispatch::enum_dispatch]
 pub trait BascetFile: Sized {
     /// Valid file extensions for this file type (e.g., &["tirp", "tirp.gz"])
@@ -142,7 +148,7 @@ pub trait BascetFile: Sized {
 //         Ok(temp)
 //     }
 
-//     /// Create temp file in specified directory with auto-generated name  
+//     /// Create temp file in specified directory with auto-generated name
 //     fn with_unique_name_in<P: AsRef<std::path::Path>>(
 //         dir: P,
 //         extension: &str,

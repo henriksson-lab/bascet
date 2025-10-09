@@ -1,9 +1,9 @@
 use crate::io::traits::BascetFile;
 use crate::utils::expand_and_resolve;
 
-const VALID_EXTENSIONS: &[&str] = &["csv"];
+const VALID_EXTENSIONS: &[&str] = &["tirp.gz"];
 
-/// CSV input file - must exist, have content, and match extensions
+/// Tirp input file - must exist, have content, and match extensions
 #[derive(Debug)]
 pub struct Input {
     path: std::path::PathBuf,
@@ -36,7 +36,7 @@ impl BascetFile for Input {
     }
 }
 
-/// CSV output file - parent directory must exist, file may or may not exist
+/// Tirp output file - parent directory must exist, file may or may not exist
 #[derive(Debug)]
 pub struct Output {
     path: std::path::PathBuf,
@@ -76,7 +76,7 @@ impl BascetFile for Output {
     }
 }
 
-// CSV temporary file - automatically deleted on drop, minimal validation
+// /// Tirp temporary file - automatically deleted on drop, minimal validation
 // #[derive(Debug)]
 // pub struct Temp {
 //     inner: tempfile::NamedTempFile,

@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::{common, io::traits::BascetWrite};
 
 pub struct Writer<W>
@@ -26,6 +28,24 @@ where
     fn set_writer(mut self, writer: W) -> Self {
         self.inner = Some(writer);
         self
+    }
+
+    fn write_counts<H, K, V>(&mut self, counts: H) -> Result<(), crate::runtime::Error>
+    where
+        H: IntoIterator<Item = (K, V)>,
+        K: AsRef<[u8]>,
+        V: std::fmt::Display,
+    {
+        if let Some(ref mut writer) = self.inner {
+            let output = counts
+                .into_iter()
+                .map(|(key, value)| format!("{}\t{}", String::from_utf8_lossy(key.as_ref()), value))
+                .join("\n");
+
+            writer.write_all(output.as_bytes())?;
+        }
+
+        Ok(())
     }
 
     fn write_countsketch<C>(

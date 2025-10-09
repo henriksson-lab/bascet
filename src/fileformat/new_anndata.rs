@@ -15,7 +15,7 @@ use sprs::{CsMat, TriMat};
 
 ///
 /// Builder of AnnData objects
-/// 
+///
 /// https://anndata.readthedocs.io/en/stable/
 ///
 /// file format
@@ -144,31 +144,18 @@ impl SparseMatrixAnnDataBuilder {
     ///
     /// For a given cell, add counts for a set of cells
     ///
-    pub fn add_value_at_index(
-        &mut self, 
-        feature_index: u32, 
-        cell_index: u32, 
-        cnt: u32
-    ) {
+    pub fn add_value_at_index(&mut self, feature_index: u32, cell_index: u32, cnt: u32) {
         self.entries.push((feature_index, cell_index, cnt));
     }
 
     ///
     /// For a given cell, add unclassified counts
     ///
-    pub fn add_unclassified(
-        &mut self, 
-        cell_index: u32, 
-        counter: u32
-    ) {
+    pub fn add_unclassified(&mut self, cell_index: u32, counter: u32) {
         self.map_cell_unclassified_count.insert(cell_index, counter);
     }
 
-
-    pub fn compress_feature_column(
-        &mut self, 
-        prefix: &str
-    ) -> anyhow::Result<()> {
+    pub fn compress_feature_column(&mut self, prefix: &str) -> anyhow::Result<()> {
         //Get all unique feature IDs
         let mut set_taxid = HashSet::new();
         for (feature, _cell, _cnt) in &self.entries {
@@ -201,14 +188,10 @@ impl SparseMatrixAnnDataBuilder {
         Ok(())
     }
 
-
     ///
     /// Sort content and store as andata object
     ///
-    pub fn save_to_anndata(
-        &mut self, 
-        p: &PathBuf
-    ) -> anyhow::Result<()> {
+    pub fn save_to_anndata(&mut self, p: &PathBuf) -> anyhow::Result<()> {
         /*
          * rows: cells (observations)
          * cols: features (gene, chroms, taix)
@@ -244,29 +227,20 @@ impl SparseMatrixAnnDataBuilder {
 
         log::info!("Saving count matrix");
 
-
         let mut file = SparseMatrixAnnDataWriter::create_anndata(p)?;
 
-        file.store_sparse_count_matrix(
-            &csr_mat,
-            n_rows,
-            n_cols
-        )?;
+        file.store_sparse_count_matrix(&csr_mat, n_rows, n_cols)?;
 
         //Store the names of the features, if present
-        let list_feature_names = Self::gather_map_to_index(
-            &self.feature_to_index, 
-            self.cur_num_feature as usize
-        );
-        file.store_feature_names(
-            &list_feature_names
-        )?;
-        
+        let list_feature_names =
+            Self::gather_map_to_index(&self.feature_to_index, self.cur_num_feature as usize);
+        file.store_feature_names(&list_feature_names)?;
 
         //println!("Features {:?}", list_feature_names);
 
         //Store the names of the cells. Map to an array first
-        let list_cell_names = Self::gather_map_to_index(&self.cell_to_index, self.cur_num_cell as usize);
+        let list_cell_names =
+            Self::gather_map_to_index(&self.cell_to_index, self.cur_num_cell as usize);
 
         //TODO: storing unmapped count, in "obs" data frame. need new builder?
 
@@ -276,17 +250,10 @@ impl SparseMatrixAnnDataBuilder {
             list_cell_unmapped[*cellid as usize] = *cellid_int;
         }
 
-        file.store_cell_names(
-            &list_cell_names,
-            Some(&list_cell_unmapped)
-        )?;
-
+        file.store_cell_names(&list_cell_names, Some(&list_cell_unmapped))?;
 
         Ok(())
     }
-
-
-
 
     fn gather_map_to_index(
         map_to_index: &BTreeMap<Cellid, uint>,
@@ -294,57 +261,38 @@ impl SparseMatrixAnnDataBuilder {
     ) -> Vec<hdf5::types::VarLenUnicode> {
         let mut list_cell_names: Vec<hdf5::types::VarLenUnicode> = vec![VarLenUnicode::new(); len]; // Vec::w();
         for (cellid, cellid_int) in map_to_index {
-            list_cell_names[*cellid_int as usize] = SparseMatrixAnnDataWriter::listu8_to_h5_string(cellid);
+            list_cell_names[*cellid_int as usize] =
+                SparseMatrixAnnDataWriter::listu8_to_h5_string(cellid);
         }
         list_cell_names
     }
-
-
-
-
-
-
-
 }
-
-
-
 
 ///
 /// Writer for AnnData files, assuming data has already been prepared for writing
-/// 
+///
 pub struct SparseMatrixAnnDataWriter {
-    file: hdf5::File
+    file: hdf5::File,
 }
 impl SparseMatrixAnnDataWriter {
-
-
     ///
     /// x
-    /// 
-    pub fn create_anndata(
-        p: &PathBuf,
-    ) -> anyhow::Result<SparseMatrixAnnDataWriter>{
+    ///
+    pub fn create_anndata(p: &PathBuf) -> anyhow::Result<SparseMatrixAnnDataWriter> {
         if p.exists() {
             std::fs::remove_file(&p).expect("Failed to delete previous output file");
         }
         let file = H5File::create(p)?; // open for writing
 
-        Ok(SparseMatrixAnnDataWriter {
-            file: file
-        })
+        Ok(SparseMatrixAnnDataWriter { file: file })
     }
-
-
-
-
 
     ///
     /// x
-    /// 
+    ///
     pub fn store_feature_names(
         &mut self,
-        list_feature_names: &Vec<VarLenUnicode>
+        list_feature_names: &Vec<VarLenUnicode>,
     ) -> anyhow::Result<()> {
         let group = self.file.create_group("var")?;
         let builder = group.new_dataset_builder();
@@ -354,15 +302,13 @@ impl SparseMatrixAnnDataWriter {
         Ok(())
     }
 
-
-
     ///
     /// x
-    /// 
+    ///
     pub fn store_cell_names(
         &mut self,
         list_cell_names: &Vec<VarLenUnicode>,
-        list_cell_unmapped: Option<&Vec<uint>>
+        list_cell_unmapped: Option<&Vec<uint>>,
     ) -> anyhow::Result<()> {
         let group = self.file.create_group("obs")?;
 
@@ -383,91 +329,89 @@ impl SparseMatrixAnnDataWriter {
         Ok(())
     }
 
-    
-    pub fn csr_mat_u32_to_u16(
-        csr_mat: &CsMat<u32>
-    ) -> CsMat<u16> {
+    pub fn csr_mat_u32_to_u16(csr_mat: &CsMat<u32>) -> CsMat<u16> {
         let csr_mat: CsMat<u16> = CsMat::new(
             csr_mat.shape().into(),
             csr_mat.indptr().as_slice().unwrap().to_vec(),
             csr_mat.indices().into(),
-            csr_mat.data().iter().map(|x| *x as u16).collect()
+            csr_mat.data().iter().map(|x| *x as u16).collect(),
         );
         csr_mat
     }
-    
 
     ///
     /// Cast the storage type of a CSR matrix
-    /// 
-    pub fn cast_csr_mat<'a, X,Y> (
-        csr_mat: &'a CsMat<X>
-    ) -> CsMat<Y> 
+    ///
+    pub fn cast_csr_mat<'a, X, Y>(csr_mat: &'a CsMat<X>) -> CsMat<Y>
     where
         X: Copy,
         Y: TryFrom<X>,
-        <Y as TryFrom<X>>::Error: std::fmt::Debug   // is the try_from slow? better implement a specific converter?
-//        Y: From<&'a X>
+        <Y as TryFrom<X>>::Error: std::fmt::Debug, // is the try_from slow? better implement a specific converter?
+                                                   //        Y: From<&'a X>
     {
         CsMat::new(
             csr_mat.shape().into(),
             csr_mat.indptr().as_slice().unwrap().to_vec(),
             csr_mat.indices().into(),
-            csr_mat.data().iter().map(|x| Y::try_from(*x).unwrap()).collect()
+            csr_mat
+                .data()
+                .iter()
+                .map(|x| Y::try_from(*x).unwrap())
+                .collect(),
         )
     }
 
-/* 
-    /// 
-    pub fn store_sparse_count_matrix(
-        &mut self,
-        csr_mat: &CsMat<u32>,  //u16 is enough in most cases. can try to downscale!
-        n_rows: u32,
-        n_cols: u32
-    ) -> anyhow::Result<()> {
+    /*
+        ///
+        pub fn store_sparse_count_matrix(
+            &mut self,
+            csr_mat: &CsMat<u32>,  //u16 is enough in most cases. can try to downscale!
+            n_rows: u32,
+            n_cols: u32
+        ) -> anyhow::Result<()> {
 
 
-        //Extract separate vectors to store
-        let mat_indices = csr_mat.indices();
-        let mat_data = csr_mat.data();
-        let mat_indptr = csr_mat.indptr();
-        let mat_indptr = mat_indptr.as_slice().unwrap();
+            //Extract separate vectors to store
+            let mat_indices = csr_mat.indices();
+            let mat_data = csr_mat.data();
+            let mat_indptr = csr_mat.indptr();
+            let mat_indptr = mat_indptr.as_slice().unwrap();
 
-        //Store the sparse matrix here
-        let group = self.file.create_group("X")?;
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&mat_data).create("data")?; //Data
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&mat_indices).create("indices")?; // Columns
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&mat_indptr).create("indptr")?; // Rows
+            //Store the sparse matrix here
+            let group = self.file.create_group("X")?;
+            let builder = group.new_dataset_builder();
+            let _ = builder.with_data(&mat_data).create("data")?; //Data
+            let builder = group.new_dataset_builder();
+            let _ = builder.with_data(&mat_indices).create("indices")?; // Columns
+            let builder = group.new_dataset_builder();
+            let _ = builder.with_data(&mat_indptr).create("indptr")?; // Rows
 
-        //Store the matrix size
-        let builder = group.new_dataset_builder();
-        let _ = builder
-            .with_data(
-                &[
-                    n_rows, //num cells
-                    n_cols, //num features
-                ]
-                .as_slice(),
-            )
-            .create("shape")?;
-        Ok(())
-    }
-*/
+            //Store the matrix size
+            let builder = group.new_dataset_builder();
+            let _ = builder
+                .with_data(
+                    &[
+                        n_rows, //num cells
+                        n_cols, //num features
+                    ]
+                    .as_slice(),
+                )
+                .create("shape")?;
+            Ok(())
+        }
+    */
 
     ///
     /// x
-    /// 
+    ///
     pub fn store_sparse_count_matrix<X>(
         &mut self,
-        csr_mat: &CsMat<X>,  //u16 is enough in most cases. can try to downscale!
+        csr_mat: &CsMat<X>, //u16 is enough in most cases. can try to downscale!
         n_rows: u32,
-        n_cols: u32
-    ) -> anyhow::Result<()> 
-    where 
-        X: hdf5::H5Type
+        n_cols: u32,
+    ) -> anyhow::Result<()>
+    where
+        X: hdf5::H5Type,
     {
         //Extract separate vectors to store
         let mat_indices = csr_mat.indices();
@@ -497,7 +441,6 @@ impl SparseMatrixAnnDataWriter {
             .create("shape")?;
         Ok(())
     }
-
 
     ///
     /// Helper: convert string to HDF5 variable length unicode
@@ -510,12 +453,7 @@ impl SparseMatrixAnnDataWriter {
     ///
     /// Helper: convert list of strings to HDF5
     ///
-    pub fn list_string_to_h5(
-        list: &Vec<Vec<u8>>
-    ) -> Vec<hdf5::types::VarLenUnicode> {
+    pub fn list_string_to_h5(list: &Vec<Vec<u8>>) -> Vec<hdf5::types::VarLenUnicode> {
         list.iter().map(|x| Self::listu8_to_h5_string(x)).collect()
     }
-
-    
-
 }

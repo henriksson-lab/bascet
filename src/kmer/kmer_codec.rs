@@ -56,7 +56,6 @@ const NT_REVERSE: [u8; 4] = [b'A', b'T', b'G', b'C'];
 
  */
 
-
 // Lookup table for plusmin_one_hash: [1, -1] for even/odd
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
