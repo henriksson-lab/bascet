@@ -5,8 +5,8 @@ use crate::command::countsketch::CountsketchWriter;
 
 use crate::command::shardify::ShardifyWriter;
 
-use crate::command::debarcode::DebarcodeHistWriter;
-use crate::command::debarcode::DebarcodeMergeWriter;
+use crate::command::getraw::DebarcodeHistWriter;
+use crate::command::getraw::DebarcodeMergeWriter;
 
 #[enum_dispatch::enum_dispatch]
 pub trait BascetWrite<W>: Sized

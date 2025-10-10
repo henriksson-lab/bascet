@@ -1,6 +1,6 @@
 use crate::command::countsketch::CountsketchStream;
-use crate::command::debarcode::DebarcodeMergeStream;
-use crate::command::debarcode::DebarcodeReadsStream;
+use crate::command::getraw::DebarcodeMergeStream;
+use crate::command::getraw::DebarcodeReadsStream;
 use crate::command::shardify::ShardifyStream;
 
 use crate::{common, log_debug, threading};
