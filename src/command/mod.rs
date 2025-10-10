@@ -31,7 +31,7 @@ pub use countsketch::CountsketchCMD;
 pub use countsketch_mat::CountsketchMatCMD;
 
 // Data processing operations
-pub use _depreciated_getraw::{GetRaw, GetRawCMD};
+pub use getraw::{GetRaw, GetRawCMD};
 pub use shardify::ShardifyCMD;
 pub use transform::{TransformCMD, TransformFile};
 
