@@ -45,19 +45,19 @@ support_which_writer! {
 
 #[derive(Args)]
 pub struct GetRawCMD {
-    #[arg(short = '1', long = "paths-r1", num_args = 1.., required = true, value_delimiter = ',', help = "List of input R1 FASTQ files (comma-separated)")]
+    #[arg(short = '1', long = "r1", num_args = 1.., required = true, value_delimiter = ',', help = "List of input R1 FASTQ files (comma-separated)")]
     pub paths_r1: Vec<PathBuf>,
-    #[arg(short = '2', long = "paths-r2", num_args = 1.., required = true, value_delimiter = ',', help = "List of input R2 FASTQ files (comma-separated)")]
+    #[arg(short = '2', long = "r2", num_args = 1.., required = true, value_delimiter = ',', help = "List of input R2 FASTQ files (comma-separated)")]
     pub paths_r2: Vec<PathBuf>,
-    #[arg(short = 'o', long = "paths-out", num_args = 1.., required = true, value_delimiter = ',', help = "List of output file paths (comma-separated)")]
+    #[arg(short = 'o', long = "out", num_args = 1.., required = true, value_delimiter = ',', help = "List of output file paths (comma-separated)")]
     pub paths_out: Vec<PathBuf>,
     #[arg(
-        long = "path-hist",
+        long = "hist",
         help = "Histogram file path. Defaults to hist.txt in the parent directory of path out"
     )]
     pub path_hist: Option<PathBuf>,
     #[arg(
-        long = "path-temp",
+        long = "temp",
         help = "Temporary storage directory. Defaults to temp in the parent directory of path out"
     )]
     pub path_temp: Option<PathBuf>,
