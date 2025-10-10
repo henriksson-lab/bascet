@@ -8,16 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bgzip::write::BGZFMultiThreadWriter;
 use bgzip::Compression;
 use clap::Args;
-use crossbeam::channel::{self, Receiver, RecvTimeoutError};
-use gxhash::{GxHasher, HashMap, HashMapExt};
+use crossbeam::channel::{Receiver, RecvTimeoutError};
+use gxhash::HashMapExt;
 use itertools::{izip, Itertools};
 use smallvec::SmallVec;
 
 use crate::barcode::CombinatorialBarcode8bp;
-use crate::common::ReadPair;
-use crate::fileformat::cell_list_file;
 use crate::io::traits::{
-    self, BascetCell, BascetCellBuilder, BascetFile, BascetStream, BascetWrite,
+    BascetCell, BascetCellBuilder, BascetFile, BascetStream, BascetWrite,
 };
 use crate::{
     common, log_critical, log_info, log_warning, support_which_stream, support_which_writer,

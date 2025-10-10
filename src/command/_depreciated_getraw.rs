@@ -39,7 +39,7 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
 
 #[derive(Args)]
-pub struct GetRawCMD {
+pub struct _depreciated_GetRawCMD {
     // FASTQ for r1
     #[arg(long = "r1", value_parser)]
     pub path_forward: PathBuf,
@@ -96,7 +96,7 @@ pub struct GetRawCMD {
     #[arg(short = '@', value_parser = clap::value_parser!(usize))]
     num_threads_total: Option<usize>,
 }
-impl GetRawCMD {
+impl _depreciated_GetRawCMD {
     /// Run the commandline option.
     /// This one takes raw FASTQ files, figures out the barcodes, and trims the reads
     pub fn try_execute(&mut self) -> Result<()> {
@@ -114,7 +114,7 @@ impl GetRawCMD {
             "".to_string()
         };
 
-        let params_io = GetRaw {
+        let params_io = _depreciated_GetRaw {
             path_tmp: self.path_tmp.clone(),
             path_forward: self.path_forward.clone(),
             path_reverse: self.path_reverse.clone(),
@@ -128,7 +128,7 @@ impl GetRawCMD {
 
         // Start the debarcoding for specified chemistry
         if self.chemistry == "atrandi_wgs" {
-            let _ = GetRaw::getraw(
+            let _ = _depreciated_GetRaw::getraw(
                 Arc::new(params_io),
                 &mut AtrandiWGSChemistry::new(
                     self.total_barcode_error_tol,
@@ -136,12 +136,12 @@ impl GetRawCMD {
                 ),
             );
         } else if self.chemistry == "atrandi_rnaseq" {
-            let _ = GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
+            let _ = _depreciated_GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
         } else if self.chemistry == "petriseq" {
-            let _ = GetRaw::getraw(Arc::new(params_io), &mut PetriseqChemistry::new());
+            let _ = _depreciated_GetRaw::getraw(Arc::new(params_io), &mut PetriseqChemistry::new());
         } else if self.chemistry == "combinatorial" {
             if let Some(path_barcodes) = &self.path_barcodes {
-                let _ = GetRaw::getraw(
+                let _ = _depreciated_GetRaw::getraw(
                     Arc::new(params_io),
                     &mut GeneralCombinatorialBarcode::new(&path_barcodes),
                 );
@@ -149,9 +149,9 @@ impl GetRawCMD {
                 bail!("Barcode file not specified");
             }
         } else if self.chemistry == "10xrna" || self.chemistry == "10x_rna" {
-            let _ = GetRaw::getraw(Arc::new(params_io), &mut TenxRNAChemistry::new());
+            let _ = _depreciated_GetRaw::getraw(Arc::new(params_io), &mut TenxRNAChemistry::new());
         } else if self.chemistry == "pb_rnaseq" || self.chemistry == "pb_rna" {
-            let _ = GetRaw::getraw(
+            let _ = _depreciated_GetRaw::getraw(
                 Arc::new(params_io),
                 &mut ParseBioChemistry3::new(
                     &self.subchemistry
@@ -276,7 +276,7 @@ fn create_writer_thread(
 
 ////////////////
 ///
-pub struct GetRaw {
+pub struct _depreciated_GetRaw {
     pub path_tmp: std::path::PathBuf,
 
     pub path_forward: std::path::PathBuf,
@@ -289,9 +289,9 @@ pub struct GetRaw {
 
     pub threads_reader: usize,
 }
-impl GetRaw {
+impl _depreciated_GetRaw {
     pub fn getraw<'a>(
-        params: Arc<GetRaw>,
+        params: Arc<_depreciated_GetRaw>,
         barcodes: &mut (impl Chemistry + Clone + Send + 'static),
     ) -> anyhow::Result<()> {
         info!("Running command: getraw");
