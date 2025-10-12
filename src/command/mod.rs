@@ -4,11 +4,11 @@ pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
 pub mod countsketch_mat;
-pub mod debarcode;
+pub mod getraw;
 pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
-pub mod getraw;
+pub mod _depreciated_getraw;
 pub mod kraken;
 pub mod mapcell;
 pub mod minhash_hist;
@@ -31,7 +31,7 @@ pub use countsketch::CountsketchCMD;
 pub use countsketch_mat::CountsketchMatCMD;
 
 // Data processing operations
-pub use getraw::{GetRaw, GetRawCMD};
+pub use _depreciated_getraw::{_depreciated_GetRaw, _depreciated_GetRawCMD};
 pub use shardify::ShardifyCMD;
 pub use transform::{TransformCMD, TransformFile};
 
@@ -61,5 +61,4 @@ pub use threadcount::{
 };
 
 // debarcoding
-// pub use trim_experimental::TrimExperimentalCMD;
-pub use debarcode::DebarcodeCMD;
+pub use getraw::GetRawCMD;

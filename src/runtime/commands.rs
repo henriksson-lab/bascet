@@ -8,7 +8,8 @@ use crate::command;
 /// Possible subcommands to parse
 #[derive(Subcommand)]
 pub enum Commands {
-    Getraw(command::GetRawCMD),
+    _depreciated_GetRaw(command::_depreciated_GetRawCMD),
+    GetRaw(command::GetRawCMD),
     Mapcell(command::MapCellCMD),
     Extract(command::ExtractCMD),
     Shardify(command::ShardifyCMD),
@@ -25,13 +26,13 @@ pub enum Commands {
     Countsketch(command::CountsketchCMD),
     CountsketchMat(command::CountsketchMatCMD),
     ExtractStream(command::ExtractStreamCMD),
-    Debarcode(command::DebarcodeCMD),
 }
 
 impl fmt::Debug for Commands {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let cmd = match self {
-            Commands::Getraw(_) => "Getraw",
+            Commands::_depreciated_GetRaw(_) => "Getraw (depreciated)",
+            Commands::GetRaw(_) => "Getraw",
             Commands::Mapcell(_) => "Mapcell",
             Commands::Extract(_) => "Extract",
             Commands::Shardify(_) => "Shardify",
@@ -48,7 +49,6 @@ impl fmt::Debug for Commands {
             Commands::Countsketch(_) => "Countsketch",
             Commands::ExtractStream(_) => "ExtractStream",
             Commands::CountsketchMat(_) => "Countsketch Mat",
-            Commands::Debarcode(_) => "Debarcode",
         };
         write!(f, "{}", cmd)
     }

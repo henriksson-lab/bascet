@@ -77,7 +77,8 @@ fn main() -> std::process::ExitCode {
     log_info!("================================================");
 
     let result = match cli.command {
-        Commands::Getraw(mut cmd) => cmd.try_execute(),
+        Commands::_depreciated_GetRaw(mut cmd) => cmd.try_execute(),
+        Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
@@ -94,7 +95,6 @@ fn main() -> std::process::ExitCode {
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(mut cmd) => cmd.try_execute(),
         Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
-        Commands::Debarcode(mut cmd) => cmd.try_execute(),
     };
 
     if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
