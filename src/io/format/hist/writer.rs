@@ -1,6 +1,6 @@
 use itertools::Itertools;
 
-use crate::{common, io::traits::BascetWrite};
+use crate::io::traits::BascetWrite;
 
 pub struct Writer<W>
 where

@@ -36,6 +36,7 @@ pub trait BascetCell: Send + Sized {
     }
 }
 
+#[allow(unused_variables)]
 pub trait BascetCellBuilder: Sized {
     type Token: BascetCell;
 

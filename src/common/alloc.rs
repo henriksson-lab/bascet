@@ -79,7 +79,7 @@ pub struct PageBufferPool<T: Pod, const N: usize> {
 }
 
 pub struct PageBufferAllocResult<T: Pod> {
-    buf_len: usize,
+    pub buf_len: usize,
     pub buf_ptr: UnsafePtr<T>,
     pub page_ptr: UnsafePtr<PageBuffer<T>>,
 }
