@@ -39,7 +39,7 @@ fn main() -> std::process::ExitCode {
     });
 
     let _logger = runtime::setup_global_logger(
-        runtime::CONFIG.get().unwrap().log_level,
+        // runtime::CONFIG.get().unwrap().log_level,
         runtime::CONFIG.get().unwrap().log_mode,
         runtime::CONFIG.get().unwrap().log_path.clone(),
     );

@@ -1,7 +1,4 @@
-use std::io::Write;
-
 use itertools::izip;
-
 use crate::io::traits::{BascetCell, BascetWrite};
 
 pub struct Writer<W>

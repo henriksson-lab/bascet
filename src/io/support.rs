@@ -65,6 +65,7 @@ macro_rules! __generate_input_enum {
             }
 
             impl $enum_name {
+                #[allow(unused_assignments)]
                 pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
                     let path = path.as_ref();
                     let mut last_error: Option<crate::runtime::Error> = None;
@@ -97,6 +98,7 @@ macro_rules! __generate_output_enum {
             }
 
             impl $enum_name {
+                #[allow(unused_assignments)]
                 pub fn try_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, crate::runtime::Error> {
                     let path = path.as_ref();
                     let mut last_error: Option<crate::runtime::Error> = None;
@@ -171,6 +173,7 @@ macro_rules! __generate_stream_enum {
             where
                 $generic: $trait_bound + 'static,
             {
+                #[allow(irrefutable_let_patterns)]
                 pub fn try_from_input(input: &$input_enum) -> Result<Self, crate::runtime::Error> {
                     $(
                         if let $input_enum::[<$format:camel>](file) = input {
@@ -204,6 +207,7 @@ macro_rules! __generate_writer_enum {
             where
                 $generic: $trait_bound + 'static,
             {
+                #[allow(irrefutable_let_patterns)]
                 pub fn try_from_output(output: &$output_enum) -> Result<Self, crate::runtime::Error> {
                     $(
                         if let $output_enum::[<$format:camel>](_) = output {
@@ -237,6 +241,7 @@ macro_rules! __generate_reader_enum {
             where
                 $generic: $trait_bound + 'static,
             {
+                #[allow(irrefutable_let_patterns)]
                 pub fn try_from_input(input: $input_enum) -> Result<Self, crate::runtime::Error> {
                     $(
                         if let $input_enum::[<$format:camel>](file) = input {

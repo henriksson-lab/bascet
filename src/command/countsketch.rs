@@ -1,9 +1,7 @@
 use crate::{
-    command::determine_thread_counts_2,
-    common::{self, PageBuffer},
-    io::traits::*,
-    kmer::kmc_counter::CountSketch,
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
+    command::determine_thread_counts_2, common::PageBuffer, io::traits::*,
+    kmer::kmc_counter::CountSketch, log_critical, log_info, log_warning, support_which_stream,
+    support_which_writer, threading,
 };
 
 use clap::Args;
@@ -12,16 +10,12 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
 };
 
 pub const DEFAULT_THREADS_READ: usize = 8;
 pub const DEFAULT_THREADS_WORK: usize = 4;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
-pub const DEFAULT_COUNTSKETCH_SIZE: usize = 128;
+pub const DEFAULT_COUNTSKETCH_SIZE: usize = 4096;
 pub const DEFAULT_KMER_SIZE: usize = 31;
 pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
@@ -151,16 +145,13 @@ impl CountsketchCMD {
             }.set_writer(BufWriter::new(output_file));
 
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
-            let (work_tx, work_rx) =
-                crossbeam::channel::bounded::<Option<CountsketchCell>>(self.channel_buffer_size);
-
-            let (write_tx, write_rx) = crossbeam::channel::bounded::<
-                Option<(CountsketchCell, CountSketch)>,
-            >(self.channel_buffer_size);
+            let (work_tx, work_rx) = 
+                crossbeam::channel::unbounded::<Option<CountsketchCell>>();
+            let (write_tx, write_rx) =
+                crossbeam::channel::unbounded::<Option<(CountsketchCell, CountSketch)>>();
 
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
-                    // log_info!("Writing"; "cell" => %String::from_utf8_lossy(cell.cell), "open" => write_rx.len());
                     if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch)
                     {
                         log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.cell), "error" => %e);
@@ -169,7 +160,7 @@ impl CountsketchCMD {
                 let _ = output_countsketch_writer.get_writer().unwrap().flush();
             });
 
-            for worker_id in 0..n_workers {
+            for _ in 0..n_workers {
                 let work_rx = work_rx.clone();
                 let write_tx = write_tx.clone();
 
@@ -177,13 +168,7 @@ impl CountsketchCMD {
                 let mut countsketch = CountSketch::new(self.countsketch_size);
 
                 worker_threadpool.execute(move || {
-                    let mut cells_processed = 0;
-
                     while let Ok(Some(cell)) = work_rx.recv() {
-                        // println!("Worker {} receiving cell {} at {:?}",
-                        //         worker_id,
-                        //         String::from_utf8_lossy(cell.cell),
-                        //         std::time::SystemTime::now());
                         let Some(reads) = cell.get_reads() else {
                             continue;
                         };
@@ -226,7 +211,6 @@ impl CountsketchCMD {
 
                         let _ = write_tx.send(Some((cell, countsketch.clone())));
                         countsketch.reset();
-                        cells_processed += 1;
                     }
                 });
             }

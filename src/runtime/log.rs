@@ -1,7 +1,7 @@
 use slog::{o, Drain, Logger};
 use slog_async::AsyncGuard;
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::path::PathBuf;
 
 use crate::utils::expand_and_resolve;
@@ -87,7 +87,7 @@ impl fmt::Display for LogMode {
 
 pub static ASYNC_GUARD: std::sync::Mutex<Option<AsyncGuard>> = std::sync::Mutex::new(None);
 pub fn setup_global_logger(
-    log_level: LogLevel,
+    // log_level: LogLevel,
     log_output: LogMode,
     log_path: PathBuf,
 ) -> Option<slog_scope::GlobalLoggerGuard> {

@@ -39,6 +39,7 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_CHEMISTRY: &str = "atrandi_wgs";
 
 #[derive(Args)]
+#[allow(non_camel_case_types)]
 pub struct _depreciated_GetRawCMD {
     // FASTQ for r1
     #[arg(long = "r1", value_parser)]
@@ -136,7 +137,10 @@ impl _depreciated_GetRawCMD {
                 ),
             );
         } else if self.chemistry == "atrandi_rnaseq" {
-            let _ = _depreciated_GetRaw::getraw(Arc::new(params_io), &mut AtrandiRNAseqChemistry::new());
+            let _ = _depreciated_GetRaw::getraw(
+                Arc::new(params_io),
+                &mut AtrandiRNAseqChemistry::new(),
+            );
         } else if self.chemistry == "petriseq" {
             let _ = _depreciated_GetRaw::getraw(Arc::new(params_io), &mut PetriseqChemistry::new());
         } else if self.chemistry == "combinatorial" {
@@ -275,6 +279,7 @@ fn create_writer_thread(
 
 ////////////////
 ///
+#[allow(non_camel_case_types)]
 pub struct _depreciated_GetRaw {
     pub path_tmp: std::path::PathBuf,
 

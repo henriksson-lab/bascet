@@ -887,7 +887,7 @@ fn spawn_mergesort_workers(
     });
     thread_handles.push(producer_handle);
 
-    for thread_id in 0..sort_n_threads {
+    for _ in 0..sort_n_threads {
         let fp_rx = fp_rx.clone();
         let ms_tx = ms_tx.clone();
 
@@ -974,7 +974,7 @@ fn spawn_mergesort_writers(
     let atomic_counter = Arc::new(AtomicUsize::new(0));
 
     let arc_timestamp_temp_files = Arc::new(timestamp_temp_files);
-    for thread_id in 0..write_n_threads {
+    for _ in 0..write_n_threads {
         let ms_rx = ms_rx.clone();
         let thread_counter = Arc::clone(&atomic_counter);
         let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);

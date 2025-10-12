@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use clap::Args;
-use crossbeam::{channel, queue::ArrayQueue};
+use crossbeam::channel;
 use itertools::izip;
 use std::{
     fs::File,

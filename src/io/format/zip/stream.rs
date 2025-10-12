@@ -1,21 +1,16 @@
-use rust_htslib::htslib;
 use std::{
     fs::File,
-    io::{BufReader, Read},
-    sync::Arc,
+    io::Read,
 };
 use zip::{HasZipMetadata, ZipArchive};
 
-use crate::{
-    io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream},
-    log_critical, log_info,
-};
+use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream};
 
 pub struct Stream<T> {
     inner_archive: ZipArchive<std::fs::File>,
     inner_files: Vec<String>,
     inner_files_cursor: usize,
-    inner_worker_threadpool: threadpool::ThreadPool,
+    // inner_worker_threadpool: threadpool::ThreadPool,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -48,7 +43,7 @@ impl<T> Stream<T> {
             inner_archive: archive,
             inner_files: files,
             inner_files_cursor: 0,
-            inner_worker_threadpool: threadpool::ThreadPool::new(1),
+            // inner_worker_threadpool: threadpool::ThreadPool::new(1),
             _marker: std::marker::PhantomData,
         })
     }

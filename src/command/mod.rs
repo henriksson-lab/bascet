@@ -1,14 +1,14 @@
 // Module declarations (alphabetical)
+pub mod _depreciated_getraw;
 pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
 pub mod countsketch_mat;
-pub mod getraw;
 pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
-pub mod _depreciated_getraw;
+pub mod getraw;
 pub mod kraken;
 pub mod mapcell;
 pub mod minhash_hist;
