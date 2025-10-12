@@ -1,4 +1,4 @@
-use slog::{o, Drain, Logger};
+use slog::{o, Drain, Level, Logger};
 use slog_async::AsyncGuard;
 use std::fmt;
 use std::fs::File;
@@ -14,19 +14,18 @@ pub enum ErrorMode {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct LogLevel(pub slog::FilterLevel);
+pub struct LogLevel(pub slog::Level);
 impl std::str::FromStr for LogLevel {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let level = match s.to_lowercase().as_str() {
-            "trace" => slog::FilterLevel::Trace,
-            "debug" => slog::FilterLevel::Debug,
-            "info" => slog::FilterLevel::Info,
-            "warn" | "warning" => slog::FilterLevel::Warning,
-            "error" => slog::FilterLevel::Error,
-            "critical" | "crit" => slog::FilterLevel::Critical,
-            "off" => slog::FilterLevel::Off,
+            "trace" => slog::Level::Trace,
+            "debug" => slog::Level::Debug,
+            "info" => slog::Level::Info,
+            "warn" | "warning" => slog::Level::Warning,
+            "error" => slog::Level::Error,
+            "critical" | "crit" => slog::Level::Critical,
             _ => return Err(format!("Invalid log level: {}", s)),
         };
         Ok(LogLevel(level))
@@ -35,18 +34,17 @@ impl std::str::FromStr for LogLevel {
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self.0 {
-            slog::FilterLevel::Off => "off",
-            slog::FilterLevel::Critical => "critical",
-            slog::FilterLevel::Error => "errors",
-            slog::FilterLevel::Warning => "warnings",
-            slog::FilterLevel::Info => "info",
-            slog::FilterLevel::Debug => "debug",
-            slog::FilterLevel::Trace => "trace",
+            slog::Level::Critical => "critical",
+            slog::Level::Error => "errors",
+            slog::Level::Warning => "warnings",
+            slog::Level::Info => "info",
+            slog::Level::Debug => "debug",
+            slog::Level::Trace => "trace",
         };
         write!(f, "{}", name)
     }
 }
-impl From<LogLevel> for slog::FilterLevel {
+impl From<LogLevel> for slog::Level {
     fn from(level: LogLevel) -> Self {
         level.0
     }
@@ -87,7 +85,7 @@ impl fmt::Display for LogMode {
 
 pub static ASYNC_GUARD: std::sync::Mutex<Option<AsyncGuard>> = std::sync::Mutex::new(None);
 pub fn setup_global_logger(
-    // log_level: LogLevel,
+    log_level: Level,
     log_output: LogMode,
     log_path: PathBuf,
 ) -> Option<slog_scope::GlobalLoggerGuard> {
@@ -134,8 +132,7 @@ pub fn setup_global_logger(
         }
     };
 
-    // let drain = slog::LevelFilter::new(drain, log_level.0).fuse();
-    // let drain = slog::Filter::new(drain, cond).fuse();
+    let drain = slog::LevelFilter::new(drain, log_level).fuse();
     let (drain, guard) = slog_async::Async::new(drain)
         .chan_size(10000)
         .build_with_guard();
