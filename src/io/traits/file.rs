@@ -4,10 +4,10 @@ use crate::command::countsketch::CountsketchOutput;
 use crate::command::shardify::ShardifyInput;
 use crate::command::shardify::ShardifyOutput;
 
-use crate::command::debarcode::DebarcodeHistOutput;
-use crate::command::debarcode::DebarcodeMergeInput;
-use crate::command::debarcode::DebarcodeMergeOutput;
-use crate::command::debarcode::DebarcodeReadsInput;
+use crate::command::getraw::DebarcodeHistOutput;
+use crate::command::getraw::DebarcodeMergeInput;
+use crate::command::getraw::DebarcodeMergeOutput;
+use crate::command::getraw::DebarcodeReadsInput;
 // use crate::command::trim_experimental::TrimExperimentalOutput;
 
 #[enum_dispatch::enum_dispatch]
