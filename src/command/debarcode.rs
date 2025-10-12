@@ -8,17 +8,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bgzip::write::BGZFMultiThreadWriter;
 use bgzip::Compression;
 use clap::Args;
-use crossbeam::channel::{self, Receiver, RecvTimeoutError};
-use gxhash::{GxHasher, HashMap, HashMapExt};
+use crossbeam::channel::{Receiver, RecvTimeoutError};
+use gxhash::HashMapExt;
 use itertools::{izip, Itertools};
 use smallvec::SmallVec;
 
 use crate::barcode::CombinatorialBarcode8bp;
-use crate::common::ReadPair;
-use crate::fileformat::cell_list_file;
-use crate::io::traits::{
-    self, BascetCell, BascetCellBuilder, BascetFile, BascetStream, BascetWrite,
-};
+use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream, BascetWrite};
 use crate::{
     common, log_critical, log_info, log_warning, support_which_stream, support_which_writer,
     threading,
@@ -40,7 +36,7 @@ support_which_writer! {
 
 support_which_writer! {
     DebarcodeHistOutput => DebarcodeHistWriter<W: Write>
-    for formats [tsv]
+    for formats [hist]
 }
 
 #[derive(Args)]
@@ -52,13 +48,13 @@ pub struct DebarcodeCMD {
     #[arg(short = 'o', long = "paths-out", num_args = 1.., required = true, value_delimiter = ',', help = "List of output file paths (comma-separated)")]
     pub paths_out: Vec<PathBuf>,
     #[arg(
-        long = "path-hist",
-        help = "Histogram file path. Defaults to hist.txt in the parent directory of path out"
+        long = "paths-hist",
+        help = "Histogram file paths. Defaults to <path_out>.hist"
     )]
-    pub path_hist: Option<PathBuf>,
+    pub paths_hist: Option<Vec<PathBuf>>,
     #[arg(
         long = "path-temp",
-        help = "Temporary storage directory. Defaults to temp in the parent directory of path out"
+        help = "Temporary storage directory. Defaults to <path_out parent dir>/temp"
     )]
     pub path_temp: Option<PathBuf>,
 
@@ -125,7 +121,7 @@ impl DebarcodeCMD {
                 .map(|n| n.get())
                 .unwrap_or_else(|e| {
                     log_critical!(
-                        "Failed to detect available CPUs. Please specify thread count manually with -@=<cpus>. Error: {e:?}"
+                        "Failed to detect available CPUs. Please specify thread count manually with -@=<cpus>."; "error" => %e
                     );
                 })
         });
@@ -196,6 +192,15 @@ impl DebarcodeCMD {
             );
         }
 
+        if self.paths_hist.is_some() && self.paths_hist.as_ref().unwrap().len() != vec_output.len()
+        {
+            let n_hist = self.paths_hist.as_ref().unwrap().len();
+            let n_out = vec_output.len();
+            log_critical!(
+                "Number of histogram paths ({n_hist}) does not match number of output paths ({n_out})"
+            );
+        }
+
         let timestamp_temp_files = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -235,25 +240,6 @@ impl DebarcodeCMD {
                 );
             }
 
-            let path_hist_out = self
-                .path_hist
-                .clone()
-                .unwrap_or(vec_output.first().unwrap().path().to_path_buf())
-                .parent()
-                .unwrap_or_else(|| {
-                    log_critical!("No valid histogram path specified.");
-                })
-                .join("hist")
-                .with_extension("tsv")
-                .to_path_buf();
-
-            let hist_output = match DebarcodeHistOutput::try_from_path(&path_hist_out) {
-                Ok(out) => out,
-                Err(e) => {
-                    log_critical!("Failed to verify hist output file"; "path" => ?path_hist_out)
-                }
-            };
-
             let ((r1_rx, r2_rx), (r1_handle, r2_handle)) = spawn_paired_readers(
                 vec_input,
                 thread_config.read,
@@ -263,12 +249,8 @@ impl DebarcodeCMD {
             let (rp_rx, rt_handle) = spawn_debarcode_router(r1_rx, r2_rx);
             let (db_rx, db_handles) = spawn_debarcode_workers(rp_rx, thread_config.debarcode);
 
-            let (ct_rx, ct_handle) = spawn_collector(
-                db_rx,
-                hist_output,
-                thread_config.sort,
-                sort_buffer_size_bytes,
-            );
+            let (ct_rx, ct_handle) =
+                spawn_collector(db_rx, thread_config.sort, sort_buffer_size_bytes);
             let (st_rx, st_handles) = spawn_sort_workers(ct_rx, thread_config.sort);
 
             let wt_handles = spawn_chunk_writers(
@@ -427,9 +409,79 @@ impl DebarcodeCMD {
             mergeround_counter += 1;
         }
 
-        for (final_file, output_path) in mergeround_merge_next.iter().zip(vec_output.iter()) {
-            std::fs::rename(final_file.path(), output_path.path())?;
-            log_info!("Moved {:?} -> {:?}", final_file.path(), output_path.path());
+        let mut output_paths = Vec::new();
+        for (final_file, output_file) in mergeround_merge_next.iter().zip(vec_output.iter()) {
+            let final_path = final_file.path();
+            let output_path = output_file.path();
+            match std::fs::rename(final_file.path(), output_file.path()) {
+                Ok(_) => {
+                    log_info!("Moved {final_path:?} -> {output_path:?}");
+                    output_paths.push(output_file.path());
+                }
+                Err(e) => {
+                    log_warning!("Failed moving {final_path:?} -> {output_path:?}"; "error" => %e);
+                    output_paths.push(final_file.path());
+                }
+            }
+        }
+
+        let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
+        for (i, output_path) in output_paths.iter().enumerate() {
+            let input = match DebarcodeMergeInput::try_from_path(output_path) {
+                Ok(i) => i,
+                Err(e) => {
+                    log_critical!("Failed to verify hist input file"; "path" => ?output_path, "error" => %e);
+                }
+            };
+
+            let mut stream =
+                DebarcodeMergeStream::<DebarcodeMergeCell>::try_from_input(&input).unwrap();
+            stream.set_reader_threads(thread_config.read);
+            stream.set_pagebuffer_config(stream_n_pages, stream_page_size_bytes);
+
+            for token in stream {
+                let token = token.unwrap();
+                let n = token.reads.len() as u64;
+                let _ = *hist_hashmap
+                    .entry(token.cell.to_vec())
+                    .and_modify(|c| *c += n)
+                    .or_insert(n);
+                drop(token);
+            }
+
+            let hist_path = if let Some(ref hist_paths) = self.paths_hist {
+                &hist_paths[i]
+            } else {
+                &PathBuf::from(format!("{}.hist", output_paths[i].display()))
+            };
+
+            let hist_output = match DebarcodeHistOutput::try_from_path(&hist_path) {
+                Ok(out) => out,
+                Err(e) => {
+                    log_critical!("Failed to verify hist output file"; "path" => ?hist_path, "error" => %e)
+                }
+            };
+
+            let hist_file = match std::fs::File::create(hist_path) {
+                Ok(file) => file,
+                Err(e) => {
+                    log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
+                }
+            };
+
+            let mut hist_writer = match DebarcodeHistWriter::try_from_output(&hist_output) {
+                Ok(w) => w,
+                Err(e) => {
+                    log_critical!("Failed to create hist output writer"; "path" => ?hist_path, "error" => %e);
+                }
+            };
+
+            hist_writer = hist_writer.set_writer(BufWriter::new(hist_file));
+            let _ = hist_writer.write_hist(&hist_hashmap);
+            if let Some(mut writer) = hist_writer.get_writer() {
+                let _ = writer.flush();
+            }
+            hist_hashmap.clear();
         }
 
         Ok(())
@@ -536,7 +588,7 @@ fn spawn_debarcode_workers(
         }
 
         let line = line.unwrap_or_else(|e| {
-            log_critical!("Failed to parse chemistry. Error: {e:?}");
+            log_critical!("Failed to parse chemistry."; "error" => %e);
         });
         let parts: Vec<&str> = line.split('\t').collect();
         chemistry.barcode.add_bc(parts[1], parts[0], parts[2]);
@@ -611,7 +663,6 @@ fn spawn_debarcode_workers(
 
 fn spawn_collector(
     db_rx: Receiver<(String, (DebarcodeReadCell, DebarcodeReadCell))>,
-    hist_output: DebarcodeHistOutput,
     sort_n_threads: usize,
     sort_buffer_size_bytes: usize,
 ) -> (
@@ -620,7 +671,6 @@ fn spawn_collector(
 ) {
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
     let ct_handle = std::thread::spawn(move || {
-        let mut hist_hashmap: gxhash::HashMap<String, u64> = gxhash::HashMap::new();
         let mut collection_buffer: Vec<(String, (DebarcodeReadCell, DebarcodeReadCell))> =
             Vec::new();
         let mut collection_cloned_size_bytes: usize = 0;
@@ -630,11 +680,6 @@ fn spawn_collector(
         loop {
             match db_rx.recv_timeout(timeout) {
                 Ok((id, (r1, r2))) => {
-                    let _ = *hist_hashmap
-                        .entry(id.clone())
-                        .and_modify(|c| *c += 1)
-                        .or_insert(1);
-
                     let cell_mem_size = 0
                         + std::mem::size_of::<String>()
                         + id.len()
@@ -673,22 +718,6 @@ fn spawn_collector(
         if !collection_buffer.is_empty() {
             let _ = ct_tx.send(collection_buffer);
         }
-
-        let hist_path = hist_output.path();
-        let hist_file = match std::fs::File::create(hist_path) {
-            Ok(file) => file,
-            Err(e) => {
-                log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
-            }
-        };
-        let mut hist_writer = match DebarcodeHistWriter::try_from_output(&hist_output) {
-            Ok(w) => w,
-            Err(e) => {
-                log_critical!("Failed to create hist output writer"; "path" => ?hist_path, "error" => %e);
-            }
-        };
-        hist_writer = hist_writer.set_writer(BufWriter::new(hist_file));
-        let _ = hist_writer.write_counts(&hist_hashmap);
     });
 
     return (ct_rx, ct_handle);
@@ -837,12 +866,12 @@ fn spawn_mergesort_workers(
                     }
 
                     if let Err(e) = std::fs::remove_file(last_file.path()) {
-                        log_critical!("Failed to delete odd file. Error: {e}"; "path" => ?last_file.path());
+                        log_critical!("Failed to delete odd file."; "path" => ?last_file.path(), "error" => %e);
                     }
                 }
                 Err(e) => {
                     log_warning!(
-                        "Failed to create stream for odd file. Skipping";
+                        "Failed to create stream for odd file. Skipping.";
                         "path" => ?last_file.path(),
                         "error" => %e
                     );
@@ -873,7 +902,7 @@ fn spawn_mergesort_workers(
                         Ok(a) => a,
                         Err(e) => {
                             log_warning!(
-                                "Failed to create merge stream a. Skipping pair";
+                                "Failed to create merge stream a. Skipping pair.";
                                 "path a" => ?&fa.path(), "path b" => ?&fb.path(),
                                 "error" => %e
                             );
@@ -888,7 +917,7 @@ fn spawn_mergesort_workers(
                         Ok(b) => b,
                         Err(e) => {
                             log_warning!(
-                                "Failed to create merge stream b. Skipping pair";
+                                "Failed to create merge stream b. Skipping pair.";
                                 "path a" => ?&fa.path(), "path b" => ?&fb.path(),
                                 "error" => %e
                             );
@@ -921,10 +950,10 @@ fn spawn_mergesort_workers(
                 }
 
                 if let Err(e) = std::fs::remove_file(fa.path()) {
-                    log_critical!("Failed to delete merged file. Error: {e}"; "path" => ?fa.path());
+                    log_critical!("Failed to delete merged file."; "path" => ?fa.path(), "error" => %e);
                 }
                 if let Err(e) = std::fs::remove_file(fb.path()) {
-                    log_critical!("Failed to delete merged file. Error: {e}"; "path" => ?fb.path());
+                    log_critical!("Failed to delete merged file."; "path" => ?fb.path(), "error" => %e);
                 }
             }
         });

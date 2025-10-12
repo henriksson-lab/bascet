@@ -216,11 +216,7 @@ impl CountFeature {
 
         //Parse GFF-like file
         println!("Reading feature file");
-        let gff = FeatureCollection::read_file(
-            &path_gff,
-            &gff_settings
-        )?;
-
+        let gff = FeatureCollection::read_file(&path_gff, &gff_settings)?;
 
         //Common data for threads
         let current_state = CurrentCounterState {
