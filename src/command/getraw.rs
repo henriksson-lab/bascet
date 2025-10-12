@@ -1434,13 +1434,13 @@ pub struct DebarcodeAtrandiWGSChemistry {
     barcode: CombinatorialBarcode8bp,
 }
 impl DebarcodeAtrandiWGSChemistry {
-    fn detect_barcode_and_trim(
-        &mut self,
+    fn detect_barcode_and_trim<'a>(
+        &'a mut self,
         r1_seq: &'static [u8],
         r1_qual: &'static [u8],
         r2_seq: &'static [u8],
         r2_qual: &'static [u8],
-    ) -> (bool, String, common::ReadPair) {
+    ) -> (bool, String, common::ReadPair<'a>) {
         //Detect barcode, which here is in R2
         let total_distance_cutoff = 4;
         let part_distance_cutoff = 1;
