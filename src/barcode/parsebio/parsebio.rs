@@ -45,23 +45,22 @@ impl Chemistry for ParseBioChemistry3 {
         //TODO enable user to select one specifically
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
-
         println!("Searching for best barcode match");
 
-
-
-
         self.barcode = if self.subchemistry != "" {
-
             if map_round_bcs.contains_key(&self.subchemistry) {
-                map_round_bcs.get(self.subchemistry.as_str()).unwrap().clone()
+                map_round_bcs
+                    .get(self.subchemistry.as_str())
+                    .unwrap()
+                    .clone()
             } else {
-                panic!("Subchemistry {} is not defined for Parse bio", &self.subchemistry);
+                panic!(
+                    "Subchemistry {} is not defined for Parse bio",
+                    &self.subchemistry
+                );
             }
-
         } else {
-
-            //TODO: should likely not allow this! great chance of confusing chemistries. the current 
+            //TODO: should likely not allow this! great chance of confusing chemistries. the current
             //algorithm tends to pick the megakit but this messes up well assignments
 
             //For each barcode system, try to match it to reads. then decide which barcode system to use.
@@ -69,21 +68,20 @@ impl Chemistry for ParseBioChemistry3 {
             let mut map_chem_match_cnt = HashMap::new();
             let n_reads = 5000;
             for _ in 0..n_reads {
-
-
                 //Parse bio barcode is in R2
                 let record = fastq_file_r2.next().unwrap();
-                let record = record.expect("Error reading record for checking barcode position; input file too short");
+                let record = record.expect(
+                    "Error reading record for checking barcode position; input file too short",
+                );
 
                 for (chem_name, bcs) in &map_round_bcs {
-
                     let total_distance_cutoff = 4;
                     let part_distance_cutoff = 1;
                     let (isok, _bc, _score) = bcs.detect_barcode(
                         record.seq(),
                         false,
                         total_distance_cutoff,
-                        part_distance_cutoff
+                        part_distance_cutoff,
                     );
 
                     //Count reads. Ensure entry is created
@@ -100,31 +98,26 @@ impl Chemistry for ParseBioChemistry3 {
             //See how well each barcode system matched
             let mut map_chem_match_frac = HashMap::new();
             for (chem_name, _bcs) in &mut map_round_bcs {
-
-                let cnt=*map_chem_match_cnt.get(chem_name).unwrap();
-                let this_frac = F::from(cnt)  / F::from(n_reads);
-                println!("Chemistry: {}\tNormalized score: {:.4}", chem_name, this_frac);
+                let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
+                let this_frac = F::from(cnt) / F::from(n_reads);
+                println!(
+                    "Chemistry: {}\tNormalized score: {:.4}",
+                    chem_name, this_frac
+                );
                 map_chem_match_frac.insert(chem_name.clone(), this_frac);
             }
 
             //Pick the best chemistry
-            let best_chem_name = map_chem_match_frac
-                .iter()
-                .max_by(|a, b| a.1.cmp(&b.1)); ///////// TODO: in case of a tie, should prioritize the smaller chemistry
+            let best_chem_name = map_chem_match_frac.iter().max_by(|a, b| a.1.cmp(&b.1)); ///////// TODO: in case of a tie, should prioritize the smaller chemistry
 
             //There will always be at least one chemistry to pick
             let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
-            
+
             println!("Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}", best_chem_name, best_chem_score);
             //panic!("test");
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
-
-
         };
-
-
-
 
         Ok(())
     }
@@ -194,12 +187,10 @@ impl Chemistry for ParseBioChemistry3 {
 impl ParseBioChemistry3 {
     ///////////////////////////////
     /// Create chemistry. Detect barcodes later
-    pub fn new(
-        subchemistry: &String
-    ) -> ParseBioChemistry3 {
+    pub fn new(subchemistry: &String) -> ParseBioChemistry3 {
         ParseBioChemistry3 {
             barcode: CombinatorialBarcode8bp::new(),
-            subchemistry: subchemistry.clone()
+            subchemistry: subchemistry.clone(),
         }
     }
 
@@ -286,7 +277,7 @@ impl ParseBioChemistry3 {
             cb.add_bc(
                 record.well.as_str(), //////////// Note: seems parse is mixing TCR and regular RNA barcodes in file. unclear how to best handle. this gives easy-to-interpret barcodes back
                 //format!("{}", record.bci).as_str(),
-                record.sequence.as_str()
+                record.sequence.as_str(),
             );
         }
 

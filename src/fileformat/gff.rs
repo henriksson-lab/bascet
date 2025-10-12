@@ -144,23 +144,17 @@ impl FeatureCollection {
         anyhow::Ok(gff)
     }
 
-
-
-    /// 
+    ///
     /// Read a BED file
-    /// 
-    fn read_bed(
-        fname: &PathBuf,
-        _params: &GFFparseSettings
-    ) -> anyhow::Result<FeatureCollection> {
+    ///
+    fn read_bed(fname: &PathBuf, _params: &GFFparseSettings) -> anyhow::Result<FeatureCollection> {
         let mut gff = FeatureCollection::new();
-
 
         let file = File::open(fname)?;
         let reader = BufReader::new(file);
 
         for line in reader.lines() {
-            let line=line.expect("Failed to read BED line");
+            let line = line.expect("Failed to read BED line");
             let mut parts = line.split("\t");
 
             //Get first 4 columns
@@ -181,7 +175,7 @@ impl FeatureCollection {
                 gene_start: cur_from,
                 gene_end: cur_to,
                 gene_strand: cur_strand,
-    
+
                 gene_id: attr_id.as_bytes().to_vec(),
                 gene_name: cur_chr.as_bytes().to_vec(),
             };
@@ -192,18 +186,13 @@ impl FeatureCollection {
         anyhow::Ok(gff)
     }
 
-
-
-
-
-
-
-    /// 
+    ///
     /// Read a GFF-like file
-    /// 
-    pub fn read_file(path_gff: &PathBuf, params: &GFFparseSettings) -> anyhow::Result<FeatureCollection> {
-
-
+    ///
+    pub fn read_file(
+        path_gff: &PathBuf,
+        params: &GFFparseSettings,
+    ) -> anyhow::Result<FeatureCollection> {
         let spath = path_gff.to_string_lossy();
 
         let gff = if spath.ends_with("gff.gz") {
@@ -232,12 +221,9 @@ impl FeatureCollection {
                 .map(BufReader::new)
                 .map(gtf::io::Reader::new)?;
             Self::read_gtf_from_reader(&mut reader, params)
-
         } else if spath.ends_with("bed") {
-
-            println!("Reading BED: {:?}",path_gff);
+            println!("Reading BED: {:?}", path_gff);
             Self::read_bed(&path_gff, params)
-                        
         } else {
             anyhow::bail!("Could not tell file format for GFF/GTF file {:?}", path_gff);
         }?;

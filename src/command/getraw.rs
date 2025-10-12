@@ -154,8 +154,7 @@ impl GetRawCMD {
             let _ = GetRaw::getraw(
                 Arc::new(params_io),
                 &mut ParseBioChemistry3::new(
-                    &self.subchemistry
-                    //TODO: option to be more specific
+                    &self.subchemistry, //TODO: option to be more specific
                 ),
             );
         } else {

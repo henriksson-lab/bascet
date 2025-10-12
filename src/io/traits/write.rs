@@ -16,7 +16,7 @@ where
     fn set_writer(self, _: W) -> Self;
     fn get_writer(self) -> Option<W>;
 
-    fn write_counts<H, K, V>(&mut self, counts: H) -> Result<(), crate::runtime::Error>
+    fn write_hist<H, K, V>(&mut self, counts: H) -> Result<(), crate::runtime::Error>
     where
         H: IntoIterator<Item = (K, V)>,
         K: AsRef<[u8]>,

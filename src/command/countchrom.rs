@@ -60,7 +60,7 @@ impl CountChromCMD {
             num_threads: num_threads_total,
             min_matching: self.min_matching,
             remove_duplicates: self.remove_duplicates,
-            remove_multimapper: self.remove_multimapper
+            remove_multimapper: self.remove_multimapper,
         })
         .unwrap();
 
@@ -149,12 +149,11 @@ impl CountChrom {
                     }
                 }
 
-
                 //Remove duplicate reads
                 let rpos = record.pos();
                 let lastpos = map_cell_lastread.get(cell_id);
                 let count_read = if let Some(lastpos) = lastpos {
-                    if rpos==*lastpos && params.remove_duplicates {
+                    if rpos == *lastpos && params.remove_duplicates {
                         //Skip this read
                         false
                     } else {
@@ -164,12 +163,11 @@ impl CountChrom {
                     true
                 };
 
-
                 //Remove multimapper
                 //TODO tons of if's; can we reduce somehow?
-                let map_uniquely = if params.remove_multimapper  {                
+                let map_uniquely = if params.remove_multimapper {
                     let tag_xa = record.aux(b"XA");
-                    if let Ok(_t)=tag_xa  {
+                    if let Ok(_t) = tag_xa {
                         //For BWA: XA-tag is produced for multimappers
                         false
                     } else {
@@ -180,7 +178,6 @@ impl CountChrom {
                 };
                 let count_read = count_read && map_uniquely;
 
-                    
                 if count_read {
                     //Update position of last read for this cell
                     map_cell_lastread.insert(cell_id.to_vec(), rpos);
@@ -204,8 +201,7 @@ impl CountChrom {
                         let cell_index = cnt_mat.get_or_create_cell(&cell_id);
                         *map_cell_unclassified_count.entry(cell_index).or_insert(0) += 1;
                     }
-                }                
-
+                }
             } else {
                 //Count non-mapping reads
                 let cell_index = cnt_mat.get_or_create_cell(&cell_id);
