@@ -1,7 +1,7 @@
-FROM ubuntu:24.10
+#FROM ubuntu:24.10
+FROM ubuntu:25.04
 ENV LC_ALL=C
 RUN SINGULARITY_SHELL=/bin/bash
-
 
 RUN apt-get update
 RUN apt install -y build-essential
