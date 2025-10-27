@@ -51,4 +51,4 @@ WORKDIR /src/bascet
 RUN cargo +nightly build --profile=release
 RUN cp /src/bascet/target/release/bascet /bin/bascet
 RUN rm -Rf /src/bascet
-CMD exec "$@"
+#CMD exec "$@"   #what is default?

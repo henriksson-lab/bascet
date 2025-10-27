@@ -82,11 +82,20 @@ pub trait BascetFile: Sized {
         let fpath = self.path();
 
         if let Some(parent) = fpath.parent() {
-            if !parent.exists() {
-                return Err(crate::runtime::Error::file_not_valid(
-                    fpath,
-                    Some("parent directory does not exist"),
-                ));
+            let parent_exists = parent.try_exists();
+            if let Ok(parent_exists) = parent_exists {
+                if !parent_exists {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        fpath,
+                        Some("parent directory does not exist"),
+                    ));
+                } else {
+                    return Err(crate::runtime::Error::file_not_valid(
+                        fpath,
+                        Some("could not check if parent directory exists; might be a permission problem"),
+                    ));
+
+                }
             }
         }
         Ok(())
