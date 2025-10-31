@@ -1,5 +1,5 @@
-use itertools::izip;
 use crate::io::traits::{BascetCell, BascetWrite};
+use itertools::izip;
 
 pub struct Writer<W>
 where

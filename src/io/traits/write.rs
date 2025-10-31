@@ -8,7 +8,6 @@ use crate::command::getraw::DebarcodeHistWriter;
 use crate::command::getraw::DebarcodeMergeWriter;
 
 #[enum_dispatch::enum_dispatch]
-
 #[allow(unused_variables)]
 pub trait BascetWrite<W>: Sized
 where

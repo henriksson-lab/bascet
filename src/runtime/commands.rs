@@ -7,7 +7,6 @@ use crate::command;
 ///////////////////////////////
 /// Possible subcommands to parse
 #[derive(Subcommand)]
-
 #[allow(non_camel_case_types)]
 pub enum Commands {
     _depreciated_GetRaw(command::_depreciated_GetRawCMD),

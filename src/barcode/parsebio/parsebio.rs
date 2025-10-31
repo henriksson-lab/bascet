@@ -23,7 +23,7 @@ pub struct ParseBioChemistry3 {
 impl Chemistry for ParseBioChemistry3 {
     ///////////////////////////////
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
-    fn prepare(
+    fn prepare_using_rp_files(
         &mut self,
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
@@ -77,7 +77,7 @@ impl Chemistry for ParseBioChemistry3 {
                 for (chem_name, bcs) in &map_round_bcs {
                     let total_distance_cutoff = 4;
                     let part_distance_cutoff = 1;
-                    let (isok, _bc, _score) = bcs.detect_barcode(
+                    let (isok, _bc, _score) = bcs._depreciated_detect_barcode(
                         record.seq(),
                         false,
                         total_distance_cutoff,
@@ -124,7 +124,7 @@ impl Chemistry for ParseBioChemistry3 {
 
     ///////////////////////////////
     /// Detect barcode, and trim if ok
-    fn detect_barcode_and_trim(
+    fn _depreciated_detect_barcode_and_trim(
         &mut self,
         r1_seq: &[u8],
         r1_qual: &[u8],
@@ -134,9 +134,12 @@ impl Chemistry for ParseBioChemistry3 {
         //Detect barcode, which for parse is in R2
         let total_distance_cutoff = 4;
         let part_distance_cutoff = 1;
-        let (isok, bc, _match_score) =
-            self.barcode
-                .detect_barcode(r2_seq, false, total_distance_cutoff, part_distance_cutoff);
+        let (isok, bc, _match_score) = self.barcode._depreciated_detect_barcode(
+            r2_seq,
+            false,
+            total_distance_cutoff,
+            part_distance_cutoff,
+        );
 
         //println!("Total score {}", match_score);
         //if match_score>0 {
@@ -309,24 +312,24 @@ impl ParseBioChemistry3 {
                 .get(&record.bc1)
                 .expect("Could not find file for bc1")
                 .clone();
-            bc1.quick_testpos = record.bc1pos;
-            bc1.all_test_pos.push(record.bc1pos);
+            bc1.pos_anchor = record.bc1pos;
+            bc1.pos_rel_anchor.push(record.bc1pos);
             bc_setup.add_pool("bc1", bc1);
 
             let mut bc2 = map_round_bcs
                 .get(&record.bc2)
                 .expect("Could not find file for bc2")
                 .clone();
-            bc2.quick_testpos = record.bc2pos;
-            bc2.all_test_pos.push(record.bc2pos);
+            bc2.pos_anchor = record.bc2pos;
+            bc2.pos_rel_anchor.push(record.bc2pos);
             bc_setup.add_pool("bc2", bc2);
 
             let mut bc3 = map_round_bcs
                 .get(&record.bc3)
                 .expect("Could not find file for bc3")
                 .clone();
-            bc3.quick_testpos = record.bc3pos;
-            bc3.all_test_pos.push(record.bc3pos);
+            bc3.pos_anchor = record.bc3pos;
+            bc3.pos_rel_anchor.push(record.bc3pos);
             bc_setup.add_pool("bc3", bc3);
 
             //Below is in a bit of the wrong position, since information used in this class!

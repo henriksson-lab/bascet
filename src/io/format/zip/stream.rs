@@ -1,7 +1,4 @@
-use std::{
-    fs::File,
-    io::Read,
-};
+use std::{fs::File, io::Read};
 use zip::{HasZipMetadata, ZipArchive};
 
 use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream};
