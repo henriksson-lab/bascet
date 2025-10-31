@@ -145,8 +145,7 @@ impl CountsketchCMD {
             }.set_writer(BufWriter::new(output_file));
 
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
-            let (work_tx, work_rx) = 
-                crossbeam::channel::unbounded::<Option<CountsketchCell>>();
+            let (work_tx, work_rx) = crossbeam::channel::unbounded::<Option<CountsketchCell>>();
             let (write_tx, write_rx) =
                 crossbeam::channel::unbounded::<Option<(CountsketchCell, CountSketch)>>();
 

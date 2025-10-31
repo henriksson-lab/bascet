@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bgzip::write::BGZFMultiThreadWriter;
 use bgzip::Compression;
-use clap::Args;
+use clap::{Args, Subcommand};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use gxhash::HashMapExt;
 use itertools::{izip, Itertools};
@@ -105,6 +105,17 @@ pub struct GetRawCMD {
 
     #[arg(long = "skip-debarcode", num_args = 1.., value_delimiter = ',', help = "Skip debarcoding phase and merge existing chunk files (comma-separated list of chunk files)")]
     pub skip_debarcode: Vec<PathBuf>,
+
+    #[command(subcommand)]
+    pub chemistry: GetRawChemistry,
+}
+
+#[derive(Subcommand)]
+pub enum GetRawChemistry {
+    /// AtrandiWGS chemistry, uses combinatorial 8bp barcodes for debarcoding
+    AtrandiWGS {},
+    /// ParseBio chemistry, uses combinatorial 8bp barcodes for debarcoding
+    ParseBio {},
 }
 
 struct ThreadConfig {
@@ -594,17 +605,17 @@ fn spawn_debarcode_workers(
         chemistry.barcode.add_bc(parts[1], parts[0], parts[2]);
     }
 
-    chemistry.barcode.pools[3].quick_testpos = (8 + 4) * 0;
-    chemistry.barcode.pools[3].all_test_pos = vec![0, 1];
+    chemistry.barcode.pools[3].pos_anchor = (8 + 4) * 0;
+    chemistry.barcode.pools[3].pos_rel_anchor = vec![0, 1];
 
-    chemistry.barcode.pools[2].quick_testpos = (8 + 4) * 1;
-    chemistry.barcode.pools[2].all_test_pos = vec![0, 1];
+    chemistry.barcode.pools[2].pos_anchor = (8 + 4) * 1;
+    chemistry.barcode.pools[2].pos_rel_anchor = vec![0, 1];
 
-    chemistry.barcode.pools[1].quick_testpos = (8 + 4) * 2;
-    chemistry.barcode.pools[1].all_test_pos = vec![0, 1];
+    chemistry.barcode.pools[1].pos_anchor = (8 + 4) * 2;
+    chemistry.barcode.pools[1].pos_rel_anchor = vec![0, 1];
 
-    chemistry.barcode.pools[0].quick_testpos = (8 + 4) * 3;
-    chemistry.barcode.pools[0].all_test_pos = vec![0, 1];
+    chemistry.barcode.pools[0].pos_anchor = (8 + 4) * 3;
+    chemistry.barcode.pools[0].pos_rel_anchor = vec![0, 1];
 
     let mut thread_handles = Vec::with_capacity(debarcode_n_threads);
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
@@ -1433,21 +1444,24 @@ where
 pub struct DebarcodeAtrandiWGSChemistry {
     barcode: CombinatorialBarcode8bp,
 }
-impl DebarcodeAtrandiWGSChemistry {
-    fn detect_barcode_and_trim<'a>(
-        &'a mut self,
+impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
+    fn detect_barcode_and_trim(
+        &mut self,
         r1_seq: &'static [u8],
         r1_qual: &'static [u8],
         r2_seq: &'static [u8],
         r2_qual: &'static [u8],
-    ) -> (bool, String, common::ReadPair<'a>) {
+    ) -> (&'static [u8], common::ReadPair<'static>) {
         //Detect barcode, which here is in R2
         let total_distance_cutoff = 4;
         let part_distance_cutoff = 1;
 
-        let (isok, bc, _match_score) =
-            self.barcode
-                .detect_barcode(r2_seq, true, total_distance_cutoff, part_distance_cutoff);
+        let (isok, bc, _match_score) = self.barcode._depreciated_detect_barcode(
+            r2_seq,
+            true,
+            total_distance_cutoff,
+            part_distance_cutoff,
+        );
 
         if isok {
             //R2 need to have the first part with barcodes removed. Figure out total size!
@@ -1458,7 +1472,6 @@ impl DebarcodeAtrandiWGSChemistry {
             let umi_from = self.barcode.umi_from;
             let umi_to = self.barcode.umi_to;
             (
-                true,
                 bc,
                 common::ReadPair {
                     r1: &r1_seq,
@@ -1471,7 +1484,6 @@ impl DebarcodeAtrandiWGSChemistry {
         } else {
             //Just return the sequence as-is
             (
-                false,
                 "".to_string(),
                 common::ReadPair {
                     r1: &r1_seq,

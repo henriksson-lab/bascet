@@ -328,7 +328,7 @@ impl _depreciated_GetRaw {
 
         // Find probable barcode starts and ends
         barcodes
-            .prepare(&mut forward_file, &mut reverse_file)
+            .prepare_using_rp_files(&mut forward_file, &mut reverse_file)
             .expect("Failed to detect barcode setup from reads");
         let mut forward_file = open_fastq(&params.path_forward).unwrap(); // reopen the file to read from beginning
         let mut reverse_file = open_fastq(&params.path_reverse).unwrap(); // reopen the file to read from beginning
@@ -388,12 +388,13 @@ impl _depreciated_GetRaw {
 
                     for bam_cell in list_bam_cell.iter() {
                         //Debarcode!
-                        let (is_ok, cellid, readpair) = barcodes.detect_barcode_and_trim(
-                            &bam_cell.forward_record.seq(),
-                            &bam_cell.forward_record.qual(),
-                            &bam_cell.reverse_record.seq(),
-                            &bam_cell.reverse_record.qual(),
-                        );
+                        let (is_ok, cellid, readpair) = barcodes
+                            ._depreciated_detect_barcode_and_trim(
+                                &bam_cell.forward_record.seq(),
+                                &bam_cell.forward_record.qual(),
+                                &bam_cell.reverse_record.seq(),
+                                &bam_cell.reverse_record.qual(),
+                            );
 
                         //Add library name to cellID
                         let cellid = format!("{}_{}", libname, cellid);
