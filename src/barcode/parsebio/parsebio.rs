@@ -1,6 +1,7 @@
 use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
+use crate::log_info;
 use seq_io::fastq::Reader as FastqReader;
 
 use crate::fileformat::shard::CellID;
@@ -122,6 +123,97 @@ impl Chemistry for ParseBioChemistry3 {
         Ok(())
     }
 
+    fn prepare_using_rp_vecs<C:crate::io::traits::BascetCell>(&mut self, r1: Vec<C>, r2: Vec<C>) -> anyhow::Result<()> {
+        /*
+        let a=str_to_barcode_8bp("ATCGGGGG");
+        let b=str_to_barcode_8bp("TTCGGGNN");
+        let score=HotEncodeATCGN::bitwise_hamming_distance_u32(a,b);
+        println!("{}", score);
+        panic!("asdasd");
+         */
+
+        println!("Loading parse barcodes");
+
+        //Load the possible barcode systems
+        let mut map_round_bcs =
+            ParseBioChemistry3::read_barcodes_pb(Cursor::new(include_bytes!("chemistry_def.csv")));
+
+        //TODO enable user to select one specifically
+        //map_round_bcs.retain(|k,_v| k=="WT v2");
+
+        println!("Searching for best barcode match");
+
+        self.barcode = if self.subchemistry != "" {
+            if map_round_bcs.contains_key(&self.subchemistry) {
+                map_round_bcs
+                    .get(self.subchemistry.as_str())
+                    .unwrap()
+                    .clone()
+            } else {
+                panic!(
+                    "Subchemistry {} is not defined for Parse bio",
+                    &self.subchemistry
+                );
+            }
+        } else {
+            //TODO: should likely not allow this! great chance of confusing chemistries. the current
+            //algorithm tends to pick the megakit but this messes up well assignments
+
+            //For each barcode system, try to match it to reads. then decide which barcode system to use.
+            //This code is a bit complicated because we wish to compare the same reads for all chemistry options
+            let mut map_chem_match_cnt = HashMap::new();
+            for i in 0..r2.len() {
+                //Parse bio barcode is in R2
+                let read = r2[i].get_reads().unwrap().first().unwrap().0;
+                
+                for (chem_name, bcs) in &map_round_bcs {
+                    let total_distance_cutoff = 4;
+                    let part_distance_cutoff = 1;
+                    let (_, score) = bcs.detect_barcode(
+                        read,
+                        false,
+                        total_distance_cutoff,
+                        part_distance_cutoff,
+                    );
+
+                    //Count reads. Ensure entry is created
+                    let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
+                    if score > -1 {
+                        *e += 1;
+                    }
+                }
+            }
+
+            //Using fraction library to simplify code. Seriously overkill in practice
+            type F = fraction::Fraction;
+
+            //See how well each barcode system matched
+            let mut map_chem_match_frac = HashMap::new();
+            for (chem_name, _bcs) in &mut map_round_bcs {
+                let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
+                let this_frac = F::from(cnt) / F::from(r2.len());
+                println!(
+                    "Chemistry: {}\tNormalized score: {:.4}",
+                    chem_name, this_frac
+                );
+                map_chem_match_frac.insert(chem_name.clone(), this_frac);
+            }
+
+            //Pick the best chemistry
+            let best_chem_name = map_chem_match_frac.iter().max_by(|a, b| a.1.cmp(&b.1)); ///////// TODO: in case of a tie, should prioritize the smaller chemistry
+
+            //There will always be at least one chemistry to pick
+            let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
+
+            println!("Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}", best_chem_name, best_chem_score);
+            //panic!("test");
+
+            map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
+        };
+
+        Ok(())
+    }
+
     ///////////////////////////////
     /// Detect barcode, and trim if ok
     fn _depreciated_detect_barcode_and_trim(
@@ -184,6 +276,85 @@ impl Chemistry for ParseBioChemistry3 {
                 },
             )
         }
+    }
+
+    fn detect_barcode_and_trim(
+        &mut self,
+        r1_seq: &'static [u8],
+        r1_qual: &'static [u8],
+        r2_seq: &'static [u8],
+        r2_qual: &'static [u8],
+    ) -> (u32, crate::common::ReadPair) {
+        //Detect barcode, which for parse is in R2
+        let total_distance_cutoff = 4;
+        let part_distance_cutoff = 1;
+        let (bc, score) = self.barcode.detect_barcode(
+            r2_seq,
+            false,
+            total_distance_cutoff,
+            part_distance_cutoff,
+        );
+
+        //println!("Total score {}", match_score);
+        //if match_score>0 {
+        //    println!("{}\t{}", match_score, String::from_utf8_lossy(r2_seq));
+        //}
+
+        if score > -1 {
+            let r1_from = 0;
+            let r1_to = r1_seq.len();
+
+            //R2 need to have the first part with barcodes removed. Figure out total size!
+            //TODO search for the truseq adapter that may appear toward the end
+            let r2_from = self.barcode.trim_bcread_len;
+            let r2_to = r2_seq.len();
+
+            //Get UMI position
+            let umi_from = self.barcode.umi_from;
+            let umi_to = self.barcode.umi_to;
+
+            (
+                bc,
+                crate::common::ReadPair {
+                    r1: &r1_seq[r1_from..r1_to],
+                    r2: &r2_seq[r2_from..r2_to],
+                    q1: &r1_qual[r1_from..r1_to],
+                    q2: &r2_qual[r2_from..r2_to],
+                    umi: &r2_seq[umi_from..umi_to],
+                },
+            )
+        } else {
+            //Just return the sequence as-is
+            (
+                u32::MAX,
+                crate::common::ReadPair {
+                    r1: &r1_seq,
+                    r2: &r2_seq,
+                    q1: &r1_qual,
+                    q2: &r2_qual,
+                    umi: &[],
+                },
+            )
+        }
+    }
+
+    fn bcindexsu8_to_bcu8(&self, index32: &[u8]) -> Vec<u8> {
+        let mut result = Vec::new();
+
+        for (i, p) in index32.iter().enumerate().rev() {
+            if i == 3 {
+                continue;
+            }
+
+            if i < 2 {
+                result.push(b'_');
+            }
+
+            result
+                .extend_from_slice(self.barcode.pools[i].barcode_name_list[*p as usize].as_bytes());
+        }
+        
+        return result;
     }
 }
 

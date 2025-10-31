@@ -4,8 +4,6 @@ pub mod chemistry;
 pub mod combinatorial_barcode_16bp;
 pub mod combinatorial_barcode_8bp;
 pub mod combinatorial_barcode_anysize;
-// doesnt exist?
-pub mod barcode_index;
 pub mod general_barcode;
 pub mod parsebio;
 pub mod petriseq_barcode;
@@ -26,7 +24,4 @@ pub use parsebio::ParseBioChemistry3;
 pub use petriseq_barcode::PetriseqChemistry;
 pub use tenx::TenxRNAChemistry;
 
-pub use barcode_index::BCIndex;
 pub use chemistry::Chemistry;
-
-// put CellID here???

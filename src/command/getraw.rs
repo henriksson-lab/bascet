@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::io::{BufRead, BufWriter, Cursor, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,7 +14,7 @@ use gxhash::HashMapExt;
 use itertools::{izip, Itertools};
 use smallvec::SmallVec;
 
-use crate::barcode::CombinatorialBarcode8bp;
+use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
 use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream, BascetWrite};
 use crate::{
     common, log_critical, log_info, log_warning, support_which_stream, support_which_writer,
@@ -86,19 +87,19 @@ pub struct GetRawCMD {
 
     #[arg(
         long = "buffer-size",
-        default_value_t = 16192,
+        default_value_t = 1024 * 12,
         help = "Total stream buffer size in MB"
     )]
     pub buffer_size_mb: usize,
     #[arg(
         long = "page-size",
-        default_value_t = 8,
+        default_value_t = 32,
         help = "Stream page size in MB"
     )]
     pub page_size_mb: usize,
     #[arg(
         long = "sort-buffer-size",
-        default_value_t = 16192,
+        default_value_t = 1024 * 12,
         help = "Total sort buffer size in MB"
     )]
     pub sort_buffer_size_mb: usize,
@@ -107,18 +108,26 @@ pub struct GetRawCMD {
     pub skip_debarcode: Vec<PathBuf>,
 
     #[command(subcommand)]
-    pub chemistry: GetRawChemistry,
+    pub chemistry: GetRawChemistryCMD,
 }
 
 #[derive(Subcommand)]
-pub enum GetRawChemistry {
+pub enum GetRawChemistryCMD {
     /// AtrandiWGS chemistry, uses combinatorial 8bp barcodes for debarcoding
-    AtrandiWGS {},
+    AtrandiWGS,
     /// ParseBio chemistry, uses combinatorial 8bp barcodes for debarcoding
-    ParseBio {},
+    ParseBio,
+}
+
+#[derive(Clone)]
+#[enum_dispatch::enum_dispatch(Chemistry)]
+pub enum GetRawChemistry {
+    AtrandiWGS(DebarcodeAtrandiWGSChemistry),
+    ParseBio(ParseBioChemistry3)
 }
 
 struct ThreadConfig {
+    total: usize,
     read: usize,
     debarcode: usize,
     sort: usize,
@@ -137,7 +146,8 @@ impl GetRawCMD {
                 })
         });
 
-        let thread_config = ThreadConfig {
+        let mut thread_config = ThreadConfig {
+            total: 0,
             sort: self.threads_sort.unwrap_or(total_threads_desired / 2),
             read: self.threads_read.unwrap_or(total_threads_desired / 4),
             write: self.threads_write.unwrap_or(total_threads_desired / 8),
@@ -149,6 +159,8 @@ impl GetRawCMD {
             + thread_config.write
             + thread_config.debarcode
             + thread_config.sort;
+            
+        thread_config.total = total_threads_actual;
 
         log_info!(
             "Using {total_threads_actual} threads";
@@ -251,14 +263,58 @@ impl GetRawCMD {
                 );
             }
 
+            let mut chemistry = match self.chemistry {
+                GetRawChemistryCMD::AtrandiWGS => GetRawChemistry::AtrandiWGS(DebarcodeAtrandiWGSChemistry::new()),
+                GetRawChemistryCMD::ParseBio => GetRawChemistry::ParseBio(ParseBioChemistry3::new(&String::from(""))),
+            };
+            
+            {
+                log_info!("Preparing chemistry...");
+                let (input_r1, input_r2) = &vec_input.first().unwrap();
+                // prepare chemistry using r2
+                let mut s1 =
+                    DebarcodeReadsStream::<DebarcodeReadCell>::try_from_input(input_r1).unwrap();
+                s1.set_reader_threads(thread_config.read);
+                s1.set_pagebuffer_config(stream_n_pages, stream_page_size_bytes);
+
+                let mut b1 = Vec::with_capacity(10000);
+                for token in s1 {
+                    let token = token.unwrap();
+                    b1.push(token.into_owned());
+
+                    if b1.len() >= 10000 {
+                        break;
+                    }
+                }
+                log_info!("Finished reading first 10000 reads of R1...");
+                let mut s2 =
+                    DebarcodeReadsStream::<DebarcodeReadCell>::try_from_input(input_r2).unwrap();
+                s2.set_reader_threads(thread_config.read);
+                s2.set_pagebuffer_config(stream_n_pages, stream_page_size_bytes);
+
+                let mut b2 = Vec::with_capacity(10000);
+                for token in s2 {
+                    let token = token.unwrap();
+                    b2.push(token.into_owned());
+
+                    if b2.len() >= 10000 {
+                        break;
+                    }
+                }
+                log_info!("Finished reading first 10000 reads of R2...");
+                let _ = chemistry.prepare_using_rp_vecs(b1, b2);
+            }
+
             let ((r1_rx, r2_rx), (r1_handle, r2_handle)) = spawn_paired_readers(
                 vec_input,
                 thread_config.read,
                 stream_page_size_bytes,
                 stream_n_pages,
             );
+            
             let (rp_rx, rt_handle) = spawn_debarcode_router(r1_rx, r2_rx);
-            let (db_rx, db_handles) = spawn_debarcode_workers(rp_rx, thread_config.debarcode);
+            let (db_rx, db_handles, chemistry) =
+                spawn_debarcode_workers(chemistry, rp_rx, thread_config.debarcode);
 
             let (ct_rx, ct_handle) =
                 spawn_collector(db_rx, thread_config.sort, sort_buffer_size_bytes);
@@ -266,6 +322,7 @@ impl GetRawCMD {
 
             let wt_handles = spawn_chunk_writers(
                 st_rx,
+                chemistry,
                 timestamp_temp_files.clone(),
                 path_temp_dir.clone(),
                 thread_config.write,
@@ -447,7 +504,7 @@ impl GetRawCMD {
 
             let mut stream =
                 DebarcodeMergeStream::<DebarcodeMergeCell>::try_from_input(&input).unwrap();
-            stream.set_reader_threads(thread_config.read);
+            stream.set_reader_threads(thread_config.total);
             stream.set_pagebuffer_config(stream_n_pages, stream_page_size_bytes);
 
             for token in stream {
@@ -582,41 +639,14 @@ fn spawn_debarcode_router(
 }
 
 fn spawn_debarcode_workers(
+    chemistry: GetRawChemistry,
     rp_rx: Receiver<(DebarcodeReadCell, DebarcodeReadCell)>,
     debarcode_n_threads: usize,
 ) -> (
-    Receiver<(String, (DebarcodeReadCell, DebarcodeReadCell))>,
+    Receiver<(u32, (DebarcodeReadCell, DebarcodeReadCell))>,
     Vec<JoinHandle<()>>,
+    GetRawChemistry,
 ) {
-    let mut chemistry = DebarcodeAtrandiWGSChemistry {
-        barcode: CombinatorialBarcode8bp::new(),
-    };
-
-    let reader = Cursor::new(include_bytes!("../barcode/atrandi_barcodes.tsv"));
-    for (index, line) in reader.lines().enumerate() {
-        if index == 0 {
-            continue;
-        }
-
-        let line = line.unwrap_or_else(|e| {
-            log_critical!("Failed to parse chemistry."; "error" => %e);
-        });
-        let parts: Vec<&str> = line.split('\t').collect();
-        chemistry.barcode.add_bc(parts[1], parts[0], parts[2]);
-    }
-
-    chemistry.barcode.pools[3].pos_anchor = (8 + 4) * 0;
-    chemistry.barcode.pools[3].pos_rel_anchor = vec![0, 1];
-
-    chemistry.barcode.pools[2].pos_anchor = (8 + 4) * 1;
-    chemistry.barcode.pools[2].pos_rel_anchor = vec![0, 1];
-
-    chemistry.barcode.pools[1].pos_anchor = (8 + 4) * 2;
-    chemistry.barcode.pools[1].pos_rel_anchor = vec![0, 1];
-
-    chemistry.barcode.pools[0].pos_anchor = (8 + 4) * 3;
-    chemistry.barcode.pools[0].pos_rel_anchor = vec![0, 1];
-
     let mut thread_handles = Vec::with_capacity(debarcode_n_threads);
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
 
@@ -634,13 +664,13 @@ fn spawn_debarcode_workers(
         let thread_handle = std::thread::spawn(move || {
             while let Ok((mut r1, mut r2)) = rp_rx.recv() {
                 // TODO: optimisation: barcodes are fixed-size if represented in a non string way (e.g as u64)
-                let (ok, id, rp) =
+                let (bcindex, rp) =
                     chemistry.detect_barcode_and_trim(r1.read, r1.quality, r2.read, r2.quality);
 
                 let thread_total_counter =
                     thread_atomic_total_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
-                if ok {
+                if bcindex != u32::MAX {
                     let thread_success_counter =
                         thread_atomic_success_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -660,7 +690,7 @@ fn spawn_debarcode_workers(
                     r2.quality = unsafe { std::mem::transmute(rp.q2) };
                     r2.umi = unsafe { std::mem::transmute(rp.umi) };
 
-                    let _ = ct_tx.send((id, (r1, r2)));
+                    let _ = ct_tx.send((bcindex, (r1, r2)));
                 }
             }
         });
@@ -669,31 +699,30 @@ fn spawn_debarcode_workers(
     }
 
     drop(ct_tx);
-    return (ct_rx, thread_handles);
+    return (ct_rx, thread_handles, chemistry);
 }
 
 fn spawn_collector(
-    db_rx: Receiver<(String, (DebarcodeReadCell, DebarcodeReadCell))>,
+    db_rx: Receiver<(u32, (DebarcodeReadCell, DebarcodeReadCell))>,
     sort_n_threads: usize,
     sort_buffer_size_bytes: usize,
 ) -> (
-    Receiver<Vec<(String, (DebarcodeReadCell, DebarcodeReadCell))>>,
+    Receiver<Vec<(u32, (DebarcodeReadCell, DebarcodeReadCell))>>,
     JoinHandle<()>,
 ) {
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
     let ct_handle = std::thread::spawn(move || {
-        let mut collection_buffer: Vec<(String, (DebarcodeReadCell, DebarcodeReadCell))> =
-            Vec::new();
+        let mut collection_buffer: Vec<(u32, (DebarcodeReadCell, DebarcodeReadCell))> = Vec::new();
         let mut collection_cloned_size_bytes: usize = 0;
         // HACK: / 8 is a magic number. this really shouldnt allocate this much extra but it does ¯\_(ツ)_/¯
-        let collection_target_cloned_size_bytes = sort_buffer_size_bytes / sort_n_threads / 8;
+        // NOTE: removed / 8 for now?
+        let collection_target_cloned_size_bytes = sort_buffer_size_bytes / sort_n_threads;
         let timeout = std::time::Duration::from_millis(500);
         loop {
             match db_rx.recv_timeout(timeout) {
                 Ok((id, (r1, r2))) => {
                     let cell_mem_size = 0
-                        + std::mem::size_of::<String>()
-                        + id.len()
+                        + std::mem::size_of::<u32>()
                         + std::mem::size_of::<DebarcodeReadCell>() * 2
                         + r1.read.len()
                         + r1.quality.len()
@@ -735,7 +764,7 @@ fn spawn_collector(
 }
 
 fn spawn_sort_workers(
-    ct_rx: Receiver<Vec<(String, (DebarcodeReadCell, DebarcodeReadCell))>>,
+    ct_rx: Receiver<Vec<(u32, (DebarcodeReadCell, DebarcodeReadCell))>>,
     sort_n_threads: usize,
 ) -> (Receiver<Vec<DebarcodeMergeCell>>, Vec<JoinHandle<()>>) {
     let mut thread_handles = Vec::with_capacity(sort_n_threads);
@@ -754,7 +783,7 @@ fn spawn_sort_workers(
                 while let Some((id, (r1, r2))) = cell_list.pop() {
                     let builder = DebarcodeMergeCell::builder();
                     let cell = builder
-                        .add_cell_id_owned(id.into_bytes())
+                        .add_cell_id_owned(id.to_le_bytes().to_vec())
                         .add_rp_owned(r1.read.to_vec(), r2.read.to_vec())
                         .add_qp_owned(r1.quality.to_vec(), r2.quality.to_vec())
                         .add_umi_owned(r1.umi.to_vec())
@@ -778,6 +807,7 @@ fn spawn_sort_workers(
 
 fn spawn_chunk_writers(
     st_rx: Receiver<Vec<DebarcodeMergeCell>>,
+    chemistry: GetRawChemistry,
     timestamp_temp_files: String,
     path_temp_dir: PathBuf,
     write_n_threads: usize,
@@ -789,6 +819,7 @@ fn spawn_chunk_writers(
     for _ in 0..write_n_threads {
         let st_rx = st_rx.clone();
 
+        let thread_chemistry = chemistry.clone();
         let thread_counter = Arc::clone(&atomic_counter);
         let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);
         let thread_path_temp_dir = path_temp_dir.clone();
@@ -825,14 +856,16 @@ fn spawn_chunk_writers(
                     Compression::fast(),
                 ));
 
-                for cell in &sorted_cell_list {
-                    let _ = temp_writer.write_cell(cell);
+                for mut cell in sorted_cell_list {
+                    let named = thread_chemistry.bcindexsu8_to_bcu8(cell.cell);
+                    cell.cell = unsafe { std::mem::transmute(named.as_slice()) };
+                    let _ = temp_writer.write_cell(&cell);
                 }
 
                 if let Some(mut writer) = temp_writer.get_writer() {
                     let _ = writer.flush();
                 }
-                log_info!("Wrote debarcoded cell chunk"; "path" => ?temp_path, "cells" => sorted_cell_list.len());
+                // log_info!("Wrote debarcoded cell chunk"; "path" => ?temp_path, "cells" => sorted_cell_list.len());
                 thread_vec_temp_written.push(temp_path);
             }
             return thread_vec_temp_written;
@@ -1069,12 +1102,26 @@ HACK: collect first 1000 read pairs from r2
 struct DebarcodeReadCell {
     cell: &'static [u8],
     read: &'static [u8],
+    reads: [(&'static [u8], &'static [u8]); 1],
     quality: &'static [u8],
     umi: &'static [u8],
 
     // theoretically possible for this to be more than 1 but very unlikely
     _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 1]>,
     _owned: Vec<Vec<u8>>,
+}
+
+impl DebarcodeReadCell {
+
+    #[inline(always)]
+    pub fn into_owned(self) -> DebarcodeReadCell {
+        Self::builder()
+            .add_cell_id_owned(self.cell.to_vec())
+            .add_sequence_owned(self.read.to_vec(),)
+            .add_quality_owned(self.quality.to_vec())
+            .add_umi_owned(self.umi.to_vec())
+            .build()
+    }
 }
 
 impl Drop for DebarcodeReadCell {
@@ -1099,7 +1146,7 @@ impl BascetCell for DebarcodeReadCell {
     }
 
     fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
-        None
+        Some(&self.reads)
     }
 
     fn get_qualities(&self) -> Option<&[(&[u8], &[u8])]> {
@@ -1214,6 +1261,7 @@ impl BascetCellBuilder for DebarcodeReadCellBuilder {
         DebarcodeReadCell {
             cell: self.cell.expect("cell is required"),
             read: self.read.unwrap_or(&[]),
+            reads: [(self.read.unwrap_or(&[]), &[])],
             quality: self.quality.unwrap_or(&[]),
             umi: self.umi.unwrap_or(&[]),
 
@@ -1232,6 +1280,7 @@ struct DebarcodeMergeCell {
     _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
 }
+
 impl Drop for DebarcodeMergeCell {
     #[inline(always)]
     fn drop(&mut self) {
@@ -1444,6 +1493,38 @@ where
 pub struct DebarcodeAtrandiWGSChemistry {
     barcode: CombinatorialBarcode8bp,
 }
+impl DebarcodeAtrandiWGSChemistry {
+    pub fn new() -> Self {
+        let mut result = DebarcodeAtrandiWGSChemistry {
+            barcode: CombinatorialBarcode8bp::new(),
+        };
+
+        let reader = Cursor::new(include_bytes!("../barcode/atrandi_barcodes.tsv"));
+        for (index, line) in reader.lines().enumerate() {
+            if index == 0 {
+                continue;
+            }
+
+            let line = line.unwrap();
+            let parts: Vec<&str> = line.split('\t').collect();
+            result.barcode.add_bc(parts[1], parts[0], parts[2]);
+        }
+
+        result.barcode.pools[3].pos_anchor = (8 + 4) * 0;
+        result.barcode.pools[3].pos_rel_anchor = vec![0, 1];
+
+        result.barcode.pools[2].pos_anchor = (8 + 4) * 1;
+        result.barcode.pools[2].pos_rel_anchor = vec![0, 1];
+
+        result.barcode.pools[1].pos_anchor = (8 + 4) * 2;
+        result.barcode.pools[1].pos_rel_anchor = vec![0, 1];
+
+        result.barcode.pools[0].pos_anchor = (8 + 4) * 3;
+        result.barcode.pools[0].pos_rel_anchor = vec![0, 1];
+
+        result
+    }
+}
 impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
     fn detect_barcode_and_trim(
         &mut self,
@@ -1451,48 +1532,62 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
         r1_qual: &'static [u8],
         r2_seq: &'static [u8],
         r2_qual: &'static [u8],
-    ) -> (&'static [u8], common::ReadPair<'static>) {
+    ) -> (u32, crate::common::ReadPair) {
         //Detect barcode, which here is in R2
         let total_distance_cutoff = 4;
         let part_distance_cutoff = 1;
 
-        let (isok, bc, _match_score) = self.barcode._depreciated_detect_barcode(
-            r2_seq,
-            true,
-            total_distance_cutoff,
-            part_distance_cutoff,
-        );
+        let (bc, score) =
+            self.barcode
+                .detect_barcode(r2_seq, true, total_distance_cutoff, part_distance_cutoff);
 
-        if isok {
-            //R2 need to have the first part with barcodes removed. Figure out total size!
-            let r2_from = self.barcode.trim_bcread_len;
-            let r2_to = r2_seq.len();
+        match score {
+            0.. => {
+                //R2 need to have the first part with barcodes removed. Figure out total size!
+                let r2_from = self.barcode.trim_bcread_len;
+                let r2_to = r2_seq.len();
 
-            //Get UMI position
-            let umi_from = self.barcode.umi_from;
-            let umi_to = self.barcode.umi_to;
-            (
-                bc,
-                common::ReadPair {
-                    r1: &r1_seq,
-                    r2: &r2_seq[r2_from..r2_to],
-                    q1: &r1_qual,
-                    q2: &r2_qual[r2_from..r2_to],
-                    umi: &r2_seq[umi_from..umi_to],
-                },
-            )
-        } else {
-            //Just return the sequence as-is
-            (
-                "".to_string(),
-                common::ReadPair {
-                    r1: &r1_seq,
-                    r2: &r2_seq,
-                    q1: &r1_qual,
-                    q2: &r2_qual,
-                    umi: &[],
-                },
-            )
+                //Get UMI position
+                let umi_from = self.barcode.umi_from;
+                let umi_to = self.barcode.umi_to;
+                (
+                    bc,
+                    common::ReadPair {
+                        r1: &r1_seq,
+                        r2: &r2_seq[r2_from..r2_to],
+                        q1: &r1_qual,
+                        q2: &r2_qual[r2_from..r2_to],
+                        umi: &r2_seq[umi_from..umi_to],
+                    },
+                )
+            }
+            ..0 => {
+                //Just return the sequence as-is
+                (
+                    u32::MAX,
+                    common::ReadPair {
+                        r1: &r1_seq,
+                        r2: &r2_seq,
+                        q1: &r1_qual,
+                        q2: &r2_qual,
+                        umi: &[],
+                    },
+                )
+            }
         }
+    }
+
+    fn bcindexsu8_to_bcu8(&self, index32: &[u8]) -> Vec<u8> {
+        let mut result = Vec::new();
+        for (i, p) in index32.iter().enumerate().rev() {
+            if i > 3 {
+                result.push(b'_');
+            }
+            
+            result
+                .extend_from_slice(self.barcode.pools[i].barcode_name_list[*p as usize].as_bytes());
+        }
+        
+        return result;
     }
 }
