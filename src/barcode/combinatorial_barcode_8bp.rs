@@ -1,11 +1,11 @@
 use gxhash::HashMapExt;
+use itertools::Itertools;
 use likely_stable::unlikely;
 use log::debug;
 use std::collections::HashMap;
 use std::io::Read;
 
 use crate::barcode::parsebio::HotEncodeATCGN;
-use crate::barcode::BCIndex;
 use crate::fileformat::shard::CellID;
 
 ///////////////////////////////
@@ -13,8 +13,8 @@ use crate::fileformat::shard::CellID;
 pub fn str_to_barcode_8bp(seq: &str) -> u16 {
     const BC_LEN: usize = 8;
     assert!(
-        BC_LEN > seq.len(),
-        "Short read (read len <= barcode pool item len) encountered"
+        BC_LEN >= seq.len(),
+        "Short read (read len <= barcode pool item len) encountered (seq: {seq})"
     );
 
     let bytes: [u8; BC_LEN] = unsafe { std::ptr::read(seq.as_ptr() as *const [u8; BC_LEN]) };
@@ -38,6 +38,8 @@ pub struct CombinatorialBarcode8bp {
     pub umi_from: usize,
     pub umi_to: usize,
 }
+unsafe impl Send for CombinatorialBarcode8bp {}
+
 impl CombinatorialBarcode8bp {
     pub fn new() -> CombinatorialBarcode8bp {
         CombinatorialBarcode8bp {
@@ -118,35 +120,32 @@ impl CombinatorialBarcode8bp {
         &self,
         read_seq: &[u8],
         abort_early: bool,
-        total_distance_cutoff: u32,
-        part_distance_cutoff: u32,
-    ) -> (BCIndex, u32) {
+        total_distance_cutoff: u8,
+        part_distance_cutoff: u8,
+    ) -> (u32, i8) {
         // 4^8 = u16::MAX, therefore u16 is the largest necessary type
-        let mut full_bc_index: Vec<u16> = Vec::with_capacity(self.num_pools());
+        let mut full_bc_index: u32 = 0;
         let mut total_score = 0;
 
         //Loop across each barcode round
-        for p in &self.pools {
+        for (i, p) in self.pools.iter().enumerate() {
             //Detect this round BC
-            let (this_bc, score) = p._depreciated_detect_barcode(read_seq);
-            full_bc_index.push(this_bc);
-            total_score = total_score + score;
+            let (bc, score) = p.detect_barcode(read_seq);
+            full_bc_index |= (bc as u32) << (i * 8);
+            total_score += score;
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if abort_early && score > part_distance_cutoff {
                 //println!("Early BC abort for local score {}", score);
-                return (false, self.bcidvec_to_string(&full_bc_index), total_score);
+                return (full_bc_index, total_score as i8);
             }
         }
-
-        let cellid = self.bcidvec_to_string(&full_bc_index);
-
         //All barcodes collected. Check if total mismatch is ok
         if total_score > total_distance_cutoff {
             //println!("Late BC abort for total score {}", total_score);
-            return (false, cellid, total_score);
+            return (full_bc_index, -1);
         } else {
-            return (true, cellid, total_score);
+            return (full_bc_index, total_score as i8);
         }
     }
 
@@ -195,9 +194,9 @@ impl CombinatorialBarcode8bp {
 /// One barcode position, in a combinatorial barcode
 #[derive(Clone, Debug)]
 pub struct CombinatorialBarcodePart8bp {
-    pub barcode_seq_list: Vec<u32>,
+    pub barcode_seq_list: Vec<u16>,
     pub barcode_name_list: Vec<String>,
-    pub seq2barcode: gxhash::HashMap<u32, u16>, // map to BC index
+    pub seq2barcode: gxhash::HashMap<u16, u8>, // map to BC index
 
     pub pos_anchor: usize,
     pub pos_rel_anchor: Vec<usize>,
@@ -218,13 +217,13 @@ impl CombinatorialBarcodePart8bp {
     pub fn add_bc(&mut self, bcname: &str, sequence: &str) {
         let packed_bc = str_to_barcode_8bp(sequence);
         let bc_id = self.barcode_seq_list.len();
-        assert!(
-            bc_id <= u16::MAX as usize,
-            "barcode ID {} exceeds u16::MAX",
-            bc_id
-        );
+        // assert!(
+        //     bc_id <= u8::MAX as usize,
+        //     "barcode ID {} exceeds u8::MAX",
+        //     bc_id
+        // );
 
-        self.seq2barcode.insert(packed_bc, bc_id as u16);
+        self.seq2barcode.insert(packed_bc, bc_id as u8);
         self.barcode_seq_list.push(packed_bc);
         self.barcode_name_list.push(bcname.to_string());
     }
@@ -241,8 +240,13 @@ impl CombinatorialBarcodePart8bp {
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ];
         let optimistic_seq = HotEncodeATCGN::encode_8bp(&optimistic_seq);
+        assert!(
+            optimistic_seq <= u16::MAX as u32,
+            "optimistic_seq encoded {} exceeds u16::MAX",
+            optimistic_seq 
+        );
 
-        if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
+        if let Some(&i) = self.seq2barcode.get(&(optimistic_seq as u16)) {
             return (i as usize, 0);
         } else {
             debug!("not a precise match {:?}", optimistic_seq);
@@ -262,7 +266,11 @@ impl CombinatorialBarcodePart8bp {
             //Find best matching barcode
             let (bc_index, bc_distance) = HotEncodeATCGN::closest_by_hamming_u32(
                 current_seq,
-                self.barcode_seq_list.as_slice(),
+                self.barcode_seq_list
+                    .iter()
+                    .map(|bs| *bs as u32)
+                    .collect_vec()
+                    .as_slice(),
             );
 
             if bc_distance == 0 {
@@ -282,7 +290,7 @@ impl CombinatorialBarcodePart8bp {
         return min_entry;
     }
 
-    pub fn detect_barcode(&self, read_seq: &[u8]) -> (u16, u32) {
+    pub fn detect_barcode(&self, read_seq: &[u8]) -> (u8, u8) {
         //barcode index, score
         const BC_LEN: usize = 8;
         let read_len = read_seq.len();
@@ -296,7 +304,7 @@ impl CombinatorialBarcodePart8bp {
         //Extract the barcode
         let optimistic_seq: [u8; BC_LEN] =
             unsafe { std::ptr::read(read_seq.as_ptr().add(pos_anchor) as *const [u8; BC_LEN]) };
-        let optimistic_seq_encoded = HotEncodeATCGN::encode_8bp(&optimistic_seq);
+        let optimistic_seq_encoded = HotEncodeATCGN::fast_encode_8bp(&optimistic_seq);
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq_encoded) {
             return (i, 0);
         } else {
@@ -307,7 +315,7 @@ impl CombinatorialBarcodePart8bp {
         }
 
         //Find candidate hits. Scan each barcode, in all positions
-        let mut vec_hits: Vec<(usize, u32)> = Vec::new(); //encoded barcode index, score
+        let mut vec_hits: Vec<(u8, u8)> = Vec::new(); //encoded barcode index, score
         for pos_offset in self.pos_rel_anchor.iter() {
             //Extract the barcode for one position
             if pos_anchor + pos_offset + BC_LEN > read_len {
@@ -316,7 +324,7 @@ impl CombinatorialBarcodePart8bp {
             let current_seq: [u8; BC_LEN] = unsafe {
                 std::ptr::read(read_seq.as_ptr().add(pos_anchor + pos_offset) as *const [u8; BC_LEN])
             };
-            let current_seq_encoded = HotEncodeATCGN::encode_8bp(&optimistic_seq);
+            let current_seq_encoded = HotEncodeATCGN::fast_encode_8bp(&current_seq);
 
             //Find best matching barcode
             let (res_index, res_distance) = HotEncodeATCGN::fast_closest_by_hamming_u16(
@@ -326,10 +334,10 @@ impl CombinatorialBarcodePart8bp {
 
             if res_distance == 0 {
                 //If we find a perfect hit then return early, with this barcode. Not clear if this speeds up anymore, or just adds work
-                return (res_index, res_distance);
+                return (res_index, res_distance as u8);
             } else {
                 //Keep for later comparison
-                vec_hits.push((res_index, res_distance));
+                vec_hits.push((res_index, res_distance as u8));
             }
         }
 

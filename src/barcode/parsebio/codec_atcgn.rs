@@ -174,7 +174,7 @@ impl HotEncodeATCGN {
         (min_index, *min_dist)
     }
 
-    pub fn fast_closest_by_hamming_u16(query: u16, candidates: &[u16]) -> (u16, u16) {
+    pub fn fast_closest_by_hamming_u16(query: u16, candidates: &[u16]) -> (u8, u8) {
         let mut min_distance = u32::MAX;
         let mut min_index = 0;
 
@@ -193,7 +193,7 @@ impl HotEncodeATCGN {
         }
 
         // max dist is 8 so this cannot overflow
-        (min_index.try_into().unwrap(), min_distance as u16)
+        (min_index as u8, min_distance as u8)
     }
 
     pub fn closest_by_hamming_u64(query: u64, candidates: &[u64]) -> (usize, u32) {
