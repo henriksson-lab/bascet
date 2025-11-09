@@ -34,6 +34,9 @@ pub trait BascetCell: Send + Sized {
     fn get_umis(&self) -> Option<&[&[u8]]> {
         None
     }
+    fn get_metadata(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 #[allow(unused_variables)]

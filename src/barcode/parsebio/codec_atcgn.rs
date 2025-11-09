@@ -105,22 +105,6 @@ impl HotEncodeATCGN {
     }
 
     ///////////////////////////////
-    /// Encode 8bp, in total 32 bits
-    #[inline(always)]
-    pub fn fast_encode_8bp(bytes: &[u8; 8]) -> u16 {
-        let n0 = NT1_LOOKUP[bytes[0] as usize] as u16;
-        let n1 = NT1_LOOKUP[bytes[1] as usize] as u16;
-        let n2 = NT1_LOOKUP[bytes[2] as usize] as u16;
-        let n3 = NT1_LOOKUP[bytes[3] as usize] as u16;
-        let n4 = NT1_LOOKUP[bytes[4] as usize] as u16;
-        let n5 = NT1_LOOKUP[bytes[5] as usize] as u16;
-        let n6 = NT1_LOOKUP[bytes[6] as usize] as u16;
-        let n7 = NT1_LOOKUP[bytes[7] as usize] as u16;
-
-        n0 | (n1 << 2) | (n2 << 4) | (n3 << 6) | (n4 << 8) | (n5 << 10) | (n6 << 12) | (n7 << 14)
-    }
-
-    ///////////////////////////////
     /// Encode 16bp, in total 64 bits
     #[inline(always)]
     pub fn encode_16bp(bytes: &[u8]) -> u64 {
@@ -174,13 +158,13 @@ impl HotEncodeATCGN {
         (min_index, *min_dist)
     }
 
-    pub fn fast_closest_by_hamming_u16(query: u16, candidates: &[u16]) -> (u8, u8) {
+    pub fn fast_closest_by_hamming_u16(query: u32, candidates: &[u32]) -> (usize, u8) {
         let mut min_distance = u32::MAX;
         let mut min_index = 0;
 
         for (idx, &candidate) in candidates.iter().enumerate() {
             // Use your existing bitwise hamming distance for u16
-            let distance = Self::bitwise_hamming_distance_u16(query, candidate);
+            let distance = Self::bitwise_hamming_distance_u32(query, candidate);
 
             if distance < min_distance {
                 min_distance = distance;
@@ -193,7 +177,7 @@ impl HotEncodeATCGN {
         }
 
         // max dist is 8 so this cannot overflow
-        (min_index as u8, min_distance as u8)
+        (min_index, min_distance as u8)
     }
 
     pub fn closest_by_hamming_u64(query: u64, candidates: &[u64]) -> (usize, u32) {
@@ -212,12 +196,6 @@ impl HotEncodeATCGN {
             .unwrap();
 
         (min_index, *min_dist)
-    }
-
-    #[inline(always)]
-    pub fn bitwise_hamming_distance_u16(a: u16, b: u16) -> u32 {
-        let ret = 8 - (a & b).count_ones(); //Distance can be at most 8
-        ret
     }
 
     ///////////////////////////////

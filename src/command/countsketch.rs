@@ -240,7 +240,7 @@ impl CountsketchCMD {
                         }
                     }
 
-                    if cells_parsed % 100 == 0 {
+                    if cells_parsed % 1_000 == 0 {
                         log_info!("Processing"; "cells parsed" => cells_parsed, "parse errors" => parse_errors);
                     }
                 }
