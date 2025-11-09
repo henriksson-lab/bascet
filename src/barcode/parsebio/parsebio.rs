@@ -2,6 +2,7 @@ use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
 use crate::log_info;
+use blart::AsBytes;
 use seq_io::fastq::Reader as FastqReader;
 
 use crate::fileformat::shard::CellID;
@@ -119,11 +120,15 @@ impl Chemistry for ParseBioChemistry3 {
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
         };
-
+        
         Ok(())
     }
 
-    fn prepare_using_rp_vecs<C:crate::io::traits::BascetCell>(&mut self, r1: Vec<C>, r2: Vec<C>) -> anyhow::Result<()> {
+    fn prepare_using_rp_vecs<C: crate::io::traits::BascetCell>(
+        &mut self,
+        r1: Vec<C>,
+        r2: Vec<C>,
+    ) -> anyhow::Result<()> {
         /*
         let a=str_to_barcode_8bp("ATCGGGGG");
         let b=str_to_barcode_8bp("TTCGGGNN");
@@ -165,7 +170,7 @@ impl Chemistry for ParseBioChemistry3 {
             for i in 0..r2.len() {
                 //Parse bio barcode is in R2
                 let read = r2[i].get_reads().unwrap().first().unwrap().0;
-                
+
                 for (chem_name, bcs) in &map_round_bcs {
                     let total_distance_cutoff = 4;
                     let part_distance_cutoff = 1;
@@ -210,7 +215,7 @@ impl Chemistry for ParseBioChemistry3 {
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
         };
-
+        log_info!("Barcode struct:{:#?}", self.barcode);
         Ok(())
     }
 
@@ -286,14 +291,11 @@ impl Chemistry for ParseBioChemistry3 {
         r2_qual: &'static [u8],
     ) -> (u32, crate::common::ReadPair) {
         //Detect barcode, which for parse is in R2
-        let total_distance_cutoff = 4;
+        let total_distance_cutoff = 1;
         let part_distance_cutoff = 1;
-        let (bc, score) = self.barcode.detect_barcode(
-            r2_seq,
-            false,
-            total_distance_cutoff,
-            part_distance_cutoff,
-        );
+        let (bc, score) =
+            self.barcode
+                .detect_barcode(r2_seq, false, total_distance_cutoff, part_distance_cutoff);
 
         //println!("Total score {}", match_score);
         //if match_score>0 {
@@ -338,22 +340,23 @@ impl Chemistry for ParseBioChemistry3 {
         }
     }
 
-    fn bcindexsu8_to_bcu8(&self, index32: &[u8]) -> Vec<u8> {
+    fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
         let mut result = Vec::new();
+        let bytes = index32.to_be_bytes();
 
-        for (i, p) in index32.iter().enumerate().rev() {
-            if i == 3 {
-                continue;
-            }
+        // NOTE: bytes[0] is unused in parsebio3 chemistries
+        result.extend_from_slice(
+            self.barcode.pools[0].barcode_name_list[bytes[1] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[1].barcode_name_list[bytes[2] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[2].barcode_name_list[bytes[3] as usize].as_bytes(),
+        );
 
-            if i < 2 {
-                result.push(b'_');
-            }
-
-            result
-                .extend_from_slice(self.barcode.pools[i].barcode_name_list[*p as usize].as_bytes());
-        }
-        
         return result;
     }
 }
@@ -376,63 +379,63 @@ impl ParseBioChemistry3 {
         map_round_bcs.insert(
             "R3_v3".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_R3_v3.csv.gz"),
+                include_bytes!("bc_data_R3_v3.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "n141_R1_v3_6".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_n141_R1_v3_6.csv.gz"),
+                include_bytes!("bc_data_n141_R1_v3_6.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "n198_v5".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_n198_v5.csv.gz"),
+                include_bytes!("bc_data_n198_v5.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "n24_v4".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_n24_v4.csv.gz"),
+                include_bytes!("bc_data_n24_v4.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "n299_R1_v3_6".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_n299_R1_v3_6.csv.gz"),
+                include_bytes!("bc_data_n299_R1_v3_6.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "n37_R1_v3_6".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_n37_R1_v3_6.csv.gz"),
+                include_bytes!("bc_data_n37_R1_v3_6.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "n99_v5".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_n99_v5.csv.gz"),
+                include_bytes!("bc_data_n99_v5.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "v1".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_v1.csv.gz"),
+                include_bytes!("bc_data_v1.csv.sorted.gz"),
             ))),
         );
 
         map_round_bcs.insert(
             "v2".to_string(),
             ParseBioChemistry3::read_onepos_barcodes_pb(GzDecoder::new(Cursor::new(
-                include_bytes!("bc_data_v2.csv.gz"),
+                include_bytes!("bc_data_v2.csv.sorted.gz"),
             ))),
         );
 

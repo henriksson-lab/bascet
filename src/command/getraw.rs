@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bgzip::write::BGZFMultiThreadWriter;
 use bgzip::Compression;
+use blart::AsBytes;
 use clap::{Args, Subcommand};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use gxhash::HashMapExt;
@@ -116,14 +117,21 @@ pub enum GetRawChemistryCMD {
     /// AtrandiWGS chemistry, uses combinatorial 8bp barcodes for debarcoding
     AtrandiWGS,
     /// ParseBio chemistry, uses combinatorial 8bp barcodes for debarcoding
-    ParseBio,
+    ParseBio {
+        #[arg(
+            long = "subchemistry",
+            default_value_t = String::from(""),
+            help = "ParseBio subchemistry"
+        )]
+        subchemistry: String,
+    },
 }
 
 #[derive(Clone)]
 #[enum_dispatch::enum_dispatch(Chemistry)]
 pub enum GetRawChemistry {
     AtrandiWGS(DebarcodeAtrandiWGSChemistry),
-    ParseBio(ParseBioChemistry3)
+    ParseBio(ParseBioChemistry3),
 }
 
 struct ThreadConfig {
@@ -159,7 +167,7 @@ impl GetRawCMD {
             + thread_config.write
             + thread_config.debarcode
             + thread_config.sort;
-            
+
         thread_config.total = total_threads_actual;
 
         log_info!(
@@ -263,11 +271,15 @@ impl GetRawCMD {
                 );
             }
 
-            let mut chemistry = match self.chemistry {
-                GetRawChemistryCMD::AtrandiWGS => GetRawChemistry::AtrandiWGS(DebarcodeAtrandiWGSChemistry::new()),
-                GetRawChemistryCMD::ParseBio => GetRawChemistry::ParseBio(ParseBioChemistry3::new(&String::from(""))),
+            let mut chemistry = match &self.chemistry {
+                GetRawChemistryCMD::AtrandiWGS { .. } => {
+                    GetRawChemistry::AtrandiWGS(DebarcodeAtrandiWGSChemistry::new())
+                }
+                GetRawChemistryCMD::ParseBio { subchemistry, .. } => {
+                    GetRawChemistry::ParseBio(ParseBioChemistry3::new(&subchemistry))
+                }
             };
-            
+
             {
                 log_info!("Preparing chemistry...");
                 let (input_r1, input_r2) = &vec_input.first().unwrap();
@@ -304,25 +316,24 @@ impl GetRawCMD {
                 log_info!("Finished reading first 10000 reads of R2...");
                 let _ = chemistry.prepare_using_rp_vecs(b1, b2);
             }
-
+            // std::process::exit(0);
             let ((r1_rx, r2_rx), (r1_handle, r2_handle)) = spawn_paired_readers(
                 vec_input,
                 thread_config.read,
                 stream_page_size_bytes,
                 stream_n_pages,
             );
-            
+
             let (rp_rx, rt_handle) = spawn_debarcode_router(r1_rx, r2_rx);
             let (db_rx, db_handles, chemistry) =
-                spawn_debarcode_workers(chemistry, rp_rx, thread_config.debarcode);
+                spawn_debarcode_workers(rp_rx, chemistry, thread_config.debarcode);
 
             let (ct_rx, ct_handle) =
                 spawn_collector(db_rx, thread_config.sort, sort_buffer_size_bytes);
-            let (st_rx, st_handles) = spawn_sort_workers(ct_rx, thread_config.sort);
+            let (st_rx, st_handles) = spawn_sort_workers(ct_rx, chemistry, thread_config.sort);
 
             let wt_handles = spawn_chunk_writers(
                 st_rx,
-                chemistry,
                 timestamp_temp_files.clone(),
                 path_temp_dir.clone(),
                 thread_config.write,
@@ -639,8 +650,8 @@ fn spawn_debarcode_router(
 }
 
 fn spawn_debarcode_workers(
-    chemistry: GetRawChemistry,
     rp_rx: Receiver<(DebarcodeReadCell, DebarcodeReadCell)>,
+    chemistry: GetRawChemistry,
     debarcode_n_threads: usize,
 ) -> (
     Receiver<(u32, (DebarcodeReadCell, DebarcodeReadCell))>,
@@ -765,6 +776,7 @@ fn spawn_collector(
 
 fn spawn_sort_workers(
     ct_rx: Receiver<Vec<(u32, (DebarcodeReadCell, DebarcodeReadCell))>>,
+    chemistry: GetRawChemistry,
     sort_n_threads: usize,
 ) -> (Receiver<Vec<DebarcodeMergeCell>>, Vec<JoinHandle<()>>) {
     let mut thread_handles = Vec::with_capacity(sort_n_threads);
@@ -773,25 +785,40 @@ fn spawn_sort_workers(
     for _ in 0..sort_n_threads {
         let ct_rx = ct_rx.clone();
         let st_tx = st_tx.clone();
+        let thread_chemistry = chemistry.clone();
 
         let thread_handle = std::thread::spawn(move || {
-            while let Ok(mut cell_list) = ct_rx.recv() {
-                // unstable sort is in place
-                glidesort::sort_by(&mut cell_list, |(a, _), (b, _)| Ord::cmp(b, a));
-                let mut owned_list: Vec<DebarcodeMergeCell> = Vec::with_capacity(cell_list.len());
+            while let Ok(cell_list) = ct_rx.recv() {
+                // HACK: Convert barcode before sorting for correct ordering
+                // NOTE: sort in descending order to be able to pop off the end (O(1) rather than O(n))
+                // NOTE: to save memory conversion to owned cells is NOT done via map but rather by popping
+                let mut cell_list_with_bc: Vec<(u32, Vec<u8>, (DebarcodeReadCell, DebarcodeReadCell))> = cell_list
+                    .into_iter()
+                    .map(|(id, reads)| {
+                        let id_as_bc = thread_chemistry.bcindexu32_to_bcu8(&id).to_vec();
+                        (id, id_as_bc, reads)
+                    })
+                    .collect();
 
-                while let Some((id, (r1, r2))) = cell_list.pop() {
-                    let builder = DebarcodeMergeCell::builder();
-                    let cell = builder
-                        .add_cell_id_owned(id.to_le_bytes().to_vec())
-                        .add_rp_owned(r1.read.to_vec(), r2.read.to_vec())
-                        .add_qp_owned(r1.quality.to_vec(), r2.quality.to_vec())
-                        .add_umi_owned(r1.umi.to_vec())
-                        .build();
-                    owned_list.push(cell);
+                glidesort::sort_by(&mut cell_list_with_bc, |(_, bc_a, _), (_, bc_b, _)| Ord::cmp(bc_b, bc_a));
+                let mut owned_list: Vec<DebarcodeMergeCell> = Vec::with_capacity(cell_list_with_bc.len());
+                let halfway = cell_list_with_bc.len() / 2;
 
-                    if cell_list.len() % 1024 == 0 {
-                        cell_list.shrink_to_fit();
+                while let Some((id, id_as_bc, (r1, r2))) = cell_list_with_bc.pop() {
+                    let metadata = format!("{:?} from {:?} ({:?})", String::from_utf8_lossy(&id_as_bc), id.to_string(), id.to_be_bytes()).into_bytes();
+
+                    owned_list.push(
+                        DebarcodeMergeCell::builder()
+                            .add_cell_id_owned(id_as_bc)
+                            .add_rp_owned(r1.read.to_vec(), r2.read.to_vec())
+                            .add_qp_owned(r1.quality.to_vec(), r2.quality.to_vec())
+                            .add_umi_owned(r1.umi.to_vec())
+                            .add_metadata_owned(metadata)
+                            .build(),
+                    );
+
+                    if cell_list_with_bc.len() == halfway {
+                        cell_list_with_bc.shrink_to_fit();
                     }
                 }
 
@@ -807,7 +834,6 @@ fn spawn_sort_workers(
 
 fn spawn_chunk_writers(
     st_rx: Receiver<Vec<DebarcodeMergeCell>>,
-    chemistry: GetRawChemistry,
     timestamp_temp_files: String,
     path_temp_dir: PathBuf,
     write_n_threads: usize,
@@ -819,7 +845,6 @@ fn spawn_chunk_writers(
     for _ in 0..write_n_threads {
         let st_rx = st_rx.clone();
 
-        let thread_chemistry = chemistry.clone();
         let thread_counter = Arc::clone(&atomic_counter);
         let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);
         let thread_path_temp_dir = path_temp_dir.clone();
@@ -856,9 +881,7 @@ fn spawn_chunk_writers(
                     Compression::fast(),
                 ));
 
-                for mut cell in sorted_cell_list {
-                    let named = thread_chemistry.bcindexsu8_to_bcu8(cell.cell);
-                    cell.cell = unsafe { std::mem::transmute(named.as_slice()) };
+                for cell in sorted_cell_list {
                     let _ = temp_writer.write_cell(&cell);
                 }
 
@@ -896,7 +919,8 @@ fn spawn_mergesort_workers(
         // Handle odd file case by copying the last file directly
         if debarcode_merge.len() % 2 == 1 {
             let last_file = debarcode_merge.last().unwrap();
-            let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
+            // HACK: Use bounded channel to prevent memory accumulation when writer is slow
+            let (mc_tx, mc_rx) = crossbeam::channel::bounded(4096);
             let _ = producer_ms_tx.send(mc_rx);
 
             match DebarcodeMergeStream::try_from_input(last_file) {
@@ -938,7 +962,8 @@ fn spawn_mergesort_workers(
         let thread_handle = std::thread::spawn(move || {
             while let Ok((fa, fb)) = fp_rx.recv() {
                 log_info!("Merging pair: {:?} + {:?}", &fa.path(), &fb.path());
-                let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
+                // HACK: Use bounded channel to prevent memory accumulation when writer is slow
+                let (mc_tx, mc_rx) = crossbeam::channel::bounded(4096);
                 let _ = ms_tx.send(mc_rx);
 
                 let mut stream_a: DebarcodeMergeStream<DebarcodeMergeCell> =
@@ -1105,6 +1130,7 @@ struct DebarcodeReadCell {
     reads: [(&'static [u8], &'static [u8]); 1],
     quality: &'static [u8],
     umi: &'static [u8],
+    metadata: &'static [u8],
 
     // theoretically possible for this to be more than 1 but very unlikely
     _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 1]>,
@@ -1112,14 +1138,14 @@ struct DebarcodeReadCell {
 }
 
 impl DebarcodeReadCell {
-
     #[inline(always)]
     pub fn into_owned(self) -> DebarcodeReadCell {
         Self::builder()
             .add_cell_id_owned(self.cell.to_vec())
-            .add_sequence_owned(self.read.to_vec(),)
+            .add_sequence_owned(self.read.to_vec())
             .add_quality_owned(self.quality.to_vec())
             .add_umi_owned(self.umi.to_vec())
+            .add_metadata_owned(self.metadata.to_vec())
             .build()
     }
 }
@@ -1156,6 +1182,10 @@ impl BascetCell for DebarcodeReadCell {
     fn get_umis(&self) -> Option<&[&[u8]]> {
         None
     }
+
+    fn get_metadata(&self) -> Option<&[u8]> {
+        Some(self.metadata)
+    }
 }
 
 struct DebarcodeReadCellBuilder {
@@ -1163,6 +1193,7 @@ struct DebarcodeReadCellBuilder {
     read: Option<&'static [u8]>,
     quality: Option<&'static [u8]>,
     umi: Option<&'static [u8]>,
+    metadata: Option<&'static [u8]>,
 
     page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 1]>,
     owned: Vec<Vec<u8>>,
@@ -1175,6 +1206,7 @@ impl DebarcodeReadCellBuilder {
             read: None,
             quality: None,
             umi: None,
+            metadata: None,
 
             page_refs: SmallVec::new(),
             owned: Vec::new(),
@@ -1233,6 +1265,16 @@ impl BascetCellBuilder for DebarcodeReadCellBuilder {
         self
     }
 
+    fn add_metadata_owned(mut self, metadata: Vec<u8>) -> Self {
+        self.owned.push(metadata);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        // and the CountsketchCell holds the _owned field to maintain this invariant
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.metadata = Some(slice_with_lifetime);
+        self
+    }
+
     #[inline(always)]
     fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
         self.cell = Some(slice);
@@ -1251,10 +1293,12 @@ impl BascetCellBuilder for DebarcodeReadCellBuilder {
         self
     }
 
+    #[inline(always)]
     fn add_umi_slice(mut self, umi: &'static [u8]) -> Self {
         self.umi = Some(umi);
         self
     }
+
 
     #[inline(always)]
     fn build(self) -> DebarcodeReadCell {
@@ -1264,6 +1308,7 @@ impl BascetCellBuilder for DebarcodeReadCellBuilder {
             reads: [(self.read.unwrap_or(&[]), &[])],
             quality: self.quality.unwrap_or(&[]),
             umi: self.umi.unwrap_or(&[]),
+            metadata: self.metadata.unwrap_or(&[]),
 
             _page_refs: self.page_refs,
             _owned: self.owned,
@@ -1276,6 +1321,7 @@ struct DebarcodeMergeCell {
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
+    metadata: &'static [u8],
 
     _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     _owned: Vec<Vec<u8>>,
@@ -1313,12 +1359,17 @@ impl BascetCell for DebarcodeMergeCell {
     fn get_umis(&self) -> Option<&[&[u8]]> {
         Some(&self.umis)
     }
+
+    fn get_metadata(&self) -> Option<&[u8]> {
+        Some(&self.metadata)
+    }
 }
 struct DebarcodeMergeCellBuilder {
     cell: Option<&'static [u8]>,
     reads: Vec<(&'static [u8], &'static [u8])>,
     qualities: Vec<(&'static [u8], &'static [u8])>,
     umis: Vec<&'static [u8]>,
+    metadata: Option<&'static [u8]>,
 
     page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
     owned: Vec<Vec<u8>>,
@@ -1331,6 +1382,7 @@ impl DebarcodeMergeCellBuilder {
             reads: Vec::new(),
             qualities: Vec::new(),
             umis: Vec::new(),
+            metadata: None,
 
             page_refs: smallvec::SmallVec::new(),
             owned: Vec::new(),
@@ -1415,6 +1467,16 @@ impl BascetCellBuilder for DebarcodeMergeCellBuilder {
         self
     }
 
+    fn add_metadata_owned(mut self, metadata: Vec<u8>) -> Self {
+        self.owned.push(metadata);
+        let slice = self.owned.last().unwrap().as_slice();
+        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
+        // and the CountsketchCell holds the _owned field to maintain this invariant
+        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
+        self.metadata = Some(slice_with_lifetime);
+        self
+    }
+
     // NOTE: Here the idea is that for as long as the stream tokens are alive the underlying memory will be kept alive
     // by refcounts. For as long as these are valid the memory can be considered static even if it technically is not
     // this is a bit of a hack to make the underlying trait easier to use.
@@ -1459,6 +1521,7 @@ impl BascetCellBuilder for DebarcodeMergeCellBuilder {
             reads: self.reads,
             qualities: self.qualities,
             umis: self.umis,
+            metadata: self.metadata.unwrap_or(&[]),
 
             _page_refs: self.page_refs,
             _owned: self.owned,
@@ -1577,17 +1640,25 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
         }
     }
 
-    fn bcindexsu8_to_bcu8(&self, index32: &[u8]) -> Vec<u8> {
+    fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
         let mut result = Vec::new();
-        for (i, p) in index32.iter().enumerate().rev() {
-            if i > 3 {
-                result.push(b'_');
-            }
-            
-            result
-                .extend_from_slice(self.barcode.pools[i].barcode_name_list[*p as usize].as_bytes());
-        }
-        
+        let bytes = index32.as_bytes();
+        result.extend_from_slice(
+            self.barcode.pools[0].barcode_name_list[bytes[3] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[1].barcode_name_list[bytes[2] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[2].barcode_name_list[bytes[1] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[3].barcode_name_list[bytes[0] as usize].as_bytes(),
+        );
+
         return result;
     }
 }

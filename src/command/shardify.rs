@@ -54,7 +54,7 @@ pub struct ShardifyCMD {
     threads_work: usize,
 
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 2048)]
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 1048)]
     pub buffer_size_mb: usize,
     #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 32)]
     pub page_size_mb: usize,
@@ -162,7 +162,7 @@ impl ShardifyCMD {
 
                     let global_kept =
                         global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    if global_kept % 100 == 0 {
+                    if global_kept % 100_000 == 0 {
                         log_info!("Processing";
                             "cells processed" => global_processed,
                             "cells kept" => global_kept
@@ -233,7 +233,7 @@ impl ShardifyCMD {
 
                     let global_count =
                         global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    if global_count % 100 == 0 {
+                    if global_count % 1_000_000 == 0 {
                         log_info!("Writing"; "cells merged and written" => global_count);
                     }
                 }

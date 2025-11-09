@@ -2,7 +2,7 @@ use crate::command::getraw::GetRawChemistry;
 
 ///////////////////////////////
 /// This trait defines a "single cell chemistry" i.e. barcoding, UMI-definition, trimming, etc
-/// 
+///
 #[enum_dispatch::enum_dispatch]
 pub trait Chemistry {
     ///////////////////////////////
@@ -31,7 +31,11 @@ pub trait Chemistry {
         r1_qual: &[u8],
         r2_seq: &[u8],
         r2_qual: &[u8],
-    ) -> (bool, crate::fileformat::shard::CellID, crate::fileformat::shard::ReadPair) {
+    ) -> (
+        bool,
+        crate::fileformat::shard::CellID,
+        crate::fileformat::shard::ReadPair,
+    ) {
         unimplemented!();
     } // get back if ok, cellid, readpair
 
@@ -45,7 +49,7 @@ pub trait Chemistry {
         unimplemented!();
     } // get back if ok, cellid, readpair
 
-    fn bcindexsu8_to_bcu8(&self, index32: &[u8]) -> Vec<u8> {
+    fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
         unimplemented!()
     }
 }

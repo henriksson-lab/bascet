@@ -39,6 +39,7 @@ where
             let reads = cell.get_reads().unwrap_or(&[]);
             let quals = cell.get_qualities().unwrap_or(&[]);
             let umis = cell.get_umis().unwrap_or(&[]);
+            let metadata = cell.get_metadata().unwrap_or(&[]);
 
             for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
                 // Write each component directly to avoid vector allocation
@@ -57,6 +58,8 @@ where
                 writer.write_all(q2)?;
                 writer.write_all(&[crate::common::U8_CHAR_TAB])?;
                 writer.write_all(umi)?;
+                writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+                writer.write_all(metadata)?;
                 writer.write_all(&[crate::common::U8_CHAR_NEWLINE])?;
             }
         }
