@@ -1,0 +1,16 @@
+[package]
+name = "bascet-derive"
+description = "Bascet derive proc macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck = "0.5.0"
+paste = "1.0.15"
+quote = "1.0.42"
+syn = "2.0.110"
