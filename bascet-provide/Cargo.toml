@@ -1,6 +1,6 @@
 [package]
-name = "bascet-derive"
-description = "Bascet derive proc macro"
+name = "bascet-provide"
+description = "Bascet provide proc macro"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,8 @@
+use crate::{
+    cell::*
+};
+use bascet_provide::*;
 use std::sync::Arc;
-use bascet_derive::*;
-use crate::{Cell, cell::{self, Builder, cell::{ID, Read}}};
 
 // #[derive(cell::Builder)]
 struct TestBuilder {
@@ -10,36 +12,27 @@ struct TestBuilder {
 
 impl TestBuilder {
     fn new() -> Self {
-        TestBuilder { 
+        TestBuilder {
             id: Vec::default(),
-            read: vec![]
+            read: vec![],
         }
     }
 }
 
 impl Builder for TestBuilder {
-    type Product = TestCell;
+    type Builds = TestCell;
 
-    fn produce(self) -> Self::Product {
-        Self::Product {
+    fn build(self) -> Self::Builds {
+        Self::Builds {
             id: self.id,
-            read: self.read
+            read: self.read,
         }
-    }
-
-    fn id(mut self, other: <Self::Product as super::marker::ProvideID>::Type) -> Self
-        where
-            Self::Product: super::marker::ProvideID, {
-        self.id = other;
-        self
     }
 }
 
-#[derive(ProvideID, ProvideRead)]
+#[cell(Id, Read)]
 struct TestCell {
     id: Vec<u8>,
-    #[cell(ID)]
-    #[cell(Read)]
     read: Vec<u8>,
 }
 
@@ -51,11 +44,13 @@ impl Cell for TestCell {
     }
 }
 
-fn test() {
-    let id = vec![b't', b'e', b's', b't'];
+fn _test() {
     let mut builder = TestCell::builder();
+    let id = Vec::from(b"Hello World");
     builder = builder.id(id);
-    let cell = builder.produce();
-    let ID(id) = cell.get::<ID<Vec<u8>>>();
-    let (ID(id), Read(read)) = cell.get::<(ID<Vec<u8>>, Read<Vec<u8>>)>();
+    let mut cell = builder.build();
+
+    let Id(id_mut) = cell.get_mut::<Id<&mut Vec<u8>>>();
+    id_mut.extend_from_slice(b"This wont work");
+    let (Id(_), Read(_)) = cell.get::<(Id<&Vec<u8>>, Read<&Vec<u8>>)>();
 }
