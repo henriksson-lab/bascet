@@ -792,7 +792,11 @@ fn spawn_sort_workers(
                 // HACK: Convert barcode before sorting for correct ordering
                 // NOTE: sort in descending order to be able to pop off the end (O(1) rather than O(n))
                 // NOTE: to save memory conversion to owned cells is NOT done via map but rather by popping
-                let mut cell_list_with_bc: Vec<(u32, Vec<u8>, (DebarcodeReadCell, DebarcodeReadCell))> = cell_list
+                let mut cell_list_with_bc: Vec<(
+                    u32,
+                    Vec<u8>,
+                    (DebarcodeReadCell, DebarcodeReadCell),
+                )> = cell_list
                     .into_iter()
                     .map(|(id, reads)| {
                         let id_as_bc = thread_chemistry.bcindexu32_to_bcu8(&id).to_vec();
@@ -800,12 +804,21 @@ fn spawn_sort_workers(
                     })
                     .collect();
 
-                glidesort::sort_by(&mut cell_list_with_bc, |(_, bc_a, _), (_, bc_b, _)| Ord::cmp(bc_b, bc_a));
-                let mut owned_list: Vec<DebarcodeMergeCell> = Vec::with_capacity(cell_list_with_bc.len());
+                glidesort::sort_by(&mut cell_list_with_bc, |(_, bc_a, _), (_, bc_b, _)| {
+                    Ord::cmp(bc_b, bc_a)
+                });
+                let mut owned_list: Vec<DebarcodeMergeCell> =
+                    Vec::with_capacity(cell_list_with_bc.len());
                 let halfway = cell_list_with_bc.len() / 2;
 
                 while let Some((id, id_as_bc, (r1, r2))) = cell_list_with_bc.pop() {
-                    let metadata = format!("{:?} from {:?} ({:?})", String::from_utf8_lossy(&id_as_bc), id.to_string(), id.to_be_bytes()).into_bytes();
+                    let metadata = format!(
+                        "{:?} from {:?} ({:?})",
+                        String::from_utf8_lossy(&id_as_bc),
+                        id.to_string(),
+                        id.to_be_bytes()
+                    )
+                    .into_bytes();
 
                     owned_list.push(
                         DebarcodeMergeCell::builder()
@@ -1298,7 +1311,6 @@ impl BascetCellBuilder for DebarcodeReadCellBuilder {
         self.umi = Some(umi);
         self
     }
-
 
     #[inline(always)]
     fn build(self) -> DebarcodeReadCell {

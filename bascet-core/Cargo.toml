@@ -1,0 +1,10 @@
+[package]
+name = "bascet-core"
+description = "Core abstractions used for bascet commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bascet-derive = { path = "../bascet-derive" }
