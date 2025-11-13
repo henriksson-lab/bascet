@@ -1,56 +1,21 @@
-use crate::{
-    cell::*
-};
+use crate::cell::*;
 use bascet_provide::*;
-use std::sync::Arc;
 
-// #[derive(cell::Builder)]
-struct TestBuilder {
+// nobuild flag creates a noop build with an unreachable-flagged getter
+#[cell(Id, Read, Metadata(nobuild: &'static str))]
+pub struct TestCell {
+    // example of a build noop that does exist on the struct
+    #[build_set(|builder, _| builder)]
     id: Vec<u8>,
-    read: Vec<u8>,
+    
+    // example of default override
+    #[build_default(|| vec!["ATGCATCC".into()])]
+    read: Vec<Vec<u8>>,
 }
 
-impl TestBuilder {
-    fn new() -> Self {
-        TestBuilder {
-            id: Vec::default(),
-            read: vec![],
-        }
-    }
-}
-
-impl Builder for TestBuilder {
-    type Builds = TestCell;
-
-    fn build(self) -> Self::Builds {
-        Self::Builds {
-            id: self.id,
-            read: self.read,
-        }
-    }
-}
-
-#[cell(Id, Read)]
-struct TestCell {
-    id: Vec<u8>,
-    read: Vec<u8>,
-}
-
-impl Cell for TestCell {
-    type Builder = TestBuilder;
-
-    fn builder() -> Self::Builder {
-        Self::Builder::new()
-    }
-}
-
-fn _test() {
-    let mut builder = TestCell::builder();
-    let id = Vec::from(b"Hello World");
-    builder = builder.id(id);
-    let mut cell = builder.build();
-
-    let Id(id_mut) = cell.get_mut::<Id<&mut Vec<u8>>>();
-    id_mut.extend_from_slice(b"This wont work");
-    let (Id(_), Read(_)) = cell.get::<(Id<&Vec<u8>>, Read<&Vec<u8>>)>();
+fn main() {
+    let mut cell = TestCell::builder()
+        .with::<Id>(b"cell_test".to_vec())
+        .with::<Metadata>("This will be ignored")
+        .build();
 }
