@@ -7,9 +7,17 @@ use syn::{
 };
 
 enum TraitSpec {
-    Default { trait_ident: Ident },
-    Override { trait_ident: Ident, field_ident: Ident },
-    NoBuild { trait_ident: Ident, nobuild_type: syn::Type },
+    Default {
+        trait_ident: Ident,
+    },
+    Override {
+        trait_ident: Ident,
+        field_ident: Ident,
+    },
+    NoBuild {
+        trait_ident: Ident,
+        nobuild_type: syn::Type,
+    },
 }
 
 impl Parse for TraitSpec {
@@ -25,13 +33,19 @@ impl Parse for TraitSpec {
             }
             content.parse::<Token![:]>()?;
             let nobuild_type = content.parse()?;
-            return Ok(TraitSpec::NoBuild { trait_ident, nobuild_type });
+            return Ok(TraitSpec::NoBuild {
+                trait_ident,
+                nobuild_type,
+            });
         }
 
         if input.peek(Token![=]) {
             input.parse::<Token![=]>()?;
             let field_ident = input.parse()?;
-            return Ok(TraitSpec::Override { trait_ident, field_ident });
+            return Ok(TraitSpec::Override {
+                trait_ident,
+                field_ident,
+            });
         }
 
         Ok(TraitSpec::Default { trait_ident })
@@ -74,17 +88,24 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
                 let (idx, field) = fields
                     .iter()
                     .enumerate()
-                    .find(|(_, f)| f.ident.as_ref() == Some(&Ident::new(&snake, trait_ident.span())))
+                    .find(|(_, f)| {
+                        f.ident.as_ref() == Some(&Ident::new(&snake, trait_ident.span()))
+                    })
                     .unwrap_or_else(|| panic!("No field '{}' for trait {}", snake, name));
                 (name, field.ident.clone().unwrap(), field.ty.clone(), idx)
             }
-            TraitSpec::Override { trait_ident, field_ident } => {
+            TraitSpec::Override {
+                trait_ident,
+                field_ident,
+            } => {
                 let name = trait_ident.to_string();
                 let (idx, field) = fields
                     .iter()
                     .enumerate()
                     .find(|(_, f)| f.ident.as_ref() == Some(field_ident))
-                    .unwrap_or_else(|| panic!("Field '{}' not found for trait {}", field_ident, name));
+                    .unwrap_or_else(|| {
+                        panic!("Field '{}' not found for trait {}", field_ident, name)
+                    });
                 (name, field_ident.clone(), field.ty.clone(), idx)
             }
             TraitSpec::NoBuild { .. } => continue,
@@ -97,14 +118,20 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
             .push(format!("Provide{}", name));
     }
 
-    for (fname, traits) in &field_usage {
-        if traits.len() > 1 {
-            let msg = format!("Field `{}` is used by multiple traits: {}", fname, traits.join(", "));
+    for (fname, used_by) in &field_usage {
+        if used_by.len() > 1 {
+            let msg = format!(
+                "Field `{}` is used by multiple traits: {}",
+                fname,
+                used_by.join(", ")
+            );
             if let Some(field) = fields
                 .iter_mut()
                 .find(|f| f.ident.as_ref().map(|i| i.to_string()).as_ref() == Some(fname))
             {
-                field.attrs.push(syn::parse_quote! { #[deprecated(note = #msg)] });
+                field
+                    .attrs
+                    .push(syn::parse_quote! { #[deprecated(note = #msg)] });
             }
         }
     }
@@ -122,15 +149,7 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
 
         if is_nobuild {
             quote! {
-                impl #trait_path for #struct_name {
-                    type Type = ();
-                    fn as_ref(&self) -> &Self::Type {
-                        unreachable!("Cannot get {} - marked as nobuild", stringify!(#name))
-                    }
-                    fn as_mut(&mut self) -> &mut Self::Type {
-                        unreachable!("Cannot get {} - marked as nobuild", stringify!(#name))
-                    }
-                }
+                
             }
         } else {
             let (fname, ftype, _) = &trait_to_field[&name];
@@ -154,10 +173,10 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
             let mut default = None;
             let mut setter = None;
             f.attrs.retain(|attr| {
-                if attr.path().is_ident("build_default") {
+                if attr.path().is_ident("default") {
                     default = attr.parse_args::<syn::Expr>().ok();
                     false
-                } else if attr.path().is_ident("build_set") {
+                } else if attr.path().is_ident("with") {
                     setter = attr.parse_args::<syn::Expr>().ok();
                     false
                 } else {
@@ -168,38 +187,39 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
         })
         .unzip();
 
-    let build_impls = trait_list.specs.iter().map(|spec| {
-        match spec {
-            TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
-                let name = trait_ident.to_string();
-                let attr_path: syn::Path =
-                    syn::parse_str(&format!("crate::cell::attr::{}", name)).unwrap();
-                let (fname, ftype, idx) = &trait_to_field[&name];
+    let build_impls = trait_list.specs.iter().map(|spec| match spec {
+        TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
+            let name = trait_ident.to_string();
+            let attr_path: syn::Path =
+                syn::parse_str(&format!("crate::cell::attr::{}", name)).unwrap();
+            let (fname, ftype, idx) = &trait_to_field[&name];
 
-                let body = match &field_setters[*idx] {
-                    Some(setter) => quote! { (#setter)(builder, value) },
-                    None => quote! { builder.#fname = value; builder },
-                };
+            let body = match &field_setters[*idx] {
+                Some(setter) => quote! { (#setter)(builder, value) },
+                None => quote! { builder.#fname = value; builder },
+            };
 
-                quote! {
-                    impl crate::cell::core::Build<#builder_name> for #attr_path {
-                        type Type = #ftype;
-                        fn build(mut builder: #builder_name, value: Self::Type) -> #builder_name {
-                            #body
-                        }
+            quote! {
+                impl crate::cell::traits::Build<#builder_name> for #attr_path {
+                    type Type = #ftype;
+                    fn build(mut builder: #builder_name, value: Self::Type) -> #builder_name {
+                        #body
                     }
                 }
             }
-            TraitSpec::NoBuild { trait_ident, nobuild_type } => {
-                let name = trait_ident.to_string();
-                let attr_path: syn::Path =
-                    syn::parse_str(&format!("crate::cell::attr::{}", name)).unwrap();
-                quote! {
-                    impl crate::cell::core::Build<#builder_name> for #attr_path {
-                        type Type = #nobuild_type;
-                        fn build(builder: #builder_name, _value: Self::Type) -> #builder_name {
-                            builder
-                        }
+        }
+        TraitSpec::NoBuild {
+            trait_ident,
+            nobuild_type,
+        } => {
+            let name = trait_ident.to_string();
+            let attr_path: syn::Path =
+                syn::parse_str(&format!("crate::cell::attr::{}", name)).unwrap();
+            quote! {
+                impl crate::cell::traits::Build<#builder_name> for #attr_path {
+                    type Type = #nobuild_type;
+                    fn build(builder: #builder_name, _value: Self::Type) -> #builder_name {
+                        builder
                     }
                 }
             }
@@ -207,12 +227,13 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
     });
 
     let default_impl = if field_defaults.iter().any(|d| d.is_some()) {
-        let inits = field_names.iter().zip(&field_defaults).map(|(name, default)| {
-            match default {
+        let inits = field_names
+            .iter()
+            .zip(&field_defaults)
+            .map(|(name, default)| match default {
                 Some(expr) => quote! { #name: (#expr)() },
                 None => quote! { #name: Default::default() },
-            }
-        });
+            });
         quote! {
             impl Default for #builder_name {
                 fn default() -> Self {
@@ -233,14 +254,14 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
             #(pub #field_names: #field_types,)*
         }
 
-        impl crate::cell::core::Builder for #builder_name {
+        impl crate::cell::traits::Builder for #builder_name {
             type Builds = #struct_name;
             fn build(self) -> Self::Builds {
                 Self::Builds { #(#field_names: self.#field_names,)* }
             }
         }
 
-        impl crate::cell::core::Cell for #struct_name {
+        impl crate::cell::traits::Cell for #struct_name {
             type Builder = #builder_name;
             fn builder() -> Self::Builder { Default::default() }
         }
