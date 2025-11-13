@@ -1,6 +1,9 @@
 mod provide;
 
 #[proc_macro_attribute]
-pub fn cell(attrs: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn cell(
+    attrs: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     provide::attrs(attrs, item)
 }
