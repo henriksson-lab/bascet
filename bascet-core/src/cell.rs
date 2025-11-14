@@ -26,16 +26,16 @@
 //! assert_eq!(id, b"cell_test_modified");
 //! ```
 //! In addition, several flags exist to modify builder and provider:
-//! ```
-//! // nobuild flag creates a noop build with an unreachable-flagged getter
+//! ```compile_fail
+//! use bascet_core::cell::*;
+//! use bascet_provide::*;
+//!
 //! #[cell(Id, Read, Metadata(nobuild: &'static str))]
 //! pub struct TestCell {
-//!     // example of a build override
-//!     #[with(|builder, value| builder.id = value.into_iter().map(|v| v * 2).collect(); builder)]
+//!     #[with(|mut builder: TestCellBuilder, value: Vec<u8>| { builder.id = value.into_iter().map(|v| v * 2).collect(); builder })]
 //!     id: Vec<u8>,
 //!
-//!     // example of default override
-//!     #[default(|| vec!["ATGCATCC".into()])]
+//!     #[default(|| vec![b"ATGCATCC".to_vec()])]
 //!     read: Vec<Vec<u8>>,
 //! }
 //! let mut cell = TestCell::builder()
@@ -43,11 +43,10 @@
 //!     .with::<Metadata>("This will be ignored")
 //!     .build();
 //! let (id, read) = cell.get_ref::<(Id, Read)>();
-//! assert_eq!(id, vec![2, 4, 6]);
-//! assert_eq!(id, vec![b"ATGCATCC".to_vec()]);
-//!
-//! // does not compile:
-//! let (metadata) = cell.get_ref::<Metadata>();
+//! assert_eq!(id, &vec![2, 4, 6]);
+//! assert_eq!(read, &vec![b"ATGCATCC".to_vec()]);
+//! // This fails to compile
+//! let metadata = cell.get_ref::<Metadata>();
 //! ```
 
 #[macro_use]

@@ -9,7 +9,6 @@ impl_attrs!(
     ManagedRef
 );
 
-#[rustfmt::skip]
 impl_tuple_provide!(Arg1, Arg2);
 impl_tuple_provide!(Arg1, Arg2, Arg3);
 impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4);
