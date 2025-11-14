@@ -77,6 +77,12 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
     };
     let fields = &mut named_fields.named;
 
+    // TODO: convert to const
+    let provides_trait = quote! { bascet_core::cell::Provides };
+    let build_trait = quote! { bascet_core::builder::Build };
+    let builder_trait = quote! { bascet_core::builder::Builder };
+    let cell_trait = quote! { bascet_core::cell::Cell };
+
     let mut trait_to_field: HashMap<String, (Ident, syn::Type, usize)> = HashMap::new();
     let mut field_usage: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -137,24 +143,19 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let trait_impls = trait_list.specs.iter().map(|spec| {
-        let (name, is_nobuild) = match spec {
+        let (trait_ident, is_nobuild) = match spec {
             TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
-                (trait_ident.to_string(), false)
+                (trait_ident, false)
             }
-            TraitSpec::NoBuild { trait_ident, .. } => (trait_ident.to_string(), true),
+            TraitSpec::NoBuild { trait_ident, .. } => (trait_ident, true),
         };
 
-        let trait_path: syn::Path =
-            syn::parse_str(&format!("crate::cell::attr::Provide{}", name)).unwrap();
-
         if is_nobuild {
-            quote! {
-                
-            }
+            quote! {}
         } else {
-            let (fname, ftype, _) = &trait_to_field[&name];
+            let (fname, ftype, _) = &trait_to_field[&trait_ident.to_string()];
             quote! {
-                impl #trait_path for #struct_name {
+                impl #provides_trait<#trait_ident> for #struct_name {
                     type Type = #ftype;
                     fn as_ref(&self) -> &Self::Type { &self.#fname }
                     fn as_mut(&mut self) -> &mut Self::Type { &mut self.#fname }
@@ -190,19 +191,17 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
     let build_impls = trait_list.specs.iter().map(|spec| match spec {
         TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
             let name = trait_ident.to_string();
-            let attr_path: syn::Path =
-                syn::parse_str(&format!("crate::cell::attr::{}", name)).unwrap();
             let (fname, ftype, idx) = &trait_to_field[&name];
 
             let body = match &field_setters[*idx] {
-                Some(setter) => quote! { (#setter)(builder, value) },
-                None => quote! { builder.#fname = value; builder },
+                Some(setter) => quote! { (#setter)(self, value) },
+                None => quote! { self.#fname = value; self },
             };
 
             quote! {
-                impl crate::cell::traits::Build<#builder_name> for #attr_path {
+                impl #build_trait<#trait_ident> for #builder_name {
                     type Type = #ftype;
-                    fn build(mut builder: #builder_name, value: Self::Type) -> #builder_name {
+                    fn set(mut self, value: Self::Type) -> Self {
                         #body
                     }
                 }
@@ -212,14 +211,11 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
             trait_ident,
             nobuild_type,
         } => {
-            let name = trait_ident.to_string();
-            let attr_path: syn::Path =
-                syn::parse_str(&format!("crate::cell::attr::{}", name)).unwrap();
             quote! {
-                impl crate::cell::traits::Build<#builder_name> for #attr_path {
+                impl #build_trait<#trait_ident> for #builder_name {
                     type Type = #nobuild_type;
-                    fn build(builder: #builder_name, _value: Self::Type) -> #builder_name {
-                        builder
+                    fn set(self, _value: Self::Type) -> Self {
+                        self
                     }
                 }
             }
@@ -254,14 +250,14 @@ pub fn attrs(attrs: TokenStream, item: TokenStream) -> TokenStream {
             #(pub #field_names: #field_types,)*
         }
 
-        impl crate::cell::traits::Builder for #builder_name {
+        impl #builder_trait for #builder_name {
             type Builds = #struct_name;
             fn build(self) -> Self::Builds {
                 Self::Builds { #(#field_names: self.#field_names,)* }
             }
         }
 
-        impl crate::cell::traits::Cell for #struct_name {
+        impl #cell_trait for #struct_name {
             type Builder = #builder_name;
             fn builder() -> Self::Builder { Default::default() }
         }

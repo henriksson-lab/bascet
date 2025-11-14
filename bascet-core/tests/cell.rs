@@ -1,5 +1,5 @@
-use bascet_core::cell::*;
-use bascet_provide::*;
+use bascet_core::*;
+use bascet_derive::*;
 
 #[cell(Id, Read)]
 pub struct BasicCell {

@@ -1,6 +1,6 @@
 [package]
-name = "bascet-provide"
-description = "Bascet provide proc macro"
+name = "bascet-derive"
+description = "Bascet derive macros for cells"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,5 +12,7 @@ proc-macro = true
 [dependencies]
 heck = "0.5.0"
 paste = "1.0.15"
+proc-macro2 = "1.0.103"
 quote = "1.0.42"
-syn = "2.0.110"
+syn = { version = "2.0.110", features = ["full"] }
+token_stream2 = "1.0.2"
