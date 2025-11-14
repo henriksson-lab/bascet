@@ -2,8 +2,8 @@
 //!
 //! # Example
 //! ```
-//! use bascet_core::cell::*;
-//! use bascet_provide::*;
+//! use bascet_core::*;
+//! use bascet_derive::*;
 //!
 //! #[cell(Id, Read)]
 //! pub struct TestCell {
@@ -27,8 +27,8 @@
 //! ```
 //! In addition, several flags exist to modify builder and provider:
 //! ```compile_fail
-//! use bascet_core::cell::*;
-//! use bascet_provide::*;
+//! use bascet_core::*;
+//! use bascet_derive::*;
 //!
 //! #[cell(Id, Read, Metadata(nobuild: &'static str))]
 //! pub struct TestCell {
@@ -48,12 +48,5 @@
 //! // This fails to compile
 //! let metadata = cell.get_ref::<Metadata>();
 //! ```
-
-#[macro_use]
-pub(crate) mod macros;
-#[rustfmt::skip]
-pub mod attr;
 pub mod traits;
-
-pub use attr::*;
 pub use traits::*;
