@@ -1,37 +1,8 @@
 macro_rules! impl_attrs {
     ($($attr_name:ident),+ $(,)?) => {
         $(
-            paste::paste!{
-                pub trait [<Provide $attr_name>] {
-                    type Type;
-                    fn as_ref(&self) -> &Self::Type;
-                    fn as_mut(&mut self) -> &mut Self::Type;
-                }
-
-                pub struct $attr_name;
-
-                impl<[<"'" $attr_name:snake>], T> super::traits::GetRef<[<"'" $attr_name:snake>], T> for $attr_name
-                where
-                    T: [<Provide $attr_name>],
-                    T::Type: [<"'" $attr_name:snake>],
-                {
-                    type Output = &[<"'" $attr_name:snake>] T::Type;
-                    fn get_ref(cell: &[<"'" $attr_name:snake>] T) -> Self::Output {
-                        cell.as_ref()
-                    }
-                }
-
-                impl<[<"'" $attr_name:snake>], T> super::traits::GetMut<[<"'" $attr_name:snake>], T> for $attr_name
-                where
-                    T: [<Provide $attr_name>],
-                    T::Type: [<"'" $attr_name:snake>],
-                {
-                    type Output = &[<"'" $attr_name:snake>] mut T::Type;
-                    fn get_mut(cell: &[<"'" $attr_name:snake>] mut T) -> Self::Output {
-                        cell.as_mut()
-                    }
-                }
-            }
+            pub struct $attr_name;
+            impl super::traits::Attr for $attr_name {}
         )+
     };
 }
