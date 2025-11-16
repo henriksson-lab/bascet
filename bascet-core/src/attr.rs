@@ -1,8 +1,9 @@
-pub mod traits;
+// NOTE: mod macros and macros use must come BEFORE anything using the macros?
 #[macro_use]
-pub mod macros;
+mod macros;
+mod traits;
 #[rustfmt::skip]
-pub mod attrs;
+mod attrs;
 
 pub use attrs::*;
 pub use traits::*;
