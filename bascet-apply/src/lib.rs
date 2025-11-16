@@ -53,11 +53,14 @@ pub fn apply_selected(input: TokenStream) -> TokenStream {
         _ => Vec::new(),
     };
 
-    let calls = attrs.iter().filter(|(a, _)| selected.contains(a)).map(
-        |(attr, val)| quote! {
-            ::bascet_core::Tagged::<#attr, _>::new(#val).put(&mut #target);
-        },
-    );
+    let calls = attrs
+        .iter()
+        .filter(|(a, _)| selected.contains(a))
+        .map(|(attr, val)| {
+            quote! {
+                ::bascet_core::Tagged::<#attr, _>::new(#val).put(&mut #target);
+            }
+        });
 
     quote! {{
         use ::bascet_core::Put as _;

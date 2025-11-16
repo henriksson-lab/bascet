@@ -7,8 +7,8 @@ use syn::{
 };
 
 enum TraitSpec {
-    Default { 
-        trait_ident: Ident 
+    Default {
+        trait_ident: Ident,
     },
     Override {
         trait_ident: Ident,
@@ -51,7 +51,10 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         .attrs
         .iter()
         .find(|attr| attr.path().is_ident("attrs"))
-        .map(|attr| attr.parse_args::<TraitList>().expect("Invalid attrs syntax"))
+        .map(|attr| {
+            attr.parse_args::<TraitList>()
+                .expect("Invalid attrs syntax")
+        })
         .expect("Missing #[attrs(...)] attribute");
 
     let Data::Struct(data) = &mut input.data else {
@@ -94,12 +97,14 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
     input.attrs.retain(|attr| !attr.path().is_ident("attrs"));
 
     let attr_idents = trait_list.specs.iter().map(|spec| match spec {
-        TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => trait_ident
+        TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => trait_ident,
     });
 
     let impls = trait_list.specs.iter().map(|spec| {
         let trait_ident = match spec {
-            TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => trait_ident
+            TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
+                trait_ident
+            }
         };
         let (fname, ftype) = &map[&trait_ident.to_string()];
         quote! {
