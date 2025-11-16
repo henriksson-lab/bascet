@@ -67,11 +67,19 @@ where
                             match self.inner_parser.parse::<C, A>(block) {
                                 crate::ParseStatus::Full(cell) => return Ok(Some(cell)),
                                 crate::ParseStatus::Partial => continue,
-                                crate::ParseStatus::Error(_) => return Err(()),
+                                crate::ParseStatus::Error(e) => return Err(e),
                             }
                         }
-                        crate::DecodeStatus::Eof => return Ok(None),
-                        crate::DecodeStatus::Error(_) => return Err(()),
+                        crate::DecodeStatus::Eof(leftover) => {
+                            match self.inner_parser.parse_finish::<C, A>(leftover) {
+                                crate::ParseStatus::Full(cell) => return Ok(Some(cell)),
+                                super::ParseStatus::Error(e) => return Err(e),
+
+                                // SAFETY: parse_finish must always return the final cell as complete.
+                                crate::ParseStatus::Partial => unreachable!(),
+                            }
+                        }
+                        crate::DecodeStatus::Error(e) => return Err(e),
                     }
                 }
             }
@@ -94,7 +102,7 @@ where
         let handle = std::thread::spawn(move || loop {
             let decode_status = decoder.decode();
             let decode_break = match &decode_status {
-                crate::DecodeStatus::Eof | crate::DecodeStatus::Error(_) => true,
+                crate::DecodeStatus::Eof(_) | crate::DecodeStatus::Error(_) => true,
                 crate::DecodeStatus::Block(_) => false,
             };
 
