@@ -1,0 +1,10 @@
+[package]
+name = "bascet-io"
+description = "IO implementations required for bascet commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bascet-core = { path = "../bascet-core" }
