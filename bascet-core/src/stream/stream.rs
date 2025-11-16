@@ -1,3 +1,5 @@
+use std::{num::NonZero, thread::JoinHandle};
+
 pub struct Stream<D, P> 
 where 
     D: crate::Decode,
@@ -44,5 +46,9 @@ where
                 None => return Ok(None),
             }
         }
+    }
+
+    pub fn spawn_decode_worker(&mut self, n_buffers: NonZero<usize>) -> (JoinHandle<()>, rtrb::Consumer<Result<Option<D::Block>, ()>>) {
+
     }
 }

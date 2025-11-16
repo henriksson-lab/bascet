@@ -10,3 +10,4 @@ repository.workspace = true
 bascet-apply = { path = "../bascet-apply" }
 bascet-derive = { path = "../bascet-derive" }
 paste = "1.0.15"
+rtrb = "0.3.2"
