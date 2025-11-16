@@ -1,6 +1,6 @@
 use std::{num::NonZero, thread::JoinHandle};
 
-use rtrb::PushError;
+use rtrb::{PopError, PushError};
 
 use crate::threading;
 
@@ -46,32 +46,36 @@ where
     where
         C: crate::Composite,
     {
-        loop {
-            let block = self.inner_buffer_rx.pop().ok();
-            match block {
-                Some(block) => {
-                    if let Some(structured) = self.inner_parser.parse::<C, C::Attrs>(block)? {
-                        return Ok(Some(structured));
-                    }
-                }
-                None => return Ok(None),
-            }
-        }
+        self.next_with::<C, C::Attrs>()
     }
 
     pub fn next_with<C, A>(&mut self) -> Result<Option<C>, ()>
     where
         C: crate::Composite,
     {
+        let mut spinpark_counter = 0;
         loop {
-            let block = self.inner_buffer_rx.pop().ok()??;
-            match block {
-                Some(block) => {
-                    if let Some(structured) = self.inner_parser.parse::<C, A>(block)? {
-                        return Ok(Some(structured));
+            match self.inner_buffer_rx.pop() {
+                Err(PopError::Empty) => {
+                    threading::spinpark_loop::<100>(&mut spinpark_counter);
+                }
+                Ok(res_decode) => {
+                    spinpark_counter = 0;
+
+                    match res_decode {
+                        Ok(Some(block)) => {
+                            if let Some(structured) = self.inner_parser.parse::<C, A>(block)? {
+                                return Ok(Some(structured));
+                            }
+                        }
+                        Ok(None) => {
+                            return Ok(None);
+                        }
+                        Err(_) => {
+                            panic!();
+                        }
                     }
                 }
-                None => return Ok(None),
             }
         }
     }
