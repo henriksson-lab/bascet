@@ -6,5 +6,5 @@ impl_attrs!(
     Quality,
     Umi,
     Metadata,
-    ManagedRef
+    RefCount
 );
