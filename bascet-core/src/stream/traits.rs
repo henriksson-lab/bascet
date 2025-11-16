@@ -1,6 +1,6 @@
 pub enum DecodeStatus<T, E> {
     Block(T),
-    Eof,
+    Eof(T),
     Error(E),
 }
 
