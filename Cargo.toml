@@ -10,7 +10,7 @@ readme = "README.md"
 include = ["/src", "Cargo.toml", "Dockerfile", "README.md"]
 
 [workspace]
-members = ["bascet-core", "bascet-derive"]
+members = ["bascet-apply","bascet-core", "bascet-derive"]
 
 [workspace.package]
 version = "2.0.0-alpha.1"
@@ -19,13 +19,14 @@ license = "MIT"
 repository = "https://github.com/henriksson-lab/bascet"
 homepage = "https://henriksson-lab.github.io/zorn/"
 
+[profile.release]
+lto = "thin"
+
 [dependencies]
 ahash = "0.8.12"
-
 anyhow = "1.0.93"
 bascet-core = { path = "bascet-core" }
 bascet-derive = { path = "bascet-derive" }
-
 bgzip = "0.3.1"
 bincode = "1.3.3"
 bio = "2.0.3"
@@ -61,7 +62,6 @@ linya = "0.3.1"
 log = "0.4.19"
 memchr = "2.7.5"
 memmap2 = "0.9.5"
-
 memory-stats = "1.0.0"
 min-max-heap = "1.3.0"
 murmur3 = "0.5.2"

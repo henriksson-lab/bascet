@@ -7,5 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bascet-apply = { path = "../bascet-apply" }
 bascet-derive = { path = "../bascet-derive" }
 paste = "1.0.15"

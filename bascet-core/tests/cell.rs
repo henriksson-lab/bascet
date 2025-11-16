@@ -1,105 +1,92 @@
-use bascet_core::*;
+use bascet_apply::*;
+use bascet_core::{
+    attr::{Id, Metadata, Read},
+    Get,
+};
 use bascet_derive::*;
 
-#[cell(Id, Read)]
-pub struct BasicCell {
-    id: Vec<u8>,
-    read: Vec<Vec<u8>>,
+#[derive(Composite, Default)]
+#[attrs(Id, Metadata)]
+struct NormalCell {
+    id: String,
+    metadata: &'static str,
 }
 
-#[cell(Id = custom_id, Read)]
-pub struct RedirectCell {
+#[derive(Composite, Default)]
+#[attrs(Id = custom_id, Read)]
+struct RedirectCell {
     custom_id: Vec<u8>,
     read: Vec<Vec<u8>>,
 }
 
-#[cell(Id, Read, Metadata(nobuild: &'static str))]
-pub struct NoBuildCell {
+#[derive(Composite)]
+#[attrs(Id, Metadata)]
+struct DefaultCell {
     id: Vec<u8>,
-    #[default(|| vec![b"default".to_vec()])]
-    read: Vec<Vec<u8>>,
+    metadata: &'static str,
 }
 
-#[cell(Id, Read)]
-pub struct CustomSetterCell {
-    #[with(|mut builder: CustomSetterCellBuilder, value: Vec<u8>| {
-        builder.id = value.into_iter().map(|v| v * 2).collect();
-        builder
-    })]
-    id: Vec<u8>,
-    read: Vec<Vec<u8>>,
-}
-
-#[test]
-fn test_single_attr() {
-    let cell = BasicCell::builder()
-        .with::<Id>(b"test_id".to_vec())
-        .with::<Read>(vec![b"ATGC".to_vec()])
-        .build();
-
-    let id: &Vec<u8> = cell.get_ref::<Id>();
-    assert_eq!(id, b"test_id");
+impl Default for DefaultCell {
+    fn default() -> Self {
+        Self {
+            id: b"default".to_vec(),
+            metadata: Default::default(),
+        }
+    }
 }
 
 #[test]
-fn test_tuple_get() {
-    let cell = BasicCell::builder()
-        .with::<Id>(b"test".to_vec())
-        .with::<Read>(vec![b"ATGC".to_vec()])
-        .build();
-
-    let (id, read) = cell.get_ref::<(Id, Read)>();
-    assert_eq!(id, b"test");
-    assert_eq!(read, &vec![b"ATGC".to_vec()]);
+fn apply_full() {
+    let mut cell = NormalCell::default();
+    apply_selected!((Id, Metadata), cell, {
+        Id => "test".to_string(),
+        Metadata => "meta",
+    });
+    assert_eq!(cell.id, "test");
+    assert_eq!(cell.metadata, "meta");
 }
 
 #[test]
-fn test_mut() {
-    let mut cell = BasicCell::builder()
-        .with::<Id>(b"test".to_vec())
-        .with::<Read>(vec![b"ATGC".to_vec()])
-        .build();
-
-    let id: &mut Vec<u8> = cell.get_mut::<Id>();
-    id.extend_from_slice(b"_modified");
-
-    assert_eq!(cell.get_ref::<Id>(), b"test_modified");
+fn apply_partial() {
+    let mut cell = NormalCell::default();
+    apply_selected!((Id,), cell, {
+        Id => "only_id".to_string(),
+        Metadata => "ignored",
+    });
+    assert_eq!(cell.id, "only_id");
+    assert_eq!(cell.metadata, <&str>::default());
 }
 
 #[test]
-fn test_redirect() {
-    let cell = RedirectCell::builder()
-        .with::<Id>(b"override".to_vec())
-        .with::<Read>(vec![b"ATGC".to_vec()])
-        .build();
-
-    assert_eq!(cell.get_ref::<Id>(), b"override");
+fn get_trait() {
+    let mut cell = NormalCell::default();
+    apply_selected!((Id,), cell, { Id => "test".to_string() });
+    assert_eq!(Get::<Id>::get(&cell), "test");
 }
 
 #[test]
-fn test_nobuild() {
-    let cell = NoBuildCell::builder()
-        .with::<Id>(b"test".to_vec())
-        .with::<Metadata>("ignored")
-        .build();
-
-    assert_eq!(cell.get_ref::<Id>(), b"test");
+fn field_override() {
+    let mut cell = RedirectCell::default();
+    apply_selected!((Id,), cell, { Id => b"test".to_vec() });
+    assert_eq!(cell.custom_id, b"test");
+    assert_eq!(Get::<Id>::get(&cell), b"test");
 }
 
 #[test]
-fn test_default() {
-    let cell = NoBuildCell::builder().with::<Id>(b"test".to_vec()).build();
-
-    assert_eq!(cell.get_ref::<Read>(), &vec![b"default".to_vec()]);
+fn filters_unselected() {
+    let mut cell = NormalCell::default();
+    apply_selected!((Id), cell, {
+        Id => "selected".to_string(),
+        Read => "not selected - generates no code",
+    });
+    assert_eq!(cell.id, "selected");
 }
 
 #[test]
-fn test_custom_setter() {
-    let cell = CustomSetterCell::builder()
-        .with::<Id>(vec![1, 2, 3])
-        .with::<Read>(vec![b"ATGC".to_vec()])
-        .build();
-
-    assert_eq!(cell.get_ref::<Id>(), &vec![2, 4, 6]);
-    assert_eq!(cell.get_ref::<Read>(), &vec![b"ATGC".to_vec()]);
+fn default_impl() {
+    let mut cell = DefaultCell::default();
+    apply_selected!((Metadata), cell, {
+        Metadata => "Some metadata",
+    });
+    assert_eq!(cell.id, b"default".to_vec());
 }
