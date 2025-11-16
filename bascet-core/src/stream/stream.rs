@@ -9,8 +9,8 @@ where
     D: crate::Decode,
     P: crate::Parse<D::Block>,
 {
-    inner_buffer_rx: rtrb::Consumer<Result<Option<D::Block>, ()>>,
-    inner_decoder_thread: JoinHandle<()>,
+    inner_buffer_rx: rtrb::Consumer<crate::DecodeStatus<D::Block, ()>>,
+    inner_decoder_thread: Option<JoinHandle<()>>,
     inner_parser: P,
 }
 
@@ -32,12 +32,10 @@ where
         D: Send + 'static,
         D::Block: Send,
     {
-        let (handle, rx) = Self::spawn_decode_worker(
-            decoder, NonZero::new(N).unwrap()
-        );
+        let (handle, rx) = Self::spawn_decode_worker(decoder, NonZero::new(N).unwrap());
         Self {
             inner_buffer_rx: rx,
-            inner_decoder_thread: handle,
+            inner_decoder_thread: Some(handle),
             inner_parser: parser,
         }
     }
@@ -45,6 +43,7 @@ where
     pub fn next<C>(&mut self) -> Result<Option<C>, ()>
     where
         C: crate::Composite,
+        C: crate::Get<crate::RefCount>,
     {
         self.next_with::<C, C::Attrs>()
     }
@@ -52,6 +51,7 @@ where
     pub fn next_with<C, A>(&mut self) -> Result<Option<C>, ()>
     where
         C: crate::Composite,
+        C: crate::Get<crate::RefCount>,
     {
         let mut spinpark_counter = 0;
         loop {
@@ -59,21 +59,19 @@ where
                 Err(PopError::Empty) => {
                     threading::spinpark_loop::<100>(&mut spinpark_counter);
                 }
-                Ok(res_decode) => {
+                Ok(decode_status) => {
                     spinpark_counter = 0;
 
-                    match res_decode {
-                        Ok(Some(block)) => {
-                            if let Some(structured) = self.inner_parser.parse::<C, A>(block)? {
-                                return Ok(Some(structured));
+                    match decode_status {
+                        crate::DecodeStatus::Block(block) => {
+                            match self.inner_parser.parse::<C, A>(block) {
+                                crate::ParseStatus::Full(cell) => return Ok(Some(cell)),
+                                crate::ParseStatus::Partial => continue,
+                                crate::ParseStatus::Error(_) => return Err(()),
                             }
                         }
-                        Ok(None) => {
-                            return Ok(None);
-                        }
-                        Err(_) => {
-                            panic!();
-                        }
+                        crate::DecodeStatus::Eof => return Ok(None),
+                        crate::DecodeStatus::Error(_) => return Err(()),
                     }
                 }
             }
@@ -83,7 +81,10 @@ where
     pub fn spawn_decode_worker(
         mut decoder: D,
         n_buffers: NonZero<usize>,
-    ) -> (JoinHandle<()>, rtrb::Consumer<Result<Option<D::Block>, ()>>)
+    ) -> (
+        JoinHandle<()>,
+        rtrb::Consumer<crate::DecodeStatus<D::Block, ()>>,
+    )
     where
         D: Send + 'static,
         D::Block: Send,
@@ -91,31 +92,40 @@ where
         let (mut tx, rx) = rtrb::RingBuffer::new(n_buffers.get());
 
         let handle = std::thread::spawn(move || loop {
-            match decoder.decode() {
-                Ok(Some(block)) => {
-                    let mut item = Ok(Some(block));
-                    let mut spinpark_counter = 0;
-                    loop {
-                        match tx.push(item) {
-                            Ok(_) => break,
-                            Err(PushError::Full(i)) => {
-                                item = i;
-                                threading::spinpark_loop::<100>(&mut spinpark_counter);
-                            }
-                        }
+            let decode_status = decoder.decode();
+            let decode_break = match &decode_status {
+                crate::DecodeStatus::Eof | crate::DecodeStatus::Error(_) => true,
+                crate::DecodeStatus::Block(_) => false,
+            };
+
+            let mut item = decode_status;
+            let mut spinpark_counter = 0;
+            loop {
+                match tx.push(item) {
+                    Ok(_) => break,
+                    Err(PushError::Full(i)) => {
+                        item = i;
+                        threading::spinpark_loop::<100>(&mut spinpark_counter);
                     }
                 }
-                Ok(None) => {
-                    let _ = tx.push(Ok(None));
-                    break;
-                }
-                Err(e) => {
-                    let _ = tx.push(Err(e));
-                    break;
-                }
+            }
+
+            if decode_break {
+                break;
             }
         });
 
         (handle, rx)
+    }
+}
+
+impl<D, P> Drop for Stream<D, P>
+where
+    D: crate::Decode,
+    P: crate::Parse<D::Block>,
+{
+    fn drop(&mut self) {
+        let handle = self.inner_decoder_thread.take().unwrap();
+        handle.join().expect("Couldn't join on the Decode thread");
     }
 }
