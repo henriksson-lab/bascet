@@ -2,8 +2,8 @@ pub trait Attr {}
 
 pub trait Get<A> {
     type Value;
-    fn get(&self) -> &Self::Value;
-    fn get_mut(&mut self) -> &mut Self::Value;
+    fn attr(&self) -> &Self::Value;
+    fn attr_mut(&mut self) -> &mut Self::Value;
 }
 
 pub struct Tagged<A, T> {
@@ -32,7 +32,7 @@ where
 {
     #[inline(always)]
     fn put(self, target: &mut Target) {
-        *target.get_mut() = self.value;
+        *target.attr_mut() = self.value;
     }
 }
 
@@ -56,7 +56,7 @@ where
 
     #[inline(always)]
     fn get_ref(cell: &'a T) -> Self::Output {
-        cell.get()
+        cell.attr()
     }
 }
 
@@ -70,31 +70,8 @@ where
 
     #[inline(always)]
     fn get_mut(cell: &'a mut T) -> Self::Output {
-        cell.get_mut()
+        cell.attr_mut()
     }
 }
 
-impl_tuple_provide!(Arg1, Arg2);
-impl_tuple_provide!(Arg1, Arg2, Arg3);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10, Arg11);
-impl_tuple_provide!(Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10, Arg11, Arg12);
-impl_tuple_provide!(
-    Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10, Arg11, Arg12, Arg13
-);
-impl_tuple_provide!(
-    Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10, Arg11, Arg12, Arg13, Arg14
-);
-impl_tuple_provide!(
-    Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10, Arg11, Arg12, Arg13, Arg14, Arg15
-);
-impl_tuple_provide!(
-    Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9, Arg10, Arg11, Arg12, Arg13, Arg14, Arg15,
-    Arg16
-);
+impl_variadic_get!();

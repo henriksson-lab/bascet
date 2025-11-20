@@ -110,8 +110,8 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         quote! {
             impl bascet_core::Get<#trait_ident> for #name {
                 type Value = #ftype;
-                fn get(&self) -> &Self::Value { &self.#fname }
-                fn get_mut(&mut self) -> &mut Self::Value { &mut self.#fname }
+                fn attr(&self) -> &Self::Value { &self.#fname }
+                fn attr_mut(&mut self) -> &mut Self::Value { &mut self.#fname }
             }
         }
     });

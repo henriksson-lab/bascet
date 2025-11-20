@@ -18,6 +18,7 @@ Cargo.lock
 
 # local todo for development
 .todo
+
 # data for development
 data
 out
@@ -28,7 +29,9 @@ zorn
 # bascet log
 latest.log
 
-# profiling files
+# profiling
+benches
+benches/*
 heaptrack.*
 perf.data
 perf.data.old

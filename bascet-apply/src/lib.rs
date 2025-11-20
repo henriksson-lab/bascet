@@ -41,6 +41,7 @@ pub fn apply_selected(input: TokenStream) -> TokenStream {
     let Input { m, target, attrs } = parse_macro_input!(input as Input);
 
     let selected = match &m {
+        // Tuple syntax: (Id,) or (Id, Metadata)
         Type::Tuple(t) => t
             .elems
             .iter()
@@ -49,6 +50,7 @@ pub fn apply_selected(input: TokenStream) -> TokenStream {
                 _ => None,
             })
             .collect(),
+        // Single type: Id or (Id) - both parse as Type::Path
         Type::Path(p) => p.path.get_ident().cloned().into_iter().collect(),
         _ => Vec::new(),
     };

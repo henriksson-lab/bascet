@@ -1,0 +1,348 @@
+// use std::{ptr::{NonNull, slice_from_raw_parts}, sync::atomic::AtomicU64};
+
+// use bascet_core::*;
+
+// const U8_CHAR_NEWLINE: u8 = b'\n';
+// const U8_CHAR_RECORD: u8 = b'@';
+// const U8_CHAR_SEP: u8 = b'+';
+
+// pub struct FASTQRecordParser {
+//     inner_ptr_partial_src: UnsafePtr<Arena<u8>>,
+//     inner_ptr_partial_tail: UnsafePtr<u8>,
+//     inner_len_partial_tail: usize,
+
+//     inner_off_cursor: usize,
+//     inner_last_block_ptr: *const u8,
+// }
+
+// // record ID, sequence (unpaired), qualities (unpaired)
+// pub struct FASTQRecord {
+//     id: &'static [u8],
+//     seq: &'static [u8],
+//     qal: &'static [u8],
+//     refcount: UnsafePtr<Arena<u8>>,
+// }
+
+// impl Get<Id> for FASTQRecord {
+//     type Value = &'static [u8];
+//     fn attr(&self) -> &Self::Value {
+//         &self.id
+//     }
+//     fn attr_mut(&mut self) -> &mut Self::Value {
+//         &mut self.id
+//     }
+// }
+
+// impl Get<Read> for FASTQRecord {
+//     type Value = &'static [u8];
+//     fn attr(&self) -> &Self::Value {
+//         &self.seq
+//     }
+//     fn attr_mut(&mut self) -> &mut Self::Value {
+//         &mut self.seq
+//     }
+// }
+
+// impl Get<Quality> for FASTQRecord {
+//     type Value = &'static [u8];
+//     fn attr(&self) -> &Self::Value {
+//         &self.qal
+//     }
+//     fn attr_mut(&mut self) -> &mut Self::Value {
+//         &mut self.qal
+//     }
+// }
+
+// impl Get<RefCount> for FASTQRecord {
+//     type Value = UnsafePtr<Arena<u8>>;
+//     fn attr(&self) -> &Self::Value {
+//         &self.refcount
+//     }
+//     fn attr_mut(&mut self) -> &mut Self::Value {
+//         &mut self.refcount
+//     }
+// }
+
+// impl FASTQRecordParser {
+//     pub fn new() -> Self {
+//         FASTQRecordParser {
+//             inner_ptr_partial_src: unsafe {
+//                 UnsafePtr::new_unchecked(NonNull::dangling().as_ptr())
+//             },
+//             inner_ptr_partial_tail: unsafe {
+//                 UnsafePtr::new_unchecked(NonNull::dangling().as_ptr())
+//             },
+//             inner_len_partial_tail: 0,
+//             inner_off_cursor: 0,
+//             inner_last_block_ptr: std::ptr::null(),
+//         }
+//     }
+
+//     unsafe fn record_from_raw(
+//         from: *const u8,
+//         line_positions: [usize; 4],
+//         refcount: UnsafePtr<Arena<u8>>,
+//     ) -> FASTQRecord {
+//         let hdr_with_marker = std::slice::from_raw_parts(from, line_positions[0]);
+//         let seq = std::slice::from_raw_parts(
+//             from.add(line_positions[0] + 1),
+//             line_positions[1] - line_positions[0] - 1,
+//         );
+//         let sep_with_marker = std::slice::from_raw_parts(
+//             from.add(line_positions[1] + 1),
+//             line_positions[2] - line_positions[1] - 1,
+//         );
+//         let qal = std::slice::from_raw_parts(
+//             from.add(line_positions[2] + 1),
+//             line_positions[3] - line_positions[2] - 1,
+//         );
+
+//         if hdr_with_marker.is_empty() || hdr_with_marker[0] != U8_CHAR_RECORD {
+//             panic!(
+//                 "Invalid FASTQ header: {:?}",
+//                 String::from_utf8_lossy(hdr_with_marker)
+//             )
+//         }
+
+//         if sep_with_marker.is_empty() || sep_with_marker[0] != U8_CHAR_SEP {
+//             panic!(
+//                 "Invalid FASTQ separator: {:?}",
+//                 String::from_utf8_lossy(sep_with_marker)
+//             )
+//         }
+
+//         if seq.len() != qal.len() {
+//             panic!(
+//                 "Sequence and quality length mismatch: {} != {}",
+//                 seq.len(),
+//                 qal.len()
+//             )
+//         }
+
+//         // Skip the @ marker
+//         let hdr = &hdr_with_marker[1..];
+
+//         // SAFETY: transmute slices to static lifetime kept alive by ref counter
+//         FASTQRecord {
+//             id: std::mem::transmute(hdr),
+//             seq: std::mem::transmute(seq),
+//             qal: std::mem::transmute(qal),
+//             refcount,
+//         }
+//     }
+
+//     unsafe fn parse_with_partial_tail<C, A>(
+//         &mut self,
+//         block: ArenaSlice<'static, u8>,
+//     ) -> ParseStatus<C, ()>
+//     where
+//         C: Composite + Default + ParseFrom<A, FASTQRecord>,
+//     {
+//         let end_partial = self.inner_ptr_partial_tail.add(self.inner_len_partial_tail);
+
+//         // Check if partial tail and new block are contiguous in memory
+//         if end_partial.as_ptr() == block.inner.as_ptr() as *mut u8 {
+//             // Contiguous: can treat as single buffer
+//             let ptr_start = self.inner_ptr_partial_tail.as_ptr();
+//             let total_len = self.inner_len_partial_tail + block.inner.len();
+//             let buf_combined = std::slice::from_raw_parts(ptr_start, total_len);
+//             // println!("Contiguous case: ptr_start={:p}, partial_len={}, new_block_len={}, first_20_bytes={:?}",
+//                 // ptr_start, self.inner_len_partial_tail, block.inner.len(),
+//                 // String::from_utf8_lossy(&buf_combined[..20.min(buf_combined.len())]));
+
+//             let mut newline_iter = memchr::memchr_iter(U8_CHAR_NEWLINE, buf_combined);
+//             let line_positions = match (
+//                 newline_iter.next(),
+//                 newline_iter.next(),
+//                 newline_iter.next(),
+//                 newline_iter.next(),
+//             ) {
+//                 (Some(n0), Some(n1), Some(n2), Some(n3)) => [n0, n1, n2, n3],
+//                 _ => return ParseStatus::Error(()),
+//             };
+
+//             // Release old partial block ref
+//             let ptr_partial_src = self.inner_ptr_partial_src.as_ptr();
+//             (*ptr_partial_src).dec_ref();
+
+//             // Calculate where offset should be in the NEW block
+//             let consumed_from_combined = line_positions[3] + 1;
+//             self.inner_off_cursor = consumed_from_combined.saturating_sub(self.inner_len_partial_tail);
+//             self.inner_len_partial_tail = 0;
+
+//             let record = {
+//                 let ptr_src = self.inner_ptr_partial_src.as_ptr();
+//                 (*ptr_src).inc_ref();
+//                 FASTQRecordParser::record_from_raw(
+//                     ptr_start,
+//                     line_positions,
+//                     self.inner_ptr_partial_src,
+//                 )
+//             };
+//             let mut result = C::default();
+//             result.from(&record);
+//             ParseStatus::Full(result)
+//         } else {
+//             // Non-contiguous: need to copy
+//             // Count newlines in partial tail to determine how many more we need from new block
+//             let partial_slice = std::slice::from_raw_parts(
+//                 self.inner_ptr_partial_tail.as_ptr(),
+//                 self.inner_len_partial_tail
+//             );
+//             let newlines_in_partial = memchr::memchr_iter(U8_CHAR_NEWLINE, partial_slice).count();
+
+//             // Find bytes needed from new block to complete the record
+//             let mut newline_iter = memchr::memchr_iter(U8_CHAR_NEWLINE, block.inner);
+//             let block_line_end = match newlines_in_partial {
+//                 0 => match (newline_iter.next(), newline_iter.next(), newline_iter.next(), newline_iter.next()) {
+//                     (Some(_), Some(_), Some(_), Some(n3)) => n3 + 1,
+//                     _ => return ParseStatus::Error(()),
+//                 },
+//                 1 => match (newline_iter.next(), newline_iter.next(), newline_iter.next()) {
+//                     (Some(_), Some(_), Some(n2)) => n2 + 1,
+//                     _ => return ParseStatus::Error(()),
+//                 },
+//                 2 => match (newline_iter.next(), newline_iter.next()) {
+//                     (Some(_), Some(n1)) => n1 + 1,
+//                     _ => return ParseStatus::Error(()),
+//                 },
+//                 3 => match newline_iter.next() {
+//                     Some(n0) => n0 + 1,
+//                     _ => return ParseStatus::Error(()),
+//                 },
+//                 _ => return ParseStatus::Error(()),
+//             };
+
+//             // Allocate combined buffer directly in arena
+//             let ptr_partial = self.inner_ptr_partial_tail.as_ptr();
+//             let combined_len = self.inner_len_partial_tail + block_line_end;
+
+//             let arena_ptr = block.inner_ptr_src.as_ptr();
+//             let allocated_ptr = (*arena_ptr).alloc(combined_len);
+
+//             // Copy partial tail + new block data into arena
+//             std::ptr::copy_nonoverlapping(ptr_partial, allocated_ptr, self.inner_len_partial_tail);
+//             std::ptr::copy_nonoverlapping(
+//                 block.inner.as_ptr(),
+//                 allocated_ptr.add(self.inner_len_partial_tail),
+//                 block_line_end
+//             );
+
+//             let buf_combined = std::slice::from_raw_parts(allocated_ptr, combined_len);
+
+//             // Find newlines in combined buffer
+//             let mut newline_iter = memchr::memchr_iter(U8_CHAR_NEWLINE, buf_combined);
+//             let line_positions = match (
+//                 newline_iter.next(),
+//                 newline_iter.next(),
+//                 newline_iter.next(),
+//                 newline_iter.next(),
+//             ) {
+//                 (Some(n0), Some(n1), Some(n2), Some(n3)) => {
+//                     println!("Non-contig: partial_len={}, newlines_in_partial={}, block_line_end={}, combined_len={}, positions=[{},{},{},{}]",
+//                         self.inner_len_partial_tail, newlines_in_partial, block_line_end, combined_len, n0, n1, n2, n3);
+//                     println!("Combined first 200: {:?}", String::from_utf8_lossy(&buf_combined[..200.min(combined_len)]));
+//                     [n0, n1, n2, n3]
+//                 },
+//                 _ => return ParseStatus::Error(()),
+//             };
+
+//             // Release old partial block ref
+//             let ptr_partial_src = self.inner_ptr_partial_src.as_ptr();
+//             (*ptr_partial_src).dec_ref();
+
+//             // Calculate where offset should be in the NEW block
+//             let consumed_from_combined = line_positions[3] + 1;
+//             self.inner_off_cursor = consumed_from_combined.saturating_sub(self.inner_len_partial_tail);
+//             self.inner_len_partial_tail = 0;
+
+//             let record = {
+//                 let ptr_src = block.inner_ptr_src.as_ptr();
+//                 (*ptr_src).inc_ref();
+//                 FASTQRecordParser::record_from_raw(
+//                     buf_combined.as_ptr(),
+//                     line_positions,
+//                     block.inner_ptr_src,
+//                 )
+//             };
+//             let mut result = C::default();
+//             result.from(&record);
+//             ParseStatus::Full(result)
+//         }
+//     }
+// }
+
+// impl Parse<ArenaSlice<'static, u8>> for FASTQRecordParser {
+//     type ParsedRecord = FASTQRecord;
+
+//     fn parse<C, A>(&mut self, block: ArenaSlice<'static, u8>) -> bascet_core::ParseStatus<C, ()>
+//     where
+//         C: bascet_core::Composite + Default + ParseFrom<A, FASTQRecord>,
+//     {
+//         // Check if this is a new block - if so, reset offset
+//         let block_ptr = block.inner.as_ptr();
+//         if block_ptr != self.inner_last_block_ptr {
+//             self.inner_last_block_ptr = block_ptr;
+//             self.inner_off_cursor = 0;
+//         }
+
+//         // Handle partial tail from previous block
+//         if self.inner_len_partial_tail > 0 {
+//             let result = unsafe { self.parse_with_partial_tail::<C, A>(block) };
+//             return result;
+//         }
+
+//         // Check if we've exhausted this block
+//         if self.inner_off_cursor >= block.inner.len() {
+//             return ParseStatus::Partial;
+//         }
+
+//         // Parse from current offset
+//         let search_slice = &block.inner[self.inner_off_cursor..];
+
+//         let mut newline_iter = memchr::memchr_iter(U8_CHAR_NEWLINE, search_slice);
+//         let line_positions = match (
+//             newline_iter.next(),
+//             newline_iter.next(),
+//             newline_iter.next(),
+//             newline_iter.next(),
+//         ) {
+//             (Some(n0), Some(n1), Some(n2), Some(n3)) => [n0, n1, n2, n3],
+//             _ => unsafe {
+//                 // Incomplete record - store as partial
+//                 self.inner_ptr_partial_src = block.inner_ptr_src;
+//                 let ptr_src = self.inner_ptr_partial_src.as_ptr();
+//                 (*ptr_src).inc_ref();
+
+//                 self.inner_len_partial_tail = search_slice.len();
+//                 self.inner_ptr_partial_tail =
+//                     UnsafePtr::new_unchecked(search_slice.as_ptr() as *mut u8);
+//                 return ParseStatus::Partial;
+//             },
+//         };
+
+//         // Update offset for next call
+//         self.inner_off_cursor += line_positions[3] + 1;
+
+//         let record = unsafe {
+//             let ptr_src = block.inner_ptr_src.as_ptr();
+//             (*ptr_src).inc_ref();
+//             FASTQRecordParser::record_from_raw(
+//                 search_slice.as_ptr(),
+//                 line_positions,
+//                 block.inner_ptr_src,
+//             )
+//         };
+
+//         let mut result = C::default();
+//         result.from(&record);
+//         ParseStatus::Full(result)
+//     }
+
+//     fn parse_finish<C, A>(&mut self) -> bascet_core::ParseStatus<C, ()>
+//     where
+//         C: bascet_core::Composite,
+//     {
+//         todo!()
+//     }
+// }

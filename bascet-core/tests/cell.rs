@@ -1,7 +1,7 @@
 use bascet_apply::*;
 use bascet_core::{
     attr::{Id, Metadata, Read},
-    Get,
+    Composite, Get,
 };
 use bascet_derive::*;
 
@@ -49,7 +49,7 @@ fn apply_full() {
 #[test]
 fn apply_partial() {
     let mut cell = NormalCell::default();
-    apply_selected!((Id,), cell, {
+    apply_selected!(Id, cell, {
         Id => "only_id".to_string(),
         Metadata => "ignored",
     });
@@ -60,22 +60,25 @@ fn apply_partial() {
 #[test]
 fn get_trait() {
     let mut cell = NormalCell::default();
-    apply_selected!((Id,), cell, { Id => "test".to_string() });
-    assert_eq!(Get::<Id>::get(&cell), "test");
+    apply_selected!(Id, cell, { Id => "test".to_string() });
+    assert_eq!(cell.get_ref::<Id>(), "test");
 }
 
 #[test]
 fn field_override() {
     let mut cell = RedirectCell::default();
-    apply_selected!((Id,), cell, { Id => b"test".to_vec() });
+    apply_selected!(Id, cell, {
+        Id => b"test".to_vec(),
+        Read => b"read test".to_vec()
+    });
     assert_eq!(cell.custom_id, b"test");
-    assert_eq!(Get::<Id>::get(&cell), b"test");
+    assert_eq!(Get::<Id>::attr(&cell), b"test");
 }
 
 #[test]
 fn filters_unselected() {
     let mut cell = NormalCell::default();
-    apply_selected!((Id), cell, {
+    apply_selected!(Id, cell, {
         Id => "selected".to_string(),
         Read => "not selected - generates no code",
     });
@@ -85,7 +88,7 @@ fn filters_unselected() {
 #[test]
 fn default_impl() {
     let mut cell = DefaultCell::default();
-    apply_selected!((Metadata), cell, {
+    apply_selected!(Metadata, cell, {
         Metadata => "Some metadata",
     });
     assert_eq!(cell.id, b"default".to_vec());
