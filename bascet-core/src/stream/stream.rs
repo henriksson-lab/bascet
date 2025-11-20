@@ -1,28 +1,29 @@
 use std::{num::NonZero, thread::JoinHandle};
 
-use rtrb::{PopError, PushError};
+use rtrb::{PeekError, PopError, PushError};
 
-use crate::threading;
+use crate::{DecodeStatus, ParseStatus, spinpark_loop};
 
 pub struct Stream<D, P>
 where
     D: crate::Decode,
-    P: crate::Parse<D::Block>,
+    P: crate::Parse<D::Output>,
 {
-    inner_buffer_rx: rtrb::Consumer<crate::DecodeStatus<D::Block, ()>>,
+    inner_buffer_rx: rtrb::Consumer<DecodeStatus<D::Output, ()>>,
     inner_decoder_thread: Option<JoinHandle<()>>,
+    inner_decoder_flg_reset_parser: bool,
     inner_parser: P,
 }
 
 impl<D, P> Stream<D, P>
 where
     D: crate::Decode,
-    P: crate::Parse<D::Block>,
+    P: crate::Parse<D::Output>,
 {
     pub fn new(decoder: D, parser: P) -> Self
     where
         D: Send + 'static,
-        D::Block: Send,
+        D::Output: Send,
     {
         Self::with::<2>(decoder, parser)
     }
@@ -30,56 +31,81 @@ where
     pub fn with<const N: usize>(decoder: D, parser: P) -> Self
     where
         D: Send + 'static,
-        D::Block: Send,
+        D::Output: Send,
     {
         let (handle, rx) = Self::spawn_decode_worker(decoder, NonZero::new(N).unwrap());
         Self {
             inner_buffer_rx: rx,
             inner_decoder_thread: Some(handle),
+            inner_decoder_flg_reset_parser: false,
             inner_parser: parser,
         }
     }
 
     pub fn next<C>(&mut self) -> Result<Option<C>, ()>
     where
-        C: crate::Composite,
-        C: crate::Get<crate::RefCount>,
+        C: crate::Composite + Default + crate::Get<crate::RefCount>,
+        C: crate::ParseFrom<C::Attrs, P::Output>,
     {
         self.next_with::<C, C::Attrs>()
     }
 
     pub fn next_with<C, A>(&mut self) -> Result<Option<C>, ()>
     where
-        C: crate::Composite,
-        C: crate::Get<crate::RefCount>,
+        C: crate::Composite + Default + crate::Get<crate::RefCount>,
+        C: crate::ParseFrom<A, P::Output>,
     {
         let mut spinpark_counter = 0;
+        // dbg!("called next");
         loop {
-            match self.inner_buffer_rx.pop() {
-                Err(PopError::Empty) => {
-                    threading::spinpark_loop::<100>(&mut spinpark_counter);
+            match self.inner_buffer_rx.peek() {
+                Err(PeekError::Empty) => {
+                    // dbg!(spinpark_counter);
+                    spinpark_loop::spinpark_loop::<100>(&mut spinpark_counter);
+                    continue;
                 }
                 Ok(decode_status) => {
+                    // dbg!("decoded!");
                     spinpark_counter = 0;
-
+                    if std::mem::replace(&mut self.inner_decoder_flg_reset_parser, false) {
+                        self.inner_parser.parse_reset()?;
+                    }
                     match decode_status {
-                        crate::DecodeStatus::Block(block) => {
-                            match self.inner_parser.parse::<C, A>(block) {
-                                crate::ParseStatus::Full(cell) => return Ok(Some(cell)),
-                                crate::ParseStatus::Partial => continue,
-                                crate::ParseStatus::Error(e) => return Err(e),
+                        DecodeStatus::Decoded(decoded) => {
+                            match self.inner_parser.parse::<C, A>(*decoded) {
+                                ParseStatus::Full(cell) => {
+                                    // dbg!("returning cell!");
+                                    return Ok(Some(cell));
+                                }
+                                ParseStatus::Partial => {
+                                    // Parser exhausted data
+                                    // println!("partial cell!");
+                                    self.inner_buffer_rx.pop().unwrap();
+                                    self.inner_decoder_flg_reset_parser = true;
+                                    continue;
+                                }
+                                ParseStatus::Error(e) => {
+                                    dbg!("error!", e);
+                                    self.inner_buffer_rx.pop().unwrap();
+                                    self.inner_decoder_flg_reset_parser = true;
+                                    continue;
+                                }
                             }
                         }
-                        crate::DecodeStatus::Eof(leftover) => {
-                            match self.inner_parser.parse_finish::<C, A>(leftover) {
-                                crate::ParseStatus::Full(cell) => return Ok(Some(cell)),
-                                super::ParseStatus::Error(e) => return Err(e),
+                        DecodeStatus::Eof => {
+                            self.inner_buffer_rx.pop().unwrap();
+                            match self.inner_parser.parse_finish::<C, A>() {
+                                ParseStatus::Full(cell) => return Ok(Some(cell)),
+                                ParseStatus::Error(e) => return Err(e),
 
                                 // SAFETY: parse_finish must always return the final cell as complete.
-                                crate::ParseStatus::Partial => unreachable!(),
+                                ParseStatus::Partial => unreachable!(),
                             }
                         }
-                        crate::DecodeStatus::Error(e) => return Err(e),
+                        DecodeStatus::Error(e) => {
+                            // self.inner_buffer_rx.pop();
+                            return Err(*e);
+                        }
                     }
                 }
             }
@@ -91,19 +117,19 @@ where
         n_buffers: NonZero<usize>,
     ) -> (
         JoinHandle<()>,
-        rtrb::Consumer<crate::DecodeStatus<D::Block, ()>>,
+        rtrb::Consumer<DecodeStatus<D::Output, ()>>,
     )
     where
         D: Send + 'static,
-        D::Block: Send,
+        D::Output: Send,
     {
         let (mut tx, rx) = rtrb::RingBuffer::new(n_buffers.get());
 
         let handle = std::thread::spawn(move || loop {
             let decode_status = decoder.decode();
             let decode_break = match &decode_status {
-                crate::DecodeStatus::Eof(_) | crate::DecodeStatus::Error(_) => true,
-                crate::DecodeStatus::Block(_) => false,
+                DecodeStatus::Eof | DecodeStatus::Error(_) => true,
+                DecodeStatus::Decoded(_) => false,
             };
 
             let mut item = decode_status;
@@ -113,7 +139,7 @@ where
                     Ok(_) => break,
                     Err(PushError::Full(i)) => {
                         item = i;
-                        threading::spinpark_loop::<100>(&mut spinpark_counter);
+                        spinpark_loop::spinpark_loop::<100>(&mut spinpark_counter);
                     }
                 }
             }
@@ -130,7 +156,7 @@ where
 impl<D, P> Drop for Stream<D, P>
 where
     D: crate::Decode,
-    P: crate::Parse<D::Block>,
+    P: crate::Parse<D::Output>,
 {
     fn drop(&mut self) {
         let handle = self.inner_decoder_thread.take().unwrap();

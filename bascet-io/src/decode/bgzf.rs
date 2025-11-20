@@ -10,7 +10,7 @@ pub struct BGZFDecoder {
     inner_hts_file_ptr: UnsafePtr<htslib::htsFile>,
     inner_hts_bgzf_ptr: UnsafePtr<htslib::BGZF>,
 
-    inner_hts_tpool: htslib::htsThreadPool,
+    inner_hts_tpool: SendCell<htslib::htsThreadPool>,
     inner_hts_tpool_n: u64,
 
     inner_hts_block_size: ByteSize,
@@ -40,8 +40,9 @@ impl BGZFDecoder {
 
         let hts_file_ptr = unsafe { UnsafePtr::new_unchecked(htsutils::hts_open(path)) };
         let hts_bgzf_ptr =
-            unsafe { UnsafePtr::new_unchecked(htslib::hts_get_bgzfp((*hts_file_ptr).as_ptr())) };
-        let hts_tpool = htsutils::hts_tpool_init(num_threads, (*hts_file_ptr).as_ptr());
+            unsafe { UnsafePtr::new_unchecked(htslib::hts_get_bgzfp(hts_file_ptr.as_ptr())) };
+        let hts_tpool = htsutils::hts_tpool_init(num_threads, hts_file_ptr.as_ptr());
+        let hts_send_tpool = SendCell::new(hts_tpool);
 
         let sizeof_bgzf_block = ByteSize::b(
             u16::from_le_bytes([bgzf_hdr[16], bgzf_hdr[17]])
@@ -58,7 +59,7 @@ impl BGZFDecoder {
             inner_hts_file_ptr: hts_file_ptr,
             inner_hts_bgzf_ptr: hts_bgzf_ptr,
 
-            inner_hts_tpool: hts_tpool,
+            inner_hts_tpool: hts_send_tpool,
             inner_hts_tpool_n: num_threads.get(),
 
             inner_hts_block_size: sizeof_bgzf_block,
@@ -72,15 +73,15 @@ impl BGZFDecoder {
 }
 
 impl Decode for BGZFDecoder {
-    type Block = ArenaSlice<'static, u8>;
+    type Output = ArenaSlice<'static, u8>;
 
-    fn decode(&mut self) -> DecodeStatus<Self::Block, ()> {
+    fn decode(&mut self) -> DecodeStatus<Self::Output, ()> {
         let (buf_alloc, bgzf_read) = unsafe {
             let buf_alloc = self.inner_arena_pool.alloc(self.inner_hts_alloc_len);
             let bgzf_read = htslib::bgzf_read(
-                (*self.inner_hts_bgzf_ptr).as_ptr(),
+                self.inner_hts_bgzf_ptr.as_ptr(),
                 // SAFETY: we create the ptr in alloc, we know it is safe to cast to *mut
-                (*buf_alloc.inner).as_ptr() as *mut raw::c_void,
+                buf_alloc.inner.as_ptr() as *mut raw::c_void,
                 self.inner_hts_alloc_len,
             );
 
@@ -88,7 +89,7 @@ impl Decode for BGZFDecoder {
         };
 
         match bgzf_read {
-            1.. => return DecodeStatus::Block(buf_alloc),
+            1.. => return DecodeStatus::Decoded(buf_alloc),
             0 => {
                 return DecodeStatus::Eof;
             }
@@ -103,7 +104,7 @@ impl Decode for BGZFDecoder {
 impl Drop for BGZFDecoder {
     fn drop(&mut self) {
         unsafe {
-            htslib::hts_close((*self.inner_hts_file_ptr).as_ptr());
+            htslib::hts_close(self.inner_hts_file_ptr.as_ptr());
             htslib::hts_tpool_destroy(self.inner_hts_tpool.pool);
         }
     }

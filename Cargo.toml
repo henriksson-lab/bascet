@@ -10,7 +10,7 @@ readme = "README.md"
 include = ["/src", "Cargo.toml", "Dockerfile", "README.md"]
 
 [workspace]
-members = ["bascet-apply","bascet-core", "bascet-derive"]
+members = ["bascet-apply","bascet-core", "bascet-derive", "bascet-io"]
 
 [workspace.package]
 version = "2.0.0-alpha.1"
@@ -27,6 +27,8 @@ ahash = "0.8.12"
 anyhow = "1.0.93"
 bascet-core = { path = "bascet-core" }
 bascet-derive = { path = "bascet-derive" }
+bascet-apply = { path = "bascet-apply" }
+bascet-io = { path = "bascet-io" }
 bgzip = "0.3.1"
 bincode = "1.3.3"
 bio = "2.0.3"
@@ -115,3 +117,10 @@ walkdir = "2.5.0"
 # still not sure if using latest breaks anything else but for countsketch latest works.
 # crucial to disable default features though due to dependency conflicts
 zip = { version = "4.3.0", default-features = false, features = ["zstd"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "memcpy_bench"
+harness = false
