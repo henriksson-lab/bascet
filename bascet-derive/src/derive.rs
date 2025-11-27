@@ -57,6 +57,15 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         })
         .expect("Missing #[attrs(...)] attribute");
 
+    let backing_list = input
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("backing"))
+        .map(|attr| {
+            attr.parse_args::<TraitList>()
+                .expect("Invalid backing syntax")
+        });
+
     let Data::Struct(data) = &mut input.data else {
         panic!("Only structs supported");
     };
@@ -67,6 +76,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
 
     let mut map: HashMap<String, (Ident, syn::Type)> = HashMap::new();
 
+    // Process attrs
     for spec in &trait_list.specs {
         let (tname, fname, ftype) = match spec {
             TraitSpec::Default { trait_ident } => {
@@ -94,13 +104,43 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         map.insert(tname, (fname, ftype));
     }
 
-    input.attrs.retain(|attr| !attr.path().is_ident("attrs"));
+    // Process backing
+    if let Some(backing_list) = &backing_list {
+        for spec in &backing_list.specs {
+            let (tname, fname, ftype) = match spec {
+                TraitSpec::Default { trait_ident } => {
+                    let tname = trait_ident.to_string();
+                    let snake = tname.to_snake_case();
+                    let field = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref() == Some(&Ident::new(&snake, trait_ident.span())))
+                        .unwrap_or_else(|| panic!("No field '{}' for {}", snake, tname));
+                    (tname, field.ident.clone().unwrap(), field.ty.clone())
+                }
+                TraitSpec::Override {
+                    trait_ident,
+                    field_ident,
+                } => {
+                    let tname = trait_ident.to_string();
+                    let field = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref() == Some(field_ident))
+                        .unwrap_or_else(|| panic!("Field '{}' not found for {}", field_ident, tname));
+                    (tname, field_ident.clone(), field.ty.clone())
+                }
+            };
+
+            map.insert(tname, (fname, ftype));
+        }
+    }
+
+    input.attrs.retain(|attr| !attr.path().is_ident("attrs") && !attr.path().is_ident("backing"));
 
     let attr_idents = trait_list.specs.iter().map(|spec| match spec {
         TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => trait_ident,
     });
 
-    let impls = trait_list.specs.iter().map(|spec| {
+    let attr_impls = trait_list.specs.iter().map(|spec| {
         let trait_ident = match spec {
             TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
                 trait_ident
@@ -110,16 +150,50 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         quote! {
             impl bascet_core::Get<#trait_ident> for #name {
                 type Value = #ftype;
-                fn attr(&self) -> &Self::Value { &self.#fname }
-                fn attr_mut(&mut self) -> &mut Self::Value { &mut self.#fname }
+                fn as_ref(&self) -> &Self::Value { &self.#fname }
+                fn as_mut(&mut self) -> &mut Self::Value { &mut self.#fname }
             }
         }
+    });
+
+    let backing_impls = backing_list.iter().flat_map(|backing_list| {
+        backing_list.specs.iter().map(|spec| {
+            let trait_ident = match spec {
+                TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
+                    trait_ident
+                }
+            };
+            let (fname, ftype) = &map[&trait_ident.to_string()];
+            quote! {
+                impl bascet_core::Get<#trait_ident> for #name {
+                    type Value = #ftype;
+                    fn as_ref(&self) -> &Self::Value { &self.#fname }
+                    fn as_mut(&mut self) -> &mut Self::Value { &mut self.#fname }
+                }
+            }
+        })
+    });
+
+    let backing_ident = backing_list.as_ref().and_then(|bl| {
+        bl.specs.first().map(|spec| match spec {
+            TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
+                trait_ident
+            }
+        })
+    });
+
+    let backing_type = backing_ident.map(|ident| {
+        quote! { type Backing = #ident; }
+    }).unwrap_or_else(|| {
+        quote! { type Backing = bascet_core::OwnedBacking; }
     });
 
     TokenStream::from(quote! {
         impl bascet_core::Composite for #name {
             type Attrs = (#(#attr_idents),*);
+            #backing_type
         }
-        #(#impls)*
+        #(#attr_impls)*
+        #(#backing_impls)*
     })
 }

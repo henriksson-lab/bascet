@@ -1,9 +1,7 @@
-mod arena_pool;
+mod arena;
 mod consts;
-mod managed;
 mod traits;
 
-pub use arena_pool::*;
+pub use arena::*;
 pub use consts::*;
-pub use managed::*;
 pub use traits::*;

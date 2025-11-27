@@ -1,12 +1,3 @@
-macro_rules! impl_attrs {
-    ($($attr_name:ident),+ $(,)?) => {
-        $(
-            pub struct $attr_name;
-            impl crate::Attr for $attr_name {}
-        )+
-    };
-}
-
 // Generate tuple implementations for each size from 2 to 16
 macro_rules! impl_variadic_get {
     () => {

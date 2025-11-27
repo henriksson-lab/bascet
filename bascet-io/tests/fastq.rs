@@ -1,56 +1,75 @@
-use std::{ptr::NonNull, sync::atomic::AtomicU64};
+use std::{num::NonZero, ptr::NonNull, sync::atomic::AtomicU64};
 
 use bascet_core::*;
-use bascet_io::{bgzf::BGZFDecoder, FASTQRecordParser};
-use bounded_integer::BoundedU64;
+use bascet_io::{FASTQRecordParser, bgzf::BGZFDecoder};
+use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
+use smallvec::SmallVec;
 
-#[derive(Composite)]
-#[attrs(Id, Read, Quality, RefCount)]
+#[derive(Composite, Default)]
+#[attrs(Id, Sequence, Quality)]
+#[backing(ArenaBacking)]
 struct FASTQCell {
     id: &'static [u8],
-    read: &'static [u8],
+    sequence: &'static [u8],
     quality: &'static [u8],
-    ref_count: UnsafePtr<Arena<u8>>,
-}
-
-impl Default for FASTQCell {
-    fn default() -> Self {
-        Self {
-            id: Default::default(),
-            read: Default::default(),
-            quality: Default::default(),
-            ref_count: unsafe { UnsafePtr::new_unchecked(NonNull::dangling().as_ptr()) },
-        }
-    }
-}
-
-impl Drop for FASTQCell {
-    fn drop(&mut self) {
-        unsafe { self.ref_count.as_mut().dec_ref() };
-    }
+    arena_backing: SmallVec<[ArenaView<u8>; 2]>,
 }
 
 #[test]
 fn test_stream_bgzf_fastq() {
     let decoder = BGZFDecoder::builder()
         .path("../data/P32705_1002_S1_L002_R1_001.fastq.gz")
-        .sizeof_buffer(ByteSize::gib(32))
-        .num_threads(BoundedU64::const_new::<16>())
+        .num_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
     let parser = FASTQRecordParser::new();
-    let mut stream = Stream::new(decoder, parser);
+    let mut stream = Stream::builder()
+        .decoder(decoder)
+        .parser(parser)
+        .n_buffers(BoundedUsize::new(1024).unwrap())
+        .sizeof_arena(ByteSize::mib(32))
+        .sizeof_buffer(ByteSize::gib(14))
+        .build()
+        .unwrap();
 
+    use std::collections::VecDeque;
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let mut last_print = start;
     let mut i = 0;
+    let mut throughputs = VecDeque::with_capacity(60);
+
     while let Ok(Some(cell)) = stream.next::<FASTQCell>() {
         i += 1;
         if i % 1_000_000 == 0 {
-            println!("{:?}M Records Parsed", i / 1_000_000);
-            // println!("{:?}", String::from_utf8_lossy(cell.get_ref::<Id>()));
-            // println!("{:?}", String::from_utf8_lossy(cell.get_ref::<Read>()));
-            // println!("{:?}", String::from_utf8_lossy(cell.get_ref::<Quality>()));
+            let now = Instant::now();
+            let elapsed = now.duration_since(last_print).as_secs_f64();
+            let throughput = 1_000_000.0 / elapsed / 1_000_000.0;
+
+            throughputs.push_back(throughput);
+            if throughputs.len() > 60 {
+                throughputs.pop_front();
+            }
+
+            let avg_throughput: f64 = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
+
+            println!(
+                "{}M records | {:.2} M/rec/s (rolling avg: {:.2} M/rec/s)",
+                i / 1_000_000,
+                throughput,
+                avg_throughput
+            );
+
+            last_print = now;
         }
     }
-    dbg!("end");
+
+    let total_elapsed = start.elapsed().as_secs_f64();
+    let overall_throughput = i as f64 / total_elapsed / 1_000_000.0;
+    println!(
+        "\nCompleted: {} records in {:.2}s | Overall: {:.2} M/rec/s",
+        i, total_elapsed, overall_throughput
+    );
 }
