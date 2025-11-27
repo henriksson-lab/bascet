@@ -1,5 +1,6 @@
 pub trait Composite: Sized {
     type Attrs;
+    type Backing: crate::Backing;
 
     #[inline(always)]
     fn get_ref<'a, G: crate::Ref<'a, Self>>(&'a self) -> G::Output {

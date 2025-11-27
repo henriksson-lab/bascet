@@ -1,10 +1,9 @@
-impl_attrs!(
+bascet_derive::define_attr!(
     Id,
-    ReadPair,
-    Read,
-    QualityPair,
+    Sequence,
+    SequencePair,
     Quality,
+    QualityPair,
     Umi,
-    Metadata,
-    RefCount
+    Metadata
 );

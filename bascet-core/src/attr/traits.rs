@@ -1,11 +1,5 @@
 pub trait Attr {}
 
-pub trait Get<A> {
-    type Value;
-    fn attr(&self) -> &Self::Value;
-    fn attr_mut(&mut self) -> &mut Self::Value;
-}
-
 pub struct Tagged<A, T> {
     pub value: T,
     _marker: std::marker::PhantomData<A>,
@@ -27,12 +21,12 @@ pub trait Put<Target> {
 
 impl<A, T, Target> Put<Target> for Tagged<A, T>
 where
-    Target: Get<A, Value = T>,
+    Target: crate::Get<A, Value = T>,
     A: Attr,
 {
     #[inline(always)]
     fn put(self, target: &mut Target) {
-        *target.attr_mut() = self.value;
+        *target.as_mut() = self.value;
     }
 }
 
@@ -49,28 +43,28 @@ pub trait Mut<'a, T> {
 impl<'a, T, A> Ref<'a, T> for A
 where
     A: Attr,
-    T: Get<A>,
-    <T as Get<A>>::Value: 'a,
+    T: crate::Get<A>,
+    <T as crate::Get<A>>::Value: 'a,
 {
-    type Output = &'a <T as Get<A>>::Value;
+    type Output = &'a <T as crate::Get<A>>::Value;
 
     #[inline(always)]
     fn get_ref(cell: &'a T) -> Self::Output {
-        cell.attr()
+        cell.as_ref()
     }
 }
 
 impl<'a, T, A> Mut<'a, T> for A
 where
     A: Attr,
-    T: Get<A>,
-    <T as Get<A>>::Value: 'a,
+    T: crate::Get<A>,
+    <T as crate::Get<A>>::Value: 'a,
 {
-    type Output = &'a mut <T as Get<A>>::Value;
+    type Output = &'a mut <T as crate::Get<A>>::Value;
 
     #[inline(always)]
     fn get_mut(cell: &'a mut T) -> Self::Output {
-        cell.attr_mut()
+        cell.as_mut()
     }
 }
 
