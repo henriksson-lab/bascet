@@ -1,12 +1,11 @@
 use std::{fs::File, io::Read, os::raw, path::Path};
 
 use bascet_core::*;
-use bon::bon;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use rust_htslib::htslib;
 
-pub struct BGZFDecoder {
+pub struct BGZF {
     inner_hts_file_ptr: SendPtr<htslib::htsFile>,
     inner_hts_bgzf_ptr: SendPtr<htslib::BGZF>,
 
@@ -17,13 +16,13 @@ pub struct BGZFDecoder {
     inner_hts_sizeof_alloc: usize,
 }
 
-#[bon]
-impl BGZFDecoder {
+#[bon::bon]
+impl BGZF {
     #[builder]
     pub fn new<P: AsRef<Path>>(
         path: P,
         #[builder(default = BoundedU64::new(1).unwrap())] num_threads: BoundedU64<1, { u64::MAX }>,
-    ) -> std::io::Result<Self> {
+    ) -> Result<Self, ()> {
         let path = path.as_ref();
 
         let mut file = match File::open(path) {
@@ -32,7 +31,7 @@ impl BGZFDecoder {
         };
 
         let mut bgzf_hdr = [0u8; 18];
-        file.read_exact(&mut bgzf_hdr)?;
+        file.read_exact(&mut bgzf_hdr).unwrap();
 
         let hts_file_ptr = unsafe { SendPtr::new_unchecked(htsutils::hts_open(path)) };
         let hts_bgzf_ptr =
@@ -65,7 +64,7 @@ impl BGZFDecoder {
     }
 }
 
-impl Decode for BGZFDecoder {
+impl Decode for BGZF {
     fn sizeof_target_alloc(&self) -> usize {
         self.inner_hts_sizeof_alloc
     }
@@ -99,7 +98,7 @@ impl Decode for BGZFDecoder {
     }
 }
 
-impl Drop for BGZFDecoder {
+impl Drop for BGZF {
     fn drop(&mut self) {
         unsafe {
             htslib::hts_close(self.inner_hts_file_ptr.as_ptr());

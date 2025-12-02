@@ -1,34 +1,32 @@
+use memmap2::MmapMut;
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Index;
+use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
-
-use bytemuck::Pod;
-use bytesize::ByteSize;
-use memmap2::MmapMut;
 
 use crate::utils::spinpark_loop::{self, spinpark_loop, SpinPark};
 use crate::{likely_unlikely, SendPtr, DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER};
 
 pub struct ArenaSlice<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
-    slice: *mut [T],
+    slice: NonNull<[T]>,
     view: ArenaView<T>,
     _not_sync: PhantomData<*const ()>,
 }
 
 impl<T> ArenaSlice<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
     #[inline(always)]
     pub unsafe fn new(slice: &mut [T], arena: SendPtr<Arena<T>>) -> Self {
         Self {
-            slice: slice as *mut [T],
+            slice: NonNull::new_unchecked(slice as *mut [T]),
             view: ArenaView::new(arena),
             _not_sync: PhantomData,
         }
@@ -36,19 +34,20 @@ where
 
     #[inline(always)]
     pub(crate) unsafe fn truncate(mut self, len: usize) -> Self {
-        let ptr = self.slice as *mut T;
-        self.slice = std::slice::from_raw_parts_mut(ptr, len);
+        debug_assert!(len <= self.slice.as_ref().len());
+        let ptr = self.slice.as_ptr() as *mut T;
+        self.slice = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
         self
     }
 
     #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
-        unsafe { &*self.slice }
+        unsafe { self.slice.as_ref() }
     }
 
     #[inline(always)]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe { &mut *self.slice }
+        unsafe { self.slice.as_mut() }
     }
 
     #[inline(always)]
@@ -62,11 +61,11 @@ where
     }
 }
 
-unsafe impl<T> Send for ArenaSlice<T> where T: Pod + Send + Sync {}
+unsafe impl<T> Send for ArenaSlice<T> where T: bytemuck::Pod + Send + Sync {}
 
 impl<T> Clone for ArenaSlice<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
     fn clone(&self) -> Self {
         Self {
@@ -79,7 +78,7 @@ where
 
 impl<T, I> Index<I> for ArenaSlice<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
     I: SliceIndex<[T]>,
 {
     type Output = I::Output;
@@ -91,7 +90,7 @@ where
 
 pub struct ArenaView<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
     pub(crate) inner_src: SendPtr<Arena<T>>,
     _not_sync: PhantomData<*const ()>,
@@ -99,7 +98,7 @@ where
 
 impl<T> ArenaView<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
     #[inline(always)]
     pub fn new(arena: SendPtr<Arena<T>>) -> Self {
@@ -111,11 +110,11 @@ where
     }
 }
 
-unsafe impl<T> Send for ArenaView<T> where T: Pod + Send + Sync {}
+unsafe impl<T> Send for ArenaView<T> where T: bytemuck::Pod + Send + Sync {}
 
 impl<T> Clone for ArenaView<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
     fn clone(&self) -> Self {
         unsafe { (*self.inner_src).as_ref().increment_strong_count() };
@@ -128,7 +127,7 @@ where
 
 impl<T> Drop for ArenaView<T>
 where
-    T: Pod,
+    T: bytemuck::Pod,
 {
     fn drop(&mut self) {
         unsafe { (*self.inner_src).as_ref().decrement_strong_count() };
@@ -138,7 +137,7 @@ where
 #[repr(C, align(64))]
 pub struct Arena<T> {
     // allocator hot path (cache line 1)
-    ptr: *mut T,
+    ptr: NonNull<T>,
     len: u64,
     off: u64,
     avl: AtomicBool,
@@ -148,10 +147,10 @@ pub struct Arena<T> {
     cnt: AtomicU16,
 }
 
-impl<T: Pod> Arena<T> {
-    pub fn from_slice(ptr: *mut T, cap: usize) -> Self {
+impl<T: bytemuck::Pod> Arena<T> {
+    pub unsafe fn from_slice(ptr: *mut T, cap: usize) -> Self {
         Self {
-            ptr,
+            ptr: NonNull::new_unchecked(ptr),
             len: cap as u64,
             off: 0,
             avl: AtomicBool::new(true),
@@ -161,7 +160,7 @@ impl<T: Pod> Arena<T> {
     }
 
     #[inline(always)]
-    pub fn available(&mut self, len: usize) -> bool {
+    pub fn is_available(&mut self, len: usize) -> bool {
         if self
             .avl
             .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
@@ -177,28 +176,28 @@ impl<T: Pod> Arena<T> {
     }
 
     #[inline(always)]
-    pub fn release(&self) {
+    pub fn make_available(&self) {
         self.avl.store(true, Ordering::Release);
     }
 
     #[inline(always)]
     pub fn alloc(&mut self, sizeof_alloc: usize) -> *mut T {
-        // DEBUG: Verify lock is held
         debug_assert!(
-            !self.avl.load(Ordering::Relaxed),
+            self.avl.load(Ordering::Relaxed) == false,
             "Arena::alloc called without holding lock!"
         );
 
         let sizeof_alloc = sizeof_alloc as u64;
         let start = self.off;
-        let end = start
-            .checked_add(sizeof_alloc)
-            .expect("Arena::alloc: overflow");
+        let end = start + sizeof_alloc;
 
-        assert!(end <= self.len, "Arena::alloc: insufficient capacity");
+        unsafe {
+            debug_assert!(end <= self.len);
+            std::hint::assert_unchecked(end <= self.len);
+        }
 
         self.off = end;
-        unsafe { self.ptr.add(start as usize) }
+        unsafe { self.ptr.as_ptr().add(start as usize) }
     }
 
     #[inline(always)]
@@ -231,29 +230,32 @@ impl<T: Pod> Arena<T> {
     pub fn increment_strong_count(&self) {
         // SAFETY: just incrementing no data sync needed here as the value of this is not needed anywhere
         let cnt = self.cnt.fetch_add(1, Ordering::Relaxed);
-        debug_assert!(cnt !=  u16::MAX, "Arena refcount underflow");
+        debug_assert!(cnt < u16::MAX);
     }
 
     #[inline(always)]
     pub fn decrement_strong_count(&self) {
         // SAFETY: Release ensures all writes to arena data happen before refcnt reaches 0
         let cnt = self.cnt.fetch_sub(1, Ordering::Release);
-        debug_assert!(cnt != 0, "Arena refcount underflow");
+        debug_assert!(cnt > 0);
     }
 }
 
-pub struct ArenaPool<T: Pod> {
-    _mmap: MmapMut,
+pub struct ArenaPool<T: bytemuck::Pod> {
+    _mmap: memmap2::MmapMut,
     inner_buf_arenas: Vec<UnsafeCell<Arena<T>>>,
-    inner_len_arenas: usize,
+    inner_cap_arenas: usize,
     inner_idx_hint: AtomicUsize,
 }
 
-unsafe impl<T: Pod + Send> Send for ArenaPool<T> {}
-unsafe impl<T: Pod + Sync> Sync for ArenaPool<T> {}
+unsafe impl<T: bytemuck::Pod + Send> Send for ArenaPool<T> {}
+unsafe impl<T: bytemuck::Pod + Sync> Sync for ArenaPool<T> {}
 
-impl<T: Pod> ArenaPool<T> {
-    pub fn new(sizeof_buffer: ByteSize, sizeof_arena: ByteSize) -> Result<Self, ()> {
+impl<T: bytemuck::Pod> ArenaPool<T> {
+    pub fn new(
+        sizeof_buffer: bytesize::ByteSize,
+        sizeof_arena: bytesize::ByteSize,
+    ) -> Result<Self, ()> {
         let num_arenas = (sizeof_buffer.as_u64() / sizeof_arena.as_u64()) as usize;
 
         //TODO: return errors
@@ -277,6 +279,7 @@ impl<T: Pod> ArenaPool<T> {
             let len_arenas = sizeof_arena.as_u64() as usize / size_of::<T>();
             // TODO: construct with MmapOptions for explicit use of Huge Pages?
             let mut mmap = MmapMut::map_anon(sizeof_buffer.as_u64() as usize).unwrap();
+            
             let ptr_arenas_base = mmap.as_mut_ptr() as *mut T;
             for i in 0..num_arenas {
                 let ptr_arena_start = ptr_arenas_base.add(i * len_arenas);
@@ -288,7 +291,7 @@ impl<T: Pod> ArenaPool<T> {
 
             Ok(Self {
                 _mmap: mmap,
-                inner_len_arenas: len_arenas,
+                inner_cap_arenas: len_arenas,
                 inner_buf_arenas: arenas,
                 inner_idx_hint: AtomicUsize::new(0),
             })
@@ -296,21 +299,27 @@ impl<T: Pod> ArenaPool<T> {
     }
 
     pub fn alloc(&self, len: usize) -> ArenaSlice<T> {
-        assert!(
-            len <= self.inner_len_arenas,
-            "alloc size exceeds arena size"
-        );
-
+        assert!(len <= self.inner_cap_arenas);
         let num_arenas = self.inner_buf_arenas.len();
+
+        unsafe {
+            debug_assert!(num_arenas > 0);
+            std::hint::assert_unchecked(num_arenas > 0);
+        }
         let mut cnt_spin = 0;
         let mut cnt_park = 0;
 
         loop {
             for i in 0..num_arenas {
                 let idx = (self.inner_idx_hint.load(Ordering::Relaxed) + i) % num_arenas;
+                unsafe {
+                    debug_assert!(idx < num_arenas);
+                    std::hint::assert_unchecked(idx < num_arenas);
+                }
+
                 // SAFETY   The atomic lock in available() ensures exclusive access
                 let arena = unsafe { &mut *self.inner_buf_arenas[idx].get() };
-                if arena.available(len) {
+                if arena.is_available(len) {
                     self.inner_idx_hint.store(idx, Ordering::Relaxed);
                     let ptr = arena.alloc(len);
 
@@ -322,7 +331,7 @@ impl<T: Pod> ArenaPool<T> {
                             SendPtr::new_unchecked(arena as *mut Arena<T>),
                         )
                     };
-                    arena.release();
+                    arena.make_available();
 
                     return slice;
                 }
@@ -338,7 +347,7 @@ impl<T: Pod> ArenaPool<T> {
     }
 }
 
-impl<T: Pod> Drop for ArenaPool<T> {
+impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
     fn drop(&mut self) {
         let mut cnt_spin = 0;
         let mut cnt_park = 0;

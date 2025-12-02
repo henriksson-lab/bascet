@@ -1,28 +1,16 @@
-use std::{num::NonZero, ptr::NonNull, sync::atomic::AtomicU64};
-
 use bascet_core::*;
 use bascet_io::{decode, parse, tirp_as_record::TIRPCell};
 use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
-use smallvec::SmallVec;
-
-#[derive(Composite, Default)]
-#[bascet(attrs = (Id, Sequence, Quality), backing = ArenaBacking, kind = AsRecord)]
-struct FASTQRecord {
-    id: &'static [u8],
-    sequence: &'static [u8],
-    quality: &'static [u8],
-    arena_backing: SmallVec<[ArenaView<u8>; 2]>,
-}
 
 #[test]
-fn test_stream_bgzf_fastq() {
+fn test_stream_bgzf_tirp() {
     let decoder = decode::BGZF::builder()
-        .path("../data/P32705_1002_S1_L002_R1_001.fastq.gz")
+        .path("../data/shard.1.tirp.gz")
         .num_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
-    let parser = parse::FASTQ::builder().build().unwrap();
+    let parser = parse::TIRP::builder().build().unwrap();
 
     let mut stream = Stream::builder()
         .decoder(decoder)
@@ -41,7 +29,7 @@ fn test_stream_bgzf_fastq() {
     let mut i = 0;
     let mut throughputs = VecDeque::with_capacity(60);
 
-    while let Ok(Some(cell)) = stream.next::<FASTQRecord>() {
+    while let Ok(Some(cell)) = stream.next::<TIRPCell>() {
         i += 1;
         if i % 1_000_000 == 0 {
             let now = Instant::now();
@@ -56,10 +44,11 @@ fn test_stream_bgzf_fastq() {
             let avg_throughput: f64 = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
 
             println!(
-                "{}M records | {:.2} M/rec/s (rolling avg: {:.2} M/rec/s)",
+                "{}M records | {:.2} M/rec/s (rolling avg: {:.2} M/rec/s). Current: {:?}",
                 i / 1_000_000,
                 throughput,
-                avg_throughput
+                avg_throughput,
+                String::from_utf8_lossy(cell.get_ref::<Id>())
             );
 
             last_print = now;

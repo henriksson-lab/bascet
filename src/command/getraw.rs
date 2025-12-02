@@ -56,7 +56,7 @@ pub struct GetRawCMD {
     pub paths_hist: Option<Vec<PathBuf>>,
     #[arg(
         long = "temp",
-        help = "Temporary storage directory. Defaults to <path_out parent dir>/temp"
+        help = "Temporary storage directory. Defaults to <path_out>"
     )]
     pub path_temp: Option<PathBuf>,
 
@@ -245,7 +245,7 @@ impl GetRawCMD {
             .unwrap_or(vec_output.first().unwrap().path().to_path_buf())
             .parent()
             .unwrap_or_else(|| {
-                log_critical!("No valid histogram path specified.");
+                log_critical!("No valid temp path specified.");
             })
             .to_path_buf();
 

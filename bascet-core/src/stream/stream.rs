@@ -7,7 +7,7 @@ use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
 use rtrb::{PeekError, PushError};
 
-use crate::{ArenaPool, ArenaSlice, DecodeStatus, ParseStatus, spinpark_loop};
+use crate::{spinpark_loop, ArenaPool, ArenaSlice, DecodeStatus, ParseStatus};
 
 enum BufferStatus {
     Available(ArenaSlice<u8>),
@@ -20,11 +20,7 @@ enum StreamStatus {
     Spanning(ArenaSlice<u8>),
 }
 
-pub struct Stream<D, P>
-where
-    D: crate::Decode,
-    P: crate::Parse<ArenaSlice<u8>>,
-{
+pub struct Stream<D, P> {
     inner_arena_pool: Arc<ArenaPool<u8>>,
     inner_buffer_rx: rtrb::Consumer<BufferStatus>,
     inner_decoder_thread: ManuallyDrop<JoinHandle<D>>,
@@ -38,7 +34,7 @@ where
 impl<D, P> Stream<D, P>
 where
     D: crate::Decode,
-    P: crate::Parse<ArenaSlice<u8>>,
+    D: Send + 'static,
 {
     #[builder]
     pub fn new(
@@ -50,10 +46,7 @@ where
         sizeof_arena: ByteSize, //
         #[builder(default = BoundedUsize::<2, { usize::MAX }>::new(2).unwrap())]
         n_buffers: BoundedUsize<2, { usize::MAX }>,
-    ) -> Result<Self, ()>
-    where
-        D: Send + 'static,
-    {
+    ) -> Result<Self, ()> {
         let arc_arena_pool = Arc::new(ArenaPool::new(sizeof_buffer, sizeof_arena).unwrap());
         let decoder_stop_flag = Arc::new(AtomicBool::new(false));
         let (handle, rx) = Self::spawn_decode_worker(
@@ -74,18 +67,28 @@ where
 
     pub fn next<C>(&mut self) -> Result<Option<C>, ()>
     where
-        C: crate::Composite + Default,
-        C: crate::FromParsed<C::Attrs, P::Output>,
-        C: crate::FromBacking<P::Output, <C as crate::Composite>::Backing>,
+        C: Default,
+        C: crate::Composite
+            + crate::FromParsed<C::Attrs, <P as crate::Parse<crate::ArenaSlice<u8>, C::Kind>>::Item>
+            + crate::FromBacking<
+                <P as crate::Parse<crate::ArenaSlice<u8>, C::Kind>>::Item,
+                C::Backing,
+            >,
+        P: crate::Parse<crate::ArenaSlice<u8>, C::Kind>,
     {
         self.next_with::<C, C::Attrs>()
     }
 
     pub fn next_with<C, A>(&mut self) -> Result<Option<C>, ()>
     where
-        C: crate::Composite + Default,
-        C: crate::FromParsed<A, P::Output>,
-        C: crate::FromBacking<P::Output, <C as crate::Composite>::Backing>,
+        C: Default,
+        C: crate::Composite
+            + crate::FromParsed<A, <P as crate::Parse<crate::ArenaSlice<u8>, C::Kind>>::Item>
+            + crate::FromBacking<
+                <P as crate::Parse<crate::ArenaSlice<u8>, C::Kind>>::Item,
+                C::Backing,
+            >,
+        P: crate::Parse<crate::ArenaSlice<u8>, C::Kind>,
     {
         let mut spinpark_counter = 0;
 
@@ -138,8 +141,10 @@ where
                             self.inner_status = StreamStatus::Spanning(ArenaSlice::clone(decoded));
                             self.inner_buffer_rx.pop().unwrap();
                             continue;
-                        },
-                        ParseStatus::Finished => unreachable!()
+                        }
+
+                        // SAFETY: returned only by parse_finish
+                        ParseStatus::Finished => unreachable!(),
                     }
                 }
                 BufferStatus::Eof => {
@@ -168,13 +173,7 @@ where
         n_buffers: BoundedUsize<2, { usize::MAX }>,
         stop_flag: Arc<AtomicBool>,
         arena_pool: Arc<ArenaPool<u8>>,
-    ) -> (
-        JoinHandle<D>,
-        rtrb::Consumer<BufferStatus>,
-    )
-    where
-        D: Send + 'static,
-    {
+    ) -> (JoinHandle<D>, rtrb::Consumer<BufferStatus>) {
         let (mut tx, rx) = rtrb::RingBuffer::new(n_buffers.get());
 
         let handle = std::thread::spawn(move || {
@@ -190,7 +189,7 @@ where
                     DecodeStatus::Eof => {
                         stop_flag.store(true, Ordering::Relaxed);
                         BufferStatus::Eof
-                    },
+                    }
                     DecodeStatus::Error(e) => {
                         stop_flag.store(true, Ordering::Relaxed);
                         BufferStatus::Error(e)
@@ -217,11 +216,7 @@ where
     }
 }
 
-impl<D, P> Drop for Stream<D, P>
-where
-    D: crate::Decode,
-    P: crate::Parse<ArenaSlice<u8>>,
-{
+impl<D, P> Drop for Stream<D, P> {
     fn drop(&mut self) {
         self.inner_decoder_stop.store(true, Ordering::Relaxed);
         // SAFETY: drop is only called once
