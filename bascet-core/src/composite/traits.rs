@@ -1,7 +1,7 @@
 pub trait Composite: Sized {
+    type Item = ();
     type Attrs;
     type Backing: crate::Backing;
-    type Kind: CompositeKind;
 
     #[inline(always)]
     fn get_ref<'a, G: crate::Ref<'a, Self>>(&'a self) -> G::Output {
@@ -12,5 +12,3 @@ pub trait Composite: Sized {
         G::get_mut(self)
     }
 }
-
-pub trait CompositeKind {}
