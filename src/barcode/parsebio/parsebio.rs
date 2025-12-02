@@ -215,7 +215,6 @@ impl Chemistry for ParseBioChemistry3 {
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
         };
-        log_info!("Barcode struct:{:#?}", self.barcode);
         Ok(())
     }
 

@@ -239,15 +239,20 @@ impl GetRawCMD {
             / 60;
         let timestamp_temp_files = timestamp_temp_files.to_string();
 
-        let path_temp_dir = self
-            .path_temp
-            .clone()
-            .unwrap_or(vec_output.first().unwrap().path().to_path_buf())
-            .parent()
-            .unwrap_or_else(|| {
-                log_critical!("No valid histogram path specified.");
-            })
-            .to_path_buf();
+        let path_temp_dir = if let Some(temp_path) = self.path_temp.clone() {
+            temp_path
+        } else {
+            vec_output
+                .first()
+                .unwrap()
+                .path()
+                .parent()
+                .unwrap_or_else(|| {
+                    log_critical!("No valid output parent directory found.");
+                })
+                .to_path_buf()
+        };
+        log_info!("Temp is"; "temp" => ?path_temp_dir);
 
         if vec_input_debarcode_merge.is_empty() {
             let vec_input: Vec<(DebarcodeReadsInput, DebarcodeReadsInput)> = izip!(self.paths_r1.clone(), self.paths_r2.clone())
