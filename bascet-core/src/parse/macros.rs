@@ -19,15 +19,15 @@ macro_rules! impl_variadic_from_parsed {
     };
     (@gen $n:tt) => {
         seq_macro::seq!(N in 1..=$n {
-            impl<T, S, #(A~N,)*> FromParsed<(#(A~N,)*), S> for T
+            impl<T, S, #(A~N,)*> crate::FromParsed<(#(A~N,)*), S> for T
             where
-                T: #(crate::Get<A~N> + FromParsed<A~N, S> +)*,
+                T: #(crate::Get<A~N> + crate::FromParsed<A~N, S> +)*,
                 S: #(crate::Get<A~N> +)*,
                 #(A~N: crate::Attr,)*
             {
-                fn from(&mut self, source: &S) {
+                fn from_parsed(&mut self, source: &S) {
                     #(
-                        <T as FromParsed<A~N, S>>::from(self, &source);
+                        <T as crate::FromParsed<A~N, S>>::from_parsed(self, &source);
                     )*
                 }
             }

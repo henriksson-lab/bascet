@@ -2,18 +2,15 @@ use smallvec::SmallVec;
 
 use crate::{ArenaView, FromBacking};
 
-bascet_derive::define_backing!(
-    OwnedBacking,
-    ArenaBacking
-);
+bascet_derive::define_backing!(OwnedBacking, ArenaBacking);
 
-// OwnedBacking with () - no backing storage needed
+// OwnedBacking with () no backing needed
 impl<T, S> FromBacking<S, OwnedBacking> for T
 where
     T: crate::Get<OwnedBacking, Value = ()>,
     S: crate::Get<OwnedBacking, Value = ()>,
 {
-    fn take_backing(&mut self, _source: S) {  }
+    fn take_backing(&mut self, _source: S) {}
 }
 
 impl<T, S, U, const N: usize> FromBacking<S, ArenaBacking> for T
