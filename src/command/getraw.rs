@@ -1589,6 +1589,10 @@ impl DebarcodeAtrandiWGSChemistry {
     }
 }
 impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
+    fn prepare_using_rp_vecs<C:crate::io::traits::BascetCell>(&mut self,_vec_r1:Vec<C>,_vec_r2:Vec<C>,) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     fn detect_barcode_and_trim(
         &mut self,
         r1_seq: &'static [u8],
