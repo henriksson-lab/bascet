@@ -1,5 +1,5 @@
 pub trait Composite: Sized {
-    type Item = ();
+    type Marker;
     type Attrs;
     type Backing: crate::Backing;
 

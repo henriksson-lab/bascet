@@ -1,27 +1,19 @@
+use crate::fastq;
 use bascet_core::*;
-use smallvec::{smallvec, SmallVec};
 
-#[derive(Composite, Default)]
-#[bascet(attrs = (Id, Sequence, Quality), backing = ArenaBacking, kind = AsRecord)]
-pub struct FASTQRecord {
-    pub id: &'static [u8],
-    pub sequence: &'static [u8],
-    pub quality: &'static [u8],
+impl Parse<ArenaSlice<u8>, AsRecord> for crate::Fastq {
+    type Item = fastq::Record;
 
-    // SAFETY: exposed ONLY to allow conversion outside this crate.
-    //         be VERY careful modifying this at all
-    pub arena_backing: SmallVec<[ArenaView<u8>; 2]>,
-}
-
-impl Parse<ArenaSlice<u8>, AsRecord> for crate::FASTQ {
-    type Item = FASTQRecord;
-
-    fn parse_aligned<C, A>(&mut self, decoded: &ArenaSlice<u8>) -> ParseStatus<C, ()>
+    fn parse_aligned<C, A>(
+        &mut self,
+        decoded: &ArenaSlice<u8>,
+        _context: &mut <Self as Context<AsRecord>>::Context,
+    ) -> ParseStatus<C, ()>
     where
-        C: bascet_core::Composite
+        C: Composite<Marker = AsRecord>
             + Default
             + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, <C as bascet_core::Composite>::Backing>,
+            + FromBacking<Self::Item, C::Backing>,
     {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
@@ -52,34 +44,38 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::FASTQ {
         // SAFETY: pos_newline[3] was found by memchr in buf_cursor
         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_newline[3]) };
         let fastq_record =
-            unsafe { FASTQRecord::from_raw(buf_record, pos_newline, decoded.clone_view()) };
+            unsafe { fastq::Record::from_raw(buf_record, pos_newline, decoded.clone_view()) };
         let mut composite_record = C::default();
         composite_record.from_parsed(&fastq_record);
         composite_record.take_backing(fastq_record);
         ParseStatus::Full(composite_record)
     }
 
-    fn parse_finish<C, A>(&mut self) -> ParseStatus<C, ()>
+    fn parse_finish<C, A>(
+        &mut self,
+        _context: &mut <Self as Context<AsRecord>>::Context,
+    ) -> ParseStatus<C, ()>
     where
-        C: bascet_core::Composite
+        C: Composite<Marker = AsRecord>
             + Default
             + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, <C as bascet_core::Composite>::Backing>,
+            + FromBacking<Self::Item, C::Backing>,
     {
         return ParseStatus::Finished;
     }
 
     fn parse_spanning<C, A>(
-        &mut self,                              //
-        decoded_spanning_tail: &ArenaSlice<u8>, //
-        decoded_spanning_head: &ArenaSlice<u8>, //
+        &mut self,
+        decoded_spanning_tail: &ArenaSlice<u8>,
+        decoded_spanning_head: &ArenaSlice<u8>,
+        _context: &mut <Self as Context<AsRecord>>::Context,
         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
     ) -> ParseStatus<C, ()>
     where
-        C: bascet_core::Composite
+        C: Composite<Marker = AsRecord>
             + Default
             + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, <C as bascet_core::Composite>::Backing>,
+            + FromBacking<Self::Item, C::Backing>,
     {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
@@ -133,7 +129,7 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::FASTQ {
             let combined_slice =
                 unsafe { std::slice::from_raw_parts(tail_remaining.as_ptr(), tail_len + head_len) };
             let mut record = unsafe {
-                FASTQRecord::from_raw(
+                fastq::Record::from_raw(
                     combined_slice,
                     pos_newline_combined,
                     decoded_spanning_tail.clone_view(),
@@ -164,7 +160,7 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::FASTQ {
             }
 
             unsafe {
-                FASTQRecord::from_raw(
+                fastq::Record::from_raw(
                     scratch.as_slice(),
                     pos_newline_combined,
                     scratch.clone_view(),
@@ -177,52 +173,5 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::FASTQ {
 
         self.inner_cursor = head_len;
         ParseStatus::Full(composite_record)
-    }
-}
-
-impl FASTQRecord {
-    unsafe fn from_raw(
-        buf_record: &[u8],
-        pos_newline: [usize; 4],
-        arena_view: ArenaView<u8>,
-    ) -> FASTQRecord {
-        // SAFETY: Caller guarantees pos_newline indices are valid
-        let hdr = buf_record.get_unchecked(..pos_newline[0]);
-        let seq = buf_record.get_unchecked(pos_newline[0] + 1..pos_newline[1]);
-        let sep = buf_record.get_unchecked(pos_newline[1] + 1..pos_newline[2]);
-        let qal = buf_record.get_unchecked(pos_newline[2] + 1..pos_newline[3]);
-
-        if likely_unlikely::unlikely(hdr.get(0) != Some(&b'@')) {
-            panic!(
-                "Invalid FASTQ header: {:?}; record {:?}",
-                String::from_utf8_lossy(hdr),
-                String::from_utf8_lossy(buf_record),
-            );
-        }
-        if likely_unlikely::unlikely(sep.get(0) != Some(&b'+')) {
-            panic!(
-                "Invalid FASTQ separator: {:?}",
-                String::from_utf8_lossy(sep)
-            );
-        }
-        if likely_unlikely::unlikely(seq.len() != qal.len()) {
-            panic!(
-                "Sequence and quality length mismatch: {} != {}",
-                seq.len(),
-                qal.len()
-            );
-        }
-
-        // SAFETY: transmute slices to static lifetime kept alive by ArenaView refcount
-        let static_id: &'static [u8] = unsafe { std::mem::transmute(hdr) };
-        let static_seq: &'static [u8] = unsafe { std::mem::transmute(seq) };
-        let static_qal: &'static [u8] = unsafe { std::mem::transmute(qal) };
-
-        FASTQRecord {
-            id: static_id,
-            sequence: static_seq,
-            quality: static_qal,
-            arena_backing: smallvec![arena_view],
-        }
     }
 }

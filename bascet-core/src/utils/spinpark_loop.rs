@@ -1,6 +1,7 @@
 pub const SPINPARK_PARK_MICROS_TIMEOUT: core::time::Duration = std::time::Duration::from_micros(50);
-pub const PARKS_BEFORE_WARN: usize = (std::time::Duration::from_secs(15).as_micros()
-    / SPINPARK_PARK_MICROS_TIMEOUT.as_micros()) as usize;
+pub const SPINPARK_PARKS_BEFORE_WARN: usize = (std::time::Duration::from_secs(15).as_micros()
+    / SPINPARK_PARK_MICROS_TIMEOUT.as_micros())
+    as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpinPark {

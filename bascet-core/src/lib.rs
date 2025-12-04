@@ -18,5 +18,5 @@ pub use parse::*;
 pub use stream::*;
 pub use utils::*;
 
+pub use bascet_derive::Context;
 pub use bascet_derive::{define_attr, define_backing, Composite};
-pub use bascet_derive::{define_parser};

@@ -1,3 +1,3 @@
-pub trait AsRecord {}
-pub trait AsCell {}
-pub trait AsBlock {}
+pub struct AsRecord;
+pub struct AsCell;
+pub struct AsBlock;
