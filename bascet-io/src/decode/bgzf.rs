@@ -5,7 +5,7 @@ use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use rust_htslib::htslib;
 
-pub struct BGZF {
+pub struct Bgzf {
     inner_hts_file_ptr: SendPtr<htslib::htsFile>,
     inner_hts_bgzf_ptr: SendPtr<htslib::BGZF>,
 
@@ -17,7 +17,7 @@ pub struct BGZF {
 }
 
 #[bon::bon]
-impl BGZF {
+impl Bgzf {
     #[builder]
     pub fn new<P: AsRef<Path>>(
         path: P,
@@ -64,7 +64,7 @@ impl BGZF {
     }
 }
 
-impl Decode for BGZF {
+impl Decode for Bgzf {
     fn sizeof_target_alloc(&self) -> usize {
         self.inner_hts_sizeof_alloc
     }
@@ -98,7 +98,7 @@ impl Decode for BGZF {
     }
 }
 
-impl Drop for BGZF {
+impl Drop for Bgzf {
     fn drop(&mut self) {
         unsafe {
             htslib::hts_close(self.inner_hts_file_ptr.as_ptr());

@@ -1,13 +1,13 @@
-use std::{num::NonZero, ptr::NonNull, sync::atomic::AtomicU64};
+use std::{collections::VecDeque, num::NonZero, ptr::NonNull, sync::atomic::AtomicU64, time::Instant};
 
 use bascet_core::*;
-use bascet_io::{decode, parse, tirp_as_record::TIRPCell};
+use bascet_io::{decode, parse};
 use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 use smallvec::SmallVec;
 
 #[derive(Composite, Default)]
-#[bascet(attrs = (Id, Sequence, Quality), backing = ArenaBacking, kind = AsRecord)]
+#[bascet(attrs = (Id, Sequence, Quality), backing = ArenaBacking, marker = AsRecord)]
 struct FASTQRecord {
     id: &'static [u8],
     sequence: &'static [u8],
@@ -17,24 +17,21 @@ struct FASTQRecord {
 
 #[test]
 fn test_stream_bgzf_fastq() {
-    let decoder = decode::BGZF::builder()
+    let decoder = decode::Bgzf::builder()
         .path("../data/P32705_1002_S1_L002_R1_001.fastq.gz")
         .num_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
-    let parser = parse::FASTQ::builder().build().unwrap();
+    let parser = parse::Fastq::builder().build().unwrap();
 
     let mut stream = Stream::builder()
-        .decoder(decoder)
-        .parser(parser)
-        .n_buffers(BoundedUsize::const_new::<1024>())
+        .with_decoder(decoder)
+        .with_parser(parser)
+        .countof_buffers(BoundedUsize::const_new::<1024>())
         .sizeof_arena(ByteSize::mib(8))
         .sizeof_buffer(ByteSize::gib(1))
         .build()
         .unwrap();
-
-    use std::collections::VecDeque;
-    use std::time::Instant;
 
     let start = Instant::now();
     let mut last_print = start;

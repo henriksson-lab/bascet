@@ -4,9 +4,10 @@ use quote::quote;
 use std::collections::HashMap;
 use syn::{
     parse::Parse, parse::ParseStream, parse_macro_input, Data, DeriveInput, Fields, Ident, Token,
+    Type,
 };
 
-enum TraitSpec {
+enum AttrSpec {
     Default {
         trait_ident: Ident,
     },
@@ -16,25 +17,25 @@ enum TraitSpec {
     },
 }
 
-impl Parse for TraitSpec {
+impl Parse for AttrSpec {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let trait_ident = input.parse()?;
         if input.peek(Token![=]) {
             input.parse::<Token![=]>()?;
             let field_ident = input.parse()?;
-            return Ok(TraitSpec::Override {
+            return Ok(AttrSpec::Override {
                 trait_ident,
                 field_ident,
             });
         }
-        Ok(TraitSpec::Default { trait_ident })
+        Ok(AttrSpec::Default { trait_ident })
     }
 }
 
 struct BascetAttr {
-    attrs: Option<syn::punctuated::Punctuated<TraitSpec, Token![,]>>,
+    attrs: Option<syn::punctuated::Punctuated<AttrSpec, Token![,]>>,
     backing: Option<Ident>,
-    kind: Option<Ident>,
+    marker: Option<Ident>,
 }
 
 impl Parse for BascetAttr {
@@ -43,7 +44,7 @@ impl Parse for BascetAttr {
 
         let mut attrs = None;
         let mut backing = None;
-        let mut kind = None;
+        let mut marker = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -53,13 +54,13 @@ impl Parse for BascetAttr {
                 "attrs" => {
                     let content;
                     parenthesized!(content in input);
-                    attrs = Some(content.parse_terminated(TraitSpec::parse, Token![,])?);
+                    attrs = Some(content.parse_terminated(AttrSpec::parse, Token![,])?);
                 }
                 "backing" => {
                     backing = Some(input.parse()?);
                 }
-                "kind" => {
-                    kind = Some(input.parse()?);
+                "marker" => {
+                    marker = Some(input.parse()?);
                 }
                 _ => return Err(syn::Error::new(key.span(), "Unknown bascet parameter")),
             }
@@ -69,7 +70,7 @@ impl Parse for BascetAttr {
             }
         }
 
-        Ok(BascetAttr { attrs, backing, kind })
+        Ok(BascetAttr { attrs, backing, marker })
     }
 }
 
@@ -93,9 +94,9 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
 
     let backing_ident = bascet_attr.backing;
 
-    let kind_ident = bascet_attr
-        .kind
-        .expect("Missing kind in #[bascet(...)]. Specify: kind = AsRecord");
+    let marker_ident = bascet_attr
+        .marker
+        .expect("Missing marker in #[bascet(...)]. Specify: marker = AsRecord");
 
     let Data::Struct(data) = &mut input.data else {
         panic!("Only structs supported");
@@ -109,7 +110,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
 
     for spec in &trait_list_specs {
         let (tname, fname, ftype) = match spec {
-            TraitSpec::Default { trait_ident } => {
+            AttrSpec::Default { trait_ident } => {
                 let tname = trait_ident.to_string();
                 let snake = tname.to_snake_case();
                 let field = fields
@@ -118,7 +119,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
                     .unwrap_or_else(|| panic!("No field '{}' for {}", snake, tname));
                 (tname, field.ident.clone().unwrap(), field.ty.clone())
             }
-            TraitSpec::Override {
+            AttrSpec::Override {
                 trait_ident,
                 field_ident,
             } => {
@@ -137,12 +138,12 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
     input.attrs.retain(|attr| !attr.path().is_ident("bascet"));
 
     let attr_idents = trait_list_specs.iter().map(|spec| match spec {
-        TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => trait_ident,
+        AttrSpec::Default { trait_ident } | AttrSpec::Override { trait_ident, .. } => trait_ident,
     });
 
     let attr_impls = trait_list_specs.iter().map(|spec| {
         let trait_ident = match spec {
-            TraitSpec::Default { trait_ident } | TraitSpec::Override { trait_ident, .. } => {
+            AttrSpec::Default { trait_ident } | AttrSpec::Override { trait_ident, .. } => {
                 trait_ident
             }
         };
@@ -184,17 +185,62 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         (quote! { type Backing = bascet_core::OwnedBacking; }, None)
     };
 
-    let kind_type = quote! {
-        type Kind = bascet_core::#kind_ident;
+    let marker_type = quote! {
+        type Marker = bascet_core::#marker_ident;
     };
 
     TokenStream::from(quote! {
         impl bascet_core::Composite for #name {
             #attr_type
             #backing_type
-            #kind_type
+            #marker_type
         }
         #(#attr_impls)*
         #backing_impl
     })
+}
+
+struct ContextSpec {
+    marker: Ident,
+    context_type: Type,
+}
+
+impl Parse for ContextSpec {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let marker = input.parse()?;
+        input.parse::<Token![:]>()?;
+        let context_type = input.parse()?;
+        Ok(ContextSpec {
+            marker,
+            context_type,
+        })
+    }
+}
+
+pub fn derive_contexts(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    let name = &input.ident;
+
+    let contexts_attr = input
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("context"))
+        .expect("Missing #[context(...)] attribute");
+
+    let specs = contexts_attr
+        .parse_args_with(syn::punctuated::Punctuated::<ContextSpec, Token![,]>::parse_terminated)
+        .expect("Invalid context syntax");
+
+    let impls = specs.iter().map(|spec| {
+        let marker = &spec.marker;
+        let context_type = &spec.context_type;
+        quote! {
+            impl bascet_core::Context<bascet_core::#marker> for #name {
+                type Context = #context_type;
+                type Marker = bascet_core::#marker;
+            }
+        }
+    });
+
+    TokenStream::from(quote! { #(#impls)* })
 }

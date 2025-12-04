@@ -1,28 +1,21 @@
 use bascet_core::*;
 use smallvec::{smallvec, SmallVec};
 
-#[derive(Composite, Default)]
-#[bascet(attrs = (Id, SequencePair, QualityPair, Umi), backing = ArenaBacking, kind = AsRecord)]
-pub struct TIRPRecord {
-    pub id: &'static [u8],
-    pub sequence_pair: (&'static [u8], &'static [u8]),
-    pub quality_pair: (&'static [u8], &'static [u8]),
-    pub umi: &'static [u8],
+use crate::tirp;
 
-    // SAFETY: exposed ONLY to allow conversion outside this crate.
-    //         be VERY careful modifying this at all
-    pub arena_backing: SmallVec<[ArenaView<u8>; 2]>,
-}
+impl Parse<ArenaSlice<u8>, AsRecord> for crate::Tirp {
+    type Item = crate::tirp::Record;
 
-impl Parse<ArenaSlice<u8>, AsRecord> for crate::TIRP<TIRPRecord> {
-    type Item = TIRPRecord;
-
-    fn parse_aligned<C, A>(&mut self, decoded: &ArenaSlice<u8>) -> ParseStatus<C, ()>
+    fn parse_aligned<C, A>(
+        &mut self,
+        decoded: &ArenaSlice<u8>,
+        _context: &mut <Self as Context<AsRecord>>::Context,
+    ) -> ParseStatus<C, ()>
     where
-        C: bascet_core::Composite
+        C: Composite<Marker = AsRecord>
             + Default
             + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, <C as bascet_core::Composite>::Backing>,
+            + FromBacking<Self::Item, C::Backing>,
     {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
@@ -68,35 +61,39 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::TIRP<TIRPRecord> {
         // SAFETY: pos_endof_record was found by memchr in buf_cursor
         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_endof_record) };
         let fastq_record =
-            unsafe { TIRPRecord::from_raw(buf_record, pos_tab, decoded.clone_view()) };
+            unsafe { crate::tirp::Record::from_raw(buf_record, pos_tab, decoded.clone_view()) };
         let mut composite_record = C::default();
         composite_record.from_parsed(&fastq_record);
         composite_record.take_backing(fastq_record);
         ParseStatus::Full(composite_record)
     }
 
-    fn parse_finish<C, A>(&mut self) -> ParseStatus<C, ()>
+    fn parse_finish<C, A>(
+        &mut self,
+        _context: &mut <Self as Context<AsRecord>>::Context,
+    ) -> ParseStatus<C, ()>
     where
-        C: bascet_core::Composite
+        C: Composite<Marker = AsRecord>
             + Default
             + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, <C as bascet_core::Composite>::Backing>,
+            + FromBacking<Self::Item, C::Backing>,
     {
         return ParseStatus::Finished;
     }
 
     #[inline(always)]
     fn parse_spanning<C, A>(
-        &mut self,                              //
-        decoded_spanning_tail: &ArenaSlice<u8>, //
-        decoded_spanning_head: &ArenaSlice<u8>, //
+        &mut self,
+        decoded_spanning_tail: &ArenaSlice<u8>,
+        decoded_spanning_head: &ArenaSlice<u8>,
+        _context: &mut <Self as Context<AsRecord>>::Context,
         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
     ) -> ParseStatus<C, ()>
     where
-        C: bascet_core::Composite
+        C: Composite<Marker = AsRecord>
             + Default
             + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, <C as bascet_core::Composite>::Backing>,
+            + FromBacking<Self::Item, C::Backing>,
     {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
@@ -241,7 +238,7 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::TIRP<TIRPRecord> {
             let combined_slice =
                 unsafe { std::slice::from_raw_parts(tail_remaining.as_ptr(), tail_len + head_len) };
             let mut record = unsafe {
-                TIRPRecord::from_raw(
+                tirp::Record::from_raw(
                     combined_slice,
                     pos_tab_combined,
                     decoded_spanning_tail.clone_view(),
@@ -272,7 +269,7 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::TIRP<TIRPRecord> {
             }
 
             unsafe {
-                TIRPRecord::from_raw(scratch.as_slice(), pos_tab_combined, scratch.clone_view())
+                tirp::Record::from_raw(scratch.as_slice(), pos_tab_combined, scratch.clone_view())
             }
         };
         let mut composite_record = C::default();
@@ -281,45 +278,5 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::TIRP<TIRPRecord> {
 
         self.inner_cursor = head_len;
         ParseStatus::Full(composite_record)
-    }
-}
-
-impl TIRPRecord {
-    unsafe fn from_raw(
-        buf_record: &[u8],
-        pos_tab: [usize; 7],
-        arena_view: ArenaView<u8>,
-    ) -> TIRPRecord {
-        // SAFETY: Caller guarantees pos_newline indices are valid
-        let id = buf_record.get_unchecked(..pos_tab[0]);
-        let r1 = buf_record.get_unchecked(pos_tab[2] + 1..pos_tab[3]);
-        let r2 = buf_record.get_unchecked(pos_tab[3] + 1..pos_tab[4]);
-        let q1 = buf_record.get_unchecked(pos_tab[4] + 1..pos_tab[5]);
-        let q2 = buf_record.get_unchecked(pos_tab[5] + 1..pos_tab[6]);
-        let umi = buf_record.get_unchecked(pos_tab[6] + 1..);
-
-        if likely_unlikely::unlikely(r1.len() != q1.len()) {
-            panic!("r1/q1 length mismatch: {:?} != {:?}", r1.len(), q1.len());
-        }
-        if likely_unlikely::unlikely(r2.len() != q2.len()) {
-            panic!("r1/q1 length mismatch: {:?} != {:?}", r2.len(), q2.len());
-        }
-
-        // SAFETY: transmute slices to static lifetime kept alive by ArenaView refcount
-        let static_id: &'static [u8] = unsafe { std::mem::transmute(id) };
-        let static_r1: &'static [u8] = unsafe { std::mem::transmute(r1) };
-        let static_r2: &'static [u8] = unsafe { std::mem::transmute(r2) };
-        let static_q1: &'static [u8] = unsafe { std::mem::transmute(q1) };
-        let static_q2: &'static [u8] = unsafe { std::mem::transmute(q2) };
-        let static_umi: &'static [u8] = unsafe { std::mem::transmute(umi) };
-
-        TIRPRecord {
-            id: static_id,
-            sequence_pair: (static_r1, static_r2),
-            quality_pair: (static_q1, static_q2),
-            umi: static_umi,
-
-            arena_backing: smallvec![arena_view],
-        }
     }
 }

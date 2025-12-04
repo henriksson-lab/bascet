@@ -1,21 +1,21 @@
 use bascet_core::*;
-use bascet_io::{decode, parse, tirp_as_record::TIRPCell};
+use bascet_io::{decode, parse, tirp};
 use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 
 #[test]
 fn test_stream_bgzf_tirp() {
-    let decoder = decode::BGZF::builder()
+    let decoder = decode::Bgzf::builder()
         .path("../data/shard.1.tirp.gz")
         .num_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
-    let parser = parse::TIRP::builder().build().unwrap();
+    let parser = parse::Tirp::builder().build().unwrap();
 
     let mut stream = Stream::builder()
-        .decoder(decoder)
-        .parser(parser)
-        .n_buffers(BoundedUsize::const_new::<1024>())
+        .with_decoder(decoder)
+        .with_parser(parser)
+        .countof_buffers(BoundedUsize::const_new::<1024>())
         .sizeof_arena(ByteSize::mib(8))
         .sizeof_buffer(ByteSize::gib(1))
         .build()
@@ -29,7 +29,7 @@ fn test_stream_bgzf_tirp() {
     let mut i = 0;
     let mut throughputs = VecDeque::with_capacity(60);
 
-    while let Ok(Some(cell)) = stream.next::<TIRPCell>() {
+    while let Ok(Some(cell)) = stream.next::<tirp::Record>() {
         i += 1;
         if i % 1_000_000 == 0 {
             let now = Instant::now();

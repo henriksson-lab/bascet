@@ -4,7 +4,7 @@ use crate::{ArenaView, FromBacking};
 
 bascet_derive::define_backing!(OwnedBacking, ArenaBacking);
 
-// OwnedBacking with () no backing needed
+// OwnedBacking with () => no backing needed
 impl<T, S> FromBacking<S, OwnedBacking> for T
 where
     T: crate::Get<OwnedBacking, Value = ()>,

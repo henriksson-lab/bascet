@@ -256,11 +256,12 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
         sizeof_buffer: bytesize::ByteSize,
         sizeof_arena: bytesize::ByteSize,
     ) -> Result<Self, ()> {
-        let num_arenas = (sizeof_buffer.as_u64() / sizeof_arena.as_u64()) as usize;
+        let countof_arenas = (sizeof_buffer.as_u64() / sizeof_arena.as_u64()) as usize;
+        let capof_arenas = sizeof_arena.as_u64() as usize / size_of::<T>();
 
         //TODO: return errors
         assert!(
-            num_arenas >= 2,
+            countof_arenas >= 2,
             "need at least 2 arenas to prevent stalls (higher strongly recommended)"
         );
         assert!(
@@ -275,24 +276,23 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
         );
 
         unsafe {
-            let mut arenas = Vec::with_capacity(num_arenas);
-            let len_arenas = sizeof_arena.as_u64() as usize / size_of::<T>();
+            let mut vec_arenas = Vec::with_capacity(countof_arenas);
             // TODO: construct with MmapOptions for explicit use of Huge Pages?
             let mut mmap = MmapMut::map_anon(sizeof_buffer.as_u64() as usize).unwrap();
-            
-            let ptr_arenas_base = mmap.as_mut_ptr() as *mut T;
-            for i in 0..num_arenas {
-                let ptr_arena_start = ptr_arenas_base.add(i * len_arenas);
-                arenas.push(UnsafeCell::new(Arena::from_slice(
+
+            let ptrbase_arena = mmap.as_mut_ptr() as *mut T;
+            for i in 0..countof_arenas {
+                let ptr_arena_start = ptrbase_arena.add(i * capof_arenas);
+                vec_arenas.push(UnsafeCell::new(Arena::from_slice(
                     ptr_arena_start,
-                    len_arenas,
+                    capof_arenas,
                 )));
             }
 
             Ok(Self {
                 _mmap: mmap,
-                inner_cap_arenas: len_arenas,
-                inner_buf_arenas: arenas,
+                inner_cap_arenas: capof_arenas,
+                inner_buf_arenas: vec_arenas,
                 inner_idx_hint: AtomicUsize::new(0),
             })
         }
@@ -300,21 +300,21 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
 
     pub fn alloc(&self, len: usize) -> ArenaSlice<T> {
         assert!(len <= self.inner_cap_arenas);
-        let num_arenas = self.inner_buf_arenas.len();
+        let countof_arenas = self.inner_buf_arenas.len();
 
         unsafe {
-            debug_assert!(num_arenas > 0);
-            std::hint::assert_unchecked(num_arenas > 0);
+            debug_assert!(countof_arenas > 0);
+            std::hint::assert_unchecked(countof_arenas > 0);
         }
-        let mut cnt_spin = 0;
-        let mut cnt_park = 0;
+        let mut count_spun = 0;
+        let mut count_parked = 0;
 
         loop {
-            for i in 0..num_arenas {
-                let idx = (self.inner_idx_hint.load(Ordering::Relaxed) + i) % num_arenas;
+            for i in 0..countof_arenas {
+                let idx = (self.inner_idx_hint.load(Ordering::Relaxed) + i) % countof_arenas;
                 unsafe {
-                    debug_assert!(idx < num_arenas);
-                    std::hint::assert_unchecked(idx < num_arenas);
+                    debug_assert!(idx < countof_arenas);
+                    std::hint::assert_unchecked(idx < countof_arenas);
                 }
 
                 // SAFETY   The atomic lock in available() ensures exclusive access
@@ -336,11 +336,13 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                     return slice;
                 }
             }
-            if likely_unlikely::unlikely(spinpark_loop::<100>(&mut cnt_spin) == SpinPark::Park) {
-                cnt_park += 1;
-                if likely_unlikely::unlikely(cnt_park >= spinpark_loop::PARKS_BEFORE_WARN) {
+            if likely_unlikely::unlikely(spinpark_loop::<100>(&mut count_spun) == SpinPark::Park) {
+                count_parked += 1;
+                if likely_unlikely::unlikely(
+                    count_parked >= spinpark_loop::SPINPARK_PARKS_BEFORE_WARN,
+                ) {
                     // TODO: emit warning - consumers not releasing fast enough
-                    cnt_park = 0;
+                    count_parked = 0;
                 }
             }
         }
@@ -349,8 +351,8 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
 
 impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
     fn drop(&mut self) {
-        let mut cnt_spin = 0;
-        let mut cnt_park = 0;
+        let mut count_spun = 0;
+        let mut count_parked = 0;
 
         'wait: loop {
             for arena_cell in &self.inner_buf_arenas {
@@ -358,12 +360,14 @@ impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
                 let arena = unsafe { &*arena_cell.get() };
                 if arena.cnt.load(Ordering::Relaxed) != 0 {
                     if likely_unlikely::unlikely(
-                        spinpark_loop::<100>(&mut cnt_spin) == SpinPark::Park,
+                        spinpark_loop::<100>(&mut count_spun) == SpinPark::Park,
                     ) {
-                        cnt_park += 1;
-                        if likely_unlikely::unlikely(cnt_park >= spinpark_loop::PARKS_BEFORE_WARN) {
+                        count_parked += 1;
+                        if likely_unlikely::unlikely(
+                            count_parked >= spinpark_loop::SPINPARK_PARKS_BEFORE_WARN,
+                        ) {
                             // TODO: emit warning - consumers not releasing fast enough
-                            cnt_park = 0;
+                            count_parked = 0;
                         }
                     }
                     continue 'wait;
