@@ -1,9 +1,5 @@
 use bascet_core::*;
 
-#[derive(Context, Default)]
-#[context(
-    AsRecord: (),
-)]
 pub struct Fastq {
     pub(crate) inner_cursor: usize,
 }

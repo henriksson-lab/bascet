@@ -1,4 +1,5 @@
-mod as_cell;
+mod as_cell_accumulate;
+mod as_cell_direct;
 mod as_record;
 mod consts;
 mod stream;

@@ -5,52 +5,17 @@ pub enum ParseStatus<T, E> {
     Finished,
 }
 
-pub trait FromParsed<AttrTuple, Source> {
-    fn from_parsed(&mut self, source: &Source);
-}
-
-pub trait Context<M> {
-    type Context: Default;
-    type Marker;
-}
-
-pub trait Parse<T, M>
-where
-    Self: Context<M>,
-{
+pub trait Parse<T> {
     type Item;
 
-    fn parse_aligned<C, A>(
-        &mut self,
-        decoded: &T,
-        context: &mut <Self as Context<M>>::Context,
-    ) -> ParseStatus<C, ()>
-    where
-        C: crate::Composite<Marker = M>
-            + Default
-            + crate::FromParsed<A, Self::Item>
-            + crate::FromBacking<Self::Item, C::Backing>;
+    fn parse_aligned(&mut self, decoded: &T) -> ParseStatus<Self::Item, ()>;
 
-    fn parse_spanning<C, A>(
+    fn parse_spanning(
         &mut self,
         decoded_spanning_tail: &T,
         decoded_spanning_head: &T,
-        context: &mut <Self as Context<M>>::Context,
         alloc: impl FnMut(usize) -> T,
-    ) -> ParseStatus<C, ()>
-    where
-        C: crate::Composite<Marker = M>
-            + Default
-            + crate::FromParsed<A, Self::Item>
-            + crate::FromBacking<Self::Item, C::Backing>;
+    ) -> ParseStatus<Self::Item, ()>;
 
-    fn parse_finish<C, A>(
-        &mut self,
-        context: &mut <Self as Context<M>>::Context,
-    ) -> ParseStatus<C, ()>
-    where
-        C: crate::Composite<Marker = M>
-            + Default
-            + crate::FromParsed<A, Self::Item>
-            + crate::FromBacking<Self::Item, C::Backing>;
+    fn parse_finish(&mut self) -> ParseStatus<Self::Item, ()>;
 }

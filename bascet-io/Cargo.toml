@@ -11,8 +11,6 @@ bascet-core = { path = "../bascet-core" }
 bon = "3.8.1"
 bounded-integer = "0.6.1"
 bytesize = "2.2.0"
-cache-size = "0.7.0"
 memchr = "2.7.6"
 rust-htslib = "0.51.0"
-seq-macro = "0.3.6"
 smallvec = { version = "1.15.1", features = ["union"] }

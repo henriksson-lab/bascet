@@ -49,8 +49,8 @@ where
     type Output = &'a <T as crate::Get<A>>::Value;
 
     #[inline(always)]
-    fn get_ref(cell: &'a T) -> Self::Output {
-        cell.as_ref()
+    fn get_ref(composite: &'a T) -> Self::Output {
+        composite.as_ref()
     }
 }
 
@@ -63,9 +63,17 @@ where
     type Output = &'a mut <T as crate::Get<A>>::Value;
 
     #[inline(always)]
-    fn get_mut(cell: &'a mut T) -> Self::Output {
-        cell.as_mut()
+    fn get_mut(composite: &'a mut T) -> Self::Output {
+        composite.as_mut()
     }
 }
 
-impl_variadic_get!();
+bascet_variadic::variadic! {
+    #[expand(n = 2..=16)]
+    impl<'a, T, @n[A~#: crate::Ref<'a, T>](sep=",")> crate::Ref<'a, T> for (@n[A~#](sep=",")) {
+        type Output = (@n[A~#::Output](sep=","));
+        fn get_ref(cell: &'a T) -> Self::Output {
+            (@n[A~#::get_ref(cell)](sep=","))
+        }
+    }
+}

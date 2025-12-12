@@ -1,22 +1,11 @@
 use bascet_core::*;
-use smallvec::{smallvec, SmallVec};
 
 use crate::tirp;
 
-impl Parse<ArenaSlice<u8>, AsRecord> for crate::Tirp {
-    type Item = crate::tirp::Record;
+impl Parse<ArenaSlice<u8>> for crate::Tirp {
+    type Item = tirp::Record;
 
-    fn parse_aligned<C, A>(
-        &mut self,
-        decoded: &ArenaSlice<u8>,
-        _context: &mut <Self as Context<AsRecord>>::Context,
-    ) -> ParseStatus<C, ()>
-    where
-        C: Composite<Marker = AsRecord>
-            + Default
-            + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, C::Backing>,
-    {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseStatus<Self::Item, ()> {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -60,41 +49,22 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::Tirp {
 
         // SAFETY: pos_endof_record was found by memchr in buf_cursor
         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_endof_record) };
-        let fastq_record =
+        let tirp_record =
             unsafe { crate::tirp::Record::from_raw(buf_record, pos_tab, decoded.clone_view()) };
-        let mut composite_record = C::default();
-        composite_record.from_parsed(&fastq_record);
-        composite_record.take_backing(fastq_record);
-        ParseStatus::Full(composite_record)
+        ParseStatus::Full(tirp_record)
     }
 
-    fn parse_finish<C, A>(
-        &mut self,
-        _context: &mut <Self as Context<AsRecord>>::Context,
-    ) -> ParseStatus<C, ()>
-    where
-        C: Composite<Marker = AsRecord>
-            + Default
-            + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, C::Backing>,
-    {
-        return ParseStatus::Finished;
+    fn parse_finish(&mut self) -> ParseStatus<Self::Item, ()> {
+        ParseStatus::Finished
     }
 
     #[inline(always)]
-    fn parse_spanning<C, A>(
+    fn parse_spanning(
         &mut self,
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
-        _context: &mut <Self as Context<AsRecord>>::Context,
         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
-    ) -> ParseStatus<C, ()>
-    where
-        C: Composite<Marker = AsRecord>
-            + Default
-            + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, C::Backing>,
-    {
+    ) -> ParseStatus<Self::Item, ()> {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
         // NOTE: as_ptr_range is [start, end) and [start', end') => end == start'
@@ -272,11 +242,8 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::Tirp {
                 tirp::Record::from_raw(scratch.as_slice(), pos_tab_combined, scratch.clone_view())
             }
         };
-        let mut composite_record = C::default();
-        composite_record.from_parsed(&tirp_record);
-        composite_record.take_backing(tirp_record);
 
         self.inner_cursor = head_len;
-        ParseStatus::Full(composite_record)
+        ParseStatus::Full(tirp_record)
     }
 }
