@@ -1,5 +1,5 @@
 pub mod fastq;
 pub mod tirp;
 
-pub use fastq::*;
-pub use tirp::*;
+pub use fastq::Fastq;
+pub use tirp::Tirp;

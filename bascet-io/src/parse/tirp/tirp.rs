@@ -1,10 +1,5 @@
 use bascet_core::*;
 
-#[derive(Context, Default)]
-#[context(
-    AsRecord: (),
-    AsCell: Cell
-)]
 pub struct Tirp {
     pub(crate) inner_cursor: usize,
 }
@@ -17,7 +12,7 @@ impl Tirp {
     }
 }
 
-#[derive(Composite, Default)]
+#[derive(Composite, Default, Clone)]
 #[bascet(attrs = (Id, SequencePair, QualityPair, Umi), backing = ArenaBacking, marker = AsRecord)]
 pub struct Record {
     id: &'static [u8],
@@ -71,11 +66,19 @@ impl Record {
 }
 
 #[derive(Composite, Default)]
-#[bascet(attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis), backing = ArenaBacking, marker = AsCell)]
+#[bascet(
+    attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis),
+    backing = ArenaBacking,
+    marker = AsCell<Accumulate>,
+    intermediate = Record
+)]
 pub struct Cell {
     id: &'static [u8],
+    #[collection]
     vec_sequence_pairs: Vec<(&'static [u8], &'static [u8])>,
+    #[collection]
     vec_quality_pairs: Vec<(&'static [u8], &'static [u8])>,
+    #[collection]
     vec_umis: Vec<&'static [u8]>,
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.

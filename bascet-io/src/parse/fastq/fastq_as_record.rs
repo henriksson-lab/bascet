@@ -1,20 +1,10 @@
 use crate::fastq;
 use bascet_core::*;
 
-impl Parse<ArenaSlice<u8>, AsRecord> for crate::Fastq {
+impl Parse<ArenaSlice<u8>> for crate::Fastq {
     type Item = fastq::Record;
 
-    fn parse_aligned<C, A>(
-        &mut self,
-        decoded: &ArenaSlice<u8>,
-        _context: &mut <Self as Context<AsRecord>>::Context,
-    ) -> ParseStatus<C, ()>
-    where
-        C: Composite<Marker = AsRecord>
-            + Default
-            + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, C::Backing>,
-    {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseStatus<Self::Item, ()> {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -45,38 +35,19 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::Fastq {
         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_newline[3]) };
         let fastq_record =
             unsafe { fastq::Record::from_raw(buf_record, pos_newline, decoded.clone_view()) };
-        let mut composite_record = C::default();
-        composite_record.from_parsed(&fastq_record);
-        composite_record.take_backing(fastq_record);
-        ParseStatus::Full(composite_record)
+        ParseStatus::Full(fastq_record)
     }
 
-    fn parse_finish<C, A>(
-        &mut self,
-        _context: &mut <Self as Context<AsRecord>>::Context,
-    ) -> ParseStatus<C, ()>
-    where
-        C: Composite<Marker = AsRecord>
-            + Default
-            + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, C::Backing>,
-    {
-        return ParseStatus::Finished;
+    fn parse_finish(&mut self) -> ParseStatus<Self::Item, ()> {
+        ParseStatus::Finished
     }
 
-    fn parse_spanning<C, A>(
+    fn parse_spanning(
         &mut self,
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
-        _context: &mut <Self as Context<AsRecord>>::Context,
         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
-    ) -> ParseStatus<C, ()>
-    where
-        C: Composite<Marker = AsRecord>
-            + Default
-            + FromParsed<A, Self::Item>
-            + FromBacking<Self::Item, C::Backing>,
-    {
+    ) -> ParseStatus<Self::Item, ()> {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
         // NOTE: as_ptr_range is [start, end) and [start', end') => end == start'
@@ -167,11 +138,8 @@ impl Parse<ArenaSlice<u8>, AsRecord> for crate::Fastq {
                 )
             }
         };
-        let mut composite_record = C::default();
-        composite_record.from_parsed(&fastq_record);
-        composite_record.take_backing(fastq_record);
 
         self.inner_cursor = head_len;
-        ParseStatus::Full(composite_record)
+        ParseStatus::Full(fastq_record)
     }
 }

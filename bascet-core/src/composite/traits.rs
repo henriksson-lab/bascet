@@ -1,6 +1,13 @@
+use crate::OwnedBacking;
+
 pub trait Composite: Sized {
-    type Marker;
     type Attrs;
+    type Single;
+    type Collection;
+
+    type Marker;
+    type Intermediate: Composite;
+
     type Backing: crate::Backing;
 
     #[inline(always)]
@@ -11,4 +18,19 @@ pub trait Composite: Sized {
     fn get_mut<'a, G: crate::Mut<'a, Self>>(&'a mut self) -> G::Output {
         G::get_mut(self)
     }
+}
+
+pub trait From<AttrTuple, Source> {
+    fn from(&mut self, source: &Source);
+}
+
+impl Composite for () {
+    type Attrs = ();
+    type Single = ();
+    type Collection = ();
+
+    type Marker = ();
+    type Intermediate = Self;
+
+    type Backing = OwnedBacking;
 }

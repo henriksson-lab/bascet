@@ -1,7 +1,9 @@
-use std::{collections::VecDeque, num::NonZero, ptr::NonNull, sync::atomic::AtomicU64, time::Instant};
+use std::{
+    collections::VecDeque, num::NonZero, ptr::NonNull, sync::atomic::AtomicU64, time::Instant,
+};
 
 use bascet_core::*;
-use bascet_io::{decode, parse};
+use bascet_io::{decode, fastq, parse};
 use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 use smallvec::SmallVec;
@@ -28,7 +30,7 @@ fn test_stream_bgzf_fastq() {
         .with_decoder(decoder)
         .with_parser(parser)
         .countof_buffers(BoundedUsize::const_new::<1024>())
-        .sizeof_arena(ByteSize::mib(8))
+        .sizeof_arena(ByteSize::mib(32))
         .sizeof_buffer(ByteSize::gib(1))
         .build()
         .unwrap();
@@ -38,7 +40,7 @@ fn test_stream_bgzf_fastq() {
     let mut i = 0;
     let mut throughputs = VecDeque::with_capacity(60);
 
-    while let Ok(Some(cell)) = stream.next::<FASTQRecord>() {
+    while let Ok(Some(rec)) = stream.query::<fastq::Record>().next() {
         i += 1;
         if i % 1_000_000 == 0 {
             let now = Instant::now();

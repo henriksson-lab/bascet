@@ -32,19 +32,28 @@ impl Parse for AttrSpec {
     }
 }
 
-struct BascetAttr {
+struct CompositeDef {
     attrs: Option<syn::punctuated::Punctuated<AttrSpec, Token![,]>>,
-    backing: Option<Ident>,
-    marker: Option<Ident>,
+    backing: Option<Type>,
+    marker: Option<Type>,
+    intermediate: Option<Type>,
 }
 
-impl Parse for BascetAttr {
+struct AttrDef {
+    trait_ident: Ident,
+    field_ident: Ident,
+    field_type: Type,
+    is_collection: bool,
+}
+
+impl Parse for CompositeDef {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         use syn::parenthesized;
 
         let mut attrs = None;
         let mut backing = None;
         let mut marker = None;
+        let mut intermediate = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -62,6 +71,9 @@ impl Parse for BascetAttr {
                 "marker" => {
                     marker = Some(input.parse()?);
                 }
+                "intermediate" => {
+                    intermediate = Some(input.parse()?);
+                }
                 _ => return Err(syn::Error::new(key.span(), "Unknown bascet parameter")),
             }
 
@@ -70,7 +82,12 @@ impl Parse for BascetAttr {
             }
         }
 
-        Ok(BascetAttr { attrs, backing, marker })
+        Ok(CompositeDef {
+            attrs,
+            backing,
+            marker,
+            intermediate,
+        })
     }
 }
 
@@ -83,7 +100,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         .iter()
         .find(|attr| attr.path().is_ident("bascet"))
         .map(|attr| {
-            attr.parse_args::<BascetAttr>()
+            attr.parse_args::<CompositeDef>()
                 .expect("Invalid bascet syntax")
         })
         .expect("Missing #[bascet(...)] attribute");
@@ -92,9 +109,9 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         .attrs
         .expect("Missing attrs in #[bascet(...)]. Specify: attrs = (Id, Sequence, ...)");
 
-    let backing_ident = bascet_attr.backing;
+    let backing_type = bascet_attr.backing;
 
-    let marker_ident = bascet_attr
+    let marker_type = bascet_attr
         .marker
         .expect("Missing marker in #[bascet(...)]. Specify: marker = AsRecord");
 
@@ -106,48 +123,67 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
     };
     let fields = &mut named_fields.named;
 
-    let mut map: HashMap<String, (Ident, syn::Type)> = HashMap::new();
+    let attr_defs: Vec<AttrDef> = trait_list_specs
+        .iter()
+        .map(|spec| {
+            let (trait_ident, field_ident, field_type, is_collection) = match spec {
+                AttrSpec::Default { trait_ident } => {
+                    let tname = trait_ident.to_string();
+                    let snake = tname.to_snake_case();
+                    let field = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref() == Some(&Ident::new(&snake, trait_ident.span())))
+                        .unwrap_or_else(|| panic!("No field '{}' for {}", snake, tname));
+                    let is_collection = field.attrs.iter().any(|a| a.path().is_ident("collection"));
+                    (
+                        trait_ident.clone(),
+                        field.ident.clone().unwrap(),
+                        field.ty.clone(),
+                        is_collection,
+                    )
+                }
+                AttrSpec::Override {
+                    trait_ident,
+                    field_ident,
+                } => {
+                    let tname = trait_ident.to_string();
+                    let field = fields
+                        .iter()
+                        .find(|f| f.ident.as_ref() == Some(field_ident))
+                        .unwrap_or_else(|| {
+                            panic!("Field '{}' not found for {}", field_ident, tname)
+                        });
+                    let is_collection = field.attrs.iter().any(|a| a.path().is_ident("collection"));
+                    (
+                        trait_ident.clone(),
+                        field_ident.clone(),
+                        field.ty.clone(),
+                        is_collection,
+                    )
+                }
+            };
 
-    for spec in &trait_list_specs {
-        let (tname, fname, ftype) = match spec {
-            AttrSpec::Default { trait_ident } => {
-                let tname = trait_ident.to_string();
-                let snake = tname.to_snake_case();
-                let field = fields
-                    .iter()
-                    .find(|f| f.ident.as_ref() == Some(&Ident::new(&snake, trait_ident.span())))
-                    .unwrap_or_else(|| panic!("No field '{}' for {}", snake, tname));
-                (tname, field.ident.clone().unwrap(), field.ty.clone())
-            }
-            AttrSpec::Override {
+            AttrDef {
                 trait_ident,
                 field_ident,
-            } => {
-                let tname = trait_ident.to_string();
-                let field = fields
-                    .iter()
-                    .find(|f| f.ident.as_ref() == Some(field_ident))
-                    .unwrap_or_else(|| panic!("Field '{}' not found for {}", field_ident, tname));
-                (tname, field_ident.clone(), field.ty.clone())
+                field_type,
+                is_collection,
             }
-        };
+        })
+        .collect();
 
-        map.insert(tname, (fname, ftype));
+    for field in fields.iter_mut() {
+        field
+            .attrs
+            .retain(|attr| !attr.path().is_ident("collection"));
     }
 
-    input.attrs.retain(|attr| !attr.path().is_ident("bascet"));
+    let attr_idents = attr_defs.iter().map(|def| &def.trait_ident);
 
-    let attr_idents = trait_list_specs.iter().map(|spec| match spec {
-        AttrSpec::Default { trait_ident } | AttrSpec::Override { trait_ident, .. } => trait_ident,
-    });
-
-    let attr_impls = trait_list_specs.iter().map(|spec| {
-        let trait_ident = match spec {
-            AttrSpec::Default { trait_ident } | AttrSpec::Override { trait_ident, .. } => {
-                trait_ident
-            }
-        };
-        let (fname, ftype) = &map[&trait_ident.to_string()];
+    let attr_impls = attr_defs.iter().map(|def| {
+        let trait_ident = &def.trait_ident;
+        let fname = &def.field_ident;
+        let ftype = &def.field_type;
         quote! {
             impl bascet_core::Get<#trait_ident> for #name {
                 type Value = #ftype;
@@ -161,86 +197,95 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
         type Attrs = (#(#attr_idents),*);
     };
 
-    let (backing_type, backing_impl) = if let Some(backing_ident) = backing_ident {
+    let (backing_type_assoc, backing_impl) = if let Some(backing_ty) = backing_type {
+        let backing_ident = match &backing_ty {
+            Type::Path(type_path) => type_path
+                .path
+                .segments
+                .last()
+                .map(|seg| seg.ident.clone())
+                .expect("Empty path in backing type"),
+            _ => panic!("Backing type must be a path type"),
+        };
+
         let backing_field_name = backing_ident.to_string().to_snake_case();
         let backing_field_ident = Ident::new(&backing_field_name, backing_ident.span());
 
         let backing_field = fields
             .iter()
             .find(|f| f.ident.as_ref() == Some(&backing_field_ident))
-            .unwrap_or_else(|| panic!("No field '{}' for backing {}", backing_field_name, backing_ident));
+            .unwrap_or_else(|| {
+                panic!(
+                    "No field '{}' for backing {}",
+                    backing_field_name, backing_ident
+                )
+            });
 
         let backing_field_type = &backing_field.ty;
 
-        let backing_type = quote! { type Backing = #backing_ident; };
+        let backing_type_assoc = quote! { type Backing = bascet_core::#backing_ty; };
         let backing_impl = quote! {
-            impl bascet_core::Get<#backing_ident> for #name {
+            impl bascet_core::Get<bascet_core::#backing_ty> for #name {
                 type Value = #backing_field_type;
                 fn as_ref(&self) -> &Self::Value { &self.#backing_field_ident }
                 fn as_mut(&mut self) -> &mut Self::Value { &mut self.#backing_field_ident }
             }
         };
-        (backing_type, Some(backing_impl))
+        (backing_type_assoc, Some(backing_impl))
     } else {
         (quote! { type Backing = bascet_core::OwnedBacking; }, None)
     };
 
-    let marker_type = quote! {
-        type Marker = bascet_core::#marker_ident;
+    let marker_type_assoc = quote! {
+        type Marker = bascet_core::#marker_type;
+    };
+
+    let intermediate_type_assoc = if let Some(intermediate_type) = bascet_attr.intermediate {
+        quote! {
+            type Intermediate = #intermediate_type;
+        }
+    } else {
+        quote! {
+            type Intermediate = Self;
+        }
+    };
+
+    let collection_attrs: Vec<_> = attr_defs
+        .iter()
+        .filter(|def| def.is_collection)
+        .map(|def| &def.trait_ident)
+        .collect();
+
+    let single_attrs: Vec<_> = attr_defs
+        .iter()
+        .filter(|def| !def.is_collection)
+        .map(|def| &def.trait_ident)
+        .collect();
+
+    let collection_type_assoc = if !collection_attrs.is_empty() {
+        quote! { type Collection = (#(#collection_attrs),*); }
+    } else {
+        quote! { type Collection = (); }
+    };
+
+    let single_type_assoc = if !single_attrs.is_empty() {
+        quote! { type Single = (#(#single_attrs),*); }
+    } else {
+        quote! { type Single = (); }
     };
 
     TokenStream::from(quote! {
         impl bascet_core::Composite for #name {
             #attr_type
-            #backing_type
-            #marker_type
+            #single_type_assoc
+            #collection_type_assoc
+
+            #marker_type_assoc
+            #intermediate_type_assoc
+
+            #backing_type_assoc
         }
         #(#attr_impls)*
         #backing_impl
     })
-}
-
-struct ContextSpec {
-    marker: Ident,
-    context_type: Type,
-}
-
-impl Parse for ContextSpec {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let marker = input.parse()?;
-        input.parse::<Token![:]>()?;
-        let context_type = input.parse()?;
-        Ok(ContextSpec {
-            marker,
-            context_type,
-        })
-    }
-}
-
-pub fn derive_contexts(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    let name = &input.ident;
-
-    let contexts_attr = input
-        .attrs
-        .iter()
-        .find(|attr| attr.path().is_ident("context"))
-        .expect("Missing #[context(...)] attribute");
-
-    let specs = contexts_attr
-        .parse_args_with(syn::punctuated::Punctuated::<ContextSpec, Token![,]>::parse_terminated)
-        .expect("Invalid context syntax");
-
-    let impls = specs.iter().map(|spec| {
-        let marker = &spec.marker;
-        let context_type = &spec.context_type;
-        quote! {
-            impl bascet_core::Context<bascet_core::#marker> for #name {
-                type Context = #context_type;
-                type Marker = bascet_core::#marker;
-            }
-        }
-    });
-
-    TokenStream::from(quote! { #(#impls)* })
 }

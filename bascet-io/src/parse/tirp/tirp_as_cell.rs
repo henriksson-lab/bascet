@@ -5,17 +5,11 @@
 // impl Parse<ArenaSlice<u8>, <Self as Context<AsCell>>::Marker> for crate::Tirp {
 //     type Item = tirp::Cell;
 
-//     fn parse_aligned<C, A>(
+//     fn parse_aligned(
 //         &mut self,
 //         decoded: &ArenaSlice<u8>,
 //         _context: &mut <Self as Context<AsCell>>::Context,
-//     ) -> ParseStatus<C, ()>
-//     where
-//         C: Composite<Marker = AsCell>
-//             + Default
-//             + FromParsed<A, Self::Item>
-//             + FromBacking<Self::Item, C::Backing>,
-//     {
+//     ) -> ParseStatus<Self::Item, (), Self::Context> {
 //         let cursor = self.inner_cursor;
 //         // SAFETY: cursor is maintained internally and always valid
 //         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -27,7 +21,7 @@
 //                 //       or a malformed file. Here we assume it is end of block
 //                 //       if parse_spanning cannot build a complete record, however it is
 //                 //       very likely a malformed file
-//                 return ParseStatus::Partial;
+//                 return ParseStatus::Partial(Self::Context::default());
 //             }
 //         };
 //         let mut iter_tab = memchr::memchr_iter(b'\t', buf_cursor);
@@ -48,7 +42,7 @@
 //                 //       or a malformed file. Here we assume it is end of block
 //                 //       if parse_spanning cannot build a complete record, however it is
 //                 //       very likely a malformed file
-//                 return ParseStatus::Partial;
+//                 return ParseStatus::Partial(Self::Context::default());
 //             }
 //         };
 
@@ -59,40 +53,25 @@
 
 //         // SAFETY: pos_endof_record was found by memchr in buf_cursor
 //         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_endof_record) };
-//         let record = unsafe { TIRPCell::from_raw(buf_record, pos_tab, decoded.clone_view()) };
-//         let mut composite_record = C::default();
-//         composite_record.from_parsed(&record);
-//         composite_record.take_backing(record);
-//         ParseStatus::Full(composite_record)
+//         let cell = unsafe { tirp::Cell::from_raw(buf_record, pos_tab, decoded.clone_view()) };
+//         ParseStatus::Full(cell)
 //     }
 
-//     fn parse_finish<C, A>(
+//     fn parse_finish(
 //         &mut self,
 //         _context: &mut <Self as Context<AsCell>>::Context,
-//     ) -> ParseStatus<C, ()>
-//     where
-//         C: Composite<Marker = AsCell>
-//             + Default
-//             + FromParsed<A, Self::Item>
-//             + FromBacking<Self::Item, C::Backing>,
-//     {
-//         return ParseStatus::Finished;
+//     ) -> ParseStatus<Self::Item, (), Self::Context> {
+//         ParseStatus::Finished
 //     }
 
 //     #[inline(always)]
-//     fn parse_spanning<C, A>(
+//     fn parse_spanning(
 //         &mut self,
 //         decoded_spanning_tail: &ArenaSlice<u8>,
 //         decoded_spanning_head: &ArenaSlice<u8>,
 //         _context: &mut <Self as Context<AsCell>>::Context,
 //         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
-//     ) -> ParseStatus<C, ()>
-//     where
-//         C: Composite<Marker = AsCell>
-//             + Default
-//             + FromParsed<A, Self::Item>
-//             + FromBacking<Self::Item, C::Backing>,
-//     {
+//     ) -> ParseStatus<Self::Item, (), Self::Context> {
 //         let slice_tail = decoded_spanning_tail.as_slice();
 //         let slice_head = decoded_spanning_head.as_slice();
 //         // NOTE: as_ptr_range is [start, end) and [start', end') => end == start'
@@ -235,18 +214,18 @@
 //             // Create view spanning both buffers
 //             let combined_slice =
 //                 unsafe { std::slice::from_raw_parts(tail_remaining.as_ptr(), tail_len + head_len) };
-//             let mut record = unsafe {
-//                 TIRPCell::from_raw(
-//                     combined_slice,
-//                     pos_tab_combined,
-//                     decoded_spanning_tail.clone_view(),
-//                 )
-//             };
+//             // let mut record = unsafe {
+//             //     TIRPCell::from_raw(
+//             //         combined_slice,
+//             //         pos_tab_combined,
+//             //         decoded_spanning_tail.clone_view(),
+//             //     )
+//             // };
 //             // Add head arena view => both arenas must be kept alive
-//             record
-//                 .arena_backing
-//                 .push(decoded_spanning_head.clone_view());
-//             record
+//             // record
+//             //     .arena_backing
+//             //     .push(decoded_spanning_head.clone_view());
+//             // record
 //         } else {
 //             // Allocate scratch and copy
 //             let mut scratch = alloc(tail_len + head_len);
@@ -266,13 +245,13 @@
 //                 );
 //             }
 
-//             unsafe {
-//                 TIRPCell::from_raw(scratch.as_slice(), pos_tab_combined, scratch.clone_view())
-//             }
+//             // unsafe {
+//             //     TIRPCell::from_raw(scratch.as_slice(), pos_tab_combined, scratch.clone_view())
+//             // }
 //         };
 //         let mut composite_record = C::default();
-//         composite_record.from_parsed(&tirp_record);
-//         composite_record.take_backing(tirp_record);
+//         // composite_record.from_parsed(&tirp_record);
+//         // composite_record.take_backing(tirp_record);
 
 //         self.inner_cursor = head_len;
 //         ParseStatus::Full(composite_record)

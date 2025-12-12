@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 
 use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
-use rtrb::{PeekError, PushError};
+use rtrb::PushError;
 
 use crate::*;
 
@@ -19,25 +19,22 @@ pub(crate) enum StreamBufferState {
     Error(()),
 }
 
-pub struct Stream<P, D, M>
-where
-    P: crate::Context<M>,
-{
+pub struct Stream<P, D, C, M> {
     pub(crate) inner_arena_pool: Arc<ArenaPool<u8>>,
     pub(crate) inner_buffer_rx: rtrb::Consumer<StreamBufferState>,
     pub(crate) inner_decoder_thread: ManuallyDrop<JoinHandle<D>>,
     pub(crate) inner_decoder_stop: Arc<AtomicBool>,
 
     pub(crate) inner_parser: P,
-    pub(crate) inner_status: StreamState,
-    pub(crate) inner_context: Option<<P as crate::Context<M>>::Context>,
-    pub(crate) _phantom: std::marker::PhantomData<M>,
+
+    pub(crate) inner_state: StreamState,
+    pub(crate) inner_context: Option<C>,
+    pub(crate) _phantom: std::marker::PhantomData<(C, M)>,
 }
 
 #[bon::bon]
-impl<P, D, M> Stream<P, D, M>
+impl<P, D, C, M> Stream<P, D, C, M>
 where
-    P: Context<M>,
     D: Decode + Send + 'static,
 {
     #[builder]
@@ -65,7 +62,8 @@ where
             inner_decoder_thread: ManuallyDrop::new(handle),
             inner_decoder_stop: decoder_stop_flag,
             inner_parser: with_parser,
-            inner_status: StreamState::Aligned,
+
+            inner_state: StreamState::Aligned,
             inner_context: None,
             _phantom: std::marker::PhantomData,
         })
@@ -119,10 +117,7 @@ where
     }
 }
 
-impl<P, D, M> Drop for Stream<P, D, M>
-where
-    P: crate::Context<M>,
-{
+impl<P, D, C, M> Drop for Stream<P, D, C, M> {
     fn drop(&mut self) {
         self.inner_decoder_stop.store(true, Ordering::Relaxed);
         // SAFETY: drop is only called once

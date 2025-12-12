@@ -1,0 +1,6 @@
+- [] specify log file path
+- [] hist output filtered count as *
+- [] tracing.rs logging backend
+- [] shardify takes per-shard mem not global
+- [] shardify should fail on 0-sized in/outputs
+- [] get-raw: take only total ram usage
