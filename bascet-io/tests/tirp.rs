@@ -25,7 +25,7 @@ use std::time::Instant;
 #[test]
 fn test_stream_bgzf_tirp() {
     let decoder = decode::Bgzf::builder()
-        .path("../data/shard.2.tirp.gz")
+        .path("../data/shard1.tirp.gz")
         .num_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();

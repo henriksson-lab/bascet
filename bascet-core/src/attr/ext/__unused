@@ -1,9 +1,0 @@
-// pub trait BytesAttr<'a, A>: Get<A>
-// where
-//     <Self as Get<A>>::Value: AsRef<[u8]> + 'a,
-// {
-//     #[inline(always)]
-//     fn bytes(&'a self) -> &'a [u8] {
-//         self.attr().as_ref()
-//     }
-// }

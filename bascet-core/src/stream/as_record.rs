@@ -15,7 +15,10 @@ where
         loop {
             let buffer_status = match self.inner_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
-                    spinpark_loop::spinpark_loop::<100>(&mut spinpark_counter);
+                    spinpark_loop::spinpark_loop_warn::<100>(
+                        &mut spinpark_counter,
+                        "Consumer (AsRecord): waiting for data (buffer empty, decoder slow or finished)"
+                    );
                     continue;
                 }
                 Ok(status) => {
@@ -28,33 +31,8 @@ where
                 StreamBufferState::Available(decoded) => decoded,
                 StreamBufferState::Error(e) => return Err(*e),
                 StreamBufferState::Eof => {
-                    // SAFETY: unwrap is safe because if EOF is returned a block MUST exist
-                    unsafe {
-                        self.inner_buffer_rx.pop().unwrap_unchecked();
-                    }
-
-                    let parsed = match self.inner_parser.parse_finish() {
-                        ParseStatus::Full(parsed) => parsed,
-                        ParseStatus::Error(_) => return Err(()),
-                        ParseStatus::Finished => return Ok(None),
-                        ParseStatus::Partial => unreachable!(),
-                    };
-
-                    return if likely(self.inner_context.is_some()) {
-                        match query.apply(&parsed, &parsed) {
-                            QueryResult::Discard => Ok(self.inner_context.take()),
-                            QueryResult::Emit => {
-                                Ok(Some(parsed))
-                            }
-                            QueryResult::Keep => unreachable!()
-                        }
-                    } else {
-                        match query.apply(&parsed, &parsed) {
-                            QueryResult::Discard => Ok(None),
-                            QueryResult::Emit => Ok(Some(parsed)),
-                            QueryResult::Keep => unreachable!(),
-                        }
-                    };
+                    self.inner_state = StreamState::Aligned;
+                    return Ok(self.inner_context.take());
                 }
             };
 
@@ -103,7 +81,7 @@ where
                 match query.apply(&parsed, &parsed) {
                     QueryResult::Emit => return Ok(Some(parsed)),
                     QueryResult::Discard => continue,
-                    QueryResult::Keep => unreachable!()
+                    QueryResult::Keep => unreachable!(),
                 }
             } else {
                 match query.apply(&parsed, &parsed) {

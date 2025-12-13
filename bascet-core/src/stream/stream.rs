@@ -1,7 +1,8 @@
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::thread::{JoinHandle, sleep};
+use std::time::Duration;
 
 use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
@@ -104,12 +105,14 @@ where
                         Ok(_) => break,
                         Err(PushError::Full(i)) => {
                             item = i;
-                            spinpark_loop::spinpark_loop::<100>(&mut spinpark_counter);
+                            spinpark_loop::spinpark_loop_warn::<100>(
+                                &mut spinpark_counter,
+                                "Decoder: pushing buffer_status (buffer full, consumer slow)"
+                            );
                         }
                     }
                 }
             }
-
             decoder
         });
 
