@@ -22,7 +22,7 @@ where
         T: Composite + Default,
         T: From<T::Attrs, C>,
         T: PushBacking<C, C::Backing>,
-        C: TakeBacking<C::Backing>
+        C: TakeBacking<C::Backing>,
     {
         match self.stream.next_with(&self.queries)? {
             Some(context) => {

@@ -4,8 +4,14 @@ use crate::{
     support_which_writer, threading,
 };
 
+use bascet_core::*;
+use bascet_io::{decode, parse, tirp};
+
+use bounded_integer::{BoundedU64, BoundedUsize};
+use bytesize::*;
 use clap::Args;
 use itertools::enumerate;
+use rust_htslib::htslib;
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -17,16 +23,12 @@ pub const DEFAULT_THREADS_WORK: usize = 4;
 pub const DEFAULT_THREADS_TOTAL: usize = 12;
 pub const DEFAULT_COUNTSKETCH_SIZE: usize = 4096;
 pub const DEFAULT_KMER_SIZE: usize = 31;
-pub const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 128;
 
-support_which_stream! {
-    CountsketchInput => CountsketchStream<T: BascetCell>
-    for formats [tirp_bgzf, zip]
-}
 support_which_writer! {
     CountsketchOutput => CountsketchWriter<W: std::io::Write>
     for formats [tsv]
 }
+
 #[derive(Args)]
 pub struct CountsketchCMD {
     // Input bascets
@@ -48,14 +50,11 @@ pub struct CountsketchCMD {
     // K-mer size
     #[arg(short = 'k', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_KMER_SIZE)]
     pub kmer_size: usize,
-    // Channel buffer size
-    #[arg(long = "channel-buffer-size", value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_CHANNEL_BUFFER_SIZE)]
-    pub channel_buffer_size: usize,
     // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 4096)]
-    pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 8)]
-    pub page_size_mb: usize,
+    #[arg(long = "buffer-size", value_parser = clap::value_parser!(u64), default_value_t = 1024)]
+    pub buffer_size_mib: u64,
+    #[arg(long = "page-size", value_parser = clap::value_parser!(u64), default_value_t = 8)]
+    pub page_size_mib: u64,
 }
 
 impl CountsketchCMD {
@@ -91,31 +90,31 @@ impl CountsketchCMD {
         for (i, input) in enumerate(&self.path_in) {
             log_info!("Processing input file"; "path" => ?input);
 
-            let file = match CountsketchInput::try_from_path(input) {
-                Ok(file) => file,
-                Err(e) => {
-                    log_warning!("Failed to open input file, skipping"; "path" => ?input, "error" => %e);
-                    total_errors += 1;
-                    continue;
-                }
-            };
+            let decoder = decode::Bgzf::builder()
+                .path(input)
+                .num_threads(BoundedU64::new(n_readers as u64).unwrap())
+                .build()
+                .unwrap();
+            let parser = parse::Tirp::builder().build().unwrap();
 
-            let mut stream: CountsketchStream<CountsketchCell> =
-                match CountsketchStream::try_from_input(&file) {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        log_warning!("Failed to create stream from file, skipping"; "path" => ?input, "error" => %e);
-                        total_errors += 1;
-                        continue;
+            let mut stream = Stream::builder()
+                .with_decoder(decoder)
+                .with_parser(parser)
+                .countof_buffers(BoundedUsize::const_new::<1024>())
+                .sizeof_arena(ByteSize::mib(self.page_size_mib))
+                .sizeof_buffer(ByteSize::mib(self.buffer_size_mib))
+                .build()
+                .unwrap();
+
+            let mut query = stream
+                .query::<tirp::Cell>()
+                .group_relaxed_with_context::<Id, Id, _>(|id: &&'static [u8], id_ctx: &&'static [u8]| {
+                    match id.cmp(id_ctx) {
+                        std::cmp::Ordering::Less => panic!("Unordered record list"),
+                        std::cmp::Ordering::Equal => QueryResult::Keep,
+                        std::cmp::Ordering::Greater => QueryResult::Emit,
                     }
-                };
-
-            let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
-            let page_size_bytes = self.page_size_mb * 1024 * 1024;
-            let num_pages = buffer_size_bytes / page_size_bytes;
-
-            stream.set_reader_threads(n_readers);
-            stream.set_pagebuffer_config(num_pages, page_size_bytes);
+                });
 
             let output_path = self.path_out.join(format!("countsketch.{i}.tsv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
@@ -145,15 +144,15 @@ impl CountsketchCMD {
             }.set_writer(BufWriter::new(output_file));
 
             let worker_threadpool = threadpool::ThreadPool::new(n_workers);
-            let (work_tx, work_rx) = crossbeam::channel::unbounded::<Option<CountsketchCell>>();
+            let (work_tx, work_rx) = crossbeam::channel::unbounded::<Option<tirp::Cell>>();
             let (write_tx, write_rx) =
-                crossbeam::channel::unbounded::<Option<(CountsketchCell, CountSketch)>>();
+                crossbeam::channel::unbounded::<Option<(tirp::Cell, CountSketch)>>();
 
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
-                    if let Err(e) = output_countsketch_writer.write_countsketch(&cell, &countsketch)
+                    if let Err(e) = output_countsketch_writer.write_comp_countsketch(&cell, &countsketch)
                     {
-                        log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.cell), "error" => %e);
+                        log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.get_bytes::<Id>()), "error" => %e);
                     }
                 }
                 let _ = output_countsketch_writer.get_writer().unwrap().flush();
@@ -168,9 +167,13 @@ impl CountsketchCMD {
 
                 worker_threadpool.execute(move || {
                     while let Ok(Some(cell)) = work_rx.recv() {
-                        let Some(reads) = cell.get_reads() else {
+                        let reads = cell.get_ref::<SequencePair>();
+                        if reads.len() == 0 {
                             continue;
-                        };
+                        }
+
+                        let mut rev_r1 = Vec::new();
+                        let mut rev_r2 = Vec::new();
 
                         for (r1, r2) in reads {
                             for kmer in r1.windows(kmer_size) {
@@ -179,7 +182,9 @@ impl CountsketchCMD {
                             for kmer in r2.windows(kmer_size) {
                                 countsketch.add(kmer);
                             }
-                            let mut rev_r1 = Vec::with_capacity(r1.len());
+
+                            rev_r1.clear();
+                            rev_r1.reserve(r1.len());
                             for &base in r1.iter().rev() {
                                 rev_r1.push(match base {
                                     b'A' => b'T',
@@ -193,7 +198,8 @@ impl CountsketchCMD {
                                 countsketch.add(kmer);
                             }
 
-                            let mut rev_r2 = Vec::with_capacity(r2.len());
+                            rev_r2.clear();
+                            rev_r2.reserve(r2.len());
                             for &base in r2.iter().rev() {
                                 rev_r2.push(match base {
                                     b'A' => b'T',
@@ -218,30 +224,27 @@ impl CountsketchCMD {
                 let mut cells_parsed = 0;
                 let mut parse_errors = 0;
 
-                for cell_res in &mut stream {
-                    let cell = match cell_res {
-                        Ok(cell) => cell,
-                        Err(e) => match e {
-                            crate::runtime::Error::ParseError { .. } => {
-                                log_warning!("Parse error"; "error" => %e);
-                                parse_errors += 1;
-                                continue;
+                loop {
+                    match query.next() {
+                        Ok(Some(cell)) => {
+                            match work_tx.send(Some(cell)) {
+                                Ok(_) => cells_parsed += 1,
+                                Err(e) => {
+                                    log_critical!("Channel send failed"; "error" => %e);
+                                }
                             }
-                            _ => {
-                                log_critical!("Stream error"; "error" => %e);
-                            }
-                        },
-                    };
 
-                    match work_tx.send(Some(cell)) {
-                        Ok(_) => cells_parsed += 1,
-                        Err(e) => {
-                            log_critical!("Channel send failed"; "error" => %e);
+                            if cells_parsed % 100 == 0 {
+                                log_info!("Processing"; "cells parsed" => cells_parsed, "parse errors" => parse_errors);
+                            }
                         }
-                    }
-
-                    if cells_parsed % 1_000 == 0 {
-                        log_info!("Processing"; "cells parsed" => cells_parsed, "parse errors" => parse_errors);
+                        Ok(None) => {
+                            break;
+                        }
+                        Err(_) => {
+                            log_warning!("Parse error");
+                            parse_errors += 1;
+                        }
                     }
                 }
 
@@ -271,134 +274,5 @@ impl CountsketchCMD {
         }
 
         Ok(())
-    }
-}
-
-struct CountsketchCell {
-    cell: &'static [u8],
-    reads: Vec<(&'static [u8], &'static [u8])>,
-
-    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<PageBuffer<u8>>; 2]>,
-    _owned: Vec<Vec<u8>>,
-}
-
-impl Drop for CountsketchCell {
-    #[inline(always)]
-    fn drop(&mut self) {
-        unsafe {
-            for page_ptr in &self._page_refs {
-                (***page_ptr).dec_ref();
-            }
-        }
-    }
-}
-
-impl BascetCell for CountsketchCell {
-    type Builder = CountsketchCellBuilder;
-
-    fn builder() -> Self::Builder {
-        CountsketchCellBuilder::new()
-    }
-
-    fn get_cell(&self) -> Option<&[u8]> {
-        Some(self.cell)
-    }
-
-    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
-        Some(&self.reads)
-    }
-}
-
-struct CountsketchCellBuilder {
-    cell: Option<&'static [u8]>,
-    reads: Vec<(&'static [u8], &'static [u8])>,
-
-    page_refs: smallvec::SmallVec<[threading::UnsafePtr<PageBuffer<u8>>; 2]>,
-    owned: Vec<Vec<u8>>,
-}
-
-impl CountsketchCellBuilder {
-    fn new() -> Self {
-        Self {
-            cell: None,
-            reads: Vec::new(),
-
-            page_refs: smallvec::SmallVec::new(),
-            owned: Vec::new(),
-        }
-    }
-}
-
-impl BascetCellBuilder for CountsketchCellBuilder {
-    type Token = CountsketchCell;
-
-    #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<PageBuffer<u8>>) -> Self {
-        unsafe {
-            (**page_ptr).inc_ref();
-        }
-        self.page_refs.push(page_ptr);
-        self
-    }
-
-    fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
-        self.owned.push(id);
-        let slice = self.owned.last().unwrap().as_slice();
-        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-        // and the CountsketchCell holds the _owned field to maintain this invariant
-        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.cell = Some(slice_with_lifetime);
-        self
-    }
-
-    #[inline(always)]
-    fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
-        self.owned.push(seq);
-        let slice = self.owned.last().unwrap().as_slice();
-        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.reads.push((slice_with_lifetime, &[]));
-        self
-    }
-
-    #[inline(always)]
-    fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
-        self.cell = Some(slice);
-        self
-    }
-
-    #[inline(always)]
-    fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
-        self.reads.push((slice, &[]));
-        self
-    }
-
-    #[inline(always)]
-    fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
-        self.reads.push((r1, r2));
-        self
-    }
-
-    #[inline(always)]
-    fn build(self) -> CountsketchCell {
-        CountsketchCell {
-            cell: self.cell.expect("cell is required"),
-            reads: self.reads,
-
-            _page_refs: self.page_refs,
-            _owned: self.owned,
-        }
-    }
-}
-
-// convenience iterator over stream
-impl<T> Iterator for CountsketchStream<T>
-where
-    T: BascetCell,
-{
-    type Item = Result<T, crate::runtime::Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_cell().transpose()
     }
 }

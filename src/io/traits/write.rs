@@ -32,6 +32,17 @@ where
         todo!()
     }
 
+    fn write_comp_countsketch<C>(&mut self, comp: &C, countsketch: &crate::kmer::kmc_counter::CountSketch) -> Result<(), crate::runtime::Error>
+    where
+        C: bascet_core::Composite
+            + bascet_core::Get<bascet_core::Id>
+            + bascet_core::Get<bascet_core::SequencePair>,
+        <C as bascet_core::Get<bascet_core::Id>>::Value: AsRef<[u8]>,
+        <C as bascet_core::Get<bascet_core::SequencePair>>::Value: bascet_core::Collection,
+    {
+        todo!()
+    }
+
     fn write_countsketch<C>(
         &mut self,
         cell: &C,

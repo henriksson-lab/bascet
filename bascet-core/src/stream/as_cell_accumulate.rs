@@ -8,7 +8,7 @@ where
     C: Push<C::Collection, C::Intermediate> + From<C::Single, C::Intermediate>,
     C: PushBacking<C::Intermediate, <C::Intermediate as Composite>::Backing>,
     C::Intermediate: Composite<Marker = AsRecord> + Default + Clone,
-    C::Intermediate: TakeBacking<<C::Intermediate as Composite>::Backing>
+    C::Intermediate: TakeBacking<<C::Intermediate as Composite>::Backing>,
 {
     fn next_with<Q>(&mut self, query: &Q) -> Result<Option<C>, ()>
     where
@@ -19,7 +19,10 @@ where
         loop {
             let buffer_status = match self.inner_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
-                    spinpark_loop::spinpark_loop::<100>(&mut spinpark_counter);
+                    spinpark_loop::spinpark_loop_warn::<100>(
+                        &mut spinpark_counter,
+                        "Consumer (AsCell<Accumulate>): waiting for data (buffer empty, decoder slow or finished)"
+                    );
                     continue;
                 }
                 Ok(status) => {
@@ -32,88 +35,24 @@ where
                 StreamBufferState::Available(decoded) => decoded,
                 StreamBufferState::Error(e) => return Err(*e),
                 StreamBufferState::Eof => {
-                    // SAFETY: unwrap is safe because if EOF is returned a block MUST exist
-                    unsafe {
-                        self.inner_buffer_rx.pop().unwrap_unchecked();
-                    }
-
-                    let parsed = match self.inner_parser.parse_finish() {
-                        ParseStatus::Full(parsed) => parsed,
-                        ParseStatus::Error(_) => return Err(()),
-                        ParseStatus::Finished => return Ok(None),
-                        ParseStatus::Partial => unreachable!(),
-                    };
-
-                    return if likely(self.inner_context.is_some()) {
-                        let context = unsafe { self.inner_context.as_mut().unwrap_unchecked() };
-                        match query.apply(&parsed, context) {
-                            QueryResult::Discard => Ok(self.inner_context.take()),
-                            QueryResult::Keep => {
-                                <C as Push<C::Collection, C::Intermediate>>::push(
-                                    context, //
-                                    &parsed,
-                                );
-                                // this cannot be StreamState::Spanning(_) because then it'd not be EOF
-
-                                Ok(self.inner_context.take())
-                            }
-                            QueryResult::Emit => {
-                                let result = self.inner_context.take().unwrap();
-                                let mut new_ctx = C::default();
-                                <C as From<C::Single, C::Intermediate>>::from(
-                                    &mut new_ctx, //
-                                    &parsed,
-                                );
-                                <C as Push<C::Collection, C::Intermediate>>::push(
-                                    &mut new_ctx, //
-                                    &parsed,
-                                );
-                                new_ctx.push_backing(parsed.take_backing());
-
-                                self.inner_context = Some(new_ctx);
-                                Ok(Some(result))
-                            }
-                        }
-                    } else {
-                        let mut context_temp = C::default();
-                        <C as From<C::Single, C::Intermediate>>::from(
-                            &mut context_temp, //
-                            &parsed,
-                        );
-                        match query.apply(&parsed, &context_temp) {
-                            QueryResult::Discard => Ok(None),
-                            QueryResult::Keep => {
-                                <C as Push<C::Collection, C::Intermediate>>::push(
-                                    &mut context_temp,
-                                    &parsed,
-                                );
-                                Ok(Some(context_temp))
-                            }
-                            QueryResult::Emit => {
-                                <C as Push<C::Collection, C::Intermediate>>::push(
-                                    &mut context_temp,
-                                    &parsed,
-                                );
-                                Ok(Some(context_temp))
-                            }
-                        }
-                    };
+                    self.inner_state = StreamState::Aligned;
+                    return Ok( self.inner_context.take());
                 }
             };
 
             let state = std::mem::replace(&mut self.inner_state, StreamState::Aligned);
             let result = match &state {
+                StreamState::Aligned => {
+                    self.inner_parser.parse_aligned(
+                        &decoded, //
+                    )
+                }
                 StreamState::Spanning(spanning_tail) => {
                     let arena_pool = &self.inner_arena_pool;
                     self.inner_parser
                         .parse_spanning(&spanning_tail, &decoded, |sizeof_span| {
                             arena_pool.alloc(sizeof_span)
                         })
-                }
-                StreamState::Aligned => {
-                    self.inner_parser.parse_aligned(
-                        &decoded, //
-                    )
                 }
             };
 
@@ -155,8 +94,8 @@ where
                         match &state {
                             StreamState::Spanning(_) => {
                                 context.push_backing(parsed.take_backing());
-                            },
-                            _ => { }
+                            }
+                            _ => {}
                         }
 
                         continue;
@@ -184,7 +123,7 @@ where
                     &mut context_temp, //
                     &parsed,
                 );
-                
+
                 match query.apply(&parsed, &context_temp) {
                     QueryResult::Discard => {
                         continue;
