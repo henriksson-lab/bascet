@@ -26,5 +26,11 @@ From: deps.sif
     ### cleanup
     rm -Rf /src/bascet
 
+
+
+
+    #todo ugly hack to get a later version not in conda
+    apt-get install -y samtools
+
 %runscript
     exec "$@"
