@@ -13,19 +13,11 @@ pub enum SpinPark {
 
 #[inline(always)]
 pub fn spinpark_loop<const MAX_SPINS: usize>(spinpark_counter: &mut usize) -> SpinPark {
-    spinpark_loop_maybe_warn::<MAX_SPINS, 0>(spinpark_counter, "")
+    spinpark_loop_warn::<MAX_SPINS, 0>(spinpark_counter, "")
 }
 
 #[inline(always)]
-pub fn spinpark_loop_warn<const MAX_SPINS: usize>(
-    spinpark_counter: &mut usize,
-    msg: &str,
-) -> SpinPark {
-    spinpark_loop_maybe_warn::<MAX_SPINS, SPINPARK_PARKS_BEFORE_WARN>(spinpark_counter, msg)
-}
-
-#[inline(always)]
-pub fn spinpark_loop_maybe_warn<const MAX_SPINS: usize, const PARKS_BEFORE_MSG: usize>(
+pub fn spinpark_loop_warn<const MAX_SPINS: usize, const PARKS_BEFORE_MSG: usize>(
     spinpark_counter: &mut usize,
     msg: &str,
 ) -> SpinPark {

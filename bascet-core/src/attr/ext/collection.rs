@@ -1,14 +1,27 @@
 pub trait Collection {
     type Item;
+    type Iter<'a>: Iterator<Item = &'a Self::Item>
+    where
+        Self: 'a,
+        Self::Item: 'a;
+    type IntoIter: Iterator<Item = Self::Item>;
+
     fn push(&mut self, item: Self::Item);
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    fn iter(&self) -> Self::Iter<'_>;
+    fn into_iter(self) -> Self::IntoIter;
 }
 
 impl<T> Collection for Vec<T> {
     type Item = T;
+    type Iter<'a>
+        = std::slice::Iter<'a, T>
+    where
+        T: 'a;
+    type IntoIter = std::vec::IntoIter<T>;
 
     #[inline]
     fn push(&mut self, item: T) {
@@ -18,6 +31,16 @@ impl<T> Collection for Vec<T> {
     #[inline]
     fn len(&self) -> usize {
         Vec::len(self)
+    }
+
+    #[inline]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.as_slice().iter()
+    }
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        <Vec<T> as IntoIterator>::into_iter(self)
     }
 }
 

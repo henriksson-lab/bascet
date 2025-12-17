@@ -15,11 +15,15 @@ pub trait Chemistry {
         unimplemented!();
     }
 
-    fn prepare_using_rp_vecs<C: crate::io::traits::BascetCell>(
+    fn prepare_using_rp_vecs<C: bascet_core::Composite>(
         &mut self,
         _vec_r1: Vec<C>,
         _vec_r2: Vec<C>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        C: bascet_core::Get<bascet_core::Sequence>,
+        <C as bascet_core::Get<bascet_core::Sequence>>::Value: AsRef<[u8]>,
+    {
         unimplemented!();
     }
 
@@ -39,13 +43,13 @@ pub trait Chemistry {
         unimplemented!();
     } // get back if ok, cellid, readpair
 
-    fn detect_barcode_and_trim(
+    fn detect_barcode_and_trim<'a>(
         &mut self,
-        r1_seq: &'static [u8],
-        r1_qual: &'static [u8],
-        r2_seq: &'static [u8],
-        r2_qual: &'static [u8],
-    ) -> (u32, crate::common::ReadPair) {
+        r1_seq: &'a [u8],
+        r1_qual: &'a [u8],
+        r2_seq: &'a [u8],
+        r2_qual: &'a [u8],
+    ) -> (u32, crate::common::ReadPair<'a>) {
         unimplemented!();
     } // get back if ok, cellid, readpair
 

@@ -108,13 +108,13 @@ impl CountsketchCMD {
 
             let mut query = stream
                 .query::<tirp::Cell>()
-                .group_relaxed_with_context::<Id, Id, _>(|id: &&'static [u8], id_ctx: &&'static [u8]| {
-                    match id.cmp(id_ctx) {
+                .group_relaxed_with_context::<Id, Id, _>(
+                    |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
                         std::cmp::Ordering::Less => panic!("Unordered record list"),
                         std::cmp::Ordering::Equal => QueryResult::Keep,
                         std::cmp::Ordering::Greater => QueryResult::Emit,
-                    }
-                });
+                    },
+                );
 
             let output_path = self.path_out.join(format!("countsketch.{i}.tsv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
@@ -150,7 +150,8 @@ impl CountsketchCMD {
 
             let _ = std::thread::spawn(move || {
                 while let Ok(Some((cell, countsketch))) = write_rx.recv() {
-                    if let Err(e) = output_countsketch_writer.write_comp_countsketch(&cell, &countsketch)
+                    if let Err(e) =
+                        output_countsketch_writer.write_comp_countsketch(&cell, &countsketch)
                     {
                         log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.get_bytes::<Id>()), "error" => %e);
                     }

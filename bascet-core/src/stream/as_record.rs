@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
 
 impl<P, D, C> crate::Next<C> for Stream<P, D, C, AsRecord>
 where
@@ -15,7 +15,7 @@ where
         loop {
             let buffer_status = match self.inner_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
-                    spinpark_loop::spinpark_loop_warn::<100>(
+                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
                         &mut spinpark_counter,
                         "Consumer (AsRecord): waiting for data (buffer empty, decoder slow or finished)"
                     );

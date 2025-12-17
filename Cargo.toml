@@ -19,8 +19,8 @@ license = "MIT"
 repository = "https://github.com/henriksson-lab/bascet"
 homepage = "https://henriksson-lab.github.io/zorn/"
 
-[profile.release]
-lto = "fat"
+# [profile.release]
+# lto = "fat"
 
 [dependencies]
 ahash = "0.8.12"

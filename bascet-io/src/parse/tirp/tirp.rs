@@ -25,6 +25,29 @@ pub struct Record {
     pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
+#[derive(Composite, Default, Clone)]
+#[bascet(attrs = (Id, SequencePair, QualityPair, Umi), backing = OwnedBacking, marker = AsRecord)]
+pub struct OwnedRecord {
+    id: Vec<u8>,
+    sequence_pair: (Vec<u8>, Vec<u8>),
+    quality_pair: (Vec<u8>, Vec<u8>),
+    umi: Vec<u8>,
+
+    owned_backing: (),
+}
+
+impl Into<OwnedRecord> for Record {
+    fn into(self) -> OwnedRecord {
+        OwnedRecord {
+            id: self.id.to_vec(),
+            sequence_pair: (self.sequence_pair.0.to_vec(), self.sequence_pair.1.to_vec()),
+            quality_pair: (self.quality_pair.0.to_vec(), self.quality_pair.1.to_vec()),
+            umi: self.umi.to_vec(),
+            owned_backing: (),
+        }
+    }
+}
+
 impl Record {
     pub unsafe fn from_raw(
         buf_record: &[u8],
@@ -84,4 +107,43 @@ pub struct Cell {
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
     pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
+}
+
+#[derive(Composite, Default)]
+#[bascet(
+    attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis),
+    backing = OwnedBacking,
+    marker = AsCell<Accumulate>,
+    intermediate = Record
+)]
+pub struct OwnedCell {
+    id: Vec<u8>,
+    #[collection]
+    vec_sequence_pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    #[collection]
+    vec_quality_pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    #[collection]
+    vec_umis: Vec<Vec<u8>>,
+
+    owned_backing: (),
+}
+
+impl Into<OwnedCell> for Cell {
+    fn into(self) -> OwnedCell {
+        OwnedCell {
+            id: self.id.to_vec(),
+            vec_sequence_pairs: self
+                .vec_sequence_pairs
+                .iter()
+                .map(|(r1, r2)| (r1.to_vec(), r2.to_vec()))
+                .collect(),
+            vec_quality_pairs: self
+                .vec_quality_pairs
+                .iter()
+                .map(|(r1, r2)| (r1.to_vec(), r2.to_vec()))
+                .collect(),
+            vec_umis: self.vec_umis.iter().map(|umi| umi.to_vec()).collect(),
+            owned_backing: (),
+        }
+    }
 }

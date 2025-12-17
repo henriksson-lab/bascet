@@ -7,6 +7,7 @@ use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
+use crate::spinpark_loop::SPINPARK_PARKS_BEFORE_WARN;
 use crate::utils::spinpark_loop::{self, spinpark_loop, SpinPark};
 use crate::{likely_unlikely, SendPtr, DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER};
 
@@ -336,15 +337,10 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                     return slice;
                 }
             }
-            if likely_unlikely::unlikely(spinpark_loop::<100>(&mut count_spun) == SpinPark::Park) {
-                count_parked += 1;
-                if likely_unlikely::unlikely(
-                    count_parked >= spinpark_loop::SPINPARK_PARKS_BEFORE_WARN,
-                ) {
-                    // TODO: emit warning - consumers not releasing fast enough
-                    count_parked = 0;
-                }
-            }
+
+            spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                &mut count_spun, "ArenaPool (alloc): waiting for arena to be freed"
+            );
         }
     }
 }
@@ -359,17 +355,9 @@ impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
                 // SAFETY: We're in drop, no other threads can access arenas
                 let arena = unsafe { &*arena_cell.get() };
                 if arena.cnt.load(Ordering::Relaxed) != 0 {
-                    if likely_unlikely::unlikely(
-                        spinpark_loop::<100>(&mut count_spun) == SpinPark::Park,
-                    ) {
-                        count_parked += 1;
-                        if likely_unlikely::unlikely(
-                            count_parked >= spinpark_loop::SPINPARK_PARKS_BEFORE_WARN,
-                        ) {
-                            // TODO: emit warning - consumers not releasing fast enough
-                            count_parked = 0;
-                        }
-                    }
+                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                        &mut count_spun, "ArenaPool (drop): waiting for arena to be freed"
+                    );
                     continue 'wait;
                 }
             }

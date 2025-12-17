@@ -26,7 +26,8 @@ out
 # working dir for development
 zorn
 
-# bascet log
+# bascet runtime
+temp
 latest.log
 
 # profiling

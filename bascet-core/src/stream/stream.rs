@@ -1,13 +1,14 @@
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{JoinHandle, sleep};
+use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 
 use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
 use rtrb::PushError;
 
+use crate::spinpark_loop::SPINPARK_PARKS_BEFORE_WARN;
 use crate::*;
 
 pub(crate) enum StreamState {
@@ -79,7 +80,7 @@ where
         let (mut tx, rx) = rtrb::RingBuffer::new(n_buffers.get());
 
         let handle = std::thread::spawn(move || {
-            while !stop_flag.load(Ordering::Relaxed) {
+            while stop_flag.load(Ordering::Relaxed) == false {
                 let size = decoder.sizeof_target_alloc();
                 let mut buffer = arena_pool.alloc(size);
                 let decode_result = decoder.decode_into(buffer.as_mut_slice());
@@ -105,10 +106,22 @@ where
                         Ok(_) => break,
                         Err(PushError::Full(i)) => {
                             item = i;
-                            spinpark_loop::spinpark_loop_warn::<100>(
+
+                            spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
                                 &mut spinpark_counter,
-                                "Decoder: pushing buffer_status (buffer full, consumer slow)"
+                                "Decoder (push): pushing buffer_status (buffer full, consumer slow)",
                             );
+
+                            if stop_flag.load(Ordering::Relaxed) == true {
+                                match &item {
+                                    StreamBufferState::Eof | StreamBufferState::Error(_) => {
+                                        // Keep waiting, must push these before thread exits
+                                    }
+                                    StreamBufferState::Available(_) => {
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -118,11 +131,21 @@ where
 
         (handle, rx)
     }
+
+    pub unsafe fn shutdown(mut self) {
+        self.inner_decoder_stop.store(true, Ordering::Relaxed);
+        // HACK: make sure stop flag is read
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        while let Ok(buffer) = self.inner_buffer_rx.pop() {
+            drop(buffer);
+        }
+        self.inner_state = StreamState::Aligned;
+        drop(self.inner_context.take());
+    }
 }
 
 impl<P, D, C, M> Drop for Stream<P, D, C, M> {
     fn drop(&mut self) {
-        self.inner_decoder_stop.store(true, Ordering::Relaxed);
         // SAFETY: drop is only called once
         let handle = unsafe { ManuallyDrop::take(&mut self.inner_decoder_thread) };
         handle.join().expect("Couldn't join on the Decode thread");
