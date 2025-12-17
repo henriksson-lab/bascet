@@ -2,6 +2,9 @@ use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
 use crate::log_info;
+use bascet_core::Collection;
+use bascet_core::GetBytes;
+use bascet_core::Sequence;
 use blart::AsBytes;
 use seq_io::fastq::Reader as FastqReader;
 
@@ -124,11 +127,15 @@ impl Chemistry for ParseBioChemistry3 {
         Ok(())
     }
 
-    fn prepare_using_rp_vecs<C: crate::io::traits::BascetCell>(
+    fn prepare_using_rp_vecs<C: bascet_core::Composite>(
         &mut self,
-        r1: Vec<C>,
-        r2: Vec<C>,
-    ) -> anyhow::Result<()> {
+        vec_r1: Vec<C>,
+        vec_r2: Vec<C>,
+    ) -> anyhow::Result<()>
+    where
+        C: bascet_core::Get<bascet_core::Sequence>,
+        <C as bascet_core::Get<bascet_core::Sequence>>::Value: AsRef<[u8]>,
+    {
         /*
         let a=str_to_barcode_8bp("ATCGGGGG");
         let b=str_to_barcode_8bp("TTCGGGNN");
@@ -167,10 +174,10 @@ impl Chemistry for ParseBioChemistry3 {
             //For each barcode system, try to match it to reads. then decide which barcode system to use.
             //This code is a bit complicated because we wish to compare the same reads for all chemistry options
             let mut map_chem_match_cnt = HashMap::new();
-            for i in 0..r2.len() {
+            for i in 0..vec_r2.len() {
                 //Parse bio barcode is in R2
-                let read = r2[i].get_reads().unwrap().first().unwrap().0;
-
+                let read = vec_r2[i].get_bytes::<Sequence>();
+                log_info!("{:?}", String::from_utf8_lossy(read));
                 for (chem_name, bcs) in &map_round_bcs {
                     let total_distance_cutoff = 4;
                     let part_distance_cutoff = 1;
@@ -196,7 +203,7 @@ impl Chemistry for ParseBioChemistry3 {
             let mut map_chem_match_frac = HashMap::new();
             for (chem_name, _bcs) in &mut map_round_bcs {
                 let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
-                let this_frac = F::from(cnt) / F::from(r2.len());
+                let this_frac = F::from(cnt) / F::from(vec_r2.len());
                 println!(
                     "Chemistry: {}\tNormalized score: {:.4}",
                     chem_name, this_frac
@@ -283,13 +290,13 @@ impl Chemistry for ParseBioChemistry3 {
         }
     }
 
-    fn detect_barcode_and_trim(
+    fn detect_barcode_and_trim<'a>(
         &mut self,
-        r1_seq: &'static [u8],
-        r1_qual: &'static [u8],
-        r2_seq: &'static [u8],
-        r2_qual: &'static [u8],
-    ) -> (u32, crate::common::ReadPair) {
+        r1_seq: &'a [u8],
+        r1_qual: &'a [u8],
+        r2_seq: &'a [u8],
+        r2_qual: &'a [u8],
+    ) -> (u32, crate::common::ReadPair<'a>) {
         //Detect barcode, which for parse is in R2
         let total_distance_cutoff = 1;
         let part_distance_cutoff = 1;

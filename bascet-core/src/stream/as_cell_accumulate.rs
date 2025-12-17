@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
 
 impl<P, D, C> crate::Next<C> for Stream<P, D, C, AsCell<Accumulate>>
 where
@@ -19,7 +19,7 @@ where
         loop {
             let buffer_status = match self.inner_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
-                    spinpark_loop::spinpark_loop_warn::<100>(
+                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
                         &mut spinpark_counter,
                         "Consumer (AsCell<Accumulate>): waiting for data (buffer empty, decoder slow or finished)"
                     );
@@ -36,7 +36,7 @@ where
                 StreamBufferState::Error(e) => return Err(*e),
                 StreamBufferState::Eof => {
                     self.inner_state = StreamState::Aligned;
-                    return Ok( self.inner_context.take());
+                    return Ok(self.inner_context.take());
                 }
             };
 
@@ -153,3 +153,10 @@ where
         }
     }
 }
+
+/*
+Can you check:
+  1. ls -la temp/29432994_* - Are there files in the middle of being written?
+  2. lsof -p <pid> - What files does the process have open?
+  3. strace -p <pid> - What system call is it stuck on?
+ */

@@ -24,6 +24,28 @@ pub struct Record {
     pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
+#[derive(Composite, Default, Clone)]
+#[bascet(attrs = (Id, Sequence, Quality), backing = OwnedBacking, marker = AsRecord)]
+pub struct OwnedRecord {
+    id: Vec<u8>,
+    sequence: Vec<u8>,
+    quality: Vec<u8>,
+
+    owned_backing: (),
+}
+
+impl Into<OwnedRecord> for Record {
+    fn into(self) -> OwnedRecord {
+        OwnedRecord {
+            id: self.id.to_vec(),
+            sequence: self.sequence.to_vec(),
+            quality: self.quality.to_vec(),
+
+            owned_backing: (),
+        }
+    }
+}
+
 impl Record {
     pub unsafe fn from_raw(
         buf_record: &[u8],

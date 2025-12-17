@@ -87,11 +87,13 @@ where
         Ok(())
     }
 
-    fn write_comp_countsketch<C>(&mut self, comp: &C, countsketch: &crate::kmer::kmc_counter::CountSketch) -> Result<(), crate::runtime::Error>
+    fn write_comp_countsketch<C>(
+        &mut self,
+        comp: &C,
+        countsketch: &crate::kmer::kmc_counter::CountSketch,
+    ) -> Result<(), crate::runtime::Error>
     where
-        C: bascet_core::Composite
-            + Get<Id>
-            + Get<SequencePair>,
+        C: bascet_core::Composite + Get<Id> + Get<SequencePair>,
         <C as Get<Id>>::Value: AsRef<[u8]>,
         <C as Get<SequencePair>>::Value: Collection,
     {

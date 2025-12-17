@@ -25,7 +25,7 @@ use std::time::Instant;
 #[test]
 fn test_stream_bgzf_tirp() {
     let decoder = decode::Bgzf::builder()
-        .path("../data/shard1.tirp.gz")
+        .path("../temp/29433167_merge_0_1.tirp.gz")
         .num_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
@@ -57,10 +57,12 @@ fn test_stream_bgzf_tirp() {
 
     while let Ok(Some(cell)) = query.next() {
         i += 1;
-        if i % 10_000 == 0 {
+
+
+        if i % 1_000 == 0 {
             let now = Instant::now();
             let elapsed = now.duration_since(last_print).as_secs_f64();
-            let throughput = 10_000.0 / elapsed / 1_000.0;
+            let throughput = 1_000.0 / elapsed / 1_000.0;
 
             throughputs.push_back(throughput);
             if throughputs.len() > 60 {
@@ -70,13 +72,12 @@ fn test_stream_bgzf_tirp() {
             let avg_throughput: f64 = throughputs.iter().sum::<f64>() / throughputs.len() as f64;
 
             println!(
-                "{}K cells | {:.2} K cells/s (rolling avg: {:.2} K cells/s). Current: {:?}",
+                "{}K cells | {:.2} K cells/s (rolling avg: {:.2} K cells/s). Current ID: {:?}",
                 i / 1_000,
                 throughput,
                 avg_throughput,
                 String::from_utf8_lossy(cell.get_ref::<Id>())
             );
-
             last_print = now;
         }
     }
