@@ -58,7 +58,6 @@ fn test_stream_bgzf_tirp() {
     while let Ok(Some(cell)) = query.next() {
         i += 1;
 
-
         if i % 1_000 == 0 {
             let now = Instant::now();
             let elapsed = now.duration_since(last_print).as_secs_f64();

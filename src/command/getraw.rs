@@ -224,7 +224,7 @@ impl GetRawCMD {
                     .unwrap_or_else(|| DEFAULT_SIZEOF_ARENA.as_mib() as u64),
             ),
             stream_buffer: ByteSize::mib(
-                self.sizeof_streamarena_mib
+                self.sizeof_streambuffer_mib
                     .unwrap_or(total_mem_desired_mib / 2),
             ),
             sort_buffer: ByteSize::mib(
@@ -376,8 +376,9 @@ impl GetRawCMD {
                 }
 
                 log_info!("Finished reading first 10000 reads of R1...");
-                unsafe { s1.shutdown(); }
-
+                unsafe {
+                    s1.shutdown();
+                }
 
                 let d2 = decode::Bgzf::builder()
                     .path(input_r2.path())
@@ -406,7 +407,9 @@ impl GetRawCMD {
                 }
 
                 log_info!("Finished reading first 10000 reads of R2...");
-                unsafe { s2.shutdown(); }
+                unsafe {
+                    s2.shutdown();
+                }
 
                 let _ = chemistry.prepare_using_rp_vecs(b1, b2);
             }
@@ -1084,7 +1087,12 @@ fn spawn_mergesort_workers(
                 .query::<DebarcodedPartialCell>()
                 .group_relaxed_with_context::<Id, Id, _>(
                     |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                        std::cmp::Ordering::Less => panic!("Unordered record list: {:?}, id: {:?}, ctx: {:?}", last_file.path(), String::from_utf8_lossy(id), String::from_utf8_lossy(id_ctx)),
+                        std::cmp::Ordering::Less => panic!(
+                            "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
+                            last_file.path(),
+                            String::from_utf8_lossy(id),
+                            String::from_utf8_lossy(id_ctx)
+                        ),
                         std::cmp::Ordering::Equal => QueryResult::Keep,
                         std::cmp::Ordering::Greater => QueryResult::Emit,
                     },
@@ -1136,7 +1144,12 @@ fn spawn_mergesort_workers(
                     .query::<DebarcodedPartialCell>()
                     .group_relaxed_with_context::<Id, Id, _>(
                         |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                            std::cmp::Ordering::Less => panic!("Unordered record list: {:?}, id: {:?}, ctx: {:?}", fa.path(), String::from_utf8_lossy(id), String::from_utf8_lossy(id_ctx)),
+                            std::cmp::Ordering::Less => panic!(
+                                "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
+                                fa.path(),
+                                String::from_utf8_lossy(id),
+                                String::from_utf8_lossy(id_ctx)
+                            ),
                             std::cmp::Ordering::Equal => QueryResult::Keep,
                             std::cmp::Ordering::Greater => QueryResult::Emit,
                         },
@@ -1161,7 +1174,12 @@ fn spawn_mergesort_workers(
                     .query::<DebarcodedPartialCell>()
                     .group_relaxed_with_context::<Id, Id, _>(
                         |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                            std::cmp::Ordering::Less => panic!("Unordered record list: {:?}, id: {:?}, ctx: {:?}", fb.path(), String::from_utf8_lossy(id), String::from_utf8_lossy(id_ctx)),
+                            std::cmp::Ordering::Less => panic!(
+                                "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
+                                fb.path(),
+                                String::from_utf8_lossy(id),
+                                String::from_utf8_lossy(id_ctx)
+                            ),
                             std::cmp::Ordering::Equal => QueryResult::Keep,
                             std::cmp::Ordering::Greater => QueryResult::Emit,
                         },
