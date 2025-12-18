@@ -339,7 +339,8 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
             }
 
             spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                &mut count_spun, "ArenaPool (alloc): waiting for arena to be freed"
+                &mut count_spun,
+                "ArenaPool (alloc): waiting for arena to be freed",
             );
         }
     }
@@ -356,7 +357,8 @@ impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
                 let arena = unsafe { &*arena_cell.get() };
                 if arena.cnt.load(Ordering::Relaxed) != 0 {
                     spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                        &mut count_spun, "ArenaPool (drop): waiting for arena to be freed"
+                        &mut count_spun,
+                        "ArenaPool (drop): waiting for arena to be freed",
                     );
                     continue 'wait;
                 }
