@@ -87,7 +87,7 @@ pub struct ShardifyCMD {
         short = 'm',
         long = "memory",
         help = "Total memory budget",
-        default_value_t = ByteSize::gib(16),
+        default_value_t = ByteSize::gib(36),
         value_parser = clap::value_parser!(ByteSize),
     )]
     total_mem: ByteSize,
@@ -252,10 +252,10 @@ impl ShardifyCMD {
                             panic!("{:?}", e);
                         },
                     };
-                    log_info!("Prudced data at stream"; "thread" => thread_name);
+                    // log_info!("Prudced data at stream"; "thread" => thread_name);
                     
                     let global_processed = global_processed_counter
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     let global_kept = global_kept_counter
                         .load(std::sync::atomic::Ordering::Relaxed);
             
