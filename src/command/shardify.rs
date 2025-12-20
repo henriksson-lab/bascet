@@ -87,7 +87,7 @@ pub struct ShardifyCMD {
         short = 'm',
         long = "memory",
         help = "Total memory budget",
-        default_value_t = ByteSize::gib(36),
+        default_value_t = ByteSize::gib(32),
         value_parser = clap::value_parser!(ByteSize),
     )]
     total_mem: ByteSize,
@@ -244,7 +244,6 @@ impl ShardifyCMD {
                             cell
                         },
                         Ok(None) => {
-                            let _ = thread_notify_tx.send(());
                             break;
                         }
                         Err(e) => {
@@ -284,6 +283,7 @@ impl ShardifyCMD {
                 }
             }));
         }
+        drop(notify_tx);
 
         let (write_tx, write_rx) = crossbeam::channel::unbounded::<Vec<ShardifyPartialCell>>();
         let global_cells_written = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -393,7 +393,6 @@ impl ShardifyCMD {
                     }
                 }
                 
-                // log_info!("Coordinator: sending batch to writers"; "cells" => coordinator_vec_send.len());
                 let _ = write_tx.send(coordinator_vec_send.clone());
                 
                 coordinator_min_cell = None;
@@ -406,6 +405,8 @@ impl ShardifyCMD {
             handle.join().expect("Stream thread panicked");
         }
         log_info!("Stream handles closed");
+        
+        drop(write_tx);
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");
         }
