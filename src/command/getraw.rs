@@ -193,7 +193,7 @@ impl GetRawCMD {
             + thread_config.sort;
 
         thread_config.total =
-            BoundedU64::new_saturating(self.threads_sort.unwrap_or(total_threads_actual));
+            BoundedU64::new_saturating(total_threads_actual);
 
         log_info!(
             "Using {total_threads_actual} threads";

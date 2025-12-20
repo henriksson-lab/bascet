@@ -2,6 +2,7 @@ mod command_to_string;
 mod detect_software;
 mod merge_archives;
 mod path_utils;
+mod clap_utils;
 
 pub use merge_archives::merge_archives;
 pub use merge_archives::merge_archives_and_delete;

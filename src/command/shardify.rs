@@ -1,20 +1,20 @@
 use anyhow::Result;
+use bascet_core::{spinpark_loop::{SPINPARK_PARKS_BEFORE_WARN, self}, *};
+use bascet_derive::Budget;
+use bascet_io::{decode, parse, tirp};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
+use bounded_integer::BoundedU64;
+use bytesize::ByteSize;
 use clap::Args;
-use crossbeam::channel;
+use clio::{InputPath, OutputPath};
+use crossbeam::channel::{self, Sender};
 use itertools::izip;
 use std::{
-    fs::File,
-    io::{BufRead, BufReader, BufWriter, Write},
-    path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    fs::File, io::{BufRead, BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::id, sync::{Arc, RwLock}, thread::JoinHandle
 };
 
 use crate::{
-    common::{self, spin_or_park},
-    io::traits::*,
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading,
-    threading::PeekableReceiver,
+    bounded_parser, common::{self, spin_or_park}, io::traits::*, log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading::{self, PeekableReceiver}
 };
 
 use std::thread;
@@ -34,507 +34,393 @@ support_which_writer! {
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
 pub struct ShardifyCMD {
-    // Input bascets (comma separated; ok with PathBuf???)
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
-    pub path_in: Vec<PathBuf>,
+    #[arg(
+        short = 'i',
+        long = "in",
+        num_args = 1..,
+        value_delimiter = ',',
+        help = "List of input files (comma-separated)"
+    )]
+    pub paths_in: Vec<InputPath>,
 
-    // Output bascets
-    #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
-    pub path_out: Vec<PathBuf>,
+    #[arg(
+        short = 'o',
+        long = "out",
+        num_args = 1..,
+        value_delimiter = ',',
+        help = "List of output files (comma-separated)")
+    ]
+    pub paths_out: Vec<OutputPath>,
 
-    // File with a list of cells to include
-    #[arg(long = "include")]
-    pub path_include: Option<PathBuf>,
+    #[arg(
+        long = "include",
+        help = "File with list of cells to include (one per line)")
+    ]
+    pub path_include: InputPath,
 
-    #[arg(short = '@', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_TOTAL)]
-    threads_total: usize,
-    #[arg(short = 'r', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
-    threads_read: usize,
-    #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
-    threads_work: usize,
+    #[arg(                                                                                              
+        short = '@',                                                                                    
+        long = "threads",                                                                               
+        help = "Total threads to use",                   
+        value_name = "3..",        
+        value_parser = bounded_parser!(BoundedU64<3, { u64::MAX }>),                                        
+    )]                                                                                                  
+    total_threads: Option<BoundedU64<3, { u64::MAX }>>,
 
-    // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(usize), default_value_t = 1048)]
-    pub buffer_size_mb: usize,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(usize), default_value_t = 32)]
-    pub page_size_mb: usize,
+    #[arg(
+        long = "numof-threads-read",
+        help = "Number of reader threads (default: number of input files)",
+        value_name = "2..",
+        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+    )]
+    numof_threads_read: Option<BoundedU64<2, { u64::MAX }>>,
+
+    #[arg(
+        long = "numof-threads-write",
+        help = "Number of writer threads",
+        value_name = "1..",
+        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
+    )]
+    numof_threads_write: Option<BoundedU64<1, { u64::MAX }>>,
+
+    #[arg(
+        short = 'm',
+        long = "memory",
+        help = "Total memory budget",
+        default_value_t = ByteSize::gib(16),
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    total_mem: ByteSize,
+
+    #[arg(
+        long = "sizeof-stream-buffer",
+        help = "Total stream buffer size. Will be divided evenly across streams.",
+        value_name = "100%",
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_buffer: Option<ByteSize>,
+
+    #[arg(
+        long = "sizeof-stream-arena",
+        help = "Stream arema buffer size [Advanced: changing this will impact performance and stability]",
+        hide_short_help = true,
+        default_value_t = DEFAULT_SIZEOF_ARENA,
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_arena: ByteSize,
 }
+
+#[derive(Budget, Debug)]
+struct ShardifyBudget {
+    #[threads(Total)]
+    threads: BoundedU64<3, { u64::MAX }>,
+
+    #[mem(Total)]
+    memory: ByteSize,
+
+    #[threads(TRead)]
+    numof_threads_read: BoundedU64<2, { u64::MAX }>,
+
+    #[threads(TWrite)]
+    numof_threads_write: BoundedU64<1, { u64::MAX }>,
+
+    #[mem(MBuffer, 100.0)]
+    sizeof_stream_buffer: ByteSize,
+}
+
 
 impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
-        log_info!("Starting Shardify";
-            "input files" => self.path_in.len(),
-            "output files" => self.path_out.len(),
-            "include list" => ?self.path_include,
-            "total threads" => self.threads_total,
-            "read threads" => self.threads_read,
-            "work threads" => self.threads_work
+        let budget = ShardifyBudget::builder()
+            .threads(self.total_threads.unwrap_or((self.paths_in.len() + 1).try_into().unwrap()))
+            .memory(self.total_mem)
+            .numof_threads_read(self.numof_threads_read.unwrap_or(self.paths_in.len().try_into().unwrap()))
+            .numof_threads_write(self.numof_threads_write.unwrap_or(1.try_into().unwrap()))
+            .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
+            .build();
+        budget.validate();
+
+        let arc_filter = read_filter(&self.path_include.path().path());
+        let numof_streams = self.paths_in.len() as u64;
+        let numof_writers = self.paths_out.len() as u64;
+
+        let each_stream_numof_threads = budget.threads::<TRead>().get() / numof_streams;
+        let each_stream_numof_threads: BoundedU64<1, { u64::MAX }> = BoundedU64::new(each_stream_numof_threads)
+            .unwrap_or_else(|| {
+                let saturated: BoundedU64<1, _> = BoundedU64::new_saturating(each_stream_numof_threads);
+                log_warning!(
+                    "Thread allocation per stream below minimum";
+                    "determined" => each_stream_numof_threads,
+                    "saturating to" => %saturated
+                );
+                saturated
+            });
+        
+        let each_stream_sizeof_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / numof_streams);
+        
+        log_info!(
+            "Starting Shardify";
+            "using" => %budget,
+            "streams" => numof_streams,
+            "writers" => numof_writers,
+            "threads per stream" => %each_stream_numof_threads,
+            "memory per stream" => %each_stream_sizeof_buffer,
+            "cells in filter" => arc_filter.len()
         );
 
-        let filter = read_filter(self.path_include.as_deref());
-        let count_streams = self.path_in.len();
-        let count_writers = self.path_out.len();
-        let count_threads_per_stream = (self.threads_read / count_streams).max(1);
-
-        log_info!("Thread allocation";
-            "streams" => count_streams,
-            "writers" => count_writers,
-            "threads per stream" => count_threads_per_stream,
-            "cells in filter" => filter.len()
-        );
-
-        let (vec_coordinator_senders, mut vec_coordinator_receivers): (
-            Vec<channel::Sender<ShardifyCell>>,
-            Vec<PeekableReceiver<ShardifyCell>>,
-        ) = (0..count_streams)
+        let (vec_coordinator_tx, mut vec_coordinator_rx): (
+            Vec<Sender<ShardifyPartialCell>>,
+            Vec<PeekableReceiver<ShardifyPartialCell>>,
+        ) = (0..numof_streams)
             .map(|_| {
-                let (tx, rx) = channel::unbounded::<ShardifyCell>();
+                let (tx, rx) = channel::unbounded::<ShardifyPartialCell>();
                 (tx, PeekableReceiver::new(rx))
             })
             .unzip();
-        let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(count_streams)));
-        let mut vec_reader_handles = Vec::with_capacity(count_streams);
-        // let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
-        let mut vec_writer_handles = Vec::with_capacity(count_writers);
 
-        // Global atomic counters for stream processing
-        let global_cells_processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let global_cells_kept = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        // let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(numof_streams)));
+        let mut vec_reader_handles = Vec::with_capacity(numof_streams as usize);
+        // // let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
+        let mut vec_writer_handles = Vec::with_capacity(numof_writers as usize);
 
-        // Extract buffer configuration before the loop
-        let buffer_size_bytes = self.buffer_size_mb * 1024 * 1024;
-        let page_size_bytes = self.page_size_mb * 1024 * 1024;
-        let num_pages = buffer_size_bytes / page_size_bytes;
+        let global_cells_processed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let global_cells_kept = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
         // bounds given by rtrb, this is only a notifier
-        let (stream_tx, stream_rx) = channel::unbounded::<Option<()>>();
-        for (thread_idx, (thread_input, thread_tx)) in
-            izip!(self.path_in.clone(), vec_coordinator_senders).enumerate()
+        let (notify_tx, notify_rx) = channel::unbounded::<()>();
+
+        for (thread_idx, (thread_input, thread_cell_tx)) in
+            izip!(self.paths_in.clone(), vec_coordinator_tx).enumerate()
         {
-            let thread_filter = Arc::clone(&filter);
-            let thread_expired = Arc::clone(&vec_consumers_states);
-            let thread_stream_tx = stream_tx.clone();
+            let thread_filter = Arc::clone(&arc_filter);
+            let thread_notify_tx = notify_tx.clone();
+            
+            let thread_stream_buffer_size = each_stream_sizeof_buffer;
+            let thread_stream_arena_size = self.sizeof_stream_arena;
+
             let global_processed_counter = Arc::clone(&global_cells_processed);
             let global_kept_counter = Arc::clone(&global_cells_kept);
 
-            let thread_handle = thread::spawn(move || {
-                log_info!("Starting stream reader"; "thread index" => thread_idx, "path" => ?thread_input);
+            vec_reader_handles.push(budget.spawn::<TRead, _, _>(thread_idx as u64, move || {
+                let thread = std::thread::current();
+                let thread_name = thread.name().unwrap_or("unknown thread"); 
+                log_info!("Starting stream"; "thread" => thread_name, "path" => %thread_input);
 
-                let thread_input_path = thread_input.clone();
-                let thread_input = match ShardifyInput::try_from_path(&thread_input) {
-                    Ok(input) => input,
-                    Err(e) => {
-                        log_critical!("Failed to open input file"; "path" => ?thread_input_path, "error" => %e);
-                    }
-                };
+                let thread_decoder = decode::Bgzf::builder()
+                    .path(thread_input.path().path())
+                    .num_threads(each_stream_numof_threads)
+                    .build()
+                    .unwrap();
+                let thread_parser = parse::Tirp::builder()
+                    .build()
+                    .unwrap();
 
-                let mut thread_stream: ShardifyStream<ShardifyCell> =
-                    match ShardifyStream::try_from_input(&thread_input) {
-                        Ok(stream) => stream,
-                        Err(e) => {
-                            log_critical!("Failed to create stream"; "path" => ?thread_input_path, "error" => %e);
+                let mut thread_stream = Stream::builder()
+                    .with_decoder(thread_decoder)
+                    .with_parser(thread_parser)
+                    .sizeof_arena(thread_stream_arena_size)
+                    .sizeof_buffer(thread_stream_buffer_size)
+                    .build()
+                    .unwrap();
+
+                let mut query = thread_stream
+                    .query::<tirp::Cell>()
+                    .group_relaxed_with_context::<Id, Id, _>(
+                        |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
+                            std::cmp::Ordering::Less => panic!(
+                                "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
+                                thread_input.path(),
+                                String::from_utf8_lossy(id),
+                                String::from_utf8_lossy(id_ctx)
+                            ),
+                            std::cmp::Ordering::Equal => QueryResult::Keep,
+                            std::cmp::Ordering::Greater => QueryResult::Emit,
+                        },
+                    );
+
+                loop {
+                    let cell = match query.next_into::<ShardifyPartialCell>() {
+                        Ok(Some(cell)) => {
+                            cell
+                        },
+                        Ok(None) => {
+                            let _ = thread_notify_tx.send(());
+                            break;
                         }
-                    };
-                thread_stream.set_reader_threads(count_threads_per_stream);
-                thread_stream.set_pagebuffer_config(num_pages, page_size_bytes);
-
-                for token_cell_result in thread_stream {
-                    let token_cell = match token_cell_result {
-                        Ok(token_cell) => token_cell,
-                        Err(e) => match e {
-                            crate::runtime::Error::ParseError { .. } => {
-                                log_warning!("Parse error"; "thread" => thread_idx, "error" => %e);
-                                continue;
-                            }
-                            _ => {
-                                log_critical!("Stream error"; "thread" => thread_idx, "error" => %e);
-                            }
+                        Err(e) => {
+                            // log_critical!("Reader: error"; "thread" => thread_name, "error" => ?e);
+                            panic!("{:?}", e);
                         },
                     };
-
+                    log_info!("Prudced data at stream"; "thread" => thread_name);
+                    
                     let global_processed = global_processed_counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        + 1;
-                    if !thread_filter.contains(token_cell.cell) {
-                        drop(token_cell);
-                        continue;
-                    }
-
-                    let global_kept =
-                        global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    if global_kept % 100_000 == 0 {
-                        log_info!("Processing";
-                            "cells processed" => global_processed,
-                            "cells kept" => global_kept
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let global_kept = global_kept_counter
+                        .load(std::sync::atomic::Ordering::Relaxed);
+            
+                    if global_processed % 10_000 == 0 {
+                        let keep_ratio = (global_kept as f64) / (global_processed as f64); 
+                        log_info!(
+                            "Processing";
+                            "(partial) cells processed" => global_processed,
+                            "(partial) cells kept" => format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio)
                         );
                     }
 
-                    if thread_tx.send(token_cell).is_ok() {
-                        let _ = thread_stream_tx.send(Some(()));
+                    // SAFETY: deref safe as long as cell is alive
+                    if !thread_filter.contains(*cell.get_ref::<Id>()) {
+                        continue;
+                    }
+
+                    global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    let _ = thread_cell_tx.send(cell);
+                    // log_info!("Stream sent notification"; "thread_idx" => thread_idx);
+                    if thread_cell_tx.len() == 1 {
+                        // NOTE: this means we just sent to an empty cell channel. Notify the coordinator!
+                        let _ = thread_notify_tx.send(());
                     }
                 }
-                thread_expired.write().unwrap().push(thread_idx);
-                let _ = thread_stream_tx.send(None);
-            });
-            vec_reader_handles.push(thread_handle);
+            }));
         }
 
-        let write_channels: Vec<_> = (0..count_writers)
-            .map(|_| channel::bounded::<Option<Box<Vec<ShardifyCell>>>>(128))
-            .collect();
-        let write_senders: Vec<_> = write_channels.iter().map(|(tx, _)| tx.clone()).collect();
-
-        let global_cells_written = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-        for (thread_idx, (thread_output, (_, thread_rx))) in self
-            .path_out
-            .clone()
-            .into_iter()
-            .zip(write_channels.into_iter())
-            .enumerate()
+        let (write_tx, write_rx) = crossbeam::channel::unbounded::<Vec<ShardifyPartialCell>>();
+        let global_cells_written = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        
+        for (thread_idx, thread_output) in IntoIterator::into_iter(self.paths_out.clone()).enumerate()
         {
-            log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => ?thread_output);
+            log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => %thread_output);
 
-            let thread_output_path = thread_output.clone();
-            let thread_output = match ShardifyOutput::try_from_path(&thread_output) {
-                Ok(output) => output,
-                Err(e) => {
-                    log_critical!("Failed to identify output file"; "path" => ?thread_output_path, "error" => %e);
-                }
-            };
-
-            let thread_file = match std::fs::File::create(thread_output.path()) {
+            let thread_file = match std::fs::File::create(thread_output.path().path()) {
                 Ok(file) => file,
                 Err(e) => {
                     log_critical!("Failed to create output file"; "path" => ?thread_output.path(), "error" => %e);
                 }
             };
 
-            let thread_buf_writer = BufWriter::with_capacity(1024 * 1024 * 32, thread_file);
-            let thread_bgzf_writer =
+            let thread_buf_writer = BufWriter::new(thread_file);
+            let mut thread_bgzf_writer =
                 BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
-
-            let mut thread_shardify_writer: ShardifyWriter<BGZFMultiThreadWriter<BufWriter<File>>> =
-                match ShardifyWriter::try_from_output(&thread_output) {
-                    Ok(writer) => writer.set_writer(thread_bgzf_writer),
-                    Err(e) => {
-                        log_critical!("Failed to create output writer"; "path" => ?thread_output_path, "error" => %e);
-                    }
-                };
+            let thread_write_rx = write_rx.clone();
 
             let global_counter = Arc::clone(&global_cells_written);
-            let thread_handle = thread::spawn(move || {
-                while let Ok(Some(vec_records)) = thread_rx.recv() {
-                    for cell in &*vec_records {
-                        if let Err(e) = thread_shardify_writer.write_cell(cell) {
-                            log_warning!("Failed to write cell"; "thread" => thread_idx, "cell" => %String::from_utf8_lossy(cell.get_cell().unwrap_or(&[])), "error" => %e);
-                        }
+            vec_writer_handles.push(budget.spawn::<TWrite, _, _>(thread_idx as u64, move || {
+                let thread = std::thread::current();
+                let thread_name = thread.name().unwrap_or("unknown thread"); 
+                log_info!("Starting writer"; "thread" => thread_name, "path" => %thread_output);
+
+                while let Ok(vec_records) = thread_write_rx.recv() {
+                    for cell in vec_records {
+                        let _ = cell.write_to(&mut thread_bgzf_writer);
                     }
 
                     let global_count =
                         global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    if global_count % 1_000_000 == 0 {
-                        log_info!("Writing"; "cells merged and written" => global_count);
+                    if global_count % 1_000 == 0 {
+                        log_info!("Writing"; "(complete) cells written" => global_count);
                     }
                 }
-                let _ = thread_shardify_writer.get_writer().unwrap().flush();
-            });
-            vec_writer_handles.push(thread_handle);
+                let _ = thread_bgzf_writer.flush();
+            }));
         }
 
-        let mut coordinator_count_streams_finished = 0;
-        let mut coordinator_count_spins = 0;
-        let mut coordinator_writer_idx = 0;
-        let mut coordinator_all_ready;
-        let mut coordinator_min_cell: Option<&[u8]>;
-        let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(count_streams);
-        let mut coordinator_vec_send: Vec<ShardifyCell> = Vec::with_capacity(count_streams); // Local vec
+        let mut coordinator_spinpark_counter = 0;
+        let mut coordinator_min_cell: Option<&[u8]> = None;
+        let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(numof_streams as usize);
+        let mut coordinator_vec_send: Vec<ShardifyPartialCell> = Vec::with_capacity(numof_streams as usize); // Local vec
 
         loop {
-            match stream_rx.try_recv() {
-                Ok(Some(())) => {}
-                Ok(None) => {
-                    coordinator_count_streams_finished += 1;
-                    log_info!("Stream finished"; "finished" => coordinator_count_streams_finished, "total" => count_streams);
-                    if coordinator_count_streams_finished == count_streams {
-                        log_info!("All streams completed, closing coordinator");
-                        break;
-                    }
-                }
+            match notify_rx.try_recv() {
+                Ok(idx) => idx,
                 Err(channel::TryRecvError::Empty) => {
-                    spin_or_park(&mut coordinator_count_spins, 100);
+                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                        &mut coordinator_spinpark_counter,
+                        "Shardify (coordinator): channel peek (channel empty, producer slow)",
+                    );
                     continue;
                 }
-                Err(_) => break,
+                Err(channel::TryRecvError::Disconnected) => {
+                    // NOTE: if the notify reciever is disconnected there will be no data sent anymore
+                    break;
+                }
             };
+            coordinator_spinpark_counter = 0;
 
-            // log_info!("Received token"; "pending" => %String::from_utf8_lossy(&pending_token), "open" => %stream_rx.len());
-            coordinator_count_spins = 0;
-            coordinator_all_ready = true;
-            coordinator_min_cell = None;
-            coordinator_vec_take.clear();
-            coordinator_vec_send.clear();
-
-            for (sweep_consumer_idx, sweep_consumer) in
-                vec_coordinator_receivers.iter_mut().enumerate()
-            {
-                // Skip streams marked done/expired
-                if vec_consumers_states
-                    .read()
-                    .unwrap()
-                    .contains(&sweep_consumer_idx)
-                {
-                    continue;
+            'sweep: loop {
+                for (sweep_idx, sweep_rx) in vec_coordinator_rx.iter_mut().enumerate() {
+                    let sweep_cell = match sweep_rx.peek() {
+                        Ok(token) => token,
+                        Err(channel::TryRecvError::Disconnected) => {
+                            continue;
+                        }
+                        Err(channel::TryRecvError::Empty) => {
+                            coordinator_vec_take.clear();
+                            break 'sweep;
+                        }
+                    };
+                    let sweep_cell_id = sweep_cell.get_ref::<Id>();
+                    match coordinator_min_cell {
+                        None => {
+                            coordinator_min_cell = Some(sweep_cell_id);
+                            coordinator_vec_take.push(sweep_idx);
+                            continue;
+                        }
+                        Some(cmc) if *sweep_cell_id < cmc => {
+                            coordinator_min_cell = Some(sweep_cell_id);
+                            coordinator_vec_take.clear();
+                            coordinator_vec_take.push(sweep_idx);
+                        }
+                        Some(cmc) if *sweep_cell_id == cmc => {
+                            coordinator_vec_take.push(sweep_idx);
+                        }
+                        Some(cmc) if *sweep_cell_id > cmc => {
+                            continue;
+                        }
+                        _ => unreachable!()
+                    }
                 }
 
-                let sweep_token = match sweep_consumer.peek() {
-                    Ok(token) => token,
-                    Err(channel::RecvError) => {
-                        // Stream not ready
-                        coordinator_all_ready = false;
-                        break;
+                for take_idx in &coordinator_vec_take {
+                    let take_rx = &mut vec_coordinator_rx[*take_idx];
+                    match take_rx.try_recv() {
+                        Ok(take_cell) => {
+                            coordinator_vec_send.push(take_cell);
+                        }
+                        Err(e) => {
+                            log_critical!("try_recv failed!"; "stream" => take_idx, "error" => ?e, "vec_take" => ?coordinator_vec_take);
+                        }
                     }
-                };
-
-                match coordinator_min_cell {
-                    None => {
-                        coordinator_min_cell = Some(sweep_token.cell);
-                        coordinator_vec_take.clear();
-                        coordinator_vec_take.push(sweep_consumer_idx);
-                    }
-                    Some(cmc) if sweep_token.cell < cmc => {
-                        coordinator_min_cell = Some(sweep_token.cell);
-                        coordinator_vec_take.clear();
-                        coordinator_vec_take.push(sweep_consumer_idx);
-                    }
-                    Some(cmc) if sweep_token.cell == cmc => {
-                        coordinator_vec_take.push(sweep_consumer_idx);
-                    }
-                    _ => {}
                 }
+                
+                // log_info!("Coordinator: sending batch to writers"; "cells" => coordinator_vec_send.len());
+                let _ = write_tx.send(coordinator_vec_send.clone());
+                
+                coordinator_min_cell = None;
+                coordinator_vec_take.clear();
+                coordinator_vec_send.clear();
             }
-
-            if !coordinator_all_ready {
-                continue;
-            }
-
-            for take_idx in &coordinator_vec_take {
-                let take_consumer = &mut vec_coordinator_receivers[*take_idx];
-                match take_consumer.recv() {
-                    Ok(take_cell) => {
-                        coordinator_vec_send.push(take_cell);
-                    }
-                    Err(_) => unreachable!("Token disappeared between peek and recv"),
-                }
-            }
-
-            let _ = write_senders[coordinator_writer_idx]
-                .send(Some(Box::new(std::mem::take(&mut coordinator_vec_send))));
-            coordinator_writer_idx = (coordinator_writer_idx + 1) % count_writers;
         }
 
         for handle in vec_reader_handles {
             handle.join().expect("Stream thread panicked");
         }
         log_info!("Stream handles closed");
-        for sender in &write_senders {
-            let _ = sender.send(None);
-        }
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");
         }
         log_info!("Write handles closed");
 
         log_info!("Shardify complete";
-            "input files processed" => self.path_in.len(),
-            "output files created" => self.path_out.len()
+            "input files processed" => self.paths_in.len(),
+            "output files created" => self.paths_out.len()
         );
 
         Ok(())
     }
 }
 
-struct ShardifyCell {
-    cell: &'static [u8],
-    reads: Vec<(&'static [u8], &'static [u8])>,
-    qualities: Vec<(&'static [u8], &'static [u8])>,
-    umis: Vec<&'static [u8]>,
-
-    _page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
-    _owned: Vec<Vec<u8>>,
-}
-impl Drop for ShardifyCell {
-    #[inline(always)]
-    fn drop(&mut self) {
-        unsafe {
-            for page_ptr in &self._page_refs {
-                (***page_ptr).dec_ref();
-            }
-        }
-    }
-}
-
-impl BascetCell for ShardifyCell {
-    type Builder = ShardifyCellBuilder;
-    fn builder() -> Self::Builder {
-        Self::Builder::new()
-    }
-
-    fn get_cell(&self) -> Option<&[u8]> {
-        Some(self.cell)
-    }
-
-    fn get_reads(&self) -> Option<&[(&[u8], &[u8])]> {
-        Some(&self.reads)
-    }
-
-    fn get_qualities(&self) -> Option<&[(&[u8], &[u8])]> {
-        Some(&self.qualities)
-    }
-
-    fn get_umis(&self) -> Option<&[&[u8]]> {
-        Some(&self.umis)
-    }
-}
-struct ShardifyCellBuilder {
-    cell: Option<&'static [u8]>,
-    reads: Vec<(&'static [u8], &'static [u8])>,
-    qualities: Vec<(&'static [u8], &'static [u8])>,
-    umis: Vec<&'static [u8]>,
-
-    page_refs: smallvec::SmallVec<[threading::UnsafePtr<common::PageBuffer<u8>>; 2]>,
-    owned: Vec<Vec<u8>>,
-}
-
-impl ShardifyCellBuilder {
-    fn new() -> Self {
-        Self {
-            cell: None,
-            reads: Vec::new(),
-            qualities: Vec::new(),
-            umis: Vec::new(),
-
-            page_refs: smallvec::SmallVec::new(),
-            owned: Vec::new(),
-        }
-    }
-}
-
-impl BascetCellBuilder for ShardifyCellBuilder {
-    type Token = ShardifyCell;
-
-    #[inline(always)]
-    fn add_page_ref(mut self, page_ptr: threading::UnsafePtr<common::PageBuffer<u8>>) -> Self {
-        unsafe {
-            (**page_ptr).inc_ref();
-        }
-        self.page_refs.push(page_ptr);
-        self
-    }
-
-    // HACK: these are hacks since this type of stream token uses slices. so we take the underlying owned vec
-    // and treat it like an otherwise Arc'd underlying vec and then pretend it is a slice.
-    fn add_cell_id_owned(mut self, id: Vec<u8>) -> Self {
-        self.owned.push(id);
-        let slice = self.owned.last().unwrap().as_slice();
-        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-        // and the CountsketchCell holds the _owned field to maintain this invariant
-        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.cell = Some(slice_with_lifetime);
-        self
-    }
-
-    #[inline(always)]
-    fn add_sequence_owned(mut self, seq: Vec<u8>) -> Self {
-        self.owned.push(seq);
-        let slice = self.owned.last().unwrap().as_slice();
-        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.reads.push((slice_with_lifetime, &[]));
-        self
-    }
-
-    #[inline(always)]
-    fn add_quality_owned(mut self, qual: Vec<u8>) -> Self {
-        self.owned.push(qual);
-        let slice = self.owned.last().unwrap().as_slice();
-        // SAFETY: The slice is valid for the static lifetime as long as self.owned keeps the Vec alive
-        let slice_with_lifetime: &'static [u8] = unsafe { std::mem::transmute(slice) };
-        self.qualities.push((slice_with_lifetime, &[]));
-        self
-    }
-
-    // NOTE: Here the idea is that for as long as the stream tokens are alive the underlying memory will be kept alive
-    // by Arcs. For as long as these are valid the memory can be considered static even if it technically is not
-    // this is a bit of a hack to make the underlying trait easier to use.
-    // has the benefit of being much faster and more memory efficient since there is no copy overhead
-    #[inline(always)]
-    fn add_cell_id_slice(mut self, slice: &'static [u8]) -> Self {
-        self.cell = Some(slice);
-        self
-    }
-
-    #[inline(always)]
-    fn add_rp_slice(mut self, r1: &'static [u8], r2: &'static [u8]) -> Self {
-        self.reads.push((r1, r2));
-        self
-    }
-    #[inline(always)]
-    fn add_qp_slice(mut self, q1: &'static [u8], q2: &'static [u8]) -> Self {
-        self.qualities.push((q1, q2));
-        self
-    }
-
-    #[inline(always)]
-    fn add_sequence_slice(mut self, slice: &'static [u8]) -> Self {
-        self.reads.push((slice, &[]));
-        self
-    }
-    #[inline(always)]
-    fn add_quality_slice(mut self, slice: &'static [u8]) -> Self {
-        self.qualities.push((slice, &[]));
-        self
-    }
-
-    fn add_umi_slice(mut self, umi: &'static [u8]) -> Self {
-        self.umis.push(umi);
-        self
-    }
-
-    #[inline(always)]
-    fn build(self) -> ShardifyCell {
-        ShardifyCell {
-            cell: self.cell.expect("cell is required"),
-            reads: self.reads,
-            qualities: self.qualities,
-            umis: self.umis,
-
-            _page_refs: self.page_refs,
-            _owned: self.owned,
-        }
-    }
-}
-
-// convenience iterator over stream
-impl<T> Iterator for ShardifyStream<T>
-where
-    T: BascetCell,
-{
-    type Item = Result<T, crate::runtime::Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_cell().transpose()
-    }
-}
-
-type ShardifyFilter = Arc<gxhash::HashSet<Vec<u8>>>;
-fn read_filter(input: Option<&Path>) -> ShardifyFilter {
-    if input == None {
-        log_critical!(
-            "Empty cell list detected! This configuration may consume massive amounts of computer memory (potentially hundreds of GiB of RAM) and will DUPLICATE the input datasets. This is almost certainly an error. Verify input parameters or provide an explicitly empty collection only if this behavior is understood and intended."
-        );
-    }
-    let input = input.unwrap();
+fn read_filter<P: AsRef<Path>>(input: P) -> Arc<gxhash::HashSet<Vec<u8>>> {
     // GOOD FIRST ISSUE:
     // implement cell list reader around the support macros!
     let file = File::open(input).unwrap();
@@ -550,4 +436,53 @@ fn read_filter(input: Option<&Path>) -> ShardifyFilter {
         );
     }
     return Arc::new(filter);
+}
+#[derive(Composite, Clone, Default)]
+#[bascet(
+    attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis),
+    backing = ArenaBacking,
+    marker = AsCell<Accumulate>,
+    intermediate = tirp::Record
+)]
+pub struct ShardifyPartialCell {
+    id: &'static [u8],
+    #[collection]
+    vec_sequence_pairs: Vec<(&'static [u8], &'static [u8])>,
+    #[collection]
+    vec_quality_pairs: Vec<(&'static [u8], &'static [u8])>,
+    #[collection]
+    vec_umis: Vec<&'static [u8]>,
+
+    // SAFETY: exposed ONLY to allow conversion outside this crate.
+    //         be VERY careful modifying this at all
+    pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
+}
+impl ShardifyPartialCell {
+    pub fn write_to<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let id = self.get_bytes::<Id>();
+        let reads = &self.vec_sequence_pairs;
+        let quals = &self.vec_quality_pairs;
+        let umis = &self.vec_umis;
+
+        for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
+            writer.write_all(id)?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(&[crate::common::U8_CHAR_1])?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(&[crate::common::U8_CHAR_1])?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(r1)?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(r2)?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(q1)?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(q2)?;
+            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
+            writer.write_all(umi)?;
+            writer.write_all(&[crate::common::U8_CHAR_NEWLINE])?;
+        }
+
+        Ok(())
+    }
 }
