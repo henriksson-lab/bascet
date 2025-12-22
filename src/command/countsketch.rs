@@ -1,28 +1,30 @@
 use crate::{
-    command::determine_thread_counts_2, common::PageBuffer, io::traits::*,
-    kmer::kmc_counter::CountSketch, log_critical, log_info, log_warning, support_which_stream,
-    support_which_writer, threading,
+    bounded_parser, common::{U8_CHAR_NEWLINE, U8_CHAR_TAB}, countsketch::CountSketch , io::traits::*,
+    log_critical, log_info, log_warning, support_which_writer,
 };
 
-use bascet_core::*;
+use bascet_core::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
+use bascet_derive::Budget;
 use bascet_io::{decode, parse, tirp};
 
-use bounded_integer::{BoundedU64, BoundedUsize};
+use anyhow::Result;
+use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
-use itertools::enumerate;
-use rust_htslib::htslib;
+use clio::{InputPath, OutputPath};
+use crossbeam::channel::{Receiver, TryRecvError};
+use itertools::{enumerate, Itertools};
 use std::{
+    cell::UnsafeCell,
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
+    sync::{
+        self,
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
-
-pub const DEFAULT_THREADS_READ: usize = 8;
-pub const DEFAULT_THREADS_WORK: usize = 4;
-pub const DEFAULT_THREADS_TOTAL: usize = 12;
-pub const DEFAULT_COUNTSKETCH_SIZE: usize = 4096;
-pub const DEFAULT_KMER_SIZE: usize = 31;
 
 support_which_writer! {
     CountsketchOutput => CountsketchWriter<W: std::io::Write>
@@ -31,68 +33,152 @@ support_which_writer! {
 
 #[derive(Args)]
 pub struct CountsketchCMD {
-    // Input bascets
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
-    pub path_in: Vec<PathBuf>,
-    // Output path
-    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
+    #[arg(
+        short = 'i',
+        long = "in",
+        num_args = 1..,
+        value_delimiter = ',',
+        help = "List of input files (comma-separated). Assumed to be sorted by cell id in descending order."
+    )]
+    pub paths_in: Vec<InputPath>,
+
+    #[arg(
+        short = 'o',
+        long = "out",
+        help = "Output directory for countsketch files"
+    )]
     pub path_out: PathBuf,
-    //Thread settings
-    #[arg(short = '@', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_TOTAL)]
-    threads_total: usize,
-    #[arg(short = 'r', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_READ)]
-    threads_read: usize,
-    #[arg(short = 'w', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
-    threads_work: usize,
-    // Countsketch parameters
-    #[arg(long = "sketch-size", value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_COUNTSKETCH_SIZE)]
+
+    #[arg(
+        short = '@',
+        long = "threads",
+        help = "Total threads to use (defaults to std::threads::available parallelism)",
+        value_name = "2..",
+        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+    )]
+    total_threads: Option<BoundedU64<2, { u64::MAX }>>,
+
+    #[arg(
+        long = "numof-threads-read",
+        help = "Number of reader threads",
+        value_name = "1.. (50%)",
+        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
+    )]
+    numof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
+
+    #[arg(
+        long = "numof-threads-work",
+        help = "Number of worker threads",
+        value_name = "1.. (50%)",
+        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
+    )]
+    numof_threads_work: Option<BoundedU64<1, { u64::MAX }>>,
+
+    #[arg(
+        short = 'm',
+        long = "memory",
+        help = "Total memory budget",
+        default_value_t = ByteSize::gib(1),
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    total_mem: ByteSize,
+
+    #[arg(
+        long = "sizeof-stream-buffer",
+        help = "Total stream buffer size.",
+        value_name = "100%",
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_buffer: Option<ByteSize>,
+
+    #[arg(
+        long = "sizeof-stream-arena",
+        help = "Stream arena buffer size [Advanced: changing this will impact performance and stability]",
+        hide_short_help = true,
+        default_value_t = DEFAULT_SIZEOF_ARENA,
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_arena: ByteSize,
+
+    #[arg(
+        short = 'k',
+        long = "kmer-size",
+        help = "K-mer size for counting",
+        default_value_t = 31,
+        value_parser = clap::value_parser!(u16),
+    )]
+    pub kmer_size: u16,
+
+    #[arg(
+        short = 's',
+        long = "sketch-size",
+        help = "Size of the count sketch. Must be a power of two.",
+        default_value_t = 4096,
+        value_parser = clap::value_parser!(usize),
+    )]
     pub countsketch_size: usize,
-    // K-mer size
-    #[arg(short = 'k', value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_KMER_SIZE)]
-    pub kmer_size: usize,
-    // Stream buffer configuration
-    #[arg(long = "buffer-size", value_parser = clap::value_parser!(u64), default_value_t = 1024)]
-    pub buffer_size_mib: u64,
-    #[arg(long = "page-size", value_parser = clap::value_parser!(u64), default_value_t = 8)]
-    pub page_size_mib: u64,
+}
+
+#[derive(Budget, Debug)]
+struct CountsketchBudget {
+    #[threads(Total)]
+    threads: BoundedU64<2, { u64::MAX }>,
+
+    #[mem(Total)]
+    memory: ByteSize,
+
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 * 0.4) as u64).unwrap())]
+    numof_threads_read: BoundedU64<1, { u64::MAX }>,
+
+    #[threads(TWork, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads.saturating_sub(1).max(1) as f64 * 0.6) as u64).unwrap())]
+    numof_threads_work: BoundedU64<1, { u64::MAX }>,
+
+    #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]
+    numof_threads_write: BoundedU64<1, 1>,
+
+    #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
+    sizeof_stream_buffer: ByteSize,
 }
 
 impl CountsketchCMD {
-    pub fn try_execute(&mut self) -> anyhow::Result<()> {
-        log_info!("Starting Countsketch";
-            "input files" => self.path_in.len(),
+    pub fn try_execute(&mut self) -> Result<()> {
+        let budget = CountsketchBudget::builder()
+            .threads(self.total_threads.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|p| p.get())
+                    .unwrap_or_else(|e| {
+                        log_warning!("Failed to determine available parallelism, using 2 threads"; "error" => %e);
+                        2
+                    })
+                    .try_into()
+                    .unwrap_or_else(|e| {
+                        log_warning!("Failed to convert parallelism to valid thread count, using 2 threads"; "error" => %e);
+                        2.try_into().unwrap()
+                    })
+            }))
+            .memory(self.total_mem)
+            .maybe_numof_threads_read(self.numof_threads_read)
+            .maybe_numof_threads_work(self.numof_threads_work)
+            .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
+            .build();
+        budget.validate();
+
+        log_info!(
+            "Starting Countsketch";
+            "using" => %budget,
+            "input files" => self.paths_in.len(),
             "output path" => ?self.path_out,
-            "total threads" => self.threads_total,
-            "read threads" => self.threads_read,
-            "work threads" => self.threads_work,
             "countsketch size" => self.countsketch_size,
-            "kmer size" => self.kmer_size
+            "kmer size" => self.kmer_size,
         );
 
-        let (n_readers, n_workers) = match determine_thread_counts_2(
-            Some(self.threads_total),
-            Some(self.threads_read),
-            Some(self.threads_work),
-        ) {
-            Ok(counts) => {
-                log_info!("Thread allocation successful"; "readers" => counts.0, "workers" => counts.1);
-                counts
-            }
-            Err(e) => {
-                log_critical!("Failed to determine thread counts"; "error" => %e);
-            }
-        };
+        let k = self.kmer_size;
+        let numof_threads_work = (*budget.threads::<TWork>()).get();
 
-        let mut processed_files = 0;
-        let mut total_cells_processed = 0;
-        let mut total_errors = 0;
-
-        for (i, input) in enumerate(&self.path_in) {
-            log_info!("Processing input file"; "path" => ?input);
-
+        for (input_idx, input) in self.paths_in.iter().enumerate() {
             let decoder = decode::Bgzf::builder()
-                .path(input)
-                .num_threads(BoundedU64::new(n_readers as u64).unwrap())
+                .path(input.path().path())
+                .num_threads(budget.numof_threads_read)
                 .build()
                 .unwrap();
             let parser = parse::Tirp::builder().build().unwrap();
@@ -100,28 +186,79 @@ impl CountsketchCMD {
             let mut stream = Stream::builder()
                 .with_decoder(decoder)
                 .with_parser(parser)
-                .countof_buffers(BoundedUsize::const_new::<1024>())
-                .sizeof_arena(ByteSize::mib(self.page_size_mib))
-                .sizeof_buffer(ByteSize::mib(self.buffer_size_mib))
+                .sizeof_arena(self.sizeof_stream_arena)
+                .sizeof_buffer(budget.sizeof_stream_buffer)
                 .build()
                 .unwrap();
 
             let mut query = stream
-                .query::<tirp::Cell>()
-                .group_relaxed_with_context::<Id, Id, _>(
-                    |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                        std::cmp::Ordering::Less => panic!("Unordered record list"),
-                        std::cmp::Ordering::Equal => QueryResult::Keep,
-                        std::cmp::Ordering::Greater => QueryResult::Emit,
-                    },
-                );
+                .query::<tirp::Record>();
 
-            let output_path = self.path_out.join(format!("countsketch.{i}.tsv"));
+            // Create per-worker local sketches (non-atomic, fast)
+            let mut worker_sketches: Vec<CountSketch> = (0..numof_threads_work)
+                .map(|_| CountSketch::new(self.countsketch_size))
+                .collect();
+
+            let arc_flag_synchronize = Arc::new(AtomicBool::new(false));
+            let arc_barrier = Arc::new(sync::Barrier::new((numof_threads_work + 1) as usize));
+
+            let mut vec_worker_handles = Vec::with_capacity(numof_threads_work as usize);
+            let (work_tx, work_rx) = crossbeam::channel::unbounded::<CountsketchRecord>();
+
+            for thread_idx in 0..numof_threads_work {
+                let thread_work_rx = work_rx.clone();
+                // SAFETY: Pass raw pointer to worker's own sketch. Each worker has exclusive access.
+                let mut sketch_ptr = unsafe { SendPtr::new_unchecked(&mut worker_sketches[thread_idx as usize] as *mut CountSketch) };
+                let thread_flag_synchronize = Arc::clone(&arc_flag_synchronize);
+                let thread_barrier = Arc::clone(&arc_barrier);
+
+                vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx as u64, move || {
+                    let thread = std::thread::current();
+                    let thread_name = thread.name().unwrap_or("unknown thread"); 
+                    log_info!("Starting worker"; "thread" => thread_name);
+
+                    let mut thread_spinpark_counter = 0;
+                    loop {
+                        let record = match thread_work_rx.try_recv() {
+                            Ok(record) => {
+                                thread_spinpark_counter = 0;
+                                record
+                            },
+                            Err(TryRecvError::Empty) => {
+                                if thread_flag_synchronize.load(Ordering::Relaxed) == true {
+                                    // wait for snapshot to be created
+                                    thread_barrier.wait();
+                                    // wait for reset to be finished
+                                    thread_barrier.wait();
+                                }
+                                spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                                    &mut thread_spinpark_counter,
+                                    "Countsketch (worker): channel try_recv (channel empty, producer slow)"
+                                );
+                                continue;
+                            },
+                            Err(TryRecvError::Disconnected) => {
+                                break;
+                            }
+                        };
+                        let record_sequence = *record.get_ref::<SequencePair>();
+
+                        // SAFETY: Each worker has exclusive access to its own sketch via raw pointer.
+                        // Barriers ensure no concurrent access during sync.
+                        unsafe {
+                            let sketch = sketch_ptr.as_mut();
+                            let _ = sketch.add_sequence(record_sequence.0, k);
+                            let _ = sketch.add_sequence(record_sequence.1, k);
+                        }
+                    }
+                }));
+            }
+
+            let output_path = self.path_out.join(format!("countsketch.{input_idx}.tsv"));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
                 Ok(output) => output,
                 Err(e) => {
                     log_warning!("Failed to verify output file, skipping"; "path" => ?output_path, "error" => %e);
-                    total_errors += 1;
                     continue;
                 }
             };
@@ -129,151 +266,111 @@ impl CountsketchCMD {
                 Ok(output) => output,
                 Err(e) => {
                     log_warning!("Failed to create output file, skipping"; "path" => ?output_path, "error" => %e);
-                    total_errors += 1;
                     continue;
                 }
             };
 
-            let mut output_countsketch_writer = match CountsketchWriter::try_from_output(&output_auto) {
-                Ok(writer) => writer,
-                Err(e) => {
-                    log_warning!("Failed to create output writer, skipping"; "path" => ?output_path, "error" => %e);
-                    total_errors += 1;
-                    continue;
-                }
-            }.set_writer(BufWriter::new(output_file));
-
-            let worker_threadpool = threadpool::ThreadPool::new(n_workers);
-            let (work_tx, work_rx) = crossbeam::channel::unbounded::<Option<tirp::Cell>>();
-            let (write_tx, write_rx) =
-                crossbeam::channel::unbounded::<Option<(tirp::Cell, CountSketch)>>();
-
-            let _ = std::thread::spawn(move || {
-                while let Ok(Some((cell, countsketch))) = write_rx.recv() {
-                    if let Err(e) =
-                        output_countsketch_writer.write_comp_countsketch(&cell, &countsketch)
-                    {
-                        log_warning!("Failed to write countsketch"; "cell" => %String::from_utf8_lossy(cell.get_bytes::<Id>()), "error" => %e);
+            let (write_tx, write_rx) = crossbeam::channel::unbounded::<(Vec<u8>, u64, Vec<i64>)>();
+            budget.spawn::<TWrite, _, _>(0, move || {
+                let mut bufwriter = BufWriter::new(output_file);
+                while let Ok((id, n, countsketch)) = write_rx.recv() {
+                    if id.is_empty() {
+                        continue;
                     }
+                    bufwriter.write_all(&id);
+                    bufwriter.write_all(&[b',']);
+                    bufwriter.write_all(n.to_string().as_bytes());
+                    bufwriter.write_all(&[b',']);
+                    bufwriter.write_all(countsketch.iter().join(",").as_bytes());
+                    bufwriter.write_all(&[U8_CHAR_NEWLINE]);
                 }
-                let _ = output_countsketch_writer.get_writer().unwrap().flush();
+                let _ = bufwriter.flush();
             });
 
-            for _ in 0..n_workers {
-                let work_rx = work_rx.clone();
-                let write_tx = write_tx.clone();
+            let mut record_id_last: Vec<u8> = Vec::new();
+            loop {
+                let record = match query.next_into::<CountsketchRecord>() {
+                    Ok(Some(record)) => record,
+                    Ok(None) => {
+                        arc_flag_synchronize.store(true, Ordering::Relaxed);
+                        arc_barrier.wait();
 
-                let kmer_size = self.kmer_size;
-                let mut countsketch = CountSketch::new(self.countsketch_size);
+                        // SAFETY: Workers are blocked at barrier, coordinator has exclusive access
+                        let (snapshot, n) = {
+                            let mut merged_sketch = vec![0i64; self.countsketch_size];
+                            let mut total = 0i64;
 
-                worker_threadpool.execute(move || {
-                    while let Ok(Some(cell)) = work_rx.recv() {
-                        let reads = cell.get_ref::<SequencePair>();
-                        if reads.len() == 0 {
-                            continue;
-                        }
-
-                        let mut rev_r1 = Vec::new();
-                        let mut rev_r2 = Vec::new();
-
-                        for (r1, r2) in reads {
-                            for kmer in r1.windows(kmer_size) {
-                                countsketch.add(kmer);
-                            }
-                            for kmer in r2.windows(kmer_size) {
-                                countsketch.add(kmer);
-                            }
-
-                            rev_r1.clear();
-                            rev_r1.reserve(r1.len());
-                            for &base in r1.iter().rev() {
-                                rev_r1.push(match base {
-                                    b'A' => b'T',
-                                    b'T' => b'A',
-                                    b'G' => b'C',
-                                    b'C' => b'G',
-                                    _ => base,
-                                });
-                            }
-                            for kmer in rev_r1.windows(kmer_size) {
-                                countsketch.add(kmer);
-                            }
-
-                            rev_r2.clear();
-                            rev_r2.reserve(r2.len());
-                            for &base in r2.iter().rev() {
-                                rev_r2.push(match base {
-                                    b'A' => b'T',
-                                    b'T' => b'A',
-                                    b'G' => b'C',
-                                    b'C' => b'G',
-                                    _ => base,
-                                });
-                            }
-                            for kmer in rev_r2.windows(kmer_size) {
-                                countsketch.add(kmer);
-                            }
-                        }
-
-                        let _ = write_tx.send(Some((cell, countsketch.clone())));
-                        countsketch.reset();
-                    }
-                });
-            }
-
-            let (cells_parsed, parse_errors) = {
-                let mut cells_parsed = 0;
-                let mut parse_errors = 0;
-
-                loop {
-                    match query.next() {
-                        Ok(Some(cell)) => {
-                            match work_tx.send(Some(cell)) {
-                                Ok(_) => cells_parsed += 1,
-                                Err(e) => {
-                                    log_critical!("Channel send failed"; "error" => %e);
+                            for sketch in &mut worker_sketches {
+                                for (i, &val) in sketch.sketch.iter().enumerate() {
+                                    merged_sketch[i] += val;
                                 }
+
+                                total += sketch.total();
+                                sketch.reset();
                             }
 
-                            if cells_parsed % 100 == 0 {
-                                log_info!("Processing"; "cells parsed" => cells_parsed, "parse errors" => parse_errors);
-                            }
-                        }
-                        Ok(None) => {
-                            break;
-                        }
-                        Err(_) => {
-                            log_warning!("Parse error");
-                            parse_errors += 1;
-                        }
+                            (merged_sketch, total as u64)
+                        };
+
+                        let _ = write_tx.send((record_id_last.clone(), n, snapshot));
+
+                        arc_flag_synchronize.store(false, Ordering::Relaxed);
+                        arc_barrier.wait();
+                        break;
                     }
+                    Err(e) => {
+                        panic!("{:?}", e);
+                    }
+                };
+                let record_id = *record.get_ref::<Id>();
+                if record_id != &record_id_last {
+                    arc_flag_synchronize.store(true, Ordering::Relaxed);
+                    arc_barrier.wait();
+
+                    // SAFETY: Workers are blocked at barrier, coordinator has exclusive access
+                    let (snapshot, n) = {
+                        let mut merged_sketch = vec![0i64; self.countsketch_size];
+                        let mut total = 0i64;
+
+                        for sketch in &mut worker_sketches {
+                            for (i, &val) in sketch.sketch.iter().enumerate() {
+                                merged_sketch[i] += val;
+                            }
+
+                            total += sketch.total();
+                            sketch.reset();
+                        }
+
+                        (merged_sketch, total as u64)
+                    };
+
+                    let _ = write_tx.send((record_id_last.clone(), n, snapshot));
+
+                    record_id_last = record_id.to_vec();
+                    arc_flag_synchronize.store(false, Ordering::Relaxed);
+                    arc_barrier.wait();
                 }
 
-                (cells_parsed, parse_errors)
-            };
-
-            for worker_id in 0..n_workers {
-                if let Err(e) = work_tx.send(None) {
-                    log_warning!("Failed to send stop signal to worker"; "worker id" => worker_id, "error" => %e);
-                }
+                let _ = work_tx.send(record);
             }
-            let _ = write_tx.send(None);
-
-            worker_threadpool.join();
-
-            processed_files += 1;
-            total_cells_processed += cells_parsed;
-            total_errors += parse_errors;
-
-            log_info!("Completed file"; "output path" => ?output_path, "cells processed" => cells_parsed, "parse errors" => parse_errors);
-        }
-
-        log_info!("Countsketch complete"; "files processed" => processed_files, "files given as input" => self.path_in.len(), "total cells processed" => total_cells_processed, "total errors" => total_errors);
-
-        if total_errors > 0 {
-            log_warning!("Execution completed with errors");
+            drop(work_tx);
+            for handle in vec_worker_handles {
+                handle.join().unwrap();
+            }
+            drop(write_tx);
         }
 
         Ok(())
     }
+}
+
+#[derive(Composite, Default)]
+#[bascet(attrs = (Id, SequencePair), backing = ArenaBacking, marker = AsRecord)]
+pub struct CountsketchRecord {
+    id: &'static [u8],
+    sequence_pair: (&'static [u8], &'static [u8]),
+
+    // SAFETY: exposed ONLY to allow conversion outside this crate.
+    //         be VERY careful modifying this at all
+    arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }

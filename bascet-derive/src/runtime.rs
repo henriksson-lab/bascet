@@ -1,30 +1,30 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Token};
-use syn::parse::{Parse, ParseStream};
 use std::collections::HashSet;
+use syn::parse::{Parse, ParseStream};
+use syn::{parse_macro_input, Data, DeriveInput, Expr, Fields, Ident, Token, Type};
 
 struct BudgetAttr {
     marker: Ident,
-    p_total: Option<f64>,
+    closure: Option<Expr>,
 }
 
 impl Parse for BudgetAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let marker = input.parse()?;
-        let p_total = if input.peek(Token![,]) {
+        let closure = if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
-            Some(input.parse::<syn::LitFloat>()?.base10_parse()?)
+            Some(input.parse()?)
         } else {
             None
         };
-        Ok(BudgetAttr { marker, p_total })
+        Ok(BudgetAttr { marker, closure })
     }
 }
 
 enum BudgetType {
-    Total,
-    Regular(Option<f64>),
+    Total(Option<Expr>),
+    Regular(Option<Expr>),
 }
 
 enum BudgetKind {
@@ -44,10 +44,14 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
     let name = &input.ident;
 
     let Data::Struct(data) = &input.data else {
-        return syn::Error::new_spanned(&input, "Budget requires struct").to_compile_error().into();
+        return syn::Error::new_spanned(&input, "Budget requires struct")
+            .to_compile_error()
+            .into();
     };
     let Fields::Named(named_fields) = &data.fields else {
-        return syn::Error::new_spanned(&input, "Budget requires named fields").to_compile_error().into();
+        return syn::Error::new_spanned(&input, "Budget requires named fields")
+            .to_compile_error()
+            .into();
     };
 
     let budget_defs: Vec<BudgetDef> = named_fields
@@ -61,9 +65,9 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 if attr.path().is_ident("threads") {
                     let budget_attr = attr.parse_args::<BudgetAttr>().ok()?;
                     let budget_type = if budget_attr.marker == "Total" {
-                        BudgetType::Total
+                        BudgetType::Total(budget_attr.closure)
                     } else {
-                        BudgetType::Regular(budget_attr.p_total)
+                        BudgetType::Regular(budget_attr.closure)
                     };
                     Some(BudgetDef {
                         kind: BudgetKind::Thread(budget_type),
@@ -74,9 +78,9 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 } else if attr.path().is_ident("mem") {
                     let budget_attr = attr.parse_args::<BudgetAttr>().ok()?;
                     let budget_type = if budget_attr.marker == "Total" {
-                        BudgetType::Total
+                        BudgetType::Total(budget_attr.closure)
                     } else {
-                        BudgetType::Regular(budget_attr.p_total)
+                        BudgetType::Regular(budget_attr.closure)
                     };
                     Some(BudgetDef {
                         kind: BudgetKind::Mem(budget_type),
@@ -91,8 +95,14 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let markers: HashSet<_> = budget_defs.iter()
-        .filter(|def| !matches!(&def.kind, BudgetKind::Thread(BudgetType::Total) | BudgetKind::Mem(BudgetType::Total)))
+    let markers: HashSet<_> = budget_defs
+        .iter()
+        .filter(|def| {
+            !matches!(
+                &def.kind,
+                BudgetKind::Thread(BudgetType::Total(_)) | BudgetKind::Mem(BudgetType::Total(_))
+            )
+        })
         .map(|def| &def.marker_ident)
         .collect();
 
@@ -127,7 +137,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                     }
                 })
             }
-            BudgetKind::Thread(BudgetType::Total) => {
+            BudgetKind::Thread(BudgetType::Total(_)) => {
                 let field_ident = &def.field_ident;
                 let field_type = &def.field_type;
 
@@ -159,55 +169,57 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         }
     });
 
-    let mem_impls = budget_defs.iter().filter_map(|def| {
-        match &def.kind {
-            BudgetKind::Mem(BudgetType::Regular(_)) => {
-                let marker = &def.marker_ident;
-                let field_ident = &def.field_ident;
-                let field_type = &def.field_type;
+    let mem_impls = budget_defs.iter().filter_map(|def| match &def.kind {
+        BudgetKind::Mem(BudgetType::Regular(_)) => {
+            let marker = &def.marker_ident;
+            let field_ident = &def.field_ident;
+            let field_type = &def.field_type;
 
-                Some(quote! {
-                    impl bascet_runtime::budget::Memory<#marker> for #name {
-                        type Value = #field_type;
+            Some(quote! {
+                impl bascet_runtime::budget::Memory<#marker> for #name {
+                    type Value = #field_type;
 
-                        fn mem(&self) -> &Self::Value {
-                            &self.#field_ident
-                        }
+                    fn mem(&self) -> &Self::Value {
+                        &self.#field_ident
                     }
-                })
-            }
-            BudgetKind::Mem(BudgetType::Total) => {
-                let field_ident = &def.field_ident;
-                let field_type = &def.field_type;
-
-                Some(quote! {
-                    impl bascet_runtime::budget::Memory<Total> for #name {
-                        type Value = #field_type;
-
-                        fn mem(&self) -> &Self::Value {
-                            &self.#field_ident
-                        }
-                    }
-                })
-            }
-            _ => None,
+                }
+            })
         }
+        BudgetKind::Mem(BudgetType::Total(_)) => {
+            let field_ident = &def.field_ident;
+            let field_type = &def.field_type;
+
+            Some(quote! {
+                impl bascet_runtime::budget::Memory<Total> for #name {
+                    type Value = #field_type;
+
+                    fn mem(&self) -> &Self::Value {
+                        &self.#field_ident
+                    }
+                }
+            })
+        }
+        _ => None,
     });
 
-    let total_threads_field = budget_defs.iter()
-        .find(|def| matches!(&def.kind, BudgetKind::Thread(BudgetType::Total)))
+    let total_threads_field = budget_defs
+        .iter()
+        .find(|def| matches!(&def.kind, BudgetKind::Thread(BudgetType::Total(_))))
         .map(|def| &def.field_ident);
 
-    let total_mem_field = budget_defs.iter()
-        .find(|def| matches!(&def.kind, BudgetKind::Mem(BudgetType::Total)))
+    let total_mem_field = budget_defs
+        .iter()
+        .find(|def| matches!(&def.kind, BudgetKind::Mem(BudgetType::Total(_))))
         .map(|def| &def.field_ident);
 
-    let thread_budget_fields: Vec<_> = budget_defs.iter()
+    let thread_budget_fields: Vec<_> = budget_defs
+        .iter()
         .filter(|def| matches!(&def.kind, BudgetKind::Thread(BudgetType::Regular(_))))
         .map(|def| &def.field_ident)
         .collect();
 
-    let mem_budget_fields: Vec<_> = budget_defs.iter()
+    let mem_budget_fields: Vec<_> = budget_defs
+        .iter()
         .filter(|def| matches!(&def.kind, BudgetKind::Mem(BudgetType::Regular(_))))
         .map(|def| &def.field_ident)
         .collect();
@@ -291,15 +303,28 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         }
     };
 
-
     let new_params = budget_defs.iter().map(|def| {
         let field_ident = &def.field_ident;
         let field_type = &def.field_type;
         match &def.kind {
-            BudgetKind::Thread(BudgetType::Total) | BudgetKind::Mem(BudgetType::Total) => {
+            BudgetKind::Thread(BudgetType::Total(None))
+            | BudgetKind::Mem(BudgetType::Total(None)) => {
+                // Total without closure = required parameter
                 quote! { #field_ident: #field_type }
             }
-            _ => {
+            BudgetKind::Thread(BudgetType::Total(Some(_)))
+            | BudgetKind::Mem(BudgetType::Total(Some(_))) => {
+                // Total with closure = no parameter needed
+                quote! {}
+            }
+            BudgetKind::Thread(BudgetType::Regular(None))
+            | BudgetKind::Mem(BudgetType::Regular(None)) => {
+                // Regular without closure = required parameter
+                quote! { #field_ident: #field_type }
+            }
+            BudgetKind::Thread(BudgetType::Regular(Some(_)))
+            | BudgetKind::Mem(BudgetType::Regular(Some(_))) => {
+                // Regular with closure = optional parameter (can override closure)
                 quote! { #field_ident: Option<#field_type> }
             }
         }
@@ -308,35 +333,56 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
     let field_inits = budget_defs.iter().map(|def| {
         let field_ident = &def.field_ident;
         match &def.kind {
-            BudgetKind::Thread(BudgetType::Total) | BudgetKind::Mem(BudgetType::Total) => {
+            BudgetKind::Thread(BudgetType::Total(None)) | BudgetKind::Mem(BudgetType::Total(None)) => {
+                // Total without closure = use the parameter value directly
                 quote! { #field_ident }
             }
-            BudgetKind::Thread(BudgetType::Regular(Some(pct))) => {
-                let total_field = total_threads_field.as_ref().expect("Thread budget requires total_threads field");
+            BudgetKind::Thread(BudgetType::Total(Some(closure))) => {
+                // Total with closure = evaluate closure (no args)
+                quote! {
+                    #field_ident: {
+                        let f = #closure;
+                        f()
+                    }
+                }
+            }
+            BudgetKind::Mem(BudgetType::Total(Some(closure))) => {
+                // Total with closure = evaluate closure (no args)
+                quote! {
+                    #field_ident: {
+                        let f = #closure;
+                        f()
+                    }
+                }
+            }
+            BudgetKind::Thread(BudgetType::Regular(Some(closure))) => {
+                // Regular thread budget with closure = call with (total_threads, total_mem)
+                let total_threads_field = total_threads_field.as_ref().expect("Thread budget with closure requires total_threads field");
+                let total_mem_field = total_mem_field.as_ref().expect("Thread budget with closure requires total_mem field");
                 quote! {
                     #field_ident: #field_ident.unwrap_or_else(|| {
-                        let calculated = (#total_field.get() as f64 * #pct / 100.0) as u64;
-                        match bounded_integer::BoundedU64::new(calculated) {
-                            Some(v) => v,
-                            None => {
-                                let saturated = bounded_integer::BoundedU64::new_saturating(calculated);
-                                eprintln!("WARNING: {}: {}% of {} threads ({}) is below minimum, saturating to {}",
-                                    stringify!(#field_ident), #pct, #total_field.get(), calculated, saturated.get());
-                                saturated
-                            }
-                        }
+                        let f = #closure;
+                        let total_threads = #total_threads_field.get();
+                        let total_mem = #total_mem_field.as_u64();
+                        f(total_threads, total_mem)
                     })
                 }
             }
-            BudgetKind::Mem(BudgetType::Regular(Some(pct))) => {
-                let total_field = total_mem_field.as_ref().expect("Mem budget requires total_mem field");
+            BudgetKind::Mem(BudgetType::Regular(Some(closure))) => {
+                // Regular mem budget with closure = call with (total_threads, total_mem)
+                let total_threads_field = total_threads_field.as_ref().expect("Mem budget with closure requires total_threads field");
+                let total_mem_field = total_mem_field.as_ref().expect("Mem budget with closure requires total_mem field");
                 quote! {
                     #field_ident: #field_ident.unwrap_or_else(|| {
-                        bytesize::ByteSize((#total_field.as_u64() as f64 * #pct / 100.0) as u64)
+                        let f = #closure;
+                        let total_threads = #total_threads_field.get();
+                        let total_mem = #total_mem_field.as_u64();
+                        f(total_threads, total_mem)
                     })
                 }
             }
             BudgetKind::Thread(BudgetType::Regular(None)) | BudgetKind::Mem(BudgetType::Regular(None)) => {
+                // Regular without closure = required parameter
                 quote! {
                     #field_ident: #field_ident.expect(&format!("{} is required", stringify!(#field_ident)))
                 }
@@ -350,7 +396,8 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         let separator = if idx == 0 { "" } else { ", " };
 
         match &def.kind {
-            BudgetKind::Thread(BudgetType::Total) | BudgetKind::Thread(BudgetType::Regular(_)) => {
+            BudgetKind::Thread(BudgetType::Total(_))
+            | BudgetKind::Thread(BudgetType::Regular(_)) => {
                 quote! {
                     write!(f, "{}{}: {}", #separator, #field_name, self.#field_ident.get())?;
                 }
