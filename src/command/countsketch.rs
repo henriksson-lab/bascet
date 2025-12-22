@@ -288,6 +288,7 @@ impl CountsketchCMD {
             });
 
             let mut record_id_last: Vec<u8> = Vec::new();
+            let mut cells_processed = 0u64;
             loop {
                 let record = match query.next_into::<CountsketchRecord>() {
                     Ok(Some(record)) => record,
@@ -347,6 +348,12 @@ impl CountsketchCMD {
                     let _ = write_tx.send((record_id_last.clone(), n, snapshot));
 
                     record_id_last = record_id.to_vec();
+                    cells_processed += 1;
+
+                    if cells_processed % 100 == 0 {
+                        log_info!("Progress"; "cells_processed" => cells_processed, "current_cell" => ?String::from_utf8_lossy(&record_id_last));
+                    }
+
                     arc_flag_synchronize.store(false, Ordering::Relaxed);
                     arc_barrier.wait();
                 }
@@ -358,6 +365,8 @@ impl CountsketchCMD {
                 handle.join().unwrap();
             }
             drop(write_tx);
+
+            log_info!("File complete"; "input_file" => input_idx, "total_cells_processed" => cells_processed);
         }
 
         Ok(())
