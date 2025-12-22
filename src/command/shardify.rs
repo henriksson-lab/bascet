@@ -1,5 +1,8 @@
 use anyhow::Result;
-use bascet_core::{spinpark_loop::{SPINPARK_PARKS_BEFORE_WARN, self}, *};
+use bascet_core::{
+    spinpark_loop::{self, SPINPARK_PARKS_BEFORE_WARN},
+    *,
+};
 use bascet_derive::Budget;
 use bascet_io::{decode, parse, tirp};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
@@ -10,11 +13,20 @@ use clio::{InputPath, OutputPath};
 use crossbeam::channel::{self, Sender};
 use itertools::izip;
 use std::{
-    fs::File, io::{BufRead, BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::id, sync::{Arc, RwLock}, thread::JoinHandle
+    fs::File,
+    io::{BufRead, BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
+    process::id,
+    sync::{Arc, RwLock},
+    thread::JoinHandle,
 };
 
 use crate::{
-    bounded_parser, common::{self, spin_or_park}, io::traits::*, log_critical, log_info, log_warning, support_which_stream, support_which_writer, threading::{self, PeekableReceiver}
+    bounded_parser,
+    common::{self, spin_or_park},
+    io::traits::*,
+    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
+    threading::{self, PeekableReceiver},
 };
 
 use std::thread;
@@ -54,17 +66,17 @@ pub struct ShardifyCMD {
 
     #[arg(
         long = "include",
-        help = "File with list of cells to include (one per line)")
-    ]
+        help = "File with list of cells to include (one per line)"
+    )]
     pub path_include: InputPath,
 
-    #[arg(                                                                                              
-        short = '@',                                                                                    
+    #[arg(
+        short = '@',
         long = "threads",                                                                               
         help = "Total threads to use",                   
         value_name = "3..",        
-        value_parser = bounded_parser!(BoundedU64<3, { u64::MAX }>),                                        
-    )]                                                                                                  
+        value_parser = bounded_parser!(BoundedU64<3, { u64::MAX }>),
+    )]
     total_threads: Option<BoundedU64<3, { u64::MAX }>>,
 
     #[arg(
@@ -118,24 +130,26 @@ struct ShardifyBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead)]
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new(total_threads.saturating_sub(1).max(2)).unwrap())]
     numof_threads_read: BoundedU64<2, { u64::MAX }>,
 
-    #[threads(TWrite)]
+    #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]
     numof_threads_write: BoundedU64<1, { u64::MAX }>,
 
-    #[mem(MBuffer, 100.0)]
+    #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
 }
-
 
 impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let budget = ShardifyBudget::builder()
-            .threads(self.total_threads.unwrap_or((self.paths_in.len() + 1).try_into().unwrap()))
+            .threads(
+                self.total_threads
+                    .unwrap_or((self.paths_in.len() + 1).try_into().unwrap()),
+            )
             .memory(self.total_mem)
-            .numof_threads_read(self.numof_threads_read.unwrap_or(self.paths_in.len().try_into().unwrap()))
-            .numof_threads_write(self.numof_threads_write.unwrap_or(1.try_into().unwrap()))
+            .maybe_numof_threads_read(self.numof_threads_read)
+            .maybe_numof_threads_write(self.numof_threads_write)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
         budget.validate();
@@ -145,9 +159,10 @@ impl ShardifyCMD {
         let numof_writers = self.paths_out.len() as u64;
 
         let each_stream_numof_threads = budget.threads::<TRead>().get() / numof_streams;
-        let each_stream_numof_threads: BoundedU64<1, { u64::MAX }> = BoundedU64::new(each_stream_numof_threads)
-            .unwrap_or_else(|| {
-                let saturated: BoundedU64<1, _> = BoundedU64::new_saturating(each_stream_numof_threads);
+        let each_stream_numof_threads: BoundedU64<1, { u64::MAX }> =
+            BoundedU64::new(each_stream_numof_threads).unwrap_or_else(|| {
+                let saturated: BoundedU64<1, _> =
+                    BoundedU64::new_saturating(each_stream_numof_threads);
                 log_warning!(
                     "Thread allocation per stream below minimum";
                     "determined" => each_stream_numof_threads,
@@ -155,9 +170,9 @@ impl ShardifyCMD {
                 );
                 saturated
             });
-        
+
         let each_stream_sizeof_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / numof_streams);
-        
+
         log_info!(
             "Starting Shardify";
             "using" => %budget,
@@ -194,7 +209,7 @@ impl ShardifyCMD {
         {
             let thread_filter = Arc::clone(&arc_filter);
             let thread_notify_tx = notify_tx.clone();
-            
+
             let thread_stream_buffer_size = each_stream_sizeof_buffer;
             let thread_stream_arena_size = self.sizeof_stream_arena;
 
@@ -252,14 +267,14 @@ impl ShardifyCMD {
                         },
                     };
                     // log_info!("Prudced data at stream"; "thread" => thread_name);
-                    
+
                     let global_processed = global_processed_counter
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     let global_kept = global_kept_counter
                         .load(std::sync::atomic::Ordering::Relaxed);
-            
+
                     if global_processed % 10_000 == 0 {
-                        let keep_ratio = (global_kept as f64) / (global_processed as f64); 
+                        let keep_ratio = (global_kept as f64) / (global_processed as f64);
                         log_info!(
                             "Processing";
                             "(partial) cells processed" => global_processed,
@@ -287,8 +302,9 @@ impl ShardifyCMD {
 
         let (write_tx, write_rx) = crossbeam::channel::unbounded::<Vec<ShardifyPartialCell>>();
         let global_cells_written = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        
-        for (thread_idx, thread_output) in IntoIterator::into_iter(self.paths_out.clone()).enumerate()
+
+        for (thread_idx, thread_output) in
+            IntoIterator::into_iter(self.paths_out.clone()).enumerate()
         {
             log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => %thread_output);
 
@@ -307,7 +323,7 @@ impl ShardifyCMD {
             let global_counter = Arc::clone(&global_cells_written);
             vec_writer_handles.push(budget.spawn::<TWrite, _, _>(thread_idx as u64, move || {
                 let thread = std::thread::current();
-                let thread_name = thread.name().unwrap_or("unknown thread"); 
+                let thread_name = thread.name().unwrap_or("unknown thread");
                 log_info!("Starting writer"; "thread" => thread_name, "path" => %thread_output);
 
                 while let Ok(vec_records) = thread_write_rx.recv() {
@@ -328,7 +344,8 @@ impl ShardifyCMD {
         let mut coordinator_spinpark_counter = 0;
         let mut coordinator_min_cell: Option<&[u8]> = None;
         let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(numof_streams as usize);
-        let mut coordinator_vec_send: Vec<ShardifyPartialCell> = Vec::with_capacity(numof_streams as usize); // Local vec
+        let mut coordinator_vec_send: Vec<ShardifyPartialCell> =
+            Vec::with_capacity(numof_streams as usize); // Local vec
 
         loop {
             match notify_rx.try_recv() {
@@ -377,7 +394,7 @@ impl ShardifyCMD {
                         Some(cmc) if *sweep_cell_id > cmc => {
                             continue;
                         }
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     }
                 }
 
@@ -392,9 +409,9 @@ impl ShardifyCMD {
                         }
                     }
                 }
-                
+
                 let _ = write_tx.send(coordinator_vec_send.clone());
-                
+
                 coordinator_min_cell = None;
                 coordinator_vec_take.clear();
                 coordinator_vec_send.clear();
@@ -405,7 +422,7 @@ impl ShardifyCMD {
             handle.join().expect("Stream thread panicked");
         }
         log_info!("Stream handles closed");
-        
+
         drop(write_tx);
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");

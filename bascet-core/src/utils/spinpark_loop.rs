@@ -34,7 +34,7 @@ pub fn spinpark_loop_warn<const MAX_SPINS: usize, const PARKS_BEFORE_MSG: usize>
 
 #[cold]
 fn spinpark_loop_slow<const PARKS_BEFORE_MSG: usize>(park_count: usize, msg: &str) {
-    if likely_unlikely::unlikely(PARKS_BEFORE_MSG > 0 && park_count == PARKS_BEFORE_MSG) {
+    if likely_unlikely::unlikely(PARKS_BEFORE_MSG > 0 && park_count % PARKS_BEFORE_MSG == 0) {
         eprintln!(
             "[SPINPARK WARNING] Parked {} times ({}ms): {}",
             PARKS_BEFORE_MSG,
