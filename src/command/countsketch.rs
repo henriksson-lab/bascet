@@ -254,7 +254,7 @@ impl CountsketchCMD {
                 }));
             }
 
-            let output_path = self.path_out.join(format!("countsketch.{input_idx}.tsv"));
+            let output_path = self.path_out.join(format!("countsketch.{}.tsv", input_idx + 1));
             let output_auto = match CountsketchOutput::try_from_path(&output_path) {
                 Ok(output) => output,
                 Err(e) => {
