@@ -1,0 +1,19 @@
+[package]
+name = "bascet-core"
+description = "Core abstractions used for bascet commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bascet-derive = { path = "../bascet-derive" }
+bascet-variadic = { path = "../bascet-variadic" }
+bon = "3.8.1"
+bounded-integer = "0.6.1"
+bytemuck = "1.24.0"
+bytesize = "2.2.0"
+memmap2 = "0.9.9"
+rtrb = "0.3.2"
+rust-htslib = "0.51.0"
+smallvec = { version = "1.15.1", features = ["union"] }

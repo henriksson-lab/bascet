@@ -158,6 +158,28 @@ impl HotEncodeATCGN {
         (min_index, *min_dist)
     }
 
+    pub fn fast_closest_by_hamming_u16(query: u32, candidates: &[u32]) -> (usize, u8) {
+        let mut min_distance = u32::MAX;
+        let mut min_index = 0;
+
+        for (idx, &candidate) in candidates.iter().enumerate() {
+            // Use your existing bitwise hamming distance for u16
+            let distance = Self::bitwise_hamming_distance_u32(query, candidate);
+
+            if distance < min_distance {
+                min_distance = distance;
+                min_index = idx;
+
+                if distance == 0 {
+                    break;
+                }
+            }
+        }
+
+        // max dist is 8 so this cannot overflow
+        (min_index, min_distance as u8)
+    }
+
     pub fn closest_by_hamming_u64(query: u64, candidates: &[u64]) -> (usize, u32) {
         //Compute each hamming distance first. We need it later.
         //By doing this separate from testing, this hopefully gets vectorized

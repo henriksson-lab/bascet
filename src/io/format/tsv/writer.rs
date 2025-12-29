@@ -1,3 +1,4 @@
+use bascet_core::{Collection, Get, GetBytes, Id, SequencePair};
 use itertools::Itertools;
 
 use crate::{common, io::traits::BascetWrite};
@@ -73,6 +74,38 @@ where
 
             // NOTE: in theory these can fail writing, however, for performance reasons, this is unchecked
             let _ = writer.write_all(id);
+            let _ = writer.write_all(&[common::U8_CHAR_TAB]);
+            let _ = writer.write_all(&n);
+
+            for value in countsketch.sketch.iter() {
+                let _ = writer.write_all(&[common::U8_CHAR_TAB]);
+                let _ = writer.write_all(value.to_string().as_bytes());
+            }
+            let _ = writer.write_all(&[common::U8_CHAR_NEWLINE]);
+        }
+
+        Ok(())
+    }
+
+    fn write_comp_countsketch<C>(
+        &mut self,
+        comp: &C,
+        countsketch: &crate::kmer::kmc_counter::CountSketch,
+    ) -> Result<(), crate::runtime::Error>
+    where
+        C: bascet_core::Composite + Get<Id> + Get<SequencePair>,
+        <C as Get<Id>>::Value: AsRef<[u8]>,
+        <C as Get<SequencePair>>::Value: Collection,
+    {
+        if let Some(ref mut writer) = self.inner {
+            let n = comp
+                .get_ref::<SequencePair>()
+                .len()
+                .to_string()
+                .into_bytes();
+
+            // NOTE: in theory these can fail writing, however, for performance reasons, this is unchecked
+            let _ = writer.write_all(comp.get_bytes::<Id>());
             let _ = writer.write_all(&[common::U8_CHAR_TAB]);
             let _ = writer.write_all(&n);
 

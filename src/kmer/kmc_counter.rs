@@ -31,7 +31,7 @@ impl CountSketch {
     }
 
     #[inline(always)]
-    pub fn add(&mut self, kmer: &[u8]) {
+    pub fn add_kmer(&mut self, kmer: &[u8]) {
         // https://wangshusen.github.io/code/countsketch.html inspo
         // in R: https://www.rdocumentation.org/packages/aroma.light/versions/3.2.0/topics/wpca
         // https://docs.rs/streaming_algorithms/latest/streaming_algorithms/  mincounthash code
@@ -121,7 +121,7 @@ impl KmerCounter {
             encoded_buf.clear();
             encoded_buf.extend(line_buf.iter().map(|&b| KMERCodec::ENCODE[b as usize]));
             for window in encoded_buf.windows(codec.kmer_size) {
-                sketch.add(window);
+                sketch.add_kmer(window);
             }
             line_buf.clear();
 

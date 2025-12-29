@@ -4,13 +4,14 @@ ENV LC_ALL=C
 RUN SINGULARITY_SHELL=/bin/bash
 
 RUN apt-get update
+# required for bascet compilation
 RUN apt install -y build-essential
 
 RUN apt-get install -y libz-dev wget make curl fastp bc
 RUN apt-get install -y fastqc kraken2 bamtools mash fastani ariba kmc skesa rna-star spades
 #snippy not yet in ubuntu
 
-#for bascet compilation
+# also required for bascet compilation
 RUN  apt-get install -y git cmake libhdf5-serial-dev libclang-dev
 
 

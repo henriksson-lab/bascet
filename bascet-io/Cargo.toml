@@ -1,0 +1,16 @@
+[package]
+name = "bascet-io"
+description = "IO implementations required for bascet commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bascet-core = { path = "../bascet-core" }
+bon = "3.8.1"
+bounded-integer = "0.6.1"
+bytesize = "2.2.0"
+memchr = "2.7.6"
+rust-htslib = "0.51.0"
+smallvec = { version = "1.15.1", features = ["union"] }

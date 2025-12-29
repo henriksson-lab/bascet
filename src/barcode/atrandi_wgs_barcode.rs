@@ -49,7 +49,7 @@ impl AtrandiWGSChemistry {
 }
 impl Chemistry for AtrandiWGSChemistry {
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
-    fn prepare(
+    fn prepare_using_rp_files(
         &mut self,
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
@@ -66,7 +66,7 @@ impl Chemistry for AtrandiWGSChemistry {
     }
 
     /// Detect barcode, and trim if ok
-    fn detect_barcode_and_trim(
+    fn _depreciated_detect_barcode_and_trim(
         &mut self,
         r1_seq: &[u8],
         r1_qual: &[u8],

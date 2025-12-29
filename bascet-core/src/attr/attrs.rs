@@ -1,0 +1,10 @@
+bascet_derive::define_attr!(
+    Id,
+    Sequence,
+    SequencePair,
+    Quality,
+    QualityPair,
+    Umi,
+    Metadata
+);
+

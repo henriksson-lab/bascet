@@ -1,4 +1,4 @@
-use crate::command::countsketch::CountsketchStream;
+// use crate::command::countsketch::CountsketchStream;
 use crate::command::getraw::DebarcodeMergeStream;
 use crate::command::getraw::DebarcodeReadsStream;
 use crate::command::shardify::ShardifyStream;
@@ -32,6 +32,9 @@ pub trait BascetCell: Send + Sized {
         None
     }
     fn get_umis(&self) -> Option<&[&[u8]]> {
+        None
+    }
+    fn get_metadata(&self) -> Option<&[u8]> {
         None
     }
 }

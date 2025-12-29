@@ -16,16 +16,23 @@ Cargo.lock
 *.pdb
 .Rproj.user
 
-# data dirs for development
+# local todo for development
+.todo
+
+# data for development
 data
 out
+
 # working dir for development
 zorn
 
-# bascet log
+# bascet runtime
+temp
 latest.log
 
-# profiling files
+# profiling
+benches
+benches/*
 heaptrack.*
 perf.data
 perf.data.old

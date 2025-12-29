@@ -1,3 +1,4 @@
+mod clap_utils;
 mod command_to_string;
 mod detect_software;
 mod merge_archives;

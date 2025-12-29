@@ -28,7 +28,7 @@ pub struct PetriseqChemistry {
 impl Chemistry for PetriseqChemistry {
     ////////////////
     ///  Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
-    fn prepare(
+    fn prepare_using_rp_files(
         &mut self,
         fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         _fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
@@ -44,7 +44,7 @@ impl Chemistry for PetriseqChemistry {
 
     ////////////////
     ///  Detect barcode, and trim if ok
-    fn detect_barcode_and_trim(
+    fn _depreciated_detect_barcode_and_trim(
         &mut self,
         r1_seq: &[u8],
         r1_qual: &[u8],

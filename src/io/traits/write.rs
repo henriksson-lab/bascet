@@ -8,7 +8,6 @@ use crate::command::getraw::DebarcodeHistWriter;
 use crate::command::getraw::DebarcodeMergeWriter;
 
 #[enum_dispatch::enum_dispatch]
-
 #[allow(unused_variables)]
 pub trait BascetWrite<W>: Sized
 where
@@ -29,6 +28,28 @@ where
     fn write_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
     where
         C: crate::io::traits::BascetCell,
+    {
+        todo!()
+    }
+
+    fn write_comp_cell<C>(&mut self, cell: &C) -> Result<(), crate::runtime::Error>
+    where
+        C: bascet_core::Composite + std::fmt::Display,
+    {
+        todo!()
+    }
+
+    fn write_comp_countsketch<C>(
+        &mut self,
+        comp: &C,
+        countsketch: &crate::kmer::kmc_counter::CountSketch,
+    ) -> Result<(), crate::runtime::Error>
+    where
+        C: bascet_core::Composite
+            + bascet_core::Get<bascet_core::Id>
+            + bascet_core::Get<bascet_core::SequencePair>,
+        <C as bascet_core::Get<bascet_core::Id>>::Value: AsRef<[u8]>,
+        <C as bascet_core::Get<bascet_core::SequencePair>>::Value: bascet_core::Collection,
     {
         todo!()
     }

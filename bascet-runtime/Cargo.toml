@@ -1,0 +1,14 @@
+[package]
+name = "bascet-runtime"
+description = "Runtime infrastructure for bascet commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+bascet-derive = { path = "../bascet-derive" }
+bon = "3.8.1"
+bounded-integer = "0.6.1"
+bytesize = "2.3.1"
