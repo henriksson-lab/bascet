@@ -2,11 +2,6 @@ use nthash_rs::{NtHash, canonical};
 
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
-/// Non-atomic CountSketch implementation for single-threaded use.
-///
-/// Fast implementation using regular Vec<i64> instead of atomics.
-/// Each worker thread should have its own instance.
-///
 /// Requires power-of-2 sketch sizes for optimal performance.
 /// Uses nthash for efficient rolling hash computation on DNA sequences.
 #[derive(Clone, Debug)]
