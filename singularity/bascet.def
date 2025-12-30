@@ -6,9 +6,15 @@ From: deps.sif
     . "$HOME/.cargo/env"
 
 %files
-    ../src        /src/bascet/src
-    ../.cargo     /src/bascet/.cargo
-    ../Cargo.toml /src/bascet/Cargo.toml
+    ../src              /src/bascet/src
+    ../assets           /src/bascet/assets
+    ../bascet-core      /src/bascet/bascet-core
+    ../bascet-derive    /src/bascet/bascet-derive
+    ../bascet-io        /src/bascet/bascet-io
+    ../bascet-variadic  /src/bascet/bascet-variadic
+    ../bascet-runtime   /src/bascet/bascet-runtime
+    ../.cargo           /src/bascet/.cargo
+    ../Cargo.toml       /src/bascet/Cargo.toml
 
 %post
     SINGULARITY_SHELL=/bin/bash
