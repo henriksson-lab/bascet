@@ -1,4 +1,3 @@
-#FROM ubuntu:24.10
 FROM ubuntu:25.04
 ENV LC_ALL=C
 RUN SINGULARITY_SHELL=/bin/bash
@@ -44,6 +43,15 @@ RUN rustup toolchain install nightly
 ######## install bascet
 
 COPY src /src/bascet/src
+COPY assets /src/bascet/assets
+COPY bascet-core /src/bascet/bascet-core
+COPY bascet-derive /src/bascet/bascet-derive
+
+COPY bascet-core /src/bascet/bascet-core
+COPY bascet-derive /src/bascet/bascet-derive
+COPY bascet-io /src/bascet/bascet-io
+COPY bascet-variadic /src/bascet/bascet-variadic
+COPY bascet-runtime /src/bascet/bascet-runtime
 COPY .cargo /src/bascet/.cargo
 COPY Cargo.toml /src/bascet/Cargo.toml
 
