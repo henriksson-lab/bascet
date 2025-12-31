@@ -59,7 +59,7 @@ pub trait BascetFile: Sized {
         Ok(())
     }
 
-    /// Validate file is not empty
+    /// Validate that file is not empty
     fn validate_not_empty(&self) -> Result<(), crate::runtime::Error> {
         let fpath = self.path();
 
@@ -77,7 +77,7 @@ pub trait BascetFile: Sized {
         Ok(())
     }
 
-    /// Validate parent directory exists
+    /// Validate that parent directory exists
     fn validate_parent_dir(&self) -> Result<(), crate::runtime::Error> {
         let fpath = self.path();
 
@@ -89,13 +89,12 @@ pub trait BascetFile: Sized {
                         fpath,
                         Some("parent directory does not exist"),
                     ));
-                } else {
-                    return Err(crate::runtime::Error::file_not_valid(
-                        fpath,
-                        Some("could not check if parent directory exists; might be a permission problem"),
-                    ));
-
                 }
+            } else {
+                return Err(crate::runtime::Error::file_not_valid(
+                    fpath,
+                    Some("could not check if parent directory exists; might be a permission problem"),
+                ));
             }
         }
         Ok(())
