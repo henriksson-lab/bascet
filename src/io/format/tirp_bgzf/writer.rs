@@ -1,5 +1,4 @@
 use crate::io::traits::{BascetCell, BascetWrite};
-use bascet_core::{Collection, GetBytes, Id, QualityPair, SequencePair, Umi};
 use itertools::izip;
 
 pub struct Writer<W>

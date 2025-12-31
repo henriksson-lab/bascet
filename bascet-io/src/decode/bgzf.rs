@@ -5,6 +5,7 @@ use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use rust_htslib::htslib;
 
+#[allow(dead_code)]
 pub struct Bgzf {
     inner_hts_file_ptr: SendPtr<htslib::htsFile>,
     inner_hts_bgzf_ptr: SendPtr<htslib::BGZF>,
@@ -92,7 +93,7 @@ impl Decode for Bgzf {
             0 => DecodeStatus::Eof,
             err => {
                 panic!("{:?}", err);
-                DecodeStatus::Error(())
+                // DecodeStatus::Error(())
             }
         }
     }

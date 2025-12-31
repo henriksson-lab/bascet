@@ -1,6 +1,6 @@
 use crate::{
-    bounded_parser, common::{U8_CHAR_NEWLINE, U8_CHAR_TAB}, countsketch::CountSketch , io::traits::*,
-    log_critical, log_info, log_warning, support_which_writer,
+    bounded_parser, common::U8_CHAR_NEWLINE, countsketch::CountSketch , io::traits::*,
+    log_info, log_warning, support_which_writer,
 };
 
 use bascet_core::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
@@ -11,11 +11,10 @@ use anyhow::Result;
 use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
-use clio::{InputPath, OutputPath};
-use crossbeam::channel::{Receiver, TryRecvError};
-use itertools::{enumerate, Itertools};
+use clio::InputPath;
+use crossbeam::channel::TryRecvError;
+use itertools::Itertools;
 use std::{
-    cell::UnsafeCell,
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
@@ -277,12 +276,12 @@ impl CountsketchCMD {
                     if id.is_empty() {
                         continue;
                     }
-                    bufwriter.write_all(&id);
-                    bufwriter.write_all(&[b',']);
-                    bufwriter.write_all(n.to_string().as_bytes());
-                    bufwriter.write_all(&[b',']);
-                    bufwriter.write_all(countsketch.iter().join(",").as_bytes());
-                    bufwriter.write_all(&[U8_CHAR_NEWLINE]);
+                    bufwriter.write_all(&id).unwrap();
+                    bufwriter.write_all(&[b',']).unwrap();
+                    bufwriter.write_all(n.to_string().as_bytes()).unwrap();
+                    bufwriter.write_all(&[b',']).unwrap();
+                    bufwriter.write_all(countsketch.iter().join(",").as_bytes()).unwrap();
+                    bufwriter.write_all(&[U8_CHAR_NEWLINE]).unwrap();
                 }
                 let _ = bufwriter.flush();
             });

@@ -76,19 +76,9 @@ where
                 }
             };
 
-            if likely_unlikely::likely(self.inner_context.is_some()) {
-                let context = unsafe { self.inner_context.as_mut().unwrap_unchecked() };
-                match query.apply(&parsed, &parsed) {
-                    QueryResult::Emit => return Ok(Some(parsed)),
-                    QueryResult::Discard => continue,
-                    QueryResult::Keep => unreachable!(),
-                }
-            } else {
-                match query.apply(&parsed, &parsed) {
-                    QueryResult::Emit => return Ok(Some(parsed)),
-                    QueryResult::Discard => continue,
-                    QueryResult::Keep => unreachable!(),
-                }
+            match query.apply(&parsed, &parsed) {
+                QueryResult::Emit | QueryResult::Keep => return Ok(Some(parsed)),
+                QueryResult::Discard => continue,
             }
         }
     }

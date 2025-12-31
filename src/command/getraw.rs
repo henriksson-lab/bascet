@@ -1,4 +1,3 @@
-use std::cell::UnsafeCell;
 use std::io::{BufRead, BufWriter, Cursor, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,22 +10,20 @@ use bascet_io::tirp::tirp;
 use bgzip::write::BGZFMultiThreadWriter;
 use bgzip::Compression;
 use blart::AsBytes;
-use bounded_integer::{BoundedU64, BoundedUsize};
+use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use clap::{Args, Subcommand};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use gxhash::HashMapExt;
 use itertools::{izip, Itertools};
-use smallvec::SmallVec;
 
 use bascet_core::*;
 use bascet_io::{decode, parse};
 
 use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
-use crate::io::traits::{BascetCell, BascetCellBuilder, BascetFile, BascetStream, BascetWrite};
+use crate::io::traits::{BascetCell, BascetFile, BascetWrite};
 use crate::{
     common, log_critical, log_info, log_warning, support_which_stream, support_which_writer,
-    threading,
 };
 
 support_which_stream! {
@@ -1025,9 +1022,9 @@ fn spawn_chunk_writers(
                 let mut writer = temp_writer.get_writer().unwrap();
 
                 for cell in sorted_cell_list {
-                    cell.write_to(&mut &mut writer);
+                    cell.write_to(&mut &mut writer).unwrap();
                 }
-                writer.flush();
+                writer.flush().unwrap();
                 // log_info!("Wrote debarcoded cell chunk"; "path" => ?temp_path, "cells" => sorted_cell_list.len());
                 thread_vec_temp_written.push(temp_path);
             }
@@ -1275,9 +1272,9 @@ fn spawn_mergesort_writers(
 
                 while let Ok(cell) = mc_rx.recv() {
                     cells_written += 1;
-                    cell.write_to(&mut &mut writer);
+                    cell.write_to(&mut &mut writer).unwrap();
                 }
-                writer.flush();
+                writer.flush().unwrap();
 
                 log_info!("Wrote sorted cell chunk"; "path" => ?temp_path, "cells" => cells_written);
                 thread_vec_temp_written.push(temp_path);

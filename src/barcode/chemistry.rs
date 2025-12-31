@@ -1,5 +1,3 @@
-use crate::command::getraw::GetRawChemistry;
-
 ///////////////////////////////
 /// This trait defines a "single cell chemistry" i.e. barcoding, UMI-definition, trimming, etc
 ///
@@ -9,8 +7,8 @@ pub trait Chemistry {
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
     fn prepare_using_rp_files(
         &mut self,
-        fastq_file_r1: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,
-        fastq_file_r2: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,
+        _fastq_file_r1: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,
+        _fastq_file_r2: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,
     ) -> anyhow::Result<()> {
         unimplemented!();
     }
@@ -31,10 +29,10 @@ pub trait Chemistry {
     /// Detect barcode, and trim if ok
     fn _depreciated_detect_barcode_and_trim(
         &mut self,
-        r1_seq: &[u8],
-        r1_qual: &[u8],
-        r2_seq: &[u8],
-        r2_qual: &[u8],
+        _r1_seq: &[u8],
+        _r1_qual: &[u8],
+        _r2_seq: &[u8],
+        _r2_qual: &[u8],
     ) -> (
         bool,
         crate::fileformat::shard::CellID,
@@ -45,15 +43,15 @@ pub trait Chemistry {
 
     fn detect_barcode_and_trim<'a>(
         &mut self,
-        r1_seq: &'a [u8],
-        r1_qual: &'a [u8],
-        r2_seq: &'a [u8],
-        r2_qual: &'a [u8],
+        _r1_seq: &'a [u8],
+        _r1_qual: &'a [u8],
+        _r2_seq: &'a [u8],
+        _r2_qual: &'a [u8],
     ) -> (u32, crate::common::ReadPair<'a>) {
         unimplemented!();
     } // get back if ok, cellid, readpair
 
-    fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
+    fn bcindexu32_to_bcu8(&self, _index32: &u32) -> Vec<u8> {
         unimplemented!()
     }
 }

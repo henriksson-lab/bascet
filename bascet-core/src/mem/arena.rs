@@ -8,8 +8,8 @@ use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
 use crate::spinpark_loop::SPINPARK_PARKS_BEFORE_WARN;
-use crate::utils::spinpark_loop::{self, spinpark_loop, SpinPark};
-use crate::{likely_unlikely, SendPtr, DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER};
+use crate::utils::spinpark_loop;
+use crate::{SendPtr, DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER};
 
 pub struct ArenaSlice<T>
 where
@@ -308,7 +308,6 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
             std::hint::assert_unchecked(countof_arenas > 0);
         }
         let mut count_spun = 0;
-        let mut count_parked = 0;
 
         loop {
             for i in 0..countof_arenas {
@@ -349,7 +348,6 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
 impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
     fn drop(&mut self) {
         let mut count_spun = 0;
-        let mut count_parked = 0;
 
         'wait: loop {
             for arena_cell in &self.inner_buf_arenas {

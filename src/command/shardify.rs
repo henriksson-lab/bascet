@@ -15,25 +15,16 @@ use itertools::izip;
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
-    path::{Path, PathBuf},
-    process::id,
-    sync::{Arc, RwLock},
-    thread::JoinHandle,
+    path::Path,
+    sync::Arc
 };
 
 use crate::{
     bounded_parser,
-    common::{self, spin_or_park},
     io::traits::*,
     log_critical, log_info, log_warning, support_which_stream, support_which_writer,
-    threading::{self, PeekableReceiver},
+    threading::PeekableReceiver,
 };
-
-use std::thread;
-
-pub const DEFAULT_THREADS_READ: usize = 10;
-pub const DEFAULT_THREADS_WORK: usize = 2;
-pub const DEFAULT_THREADS_TOTAL: usize = 12;
 
 support_which_stream! {
     ShardifyInput => ShardifyStream<T: BascetCell>

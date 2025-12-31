@@ -1,8 +1,7 @@
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{sleep, JoinHandle};
-use std::time::Duration;
+use std::thread::JoinHandle;
 
 use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
