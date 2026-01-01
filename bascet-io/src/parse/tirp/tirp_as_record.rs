@@ -241,7 +241,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
             }
         };
 
-        self.inner_cursor = head_len + 1;
+        self.inner_cursor = head_len;
         ParseStatus::Full(tirp_record)
     }
 }
