@@ -59,23 +59,73 @@ impl Record {
         let qal = buf_record.get_unchecked(pos_newline[2] + 1..pos_newline[3]);
 
         if likely_unlikely::unlikely(hdr.get(0) != Some(&b'@')) {
+            let hdr_start = 0usize;
+            let hdr_end = pos_newline[0];
+            let context_start = hdr_start.saturating_sub(512);
+            let context_end = (hdr_end + 512).min(buf_record.len());
+
             panic!(
-                "Invalid FASTQ header: {:?}; record {:?}",
+                "Invalid FASTQ header: expected '@', got {:?}\n\
+                Header range: {}..{}\n\
+                Header content: {:?}\n\
+                Context (512 bytes around, {}..{}): {:?}\n\
+                Full record: {:?}",
+                hdr.get(0).map(|&b| b as char),
+                hdr_start, hdr_end,
                 String::from_utf8_lossy(hdr),
+                context_start, context_end,
+                String::from_utf8_lossy(&buf_record[context_start..context_end]),
                 String::from_utf8_lossy(buf_record),
             );
         }
         if likely_unlikely::unlikely(sep.get(0) != Some(&b'+')) {
+            let sep_start = pos_newline[1] + 1;
+            let sep_end = pos_newline[2];
+            let context_start = sep_start.saturating_sub(512);
+            let context_end = (sep_end + 512).min(buf_record.len());
+
             panic!(
-                "Invalid FASTQ separator: {:?}",
-                String::from_utf8_lossy(sep)
+                "Invalid FASTQ separator: expected '+', got {:?}\n\
+                Separator range: {}..{}\n\
+                Separator content: {:?}\n\
+                Context (512 bytes around, {}..{}): {:?}\n\
+                Full record: {:?}",
+                sep.get(0).map(|&b| b as char),
+                sep_start, sep_end,
+                String::from_utf8_lossy(sep),
+                context_start, context_end,
+                String::from_utf8_lossy(&buf_record[context_start..context_end]),
+                String::from_utf8_lossy(buf_record),
             );
         }
         if likely_unlikely::unlikely(seq.len() != qal.len()) {
+            let seq_start = pos_newline[0] + 1;
+            let seq_end = pos_newline[1];
+            let qal_start = pos_newline[2] + 1;
+            let qal_end = pos_newline[3];
+
+            let seq_context_start = seq_start.saturating_sub(512);
+            let seq_context_end = (seq_end + 512).min(buf_record.len());
+            let qal_context_start = qal_start.saturating_sub(512);
+            let qal_context_end = (qal_end + 512).min(buf_record.len());
+
             panic!(
-                "Sequence and quality length mismatch: {} != {}",
-                seq.len(),
-                qal.len()
+                "Sequence and quality length mismatch: {} != {}\n\
+                Sequence range: {}..{}\n\
+                Quality range: {}..{}\n\
+                Sequence content: {:?}\n\
+                Quality content: {:?}\n\
+                Sequence context (512 bytes around, {}..{}): {:?}\n\
+                Quality context (512 bytes around, {}..{}): {:?}",
+                seq.len(), qal.len(),
+                seq_start, seq_end,
+                qal_start, qal_end,
+                String::from_utf8_lossy(seq),
+                String::from_utf8_lossy(qal),
+                seq_context_start, seq_context_end,
+                String::from_utf8_lossy(&buf_record[seq_context_start..seq_context_end]),
+                qal_context_start, qal_context_end,
+                String::from_utf8_lossy(&buf_record[qal_context_start..qal_context_end])
             );
         }
 

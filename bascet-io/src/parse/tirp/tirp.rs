@@ -63,10 +63,64 @@ impl Record {
         let umi = buf_record.get_unchecked(pos_tab[6] + 1..);
 
         if likely_unlikely::unlikely(r1.len() != q1.len()) {
-            panic!("r1/q1 length mismatch: {:?} != {:?}", r1.len(), q1.len());
+            let r1_start = pos_tab[2] + 1;
+            let r1_end = pos_tab[3];
+            let q1_start = pos_tab[4] + 1;
+            let q1_end = pos_tab[5];
+
+            let r1_context_start = r1_start.saturating_sub(512);
+            let r1_context_end = (r1_end + 512).min(buf_record.len());
+            let q1_context_start = q1_start.saturating_sub(512);
+            let q1_context_end = (q1_end + 512).min(buf_record.len());
+
+            panic!(
+                "r1/q1 length mismatch: {} != {}\n\
+                r1 range: {}..{}\n\
+                q1 range: {}..{}\n\
+                r1 content: {:?}\n\
+                q1 content: {:?}\n\
+                r1 context (512 bytes around, {}..{}): {:?}\n\
+                q1 context (512 bytes around, {}..{}): {:?}",
+                r1.len(), q1.len(),
+                r1_start, r1_end,
+                q1_start, q1_end,
+                String::from_utf8_lossy(r1),
+                String::from_utf8_lossy(q1),
+                r1_context_start, r1_context_end,
+                String::from_utf8_lossy(&buf_record[r1_context_start..r1_context_end]),
+                q1_context_start, q1_context_end,
+                String::from_utf8_lossy(&buf_record[q1_context_start..q1_context_end])
+            );
         }
         if likely_unlikely::unlikely(r2.len() != q2.len()) {
-            panic!("r1/q1 length mismatch: {:?} != {:?}", r2.len(), q2.len());
+            let r2_start = pos_tab[3] + 1;
+            let r2_end = pos_tab[4];
+            let q2_start = pos_tab[5] + 1;
+            let q2_end = pos_tab[6];
+
+            let r2_context_start = r2_start.saturating_sub(512);
+            let r2_context_end = (r2_end + 512).min(buf_record.len());
+            let q2_context_start = q2_start.saturating_sub(512);
+            let q2_context_end = (q2_end + 512).min(buf_record.len());
+
+            panic!(
+                "r2/q2 length mismatch: {} != {}\n\
+                r2 range: {}..{}\n\
+                q2 range: {}..{}\n\
+                r2 content: {:?}\n\
+                q2 content: {:?}\n\
+                r2 context (512 bytes around, {}..{}): {:?}\n\
+                q2 context (512 bytes around, {}..{}): {:?}",
+                r2.len(), q2.len(),
+                r2_start, r2_end,
+                q2_start, q2_end,
+                String::from_utf8_lossy(r2),
+                String::from_utf8_lossy(q2),
+                r2_context_start, r2_context_end,
+                String::from_utf8_lossy(&buf_record[r2_context_start..r2_context_end]),
+                q2_context_start, q2_context_end,
+                String::from_utf8_lossy(&buf_record[q2_context_start..q2_context_end])
+            );
         }
 
         // SAFETY: transmute slices to static lifetime kept alive by ArenaView refcount
