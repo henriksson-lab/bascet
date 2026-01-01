@@ -5,7 +5,7 @@ use crate::{
 
 use bascet_core::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
 use bascet_derive::Budget;
-use bascet_io::{decode, parse, tirp};
+use bascet_io::{codec, parse, tirp};
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
@@ -171,9 +171,9 @@ impl CountsketchCMD {
         let numof_threads_work = (*budget.threads::<TWork>()).get();
 
         for (input_idx, input) in self.paths_in.iter().enumerate() {
-            let decoder = decode::Bgzf::builder()
-                .path(input.path().path())
-                .num_threads(budget.numof_threads_read)
+            let decoder = codec::Bgzf::builder()
+                .with_path(input.path().path())
+                .countof_threads(budget.numof_threads_read)
                 .build()
                 .unwrap();
             let parser = parse::Tirp::builder().build().unwrap();
@@ -188,7 +188,6 @@ impl CountsketchCMD {
 
             let mut query = stream.query::<tirp::Record>();
 
-            // Create per-worker local sketches (non-atomic, fast)
             let mut worker_sketches: Vec<CountSketch> = (0..numof_threads_work)
                 .map(|_| CountSketch::new(self.countsketch_size))
                 .collect();
@@ -201,7 +200,6 @@ impl CountsketchCMD {
 
             for thread_idx in 0..numof_threads_work {
                 let thread_work_rx = work_rx.clone();
-                // SAFETY: Pass raw pointer to worker's own sketch. Each worker has exclusive access.
                 let mut sketch_ptr = unsafe {
                     SendPtr::new_unchecked(
                         &mut worker_sketches[thread_idx as usize] as *mut CountSketch,
@@ -261,6 +259,7 @@ impl CountsketchCMD {
                     continue;
                 }
             };
+
 
             let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
             budget.spawn::<TWrite, _, _>(0, move || {
@@ -390,7 +389,6 @@ pub struct CountsketchRecord {
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
-#[serde_as]
 #[derive(Composite, Default, Serialize)]
 #[bascet(attrs = (Id, Depth, Countsketch), backing = OwnedBacking, marker = AsRecord)]
 pub struct CountsketchRow {
