@@ -1,5 +1,17 @@
 use crate::OwnedBacking;
 
+// Null-variant. Not even sure what needs this anymore but removing it breaks things
+impl Composite for () {
+    type Attrs = ();
+    type Single = ();
+    type Collection = ();
+
+    type Marker = ();
+    type Intermediate = Self;
+
+    type Backing = OwnedBacking;
+}
+
 pub trait Composite: Sized {
     type Attrs;
     type Single;
@@ -20,17 +32,9 @@ pub trait Composite: Sized {
     }
 }
 
-pub trait From<AttrTuple, Source> {
-    fn from(&mut self, source: &Source);
+pub trait FromDirect<AttrTuple, Source> {
+    fn from_direct(&mut self, source: &Source);
 }
-
-impl Composite for () {
-    type Attrs = ();
-    type Single = ();
-    type Collection = ();
-
-    type Marker = ();
-    type Intermediate = Self;
-
-    type Backing = OwnedBacking;
+pub trait FromCollectionIndexed<AttrTuple, Source> {
+    fn from_collection_indexed(&mut self, source: &Source, index: usize);
 }

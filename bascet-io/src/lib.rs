@@ -1,5 +1,5 @@
-pub mod decode;
+pub mod codec;
 pub mod parse;
 
-pub use decode::*;
+pub use codec::*;
 pub use parse::*;

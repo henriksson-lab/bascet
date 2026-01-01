@@ -16,4 +16,5 @@ bytesize = "2.2.0"
 memmap2 = "0.9.9"
 rtrb = "0.3.2"
 rust-htslib = "0.51.0"
+serde = "1.0.228"
 smallvec = { version = "1.15.1", features = ["union"] }

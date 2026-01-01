@@ -1,4 +1,4 @@
-pub enum ParseStatus<T, E> {
+pub enum ParseResult<T, E> {
     Full(T),
     Partial,
     Error(E),
@@ -8,14 +8,14 @@ pub enum ParseStatus<T, E> {
 pub trait Parse<T> {
     type Item;
 
-    fn parse_aligned(&mut self, decoded: &T) -> ParseStatus<Self::Item, ()>;
+    fn parse_aligned(&mut self, decoded: &T) -> ParseResult<Self::Item, ()>;
 
     fn parse_spanning(
         &mut self,
         decoded_spanning_tail: &T,
         decoded_spanning_head: &T,
         alloc: impl FnMut(usize) -> T,
-    ) -> ParseStatus<Self::Item, ()>;
+    ) -> ParseResult<Self::Item, ()>;
 
-    fn parse_finish(&mut self) -> ParseStatus<Self::Item, ()>;
+    fn parse_finish(&mut self) -> ParseResult<Self::Item, ()>;
 }

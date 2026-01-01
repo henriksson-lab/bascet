@@ -15,34 +15,12 @@ use itertools::izip;
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
-    path::{Path, PathBuf},
-    process::id,
-    sync::{Arc, RwLock},
-    thread::JoinHandle,
+    path::Path,
+    sync::Arc,
 };
 
-use crate::{
-    bounded_parser,
-    common::{self, spin_or_park},
-    io::traits::*,
-    log_critical, log_info, log_warning, support_which_stream, support_which_writer,
-    threading::{self, PeekableReceiver},
-};
+use crate::{bounded_parser, log_critical, log_info, log_warning, threading::PeekableReceiver};
 
-use std::thread;
-
-pub const DEFAULT_THREADS_READ: usize = 10;
-pub const DEFAULT_THREADS_WORK: usize = 2;
-pub const DEFAULT_THREADS_TOTAL: usize = 12;
-
-support_which_stream! {
-    ShardifyInput => ShardifyStream<T: BascetCell>
-    for formats [tirp_bgzf]
-}
-support_which_writer! {
-    ShardifyOutput => ShardifyWriter<W: std::io::Write>
-    for formats [tirp_bgzf]
-}
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
 pub struct ShardifyCMD {
@@ -233,8 +211,8 @@ impl ShardifyCMD {
                 let mut thread_stream = Stream::builder()
                     .with_decoder(thread_decoder)
                     .with_parser(thread_parser)
-                    .sizeof_arena(thread_stream_arena_size)
-                    .sizeof_buffer(thread_stream_buffer_size)
+                    .sizeof_decode_arena(thread_stream_arena_size)
+                    .sizeof_decode_buffer(thread_stream_buffer_size)
                     .build()
                     .unwrap();
 
@@ -316,8 +294,9 @@ impl ShardifyCMD {
             };
 
             let thread_buf_writer = BufWriter::new(thread_file);
-            let mut thread_bgzf_writer =
-                BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast());
+            let mut thread_bgzf_writer = TsvWriter::with::<<ShardifyPartialCell as Composite>::Attrs>(
+                BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast()),
+            );
             let thread_write_rx = write_rx.clone();
 
             let global_counter = Arc::clone(&global_cells_written);
@@ -326,9 +305,11 @@ impl ShardifyCMD {
                 let thread_name = thread.name().unwrap_or("unknown thread");
                 log_info!("Starting writer"; "thread" => thread_name, "path" => %thread_output);
 
-                while let Ok(vec_records) = thread_write_rx.recv() {
-                    for cell in vec_records {
-                        let _ = cell.write_to(&mut thread_bgzf_writer);
+                while let Ok(vec_partial_cell) = thread_write_rx.recv() {
+                    for partial_cell in vec_partial_cell {
+                        for record in partial_cell.records() {
+                            thread_bgzf_writer.serialize(&record);
+                        }
                     }
 
                     let global_count =
@@ -337,7 +318,7 @@ impl ShardifyCMD {
                         log_info!("Writing"; "(complete) cells written" => global_count);
                     }
                 }
-                let _ = thread_bgzf_writer.flush();
+                let _ = thread_bgzf_writer.into_inner().flush();
             }));
         }
 
@@ -457,7 +438,7 @@ fn read_filter<P: AsRef<Path>>(input: P) -> Arc<gxhash::HashSet<Vec<u8>>> {
 }
 #[derive(Composite, Clone, Default)]
 #[bascet(
-    attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis),
+    attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
     backing = ArenaBacking,
     marker = AsCell<Accumulate>,
     intermediate = tirp::Record
@@ -465,9 +446,13 @@ fn read_filter<P: AsRef<Path>>(input: P) -> Arc<gxhash::HashSet<Vec<u8>>> {
 pub struct ShardifyPartialCell {
     id: &'static [u8],
     #[collection]
-    vec_sequence_pairs: Vec<(&'static [u8], &'static [u8])>,
+    vec_r1: Vec<&'static [u8]>,
     #[collection]
-    vec_quality_pairs: Vec<(&'static [u8], &'static [u8])>,
+    vec_r2: Vec<&'static [u8]>,
+    #[collection]
+    vec_q1: Vec<&'static [u8]>,
+    #[collection]
+    vec_q2: Vec<&'static [u8]>,
     #[collection]
     vec_umis: Vec<&'static [u8]>,
 
@@ -475,32 +460,8 @@ pub struct ShardifyPartialCell {
     //         be VERY careful modifying this at all
     pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
-impl ShardifyPartialCell {
-    pub fn write_to<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        let id = self.get_bytes::<Id>();
-        let reads = &self.vec_sequence_pairs;
-        let quals = &self.vec_quality_pairs;
-        let umis = &self.vec_umis;
-
-        for ((r1, r2), (q1, q2), umi) in izip!(reads, quals, umis) {
-            writer.write_all(id)?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(&[crate::common::U8_CHAR_1])?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(&[crate::common::U8_CHAR_1])?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(r1)?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(r2)?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(q1)?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(q2)?;
-            writer.write_all(&[crate::common::U8_CHAR_TAB])?;
-            writer.write_all(umi)?;
-            writer.write_all(&[crate::common::U8_CHAR_NEWLINE])?;
-        }
-
-        Ok(())
+impl CompositeLen for ShardifyPartialCell {
+    fn len(&self) -> usize {
+        self.get_ref::<R1>().len()
     }
 }

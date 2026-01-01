@@ -13,11 +13,13 @@ impl Tirp {
 }
 
 #[derive(Composite, Default, Clone)]
-#[bascet(attrs = (Id, SequencePair, QualityPair, Umi), backing = ArenaBacking, marker = AsRecord)]
+#[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = ArenaBacking, marker = AsRecord)]
 pub struct Record {
     id: &'static [u8],
-    sequence_pair: (&'static [u8], &'static [u8]),
-    quality_pair: (&'static [u8], &'static [u8]),
+    r1: &'static [u8],
+    r2: &'static [u8],
+    q1: &'static [u8],
+    q2: &'static [u8],
     umi: &'static [u8],
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
@@ -26,11 +28,13 @@ pub struct Record {
 }
 
 #[derive(Composite, Default, Clone)]
-#[bascet(attrs = (Id, SequencePair, QualityPair, Umi), backing = OwnedBacking, marker = AsRecord)]
+#[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = OwnedBacking, marker = AsRecord)]
 pub struct OwnedRecord {
     id: Vec<u8>,
-    sequence_pair: (Vec<u8>, Vec<u8>),
-    quality_pair: (Vec<u8>, Vec<u8>),
+    r1: Vec<u8>,
+    r2: Vec<u8>,
+    q1: Vec<u8>,
+    q2: Vec<u8>,
     umi: Vec<u8>,
 
     owned_backing: (),
@@ -40,8 +44,10 @@ impl Into<OwnedRecord> for Record {
     fn into(self) -> OwnedRecord {
         OwnedRecord {
             id: self.id.to_vec(),
-            sequence_pair: (self.sequence_pair.0.to_vec(), self.sequence_pair.1.to_vec()),
-            quality_pair: (self.quality_pair.0.to_vec(), self.quality_pair.1.to_vec()),
+            r1: self.r1.to_vec(),
+            r2: self.r2.to_vec(),
+            q1: self.q1.to_vec(),
+            q2: self.q2.to_vec(),
             umi: self.umi.to_vec(),
             owned_backing: (),
         }
@@ -79,8 +85,10 @@ impl Record {
 
         Self {
             id: static_id,
-            sequence_pair: (static_r1, static_r2),
-            quality_pair: (static_q1, static_q2),
+            r1: static_r1,
+            r2: static_r2,
+            q1: static_q1,
+            q2: static_q2,
             umi: static_umi,
 
             arena_backing: smallvec::smallvec![arena_view],
@@ -90,17 +98,22 @@ impl Record {
 
 #[derive(Composite, Default)]
 #[bascet(
-    attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis),
+    attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
     backing = ArenaBacking,
     marker = AsCell<Accumulate>,
     intermediate = Record
 )]
 pub struct Cell {
     id: &'static [u8],
+    
     #[collection]
-    vec_sequence_pairs: Vec<(&'static [u8], &'static [u8])>,
+    vec_r1: Vec<&'static [u8]>,
     #[collection]
-    vec_quality_pairs: Vec<(&'static [u8], &'static [u8])>,
+    vec_r2: Vec<&'static [u8]>,
+    #[collection]
+    vec_q1: Vec<&'static [u8]>,
+    #[collection]
+    vec_q2: Vec<&'static [u8]>,
     #[collection]
     vec_umis: Vec<&'static [u8]>,
 
@@ -111,7 +124,7 @@ pub struct Cell {
 
 #[derive(Composite, Default)]
 #[bascet(
-    attrs = (Id, SequencePair = vec_sequence_pairs, QualityPair = vec_quality_pairs, Umi = vec_umis),
+    attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
     backing = OwnedBacking,
     marker = AsCell<Accumulate>,
     intermediate = Record
@@ -119,9 +132,13 @@ pub struct Cell {
 pub struct OwnedCell {
     id: Vec<u8>,
     #[collection]
-    vec_sequence_pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    vec_r1: Vec<Vec<u8>>,
     #[collection]
-    vec_quality_pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    vec_r2: Vec<Vec<u8>>,
+    #[collection]
+    vec_q1: Vec<Vec<u8>>,
+    #[collection]
+    vec_q2: Vec<Vec<u8>>,
     #[collection]
     vec_umis: Vec<Vec<u8>>,
 
@@ -132,16 +149,10 @@ impl Into<OwnedCell> for Cell {
     fn into(self) -> OwnedCell {
         OwnedCell {
             id: self.id.to_vec(),
-            vec_sequence_pairs: self
-                .vec_sequence_pairs
-                .iter()
-                .map(|(r1, r2)| (r1.to_vec(), r2.to_vec()))
-                .collect(),
-            vec_quality_pairs: self
-                .vec_quality_pairs
-                .iter()
-                .map(|(r1, r2)| (r1.to_vec(), r2.to_vec()))
-                .collect(),
+            vec_r1: self.vec_r1.iter().map(|r1| r1.to_vec()).collect(),
+            vec_r2: self.vec_r2.iter().map(|r2| r2.to_vec()).collect(),
+            vec_q1: self.vec_q1.iter().map(|q1| q1.to_vec()).collect(),
+            vec_q2: self.vec_q2.iter().map(|q2| q2.to_vec()).collect(),
             vec_umis: self.vec_umis.iter().map(|umi| umi.to_vec()).collect(),
             owned_backing: (),
         }

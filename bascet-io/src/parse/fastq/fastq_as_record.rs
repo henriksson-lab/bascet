@@ -4,7 +4,7 @@ use bascet_core::*;
 impl Parse<ArenaSlice<u8>> for crate::Fastq {
     type Item = fastq::Record;
 
-    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseStatus<Self::Item, ()> {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item, ()> {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -22,7 +22,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
                 //       or a malformed file. Here we assume it is end of block
                 //       if parse_spanning cannot build a complete record, however it is
                 //       very likely a malformed file
-                return ParseStatus::Partial;
+                return ParseResult::Partial;
             }
         };
 
@@ -35,11 +35,11 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_newline[3]) };
         let fastq_record =
             unsafe { fastq::Record::from_raw(buf_record, pos_newline, decoded.clone_view()) };
-        ParseStatus::Full(fastq_record)
+        ParseResult::Full(fastq_record)
     }
 
-    fn parse_finish(&mut self) -> ParseStatus<Self::Item, ()> {
-        ParseStatus::Finished
+    fn parse_finish(&mut self) -> ParseResult<Self::Item, ()> {
+        ParseResult::Finished
     }
 
     fn parse_spanning(
@@ -47,7 +47,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
-    ) -> ParseStatus<Self::Item, ()> {
+    ) -> ParseResult<Self::Item, ()> {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
         // NOTE: as_ptr_range is [start, end) and [start', end') => end == start'
@@ -64,18 +64,18 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
             match (iter_tail.next(), iter_tail.next(), iter_tail.next()) {
                 (Some(t0), Some(t1), Some(t2)) => match iter_head.next() {
                     Some(h3) => ([t0, t1, t2, tail_len + h3], h3 + 1),
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 },
                 (Some(t0), Some(t1), None) => match (iter_head.next(), iter_head.next()) {
                     (Some(h2), Some(h3)) => ([t0, t1, tail_len + h2, tail_len + h3], h3 + 1),
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 },
                 (Some(t0), None, None) => {
                     match (iter_head.next(), iter_head.next(), iter_head.next()) {
                         (Some(h1), Some(h2), Some(h3)) => {
                             ([t0, tail_len + h1, tail_len + h2, tail_len + h3], h3 + 1)
                         }
-                        _ => return ParseStatus::Error(()),
+                        _ => return ParseResult::Error(()),
                     }
                 }
                 (None, None, None) => {
@@ -89,7 +89,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
                             [tail_len + h0, tail_len + h1, tail_len + h2, tail_len + h3],
                             h3 + 1,
                         ),
-                        _ => return ParseStatus::Error(()),
+                        _ => return ParseResult::Error(()),
                     }
                 }
                 _ => unreachable!(),
@@ -139,7 +139,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
             }
         };
 
-        self.inner_cursor = head_len + 1;
-        ParseStatus::Full(fastq_record)
+        self.inner_cursor = head_len;
+        ParseResult::Full(fastq_record)
     }
 }

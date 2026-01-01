@@ -13,7 +13,7 @@ where
         let mut spinpark_counter = 0;
 
         loop {
-            let buffer_status = match self.inner_buffer_rx.peek() {
+            let buffer_status = match self.inner_decoder_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
                     spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
                         &mut spinpark_counter,
@@ -39,7 +39,7 @@ where
             let state = std::mem::replace(&mut self.inner_state, StreamState::Aligned);
             let result = match &state {
                 StreamState::Spanning(spanning_tail) => {
-                    let arena_pool = &self.inner_arena_pool;
+                    let arena_pool = &self.inner_decoder_arena_pool;
                     self.inner_parser
                         .parse_spanning(&spanning_tail, &decoded, |sizeof_span| {
                             arena_pool.alloc(sizeof_span)
@@ -53,24 +53,24 @@ where
             };
 
             let parsed = match result {
-                ParseStatus::Full(parsed) => parsed,
-                ParseStatus::Partial => {
+                ParseResult::Full(parsed) => parsed,
+                ParseResult::Partial => {
                     // Parser exhausted data
                     // SAFETY: unwrap is safe because if a partial is returned a decoded block MUST exist
                     //         because a block must have been peeked at before.
                     self.inner_state = StreamState::Spanning(ArenaSlice::clone(decoded));
                     unsafe {
-                        self.inner_buffer_rx.pop().unwrap_unchecked();
+                        self.inner_decoder_buffer_rx.pop().unwrap_unchecked();
                     }
                     continue;
                 }
-                ParseStatus::Error(e) => {
+                ParseResult::Error(e) => {
                     // SAFETY: unwrap is safe because if an error is returned a decoded block MUST exist
                     //         because a block must have been peeked at before.
                     return Err(e);
                 }
 
-                ParseStatus::Finished => {
+                ParseResult::Finished => {
                     // SAFETY: returned only by parse_finish
                     unreachable!();
                 }

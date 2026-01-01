@@ -3,25 +3,16 @@ use std::{
 };
 
 use bascet_core::*;
-use bascet_io::{decode, fastq, parse};
+use bascet_io::{codec, fastq, parse};
 use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 use smallvec::SmallVec;
 
-#[derive(Composite, Default)]
-#[bascet(attrs = (Id, Sequence, Quality), backing = ArenaBacking, marker = AsRecord)]
-struct FASTQRecord {
-    id: &'static [u8],
-    sequence: &'static [u8],
-    quality: &'static [u8],
-    arena_backing: SmallVec<[ArenaView<u8>; 2]>,
-}
-
 #[test]
 fn test_stream_bgzf_fastq() {
-    let decoder = decode::Bgzf::builder()
-        .path("../data/P32705_1002_S1_L002_R1_001.fastq.gz")
-        .num_threads(BoundedU64::const_new::<11>())
+    let decoder = codec::Bgzf::builder()
+        .with_path("../data/P32705_1002_S1_L002_R1_001.fastq.gz")
+        .countof_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
     let parser = parse::Fastq::builder().build().unwrap();
@@ -30,8 +21,8 @@ fn test_stream_bgzf_fastq() {
         .with_decoder(decoder)
         .with_parser(parser)
         .countof_buffers(BoundedUsize::const_new::<1024>())
-        .sizeof_arena(ByteSize::mib(32))
-        .sizeof_buffer(ByteSize::gib(1))
+        .sizeof_decode_arena(ByteSize::mib(32))
+        .sizeof_decode_buffer(ByteSize::gib(1))
         .build()
         .unwrap();
 

@@ -1,4 +1,4 @@
-use crate::command::getraw::GetRawChemistry;
+// use crate::command::getraw::GetRawChemistry;
 
 ///////////////////////////////
 /// This trait defines a "single cell chemistry" i.e. barcoding, UMI-definition, trimming, etc
@@ -21,8 +21,8 @@ pub trait Chemistry {
         _vec_r2: Vec<C>,
     ) -> anyhow::Result<()>
     where
-        C: bascet_core::Get<bascet_core::Sequence>,
-        <C as bascet_core::Get<bascet_core::Sequence>>::Value: AsRef<[u8]>,
+        C: bascet_core::Get<bascet_core::R0>,
+        <C as bascet_core::Get<bascet_core::R0>>::Value: AsRef<[u8]>,
     {
         unimplemented!();
     }

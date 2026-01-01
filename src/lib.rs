@@ -3,7 +3,6 @@ pub mod command;
 pub mod common;
 pub mod countsketch;
 pub mod fileformat;
-pub mod io;
 pub mod kmer;
 pub mod mapcell;
 pub mod mapcell_scripts;
