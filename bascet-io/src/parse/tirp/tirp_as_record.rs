@@ -77,7 +77,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         // Find newline marking end of record (only in head - if in tail, record would be complete)
         let pos_newline_head = memchr::memchr(b'\n', slice_head);
         let head_len = match pos_newline_head {
-            Some(pos) => pos,
+            Some(pos) => pos + 1,
             None => return ParseStatus::Error(()),
         };
         let mut iter_tail = memchr::memchr_iter(b'\t', tail_remaining);
