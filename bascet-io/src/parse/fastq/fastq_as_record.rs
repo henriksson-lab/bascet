@@ -139,7 +139,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
             }
         };
 
-        self.inner_cursor = head_len;
+        self.inner_cursor = head_len + 1;
         ParseStatus::Full(fastq_record)
     }
 }
