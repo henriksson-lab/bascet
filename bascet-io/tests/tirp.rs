@@ -1,5 +1,5 @@
 use bascet_core::*;
-use bascet_io::{decode, parse, tirp};
+use bascet_io::{codec, parse, tirp};
 use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 
@@ -24,9 +24,9 @@ use std::time::Instant;
 
 #[test]
 fn test_stream_bgzf_tirp() {
-    let decoder = decode::Bgzf::builder()
-        .path("../temp/29433167_merge_0_1.tirp.gz")
-        .num_threads(BoundedU64::const_new::<11>())
+    let decoder = codec::Bgzf::builder()
+        .with_path("../temp/29433167_merge_0_1.tirp.gz")
+        .countof_threads(BoundedU64::const_new::<11>())
         .build()
         .unwrap();
     let parser = parse::Tirp::builder().build().unwrap();
@@ -35,8 +35,8 @@ fn test_stream_bgzf_tirp() {
         .with_decoder(decoder)
         .with_parser(parser)
         .countof_buffers(BoundedUsize::const_new::<1024>())
-        .sizeof_arena(ByteSize::mib(8))
-        .sizeof_buffer(ByteSize::gib(1))
+        .sizeof_decode_arena(ByteSize::mib(8))
+        .sizeof_decode_buffer(ByteSize::gib(1))
         .build()
         .unwrap();
 

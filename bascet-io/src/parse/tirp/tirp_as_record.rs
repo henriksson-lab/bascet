@@ -5,7 +5,7 @@ use crate::tirp;
 impl Parse<ArenaSlice<u8>> for crate::Tirp {
     type Item = tirp::Record;
 
-    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseStatus<Self::Item, ()> {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item, ()> {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -17,7 +17,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                 //       or a malformed file. Here we assume it is end of block
                 //       if parse_spanning cannot build a complete record, however it is
                 //       very likely a malformed file
-                return ParseStatus::Partial;
+                return ParseResult::Partial;
             }
         };
         let mut iter_tab = memchr::memchr_iter(b'\t', buf_cursor);
@@ -38,7 +38,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                 //       or a malformed file. Here we assume it is end of block
                 //       if parse_spanning cannot build a complete record, however it is
                 //       very likely a malformed file
-                return ParseStatus::Partial;
+                return ParseResult::Partial;
             }
         };
 
@@ -51,11 +51,11 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         let buf_record = unsafe { buf_cursor.get_unchecked(..pos_endof_record) };
         let tirp_record =
             unsafe { crate::tirp::Record::from_raw(buf_record, pos_tab, decoded.clone_view()) };
-        ParseStatus::Full(tirp_record)
+        ParseResult::Full(tirp_record)
     }
 
-    fn parse_finish(&mut self) -> ParseStatus<Self::Item, ()> {
-        ParseStatus::Finished
+    fn parse_finish(&mut self) -> ParseResult<Self::Item, ()> {
+        ParseResult::Finished
     }
 
     #[inline(always)]
@@ -64,7 +64,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
         mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
-    ) -> ParseStatus<Self::Item, ()> {
+    ) -> ParseResult<Self::Item, ()> {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
         // NOTE: as_ptr_range is [start, end) and [start', end') => end == start'
@@ -78,7 +78,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         let pos_newline_head = memchr::memchr(b'\n', slice_head);
         let head_len = match pos_newline_head {
             Some(pos) => pos,
-            None => return ParseStatus::Error(()),
+            None => return ParseResult::Error(()),
         };
 
         // Collect tabs from tail and head
@@ -101,13 +101,13 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
             (Some(t0), Some(t1), Some(t2), Some(t3), Some(t4), Some(t5), None) => {
                 match iter_head.next() {
                     Some(h6) => [t0, t1, t2, t3, t4, t5, tail_len + h6],
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             (Some(t0), Some(t1), Some(t2), Some(t3), Some(t4), None, None) => {
                 match (iter_head.next(), iter_head.next()) {
                     (Some(h5), Some(h6)) => [t0, t1, t2, t3, t4, tail_len + h5, tail_len + h6],
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             (Some(t0), Some(t1), Some(t2), Some(t3), None, None, None) => {
@@ -115,7 +115,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                     (Some(h4), Some(h5), Some(h6)) => {
                         [t0, t1, t2, t3, tail_len + h4, tail_len + h5, tail_len + h6]
                     }
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             (Some(t0), Some(t1), Some(t2), None, None, None, None) => {
@@ -134,7 +134,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             (Some(t0), Some(t1), None, None, None, None, None) => {
@@ -154,7 +154,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             (Some(t0), None, None, None, None, None, None) => {
@@ -175,7 +175,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             (None, None, None, None, None, None, None) => {
@@ -197,7 +197,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseStatus::Error(()),
+                    _ => return ParseResult::Error(()),
                 }
             }
             _ => unreachable!(),
@@ -244,6 +244,6 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         };
 
         self.inner_cursor = head_len + 1;
-        ParseStatus::Full(tirp_record)
+        ParseResult::Full(tirp_record)
     }
 }

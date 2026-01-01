@@ -123,6 +123,15 @@ fn expand_item(
                     panic!()
                 };
 
+                let size = combo.iter().find(|(n, _)| n == &name).unwrap().1;
+
+                // @n{...} - expand template once with # = n
+                if group.delimiter() == proc_macro2::Delimiter::Brace {
+                    result.extend(expand_template(&group.stream(), size));
+                    continue;
+                }
+
+                // @n[...] - iterate n times with # = 0, 1, 2, ...
                 let mut sep = None;
                 if let Some(proc_macro2::TokenTree::Group(g)) = iter.peek() {
                     if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
@@ -146,7 +155,6 @@ fn expand_item(
                     }
                 }
 
-                let size = combo.iter().find(|(n, _)| n == &name).unwrap().1;
                 for i in 0..size {
                     if i > 0 && sep.is_some() {
                         result.extend(

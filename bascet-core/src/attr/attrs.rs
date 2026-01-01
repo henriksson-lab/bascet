@@ -1,10 +1,12 @@
 bascet_derive::define_attr!(
     Id,
-    Sequence,
-    SequencePair,
-    Quality,
-    QualityPair,
+    R0,
+    R1,
+    R2,
+    Q0,
+    Q1,
+    Q2,
     Umi,
-    Metadata
+    Depth,
+    Countsketch
 );
-

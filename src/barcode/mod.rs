@@ -20,7 +20,7 @@ pub use combinatorial_barcode_anysize::CombinatorialBarcode;
 pub use combinatorial_barcode_anysize::CombinatorialBarcodePart;
 
 pub use atrandi_rnaseq_barcode::AtrandiRNAseqChemistry;
-pub use parsebio::ParseBioChemistry3;
+// pub use parsebio::ParseBioChemistry3;
 pub use petriseq_barcode::PetriseqChemistry;
 pub use tenx::TenxRNAChemistry;
 

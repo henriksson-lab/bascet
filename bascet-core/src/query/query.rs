@@ -20,14 +20,14 @@ where
     pub fn next_into<T>(&mut self) -> Result<Option<T>, ()>
     where
         T: Composite + Default,
-        T: From<T::Attrs, C>,
+        T: FromDirect<T::Attrs, C>,
         T: PushBacking<C, C::Backing>,
         C: TakeBacking<C::Backing>,
     {
         match self.stream.next_with(&self.queries)? {
             Some(context) => {
                 let mut composite = T::default();
-                composite.from(&context);
+                composite.from_direct(&context);
                 composite.push_backing(context.take_backing());
                 Ok(Some(composite))
             }

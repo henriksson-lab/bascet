@@ -1,4 +1,6 @@
-pub trait Attr {}
+pub trait Attr {
+    const NAME: &'static str;
+}
 
 pub struct Tagged<A, T> {
     pub value: T,

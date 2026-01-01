@@ -8,9 +8,14 @@ repository.workspace = true
 
 [dependencies]
 bascet-core = { path = "../bascet-core" }
+bascet-variadic = { path = "../bascet-variadic" }
 bon = "3.8.1"
 bounded-integer = "0.6.1"
 bytesize = "2.2.0"
+csv = "1.4.0"
+libdeflater = "1.25.0"
 memchr = "2.7.6"
 rust-htslib = "0.51.0"
+serde = "1.0.228"
 smallvec = { version = "1.15.1", features = ["union"] }
+threadpool = "1.8.1"

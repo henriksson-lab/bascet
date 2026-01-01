@@ -20,10 +20,10 @@ pub struct Bgzf {
 impl Bgzf {
     #[builder]
     pub fn new<P: AsRef<Path>>(
-        path: P,
-        #[builder(default = BoundedU64::new(1).unwrap())] num_threads: BoundedU64<1, { u64::MAX }>,
+        with_path: P,
+        #[builder(default = BoundedU64::const_new::<1>())] countof_threads: BoundedU64<1, { u64::MAX }>,
     ) -> Result<Self, ()> {
-        let path = path.as_ref();
+        let path = with_path.as_ref();
 
         let mut file = match File::open(path) {
             Ok(f) => f,
@@ -34,9 +34,10 @@ impl Bgzf {
         file.read_exact(&mut bgzf_hdr).unwrap();
 
         let hts_file_ptr = unsafe { SendPtr::new_unchecked(htsutils::hts_open(path)) };
+
         let hts_bgzf_ptr =
             unsafe { SendPtr::new_unchecked(htslib::hts_get_bgzfp(hts_file_ptr.as_ptr())) };
-        let hts_tpool = htsutils::hts_tpool_init(num_threads, hts_file_ptr.as_ptr());
+        let hts_tpool = htsutils::hts_tpool_init(countof_threads, hts_file_ptr.as_ptr());
         let hts_send_tpool = unsafe { Sendable::new(hts_tpool) };
 
         let sizeof_bgzf_block = ByteSize::b(
@@ -47,14 +48,14 @@ impl Bgzf {
 
         // NOTE: alloc size in terms of alloc slots not bytes
         let hts_sizeof_alloc =
-            ((num_threads.get() * sizeof_bgzf_block.as_u64()) / (size_of::<u8>() as u64)) as usize;
+            ((countof_threads.get() * sizeof_bgzf_block.as_u64()) / (size_of::<u8>() as u64)) as usize;
 
         let decoder = Self {
             inner_hts_file_ptr: hts_file_ptr,
             inner_hts_bgzf_ptr: hts_bgzf_ptr,
 
             inner_hts_tpool: hts_send_tpool,
-            inner_hts_tpool_n: num_threads.get(),
+            inner_hts_tpool_n: countof_threads.get(),
 
             inner_hts_block_size: sizeof_bgzf_block,
             inner_hts_sizeof_alloc: hts_sizeof_alloc,
@@ -69,7 +70,7 @@ impl Decode for Bgzf {
         self.inner_hts_sizeof_alloc
     }
 
-    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> DecodeStatus<()> {
+    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> DecodeResult<()> {
         let buf_slice = buf.as_mut();
         let bgzf_read = unsafe {
             htslib::bgzf_read(
@@ -87,12 +88,12 @@ impl Decode for Bgzf {
                     bgzf_read as usize,
                     buf_slice.len()
                 );
-                DecodeStatus::Decoded(bgzf_read as usize)
+                DecodeResult::Decoded(bgzf_read as usize)
             }
-            0 => DecodeStatus::Eof,
+            0 => DecodeResult::Eof,
             err => {
                 panic!("{:?}", err);
-                DecodeStatus::Error(())
+                DecodeResult::Error(())
             }
         }
     }

@@ -103,6 +103,8 @@ seahash = "4.1.0"
 semver = "1.0.23"
 seq_io = "0.3.1"
 serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.148"
+serde_with = "3.16.1"
 shellexpand = "3.1.1"
 slog = "2.8.2"
 slog-async = "2.8.0"

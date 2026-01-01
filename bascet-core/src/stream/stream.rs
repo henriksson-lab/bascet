@@ -1,14 +1,14 @@
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread::{sleep, JoinHandle};
-use std::time::Duration;
+use std::sync::{Arc, Barrier};
+use std::thread::JoinHandle;
 
 use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
 use rtrb::PushError;
 
 use crate::spinpark_loop::SPINPARK_PARKS_BEFORE_WARN;
+use crate::stream::DEFAULT_COUNTOF_BUFFERS;
 use crate::*;
 
 pub(crate) enum StreamState {
@@ -22,10 +22,11 @@ pub(crate) enum StreamBufferState {
 }
 
 pub struct Stream<P, D, C, M> {
-    pub(crate) inner_arena_pool: Arc<ArenaPool<u8>>,
-    pub(crate) inner_buffer_rx: rtrb::Consumer<StreamBufferState>,
+    pub(crate) inner_decoder_arena_pool: Arc<ArenaPool<u8>>,
+    pub(crate) inner_decoder_buffer_rx: rtrb::Consumer<StreamBufferState>,
     pub(crate) inner_decoder_thread: ManuallyDrop<JoinHandle<D>>,
-    pub(crate) inner_decoder_stop: Arc<AtomicBool>,
+    pub(crate) inner_decoder_flag_stop: Arc<AtomicBool>,
+    pub(crate) inner_shutdown_barrier: Arc<Barrier>,
 
     pub(crate) inner_parser: P,
 
@@ -43,26 +44,29 @@ where
     pub fn new(
         with_decoder: D,
         with_parser: P,
-        #[builder(default = DEFAULT_SIZEOF_BUFFER)] sizeof_buffer: ByteSize,
-        #[builder(default = DEFAULT_SIZEOF_ARENA)] sizeof_arena: ByteSize,
+        #[builder(default = DEFAULT_SIZEOF_BUFFER)] sizeof_decode_buffer: ByteSize,
+        #[builder(default = DEFAULT_SIZEOF_ARENA)] sizeof_decode_arena: ByteSize,
         #[builder(default = DEFAULT_COUNTOF_BUFFERS)] countof_buffers: BoundedUsize<
             2,
             { usize::MAX },
         >,
     ) -> Result<Self, ()> {
-        let arc_arena_pool = Arc::new(ArenaPool::new(sizeof_buffer, sizeof_arena).unwrap());
-        let decoder_stop_flag = Arc::new(AtomicBool::new(false));
+        let arc_decoder_arena_pool = Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena).unwrap());
+        let arc_decoder_stop_flag = Arc::new(AtomicBool::new(false));
+        let arc_shutdown_barrier = Arc::new(Barrier::new(2));
         let (handle, rx) = Self::spawn_decode_worker(
             with_decoder,
             countof_buffers,
-            decoder_stop_flag.clone(),
-            Arc::clone(&arc_arena_pool),
+            Arc::clone(&arc_decoder_stop_flag),
+            Arc::clone(&arc_shutdown_barrier),
+            Arc::clone(&arc_decoder_arena_pool),
         );
         Ok(Self {
-            inner_arena_pool: Arc::clone(&arc_arena_pool),
-            inner_buffer_rx: rx,
+            inner_decoder_arena_pool: Arc::clone(&arc_decoder_arena_pool),
+            inner_decoder_buffer_rx: rx,
             inner_decoder_thread: ManuallyDrop::new(handle),
-            inner_decoder_stop: decoder_stop_flag,
+            inner_decoder_flag_stop: arc_decoder_stop_flag,
+            inner_shutdown_barrier: arc_shutdown_barrier,
             inner_parser: with_parser,
 
             inner_state: StreamState::Aligned,
@@ -75,6 +79,7 @@ where
         mut decoder: D,
         n_buffers: BoundedUsize<2, { usize::MAX }>,
         stop_flag: Arc<AtomicBool>,
+        shutdown_barrier: Arc<Barrier>,
         arena_pool: Arc<ArenaPool<u8>>,
     ) -> (JoinHandle<D>, rtrb::Consumer<StreamBufferState>) {
         let (mut tx, rx) = rtrb::RingBuffer::new(n_buffers.get());
@@ -86,14 +91,14 @@ where
                 let decode_result = decoder.decode_into(buffer.as_mut_slice());
 
                 let buffer_status = match decode_result {
-                    DecodeStatus::Decoded(bytes_written) => {
+                    DecodeResult::Decoded(bytes_written) => {
                         StreamBufferState::Available(unsafe { buffer.truncate(bytes_written) })
                     }
-                    DecodeStatus::Eof => {
+                    DecodeResult::Eof => {
                         stop_flag.store(true, Ordering::Relaxed);
                         StreamBufferState::Eof
                     }
-                    DecodeStatus::Error(e) => {
+                    DecodeResult::Error(e) => {
                         stop_flag.store(true, Ordering::Relaxed);
                         StreamBufferState::Error(e)
                     }
@@ -112,12 +117,13 @@ where
                                 "Decoder (push): pushing buffer_status (buffer full, consumer slow)",
                             );
 
-                            if stop_flag.load(Ordering::Relaxed) == true {
+                            if likely_unlikely::unlikely(stop_flag.load(Ordering::Relaxed) == true) {
                                 match &item {
                                     StreamBufferState::Eof | StreamBufferState::Error(_) => {
                                         // Keep waiting, must push these before thread exits
                                     }
                                     StreamBufferState::Available(_) => {
+                                        shutdown_barrier.wait();
                                         break;
                                     }
                                 }
@@ -133,10 +139,10 @@ where
     }
 
     pub unsafe fn shutdown(mut self) {
-        self.inner_decoder_stop.store(true, Ordering::Relaxed);
+        self.inner_decoder_flag_stop.store(true, Ordering::Relaxed);
         // HACK: make sure stop flag is read
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        while let Ok(buffer) = self.inner_buffer_rx.pop() {
+        self.inner_shutdown_barrier.wait();
+        while let Ok(buffer) = self.inner_decoder_buffer_rx.pop() {
             drop(buffer);
         }
         self.inner_state = StreamState::Aligned;

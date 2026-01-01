@@ -1,6 +1,6 @@
 use crate::{
-    bounded_parser, common::{U8_CHAR_NEWLINE, U8_CHAR_TAB}, countsketch::CountSketch , io::traits::*,
-    log_critical, log_info, log_warning, support_which_writer,
+    bounded_parser, common::U8_CHAR_NEWLINE, countsketch::CountSketch, log_critical, log_info,
+    log_warning,
 };
 
 use bascet_core::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
@@ -11,11 +11,11 @@ use anyhow::Result;
 use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
-use clio::{InputPath, OutputPath};
-use crossbeam::channel::{Receiver, TryRecvError};
-use itertools::{enumerate, Itertools};
+use clio::InputPath;
+use crossbeam::channel::TryRecvError;
+use serde::Serialize;
+use serde_with::{serde_as, StringWithSeparator, formats::CommaSeparator};
 use std::{
-    cell::UnsafeCell,
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
@@ -25,11 +25,6 @@ use std::{
         Arc,
     },
 };
-
-support_which_writer! {
-    CountsketchOutput => CountsketchWriter<W: std::io::Write>
-    for formats [tsv]
-}
 
 #[derive(Args)]
 pub struct CountsketchCMD {
@@ -186,13 +181,12 @@ impl CountsketchCMD {
             let mut stream = Stream::builder()
                 .with_decoder(decoder)
                 .with_parser(parser)
-                .sizeof_arena(self.sizeof_stream_arena)
-                .sizeof_buffer(budget.sizeof_stream_buffer)
+                .sizeof_decode_arena(self.sizeof_stream_arena)
+                .sizeof_decode_buffer(budget.sizeof_stream_buffer)
                 .build()
                 .unwrap();
 
-            let mut query = stream
-                .query::<tirp::Record>();
+            let mut query = stream.query::<tirp::Record>();
 
             // Create per-worker local sketches (non-atomic, fast)
             let mut worker_sketches: Vec<CountSketch> = (0..numof_threads_work)
@@ -208,7 +202,11 @@ impl CountsketchCMD {
             for thread_idx in 0..numof_threads_work {
                 let thread_work_rx = work_rx.clone();
                 // SAFETY: Pass raw pointer to worker's own sketch. Each worker has exclusive access.
-                let mut sketch_ptr = unsafe { SendPtr::new_unchecked(&mut worker_sketches[thread_idx as usize] as *mut CountSketch) };
+                let mut sketch_ptr = unsafe {
+                    SendPtr::new_unchecked(
+                        &mut worker_sketches[thread_idx as usize] as *mut CountSketch,
+                    )
+                };
                 let thread_flag_synchronize = Arc::clone(&arc_flag_synchronize);
                 let thread_barrier = Arc::clone(&arc_barrier);
 
@@ -241,28 +239,22 @@ impl CountsketchCMD {
                                 break;
                             }
                         };
-                        let record_sequence = *record.get_ref::<SequencePair>();
-
                         // SAFETY: Each worker has exclusive access to its own sketch via raw pointer.
                         // Barriers ensure no concurrent access during sync.
                         unsafe {
                             let sketch = sketch_ptr.as_mut();
-                            let _ = sketch.add_sequence(record_sequence.0, k);
-                            let _ = sketch.add_sequence(record_sequence.1, k);
+                            let _ = sketch.add_sequence(record.get_ref::<R1>(), k);
+                            let _ = sketch.add_sequence(record.get_ref::<R2>(), k);
                         }
                     }
                 }));
             }
 
-            let output_path = self.path_out.join(format!("countsketch.{}.tsv", input_idx + 1));
-            let output_auto = match CountsketchOutput::try_from_path(&output_path) {
-                Ok(output) => output,
-                Err(e) => {
-                    log_warning!("Failed to verify output file, skipping"; "path" => ?output_path, "error" => %e);
-                    continue;
-                }
-            };
-            let output_file = match File::create(output_auto.path()) {
+            let output_path = self
+                .path_out
+                .join(format!("countsketch.{}.csv", input_idx + 1));
+
+            let output_file = match File::create(&output_path) {
                 Ok(output) => output,
                 Err(e) => {
                     log_warning!("Failed to create output file, skipping"; "path" => ?output_path, "error" => %e);
@@ -270,23 +262,20 @@ impl CountsketchCMD {
                 }
             };
 
-            let (write_tx, write_rx) = crossbeam::channel::unbounded::<(Vec<u8>, u64, Vec<i64>)>();
+            let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
             budget.spawn::<TWrite, _, _>(0, move || {
-                let mut bufwriter = BufWriter::new(output_file);
-                while let Ok((id, n, countsketch)) = write_rx.recv() {
-                    if id.is_empty() {
+                let bufwriter = BufWriter::new(output_file);
+                let mut writer = csv::WriterBuilder::new().has_headers(false).from_writer(bufwriter);
+                
+                while let Ok(countsketch_row) = write_rx.recv() {
+                    if countsketch_row.get_ref::<Id>().is_empty() {
                         continue;
                     }
-                    bufwriter.write_all(&id);
-                    bufwriter.write_all(&[b',']);
-                    bufwriter.write_all(n.to_string().as_bytes());
-                    bufwriter.write_all(&[b',']);
-                    bufwriter.write_all(countsketch.iter().join(",").as_bytes());
-                    bufwriter.write_all(&[U8_CHAR_NEWLINE]);
+                    writer.serialize(&countsketch_row).unwrap();
                 }
-                let _ = bufwriter.flush();
+                let _ = writer.flush();
             });
-
+            
             let mut record_id_last: Vec<u8> = Vec::new();
             let mut cells_processed = 0u64;
             loop {
@@ -313,7 +302,15 @@ impl CountsketchCMD {
                             (merged_sketch, total as u64)
                         };
 
-                        let _ = write_tx.send((record_id_last.clone(), n, snapshot));
+                        let countsketch_row = CountsketchRow {
+                            id: String::from_utf8(record_id_last).unwrap(),
+                            depth: n,
+                            countsketch: snapshot,
+
+                            owned_backing: (),
+                        };
+
+                        let _ = write_tx.send(countsketch_row);
 
                         arc_flag_synchronize.store(false, Ordering::Relaxed);
                         arc_barrier.wait();
@@ -345,7 +342,15 @@ impl CountsketchCMD {
                         (merged_sketch, total as u64)
                     };
 
-                    let _ = write_tx.send((record_id_last.clone(), n, snapshot));
+                    let countsketch_row = CountsketchRow {
+                        id: String::from_utf8(record_id_last).unwrap(),
+                        depth: n,
+                        countsketch: snapshot,
+
+                        owned_backing: (),
+                    };
+
+                    let _ = write_tx.send(countsketch_row);
 
                     record_id_last = record_id.to_vec();
                     cells_processed += 1;
@@ -374,12 +379,25 @@ impl CountsketchCMD {
 }
 
 #[derive(Composite, Default)]
-#[bascet(attrs = (Id, SequencePair), backing = ArenaBacking, marker = AsRecord)]
+#[bascet(attrs = (Id, R1, R2), backing = ArenaBacking, marker = AsRecord)]
 pub struct CountsketchRecord {
     id: &'static [u8],
-    sequence_pair: (&'static [u8], &'static [u8]),
+    r1: &'static [u8],
+    r2: &'static [u8],
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
+}
+
+#[serde_as]
+#[derive(Composite, Default, Serialize)]
+#[bascet(attrs = (Id, Depth, Countsketch), backing = OwnedBacking, marker = AsRecord)]
+pub struct CountsketchRow {
+    id: String,
+    depth: u64,
+    countsketch: Vec<i64>,
+
+    #[serde(skip)]
+    owned_backing: (),
 }

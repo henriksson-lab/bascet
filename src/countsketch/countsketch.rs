@@ -1,4 +1,4 @@
-use nthash_rs::{NtHash, canonical};
+use nthash_rs::{canonical, NtHash};
 
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
@@ -21,7 +21,10 @@ impl CountSketch {
     ///
     /// Panics if size is not a power of 2.
     pub fn new(size: usize) -> Self {
-        assert!(size != 0 && (size & (size - 1)) == 0, "size must be a power of 2");
+        assert!(
+            size != 0 && (size & (size - 1)) == 0,
+            "size must be a power of 2"
+        );
 
         CountSketch {
             sketch: vec![0; size],
@@ -35,8 +38,7 @@ impl CountSketch {
     /// Uses nthash rolling hash for efficient k-mer hashing.
     /// Processes canonical k-mer hashes
     pub fn add_sequence(&mut self, sequence: &[u8], k: u16) {
-        let mut hasher = NtHash::new(sequence, k, 1, 0)
-            .expect("Invalid sequence or k-mer size");
+        let mut hasher = NtHash::new(sequence, k, 1, 0).expect("Invalid sequence or k-mer size");
 
         while hasher.roll() {
             let canonical_hash = canonical(hasher.forward_hash(), hasher.reverse_hash());

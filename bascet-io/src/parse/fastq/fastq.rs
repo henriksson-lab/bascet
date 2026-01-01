@@ -13,11 +13,11 @@ impl Fastq {
 }
 
 #[derive(Composite, Default)]
-#[bascet(attrs = (Id, Sequence, Quality), backing = ArenaBacking, marker = AsRecord)]
+#[bascet(attrs = (Id, R0, Q0), backing = ArenaBacking, marker = AsRecord)]
 pub struct Record {
     pub id: &'static [u8],
-    pub sequence: &'static [u8],
-    pub quality: &'static [u8],
+    pub r0: &'static [u8],
+    pub q0: &'static [u8],
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
@@ -25,11 +25,11 @@ pub struct Record {
 }
 
 #[derive(Composite, Default, Clone)]
-#[bascet(attrs = (Id, Sequence, Quality), backing = OwnedBacking, marker = AsRecord)]
+#[bascet(attrs = (Id, R0, Q0), backing = OwnedBacking, marker = AsRecord)]
 pub struct OwnedRecord {
     id: Vec<u8>,
-    sequence: Vec<u8>,
-    quality: Vec<u8>,
+    r0: Vec<u8>,
+    q0: Vec<u8>,
 
     owned_backing: (),
 }
@@ -38,8 +38,8 @@ impl Into<OwnedRecord> for Record {
     fn into(self) -> OwnedRecord {
         OwnedRecord {
             id: self.id.to_vec(),
-            sequence: self.sequence.to_vec(),
-            quality: self.quality.to_vec(),
+            r0: self.r0.to_vec(),
+            q0: self.q0.to_vec(),
 
             owned_backing: (),
         }
@@ -86,8 +86,8 @@ impl Record {
 
         Self {
             id: static_id,
-            sequence: static_seq,
-            quality: static_qal,
+            r0: static_seq,
+            q0: static_qal,
             arena_backing: smallvec::smallvec![arena_view],
         }
     }

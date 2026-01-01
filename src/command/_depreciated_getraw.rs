@@ -24,7 +24,7 @@ use crate::barcode::atrandi_wgs_barcode::AtrandiWGSChemistry;
 use crate::barcode::general_barcode::GeneralCombinatorialBarcode;
 use crate::barcode::AtrandiRNAseqChemistry;
 use crate::barcode::Chemistry;
-use crate::barcode::ParseBioChemistry3;
+// use crate::barcode::ParseBioChemistry3;
 use crate::barcode::PetriseqChemistry;
 use crate::barcode::TenxRNAChemistry;
 use crate::fileformat::shard;
@@ -155,12 +155,13 @@ impl _depreciated_GetRawCMD {
         } else if self.chemistry == "10xrna" || self.chemistry == "10x_rna" {
             let _ = _depreciated_GetRaw::getraw(Arc::new(params_io), &mut TenxRNAChemistry::new());
         } else if self.chemistry == "pb_rnaseq" || self.chemistry == "pb_rna" {
-            let _ = _depreciated_GetRaw::getraw(
-                Arc::new(params_io),
-                &mut ParseBioChemistry3::new(
-                    &self.subchemistry, //TODO: option to be more specific
-                ),
-            );
+            // let _ = _depreciated_GetRaw::getraw(
+            //     Arc::new(params_io),
+            //     panic!()
+            //     &mut ParseBioChemistry3::new(
+            //         &self.subchemistry, //TODO: option to be more specific
+            //     ),
+            // );
         } else {
             bail!("Unidentified chemistry");
         }
