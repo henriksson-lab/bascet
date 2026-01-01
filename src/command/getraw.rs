@@ -21,7 +21,7 @@ use itertools::izip;
 
 use bascet_core::*;
 use bascet_derive::Budget;
-use bascet_io::{decode, parse};
+use bascet_io::{codec, parse};
 
 use crate::barcode::{Chemistry, CombinatorialBarcode8bp};
 use crate::bounded_parser;
