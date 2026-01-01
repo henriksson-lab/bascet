@@ -80,8 +80,6 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
             Some(pos) => pos,
             None => return ParseStatus::Error(()),
         };
-
-        // Collect tabs from tail and head
         let mut iter_tail = memchr::memchr_iter(b'\t', tail_remaining);
         let mut iter_head = memchr::memchr_iter(b'\t', slice_head);
 
