@@ -105,7 +105,7 @@ impl Record {
 )]
 pub struct Cell {
     id: &'static [u8],
-    
+
     #[collection]
     vec_r1: Vec<&'static [u8]>,
     #[collection]

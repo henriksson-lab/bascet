@@ -5,6 +5,6 @@ mod consts;
 mod stream;
 pub mod traits;
 
+pub(self) use consts::*;
 pub use stream::*;
 pub use traits::*;
-pub(self) use consts::*;

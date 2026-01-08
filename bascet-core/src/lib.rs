@@ -23,7 +23,7 @@ pub use parse::*;
 pub use query::*;
 pub use serialise::*;
 pub use stream::*;
-pub use writer::*;
 pub use utils::*;
+pub use writer::*;
 
 pub use bascet_derive::{define_attr, define_backing, Composite};
