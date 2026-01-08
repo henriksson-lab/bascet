@@ -48,7 +48,7 @@ where
                     )
                 }
                 StreamState::Spanning(spanning_tail) => {
-                    let arena_pool = &self.inner_decoder_arena_pool;
+                    let arena_pool = &self.inner_decoder_allocator;
                     self.inner_parser
                         .parse_spanning(&spanning_tail, &decoded, |sizeof_span| {
                             arena_pool.alloc(sizeof_span)

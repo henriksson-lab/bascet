@@ -22,7 +22,7 @@ pub(crate) enum StreamBufferState {
 }
 
 pub struct Stream<P, D, C, M> {
-    pub(crate) inner_decoder_arena_pool: Arc<ArenaPool<u8>>,
+    pub(crate) inner_decoder_allocator: Arc<ArenaPool<u8>>,
     pub(crate) inner_decoder_buffer_rx: rtrb::Consumer<StreamBufferState>,
     pub(crate) inner_decoder_thread: ManuallyDrop<JoinHandle<D>>,
     pub(crate) inner_decoder_flag_stop: Arc<AtomicBool>,
@@ -51,7 +51,8 @@ where
             { usize::MAX },
         >,
     ) -> Result<Self, ()> {
-        let arc_decoder_arena_pool = Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena).unwrap());
+        let arc_decoder_arena_pool =
+            Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena).unwrap());
         let arc_decoder_stop_flag = Arc::new(AtomicBool::new(false));
         let arc_shutdown_barrier = Arc::new(Barrier::new(2));
         let (handle, rx) = Self::spawn_decode_worker(
@@ -62,7 +63,7 @@ where
             Arc::clone(&arc_decoder_arena_pool),
         );
         Ok(Self {
-            inner_decoder_arena_pool: Arc::clone(&arc_decoder_arena_pool),
+            inner_decoder_allocator: Arc::clone(&arc_decoder_arena_pool),
             inner_decoder_buffer_rx: rx,
             inner_decoder_thread: ManuallyDrop::new(handle),
             inner_decoder_flag_stop: arc_decoder_stop_flag,
@@ -117,7 +118,8 @@ where
                                 "Decoder (push): pushing buffer_status (buffer full, consumer slow)",
                             );
 
-                            if likely_unlikely::unlikely(stop_flag.load(Ordering::Relaxed) == true) {
+                            if likely_unlikely::unlikely(stop_flag.load(Ordering::Relaxed) == true)
+                            {
                                 match &item {
                                     StreamBufferState::Eof | StreamBufferState::Error(_) => {
                                         // Keep waiting, must push these before thread exits

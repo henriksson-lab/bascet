@@ -17,9 +17,9 @@
 
 //     pub(crate) inner_encoder_arena_pool: Arc<ArenaPool<u8>>,
 //     pub(crate) inner_encoder_thread: ManuallyDrop<JoinHandle<E>>,
-    
+
 //     pub(crate) inner_writer: W,
-    
+
 //     pub(crate) inner_shutdown_flag: Arc<AtomicBool>,
 //     pub(crate) inner_shutdown_barrier: Arc<Barrier>,
 

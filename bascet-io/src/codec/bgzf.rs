@@ -21,7 +21,10 @@ impl Bgzf {
     #[builder]
     pub fn new<P: AsRef<Path>>(
         with_path: P,
-        #[builder(default = BoundedU64::const_new::<1>())] countof_threads: BoundedU64<1, { u64::MAX }>,
+        #[builder(default = BoundedU64::const_new::<1>())] countof_threads: BoundedU64<
+            1,
+            { u64::MAX },
+        >,
     ) -> Result<Self, ()> {
         let path = with_path.as_ref();
 
@@ -47,8 +50,8 @@ impl Bgzf {
         );
 
         // NOTE: alloc size in terms of alloc slots not bytes
-        let hts_sizeof_alloc =
-            ((countof_threads.get() * sizeof_bgzf_block.as_u64()) / (size_of::<u8>() as u64)) as usize;
+        let hts_sizeof_alloc = ((countof_threads.get() * sizeof_bgzf_block.as_u64())
+            / (size_of::<u8>() as u64)) as usize;
 
         let decoder = Self {
             inner_hts_file_ptr: hts_file_ptr,

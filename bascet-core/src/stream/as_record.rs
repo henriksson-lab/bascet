@@ -39,7 +39,7 @@ where
             let state = std::mem::replace(&mut self.inner_state, StreamState::Aligned);
             let result = match &state {
                 StreamState::Spanning(spanning_tail) => {
-                    let arena_pool = &self.inner_decoder_arena_pool;
+                    let arena_pool = &self.inner_decoder_allocator;
                     self.inner_parser
                         .parse_spanning(&spanning_tail, &decoded, |sizeof_span| {
                             arena_pool.alloc(sizeof_span)
@@ -76,19 +76,10 @@ where
                 }
             };
 
-            if likely_unlikely::likely(self.inner_context.is_some()) {
-                let context = unsafe { self.inner_context.as_mut().unwrap_unchecked() };
-                match query.apply(&parsed, &parsed) {
-                    QueryResult::Emit => return Ok(Some(parsed)),
-                    QueryResult::Discard => continue,
-                    QueryResult::Keep => unreachable!(),
-                }
-            } else {
-                match query.apply(&parsed, &parsed) {
-                    QueryResult::Emit => return Ok(Some(parsed)),
-                    QueryResult::Discard => continue,
-                    QueryResult::Keep => unreachable!(),
-                }
+            match query.apply(&parsed, &parsed) {
+                QueryResult::Emit => return Ok(Some(parsed)),
+                QueryResult::Discard => continue,
+                QueryResult::Keep => unreachable!(),
             }
         }
     }

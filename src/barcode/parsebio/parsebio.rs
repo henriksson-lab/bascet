@@ -39,7 +39,6 @@
 //         println!("{}", score);
 //         panic!("asdasd");
 //          */
-
 //         println!("Loading parse barcodes");
 
 //         //Load the possible barcode systems
@@ -142,7 +141,6 @@
 //         println!("{}", score);
 //         panic!("asdasd");
 //          */
-
 //         println!("Loading parse barcodes");
 
 //         //Load the possible barcode systems

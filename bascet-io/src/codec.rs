@@ -1,5 +1,5 @@
-pub mod bgzf;
 pub mod bbgz;
+pub mod bgzf;
 
-pub use bgzf::*;
 pub use bbgz::*;
+pub use bgzf::*;

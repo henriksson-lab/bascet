@@ -14,7 +14,7 @@ use clap::Args;
 use clio::InputPath;
 use crossbeam::channel::TryRecvError;
 use serde::Serialize;
-use serde_with::{serde_as, StringWithSeparator, formats::CommaSeparator};
+use serde_with::{formats::CommaSeparator, serde_as, StringWithSeparator};
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -260,12 +260,13 @@ impl CountsketchCMD {
                 }
             };
 
-
             let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
             budget.spawn::<TWrite, _, _>(0, move || {
                 let bufwriter = BufWriter::new(output_file);
-                let mut writer = csv::WriterBuilder::new().has_headers(false).from_writer(bufwriter);
-                
+                let mut writer = csv::WriterBuilder::new()
+                    .has_headers(false)
+                    .from_writer(bufwriter);
+
                 while let Ok(countsketch_row) = write_rx.recv() {
                     if countsketch_row.get_ref::<Id>().is_empty() {
                         continue;
@@ -274,7 +275,7 @@ impl CountsketchCMD {
                 }
                 let _ = writer.flush();
             });
-            
+
             let mut record_id_last: Vec<u8> = Vec::new();
             let mut cells_processed = 0u64;
             loop {

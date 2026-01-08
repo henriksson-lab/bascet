@@ -4,7 +4,6 @@ pub enum EncodeResult<E> {
     Error(E),
 }
 
-
 pub trait Encode {
     fn encode_into(source: &[u8], dest: &mut [u8]) -> EncodeResult<()>;
 }
