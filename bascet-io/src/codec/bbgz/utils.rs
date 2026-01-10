@@ -1,6 +1,7 @@
 use bounded_integer::BoundedI32;
 
 #[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
 pub struct Compression(BoundedI32<0, 12>);
 
 impl Compression {
@@ -17,9 +18,21 @@ impl Compression {
         Self(BoundedI32::const_new::<6>())
     }
 
-    // FIXME:   itd be better to get these values from libdeflater consts (MIN_COMPRESSION_LVL, MAX_COMPRESSION_LVL) but this is currently impossible
+    // FIXME:   itd be better to get these values from libdeflater consts (MIN_COMPRESSION_LVL + 1, MAX_COMPRESSION_LVL) but this is currently impossible
     pub const fn fastest() -> Self {
-        Self(BoundedI32::const_new::<0>())
+        Self(BoundedI32::const_new::<1>())
+    }
+}
+
+impl std::fmt::Display for Compression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.get())
+    }
+}
+
+impl From<BoundedI32<0, 12>> for Compression {
+    fn from(level: BoundedI32<0, 12>) -> Self {
+        Self(level)
     }
 }
 

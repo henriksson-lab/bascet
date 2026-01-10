@@ -1,4 +1,5 @@
 use bascet_core::*;
+use serde::Serialize;
 
 pub struct Tirp {
     pub(crate) inner_cursor: usize,
@@ -7,12 +8,12 @@ pub struct Tirp {
 #[bon::bon]
 impl Tirp {
     #[builder]
-    pub fn new() -> Result<Self, ()> {
-        Ok(Tirp { inner_cursor: 0 })
+    pub fn new() -> Self {
+        Self { inner_cursor: 0 }
     }
 }
 
-#[derive(Composite, Default, Clone)]
+#[derive(Composite, Default, Clone, Serialize)]
 #[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = ArenaBacking, marker = AsRecord)]
 pub struct Record {
     id: &'static [u8],
@@ -24,10 +25,11 @@ pub struct Record {
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
+    #[serde(skip)]
     pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
-#[derive(Composite, Default, Clone)]
+#[derive(Composite, Default, Clone, Serialize)]
 #[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = OwnedBacking, marker = AsRecord)]
 pub struct OwnedRecord {
     id: Vec<u8>,
@@ -37,6 +39,7 @@ pub struct OwnedRecord {
     q2: Vec<u8>,
     umi: Vec<u8>,
 
+    #[serde(skip)]
     owned_backing: (),
 }
 
@@ -96,7 +99,7 @@ impl Record {
     }
 }
 
-#[derive(Composite, Default)]
+#[derive(Composite, Default, Serialize)]
 #[bascet(
     attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
     backing = ArenaBacking,
@@ -119,10 +122,11 @@ pub struct Cell {
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
+    #[serde(skip)]
     pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
-#[derive(Composite, Default)]
+#[derive(Composite, Default, Serialize)]
 #[bascet(
     attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
     backing = OwnedBacking,
@@ -142,6 +146,7 @@ pub struct OwnedCell {
     #[collection]
     vec_umis: Vec<Vec<u8>>,
 
+    #[serde(skip)]
     owned_backing: (),
 }
 

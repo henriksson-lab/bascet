@@ -50,9 +50,9 @@ where
             2,
             { usize::MAX },
         >,
-    ) -> Result<Self, ()> {
+    ) -> Self {
         let arc_decoder_arena_pool =
-            Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena).unwrap());
+            Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena));
         let arc_decoder_stop_flag = Arc::new(AtomicBool::new(false));
         let arc_shutdown_barrier = Arc::new(Barrier::new(2));
         let (handle, rx) = Self::spawn_decode_worker(
@@ -62,7 +62,7 @@ where
             Arc::clone(&arc_shutdown_barrier),
             Arc::clone(&arc_decoder_arena_pool),
         );
-        Ok(Self {
+        Self {
             inner_decoder_allocator: Arc::clone(&arc_decoder_arena_pool),
             inner_decoder_buffer_rx: rx,
             inner_decoder_thread: ManuallyDrop::new(handle),
@@ -73,7 +73,7 @@ where
             inner_state: StreamState::Aligned,
             inner_context: None,
             _phantom: std::marker::PhantomData,
-        })
+        }
     }
 
     fn spawn_decode_worker(
@@ -125,7 +125,7 @@ where
                                         // Keep waiting, must push these before thread exits
                                     }
                                     StreamBufferState::Available(_) => {
-                                        shutdown_barrier.wait();
+                                        // shutdown_barrier.wait();
                                         break;
                                     }
                                 }
@@ -143,7 +143,8 @@ where
     pub unsafe fn shutdown(mut self) {
         self.inner_decoder_flag_stop.store(true, Ordering::Relaxed);
         // HACK: make sure stop flag is read
-        self.inner_shutdown_barrier.wait();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        // self.inner_shutdown_barrier.wait();
         while let Ok(buffer) = self.inner_decoder_buffer_rx.pop() {
             drop(buffer);
         }

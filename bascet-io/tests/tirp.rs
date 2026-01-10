@@ -24,7 +24,7 @@ use std::time::Instant;
 
 #[test]
 fn test_stream_bgzf_tirp() {
-    let decoder = codec::Bgzf::builder()
+    let decoder = codec::BBGZDecoder::builder()
         .with_path("../temp/29433167_merge_0_1.tirp.gz")
         .countof_threads(BoundedU64::const_new::<11>())
         .build()

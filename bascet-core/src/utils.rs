@@ -1,11 +1,11 @@
+pub mod channel;
 pub mod htsutils;
 pub mod likely_unlikely;
-mod send_ptr;
-pub mod sendable;
+pub mod send;
 pub mod spinpark_loop;
-mod teq;
+pub mod teq;
 
 pub use likely_unlikely::{likely, unlikely};
-pub use send_ptr::SendPtr;
-pub use sendable::Sendable;
+pub use send::SendCell;
+pub use send::SendPtr;
 pub use teq::TEq;
