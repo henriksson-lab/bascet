@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 #[test]
 fn test_stream_bgzf_fastq() {
-    let decoder = codec::Bgzf::builder()
+    let decoder = codec::BBGZDecoder::builder()
         .with_path("../data/P32705_1002_S1_L002_R1_001.fastq.gz")
         .countof_threads(BoundedU64::const_new::<11>())
         .build()

@@ -1,3 +1,4 @@
+use bytesize::ByteSize;
 use memmap2::MmapMut;
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
@@ -34,11 +35,16 @@ where
     }
 
     #[inline(always)]
-    pub(crate) unsafe fn truncate(mut self, len: usize) -> Self {
+    pub unsafe fn truncate(mut self, len: usize) -> Self {
         debug_assert!(len <= self.slice.as_ref().len());
         let ptr = self.slice.as_ptr() as *mut T;
         self.slice = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
         self
+    }
+
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.slice.len()
     }
 
     #[inline(always)]
@@ -247,16 +253,16 @@ pub struct ArenaPool<T: bytemuck::Pod> {
     inner_buf_arenas: Vec<UnsafeCell<Arena<T>>>,
     inner_cap_arenas: usize,
     inner_idx_hint: AtomicUsize,
+
+    sizeof_buffer: ByteSize,
+    sizeof_arena: ByteSize,
 }
 
 unsafe impl<T: bytemuck::Pod + Send> Send for ArenaPool<T> {}
 unsafe impl<T: bytemuck::Pod + Sync> Sync for ArenaPool<T> {}
 
 impl<T: bytemuck::Pod> ArenaPool<T> {
-    pub fn new(
-        sizeof_buffer: bytesize::ByteSize,
-        sizeof_arena: bytesize::ByteSize,
-    ) -> Result<Self, ()> {
+    pub fn new(sizeof_buffer: bytesize::ByteSize, sizeof_arena: bytesize::ByteSize) -> Self {
         let countof_arenas = (sizeof_buffer.as_u64() / sizeof_arena.as_u64()) as usize;
         let capof_arenas = sizeof_arena.as_u64() as usize / size_of::<T>();
 
@@ -265,16 +271,16 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
             countof_arenas >= 2,
             "need at least 2 arenas to prevent stalls (higher strongly recommended)"
         );
-        assert!(
-            sizeof_buffer >= DEFAULT_MIN_SIZEOF_BUFFER,
-            "buffer size should be at least {:?} (higher strongly recommended)",
-            DEFAULT_MIN_SIZEOF_BUFFER
-        );
-        assert!(
-            sizeof_arena >= DEFAULT_MIN_SIZEOF_ARENA,
-            "arena size should be at least {:?} (higher strongly recommended)",
-            DEFAULT_MIN_SIZEOF_ARENA
-        );
+        // assert!(
+        //     sizeof_buffer >= DEFAULT_MIN_SIZEOF_BUFFER,
+        //     "buffer size should be at least {:?} (higher strongly recommended)",
+        //     DEFAULT_MIN_SIZEOF_BUFFER
+        // );
+        // assert!(
+        //     sizeof_arena >= DEFAULT_MIN_SIZEOF_ARENA,
+        //     "arena size should be at least {:?} (higher strongly recommended)",
+        //     DEFAULT_MIN_SIZEOF_ARENA
+        // );
 
         unsafe {
             let mut vec_arenas = Vec::with_capacity(countof_arenas);
@@ -290,12 +296,15 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                 )));
             }
 
-            Ok(Self {
+            Self {
                 _mmap: mmap,
                 inner_cap_arenas: capof_arenas,
                 inner_buf_arenas: vec_arenas,
                 inner_idx_hint: AtomicUsize::new(0),
-            })
+
+                sizeof_buffer: sizeof_buffer,
+                sizeof_arena: sizeof_arena,
+            }
         }
     }
 

@@ -4,7 +4,7 @@ use bascet_core::{
     *,
 };
 use bascet_derive::Budget;
-use bascet_io::{decode, parse, tirp};
+use bascet_io::{codec, parse, tirp};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;

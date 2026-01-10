@@ -9,10 +9,13 @@ repository.workspace = true
 [dependencies]
 bascet-derive = { path = "../bascet-derive" }
 bascet-variadic = { path = "../bascet-variadic" }
+binary-heap-plus = "0.5.0"
 bon = "3.8.1"
 bounded-integer = "0.6.1"
 bytemuck = "1.24.0"
 bytesize = "2.2.0"
+compare = "0.1.0"
+crossbeam = "0.8.4"
 memmap2 = "0.9.9"
 rtrb = "0.3.2"
 rust-htslib = "0.51.0"

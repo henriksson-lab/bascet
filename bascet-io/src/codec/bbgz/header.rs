@@ -1,4 +1,7 @@
-use std::io::{Seek, Write};
+use std::{
+    io::{Seek, Write},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use binrw::{binrw, BinWrite};
 use smart_default::SmartDefault;
@@ -30,7 +33,7 @@ pub struct BBGZHeader {
     pub OS: u8,
     // Size of extra field
     pub XLEN: u16,
-    // Extra field subfields 
+    // Extra field subfields
     #[brw(ignore)]
     pub FEXTRA: Vec<BBGZExtra>,
 }
@@ -38,7 +41,12 @@ pub struct BBGZHeader {
 impl BBGZHeader {
     pub const SSIZE: usize = 12;
 
-    pub fn new(mtime: u32) -> Self {
+    pub fn new() -> Self {
+        let mtime = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+
         Self {
             MTIME: mtime,
             ..Default::default()
@@ -54,16 +62,21 @@ impl BBGZHeader {
     where
         W: Write + Seek,
     {
-        self.FEXTRA.push(BBGZExtra::from(BGZFExtra::new(0)));
         let xlen: usize = self.FEXTRA.iter().map(|e| e.size()).sum();
+        // NOTE: BGZFExtra only has a static size
+        let xlen: usize = xlen + BGZFExtra::SSIZE;
         self.XLEN = xlen as u16;
+
         let bsize = BBGZHeader::SSIZE + xlen + clen + BBGZTrailer::SSIZE - 1;
-        self.FEXTRA.last_mut().unwrap().DATA = (bsize as u16).to_le_bytes().to_vec();
 
         BinWrite::write(self, writer);
         for extra in &self.FEXTRA {
             BinWrite::write(extra, writer);
         }
+
+        // NOTE: bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
+        let bgzf_extra = BGZFExtra::new(bsize as u16);
+        BinWrite::write(&bgzf_extra, writer);
 
         Ok(())
     }

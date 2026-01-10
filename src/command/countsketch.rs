@@ -5,7 +5,7 @@ use crate::{
 
 use bascet_core::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
 use bascet_derive::Budget;
-use bascet_io::{codec, parse, tirp};
+use bascet_io::{codec, parse, tirp, BBGZHeader, BBGZWriter};
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
@@ -156,6 +156,7 @@ impl CountsketchCMD {
             .maybe_numof_threads_work(self.numof_threads_work)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
+
         budget.validate();
 
         log_info!(
@@ -171,20 +172,19 @@ impl CountsketchCMD {
         let numof_threads_work = (*budget.threads::<TWork>()).get();
 
         for (input_idx, input) in self.paths_in.iter().enumerate() {
-            let decoder = codec::Bgzf::builder()
+            let decoder = codec::BBGZDecoder::builder()
                 .with_path(input.path().path())
                 .countof_threads(budget.numof_threads_read)
-                .build()
-                .unwrap();
-            let parser = parse::Tirp::builder().build().unwrap();
+                .build();
+            let parser = parse::Tirp::builder()
+                .build();
 
             let mut stream = Stream::builder()
                 .with_decoder(decoder)
                 .with_parser(parser)
                 .sizeof_decode_arena(self.sizeof_stream_arena)
                 .sizeof_decode_buffer(budget.sizeof_stream_buffer)
-                .build()
-                .unwrap();
+                .build();
 
             let mut query = stream.query::<tirp::Record>();
 
@@ -263,17 +263,19 @@ impl CountsketchCMD {
             let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
             budget.spawn::<TWrite, _, _>(0, move || {
                 let bufwriter = BufWriter::new(output_file);
-                let mut writer = csv::WriterBuilder::new()
+                let mut csvwriter = csv::WriterBuilder::new()
                     .has_headers(false)
                     .from_writer(bufwriter);
 
                 while let Ok(countsketch_row) = write_rx.recv() {
-                    if countsketch_row.get_ref::<Id>().is_empty() {
+                    let id = countsketch_row.get_ref::<Id>();
+                    if id.is_empty() {
                         continue;
                     }
-                    writer.serialize(&countsketch_row).unwrap();
+                    csvwriter.serialize(&countsketch_row).unwrap();
                 }
-                let _ = writer.flush();
+
+                csvwriter.flush();
             });
 
             let mut record_id_last: Vec<u8> = Vec::new();

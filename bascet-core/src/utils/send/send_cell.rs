@@ -1,11 +1,11 @@
 #[repr(transparent)]
-pub struct Sendable<T>(T);
+pub struct SendCell<T>(T);
 
-unsafe impl<T> Send for Sendable<T> {}
-impl<T> Sendable<T> {
+unsafe impl<T> Send for SendCell<T> {}
+impl<T> SendCell<T> {
     #[inline(always)]
     pub const unsafe fn new(value: T) -> Self {
-        Sendable(value)
+        SendCell(value)
     }
 
     #[inline(always)]
@@ -24,7 +24,7 @@ impl<T> Sendable<T> {
     }
 }
 
-impl<T> std::ops::Deref for Sendable<T> {
+impl<T> std::ops::Deref for SendCell<T> {
     type Target = T;
 
     #[inline(always)]
@@ -33,7 +33,7 @@ impl<T> std::ops::Deref for Sendable<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for Sendable<T> {
+impl<T> std::ops::DerefMut for SendCell<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0

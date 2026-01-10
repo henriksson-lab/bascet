@@ -1,12 +1,15 @@
 mod block;
 mod consts;
+mod decode;
 mod header;
 mod utils;
-mod writer;
+mod write;
+
 
 pub(self) use consts::*;
-pub(self) use utils::*;
 
 pub use block::*;
+pub use decode::*;
 pub use header::*;
-pub use writer::BBGZWriter;
+pub use utils::*;
+pub use write::*;

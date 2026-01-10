@@ -1,4 +1,4 @@
-pub trait Collection {
+pub trait AsCollection {
     type Item;
     type Iter<'a>: Iterator<Item = &'a Self::Item>
     where
@@ -13,7 +13,7 @@ pub trait Collection {
     fn iter(&self) -> Self::Iter<'_>;
 }
 
-impl<T> Collection for Vec<T> {
+impl<T> AsCollection for Vec<T> {
     type Item = T;
     type Iter<'a>
         = std::slice::Iter<'a, T>
@@ -46,11 +46,11 @@ where
     S: crate::Get<A>,
     A: crate::Attr,
     <S as crate::Get<A>>::Value: Clone,
-    <T as crate::Get<A>>::Value: Collection<Item = <S as crate::Get<A>>::Value>,
+    <T as crate::Get<A>>::Value: AsCollection<Item = <S as crate::Get<A>>::Value>,
 {
     #[inline(always)]
     fn push(&mut self, source: &S) {
-        Collection::push(
+        AsCollection::push(
             <T as crate::Get<A>>::as_mut(self),
             Clone::clone(<S as crate::Get<A>>::as_ref(source)),
         );
