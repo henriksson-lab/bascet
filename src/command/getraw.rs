@@ -71,9 +71,9 @@ pub struct GetRawCMD {
         long = "threads",
         help = "Total threads to use",
         value_name = "6..",
-        value_parser = bounded_parser!(BoundedU64<7, { u64::MAX }>),
+        value_parser = bounded_parser!(BoundedU64<6, { u64::MAX }>),
     )]
-    total_threads: Option<BoundedU64<7, { u64::MAX }>>,
+    total_threads: Option<BoundedU64<6, { u64::MAX }>>,
 
     #[arg(
         long = "countof-threads-read",
@@ -94,10 +94,10 @@ pub struct GetRawCMD {
     #[arg(
         long = "countof-threads-sort",
         help = "Number of sorting threads",
-        value_name = "2..",
-        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+        value_name = "1..",
+        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
-    countof_threads_sort: Option<BoundedU64<2, { u64::MAX }>>,
+    countof_threads_sort: Option<BoundedU64<1, { u64::MAX }>>,
 
     #[arg(
         long = "countof-threads-write",
@@ -211,34 +211,34 @@ pub enum GetRawChemistry {
 #[derive(Budget, Debug)]
 struct GetrawBudget {
     #[threads(Total)]
-    threads: BoundedU64<7, { u64::MAX }>,
+    threads: BoundedU64<6, { u64::MAX }>,
 
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.15) as u64))]
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
     countof_threads_read: BoundedU64<2, { u64::MAX }>,
 
     #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.15) as u64))]
     countof_threads_debarcode: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.1) as u64))]
-    countof_threads_sort: BoundedU64<2, { u64::MAX }>,
+    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
+    countof_threads_sort: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
+    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
-    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.35) as u64))]
+    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_compress: BoundedU64<1, { u64::MAX }>,
 
-    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.25) as u64))]
+    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.3) as u64))]
     sizeof_stream_buffer: ByteSize,
 
-    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.25) as u64))]
+    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
     sizeof_sort_buffer: ByteSize,
 
-    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.25) as u64))]
+    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))]
     sizeof_compress_buffer: ByteSize,
-    #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.25) as u64))]
+    #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
     sizeof_compress_raw_buffer: ByteSize,
 }
 
@@ -846,6 +846,7 @@ fn spawn_collector(
         ByteSize(sizeof_buffer_sort / countof_threads_sort);
     let mut countof_each_sort_alloc = 0;
 
+    log_info!("sizeof_each_sort_alloc"; "sizeof_each_sort_alloc" => %sizeof_each_sort_alloc);
     let ct_handle = budget.spawn::<Total, _, _>(0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
@@ -915,12 +916,12 @@ fn spawn_sort_workers(
     ct_rx: Receiver<Vec<(u32, DebarcodedRecord)>>,
     chemistry: GetRawChemistry,
     budget: &GetrawBudget,
-) -> (Receiver<Vec<OwnedDebarcodedRecord>>, Vec<JoinHandle<()>>) {
-    let countof_sort_threads = (*budget.threads::<TSort>()).get();
-    let mut thread_handles = Vec::with_capacity(countof_sort_threads as usize);
+) -> (Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>, Vec<JoinHandle<()>>) {
+    let countof_threads_sort = (*budget.threads::<TSort>()).get();
+    let mut thread_handles = Vec::with_capacity(countof_threads_sort as usize);
     let (st_tx, st_rx) = crossbeam::channel::bounded(1);
 
-    for thread_idx in 0..countof_sort_threads {
+    for thread_idx in 0..countof_threads_sort {
         let ct_rx = ct_rx.clone();
         let st_tx = st_tx.clone();
         let thread_chemistry = chemistry.clone();
@@ -945,21 +946,8 @@ fn spawn_sort_workers(
                 glidesort::sort_by(&mut records_with_bc, |(bc_a, _), (bc_b, _)| {
                     Ord::cmp(bc_b, bc_a)
                 });
-                let mut owned_list: Vec<OwnedDebarcodedRecord> =
-                    Vec::with_capacity(records_with_bc.len());
-                let halfway = records_with_bc.len() / 2;
 
-                while let Some((id_as_bc, record)) = records_with_bc.pop() {
-                    let mut owned: OwnedDebarcodedRecord = record.into();
-                    *owned.get_mut::<Id>() = id_as_bc;
-                    owned_list.push(owned);
-
-                    if records_with_bc.len() == halfway {
-                        records_with_bc.shrink_to_fit();
-                    }
-                }
-
-                let _ = st_tx.send(owned_list);
+                let _ = st_tx.send(records_with_bc);
             }
         });
         thread_handles.push(thread_handle);
@@ -970,7 +958,7 @@ fn spawn_sort_workers(
 }
 
 fn spawn_chunk_writers(
-    st_rx: Receiver<Vec<OwnedDebarcodedRecord>>,
+    st_rx: Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>,
     timestamp_temp_files: String,
     path_temp_dir: PathBuf,
     budget: &GetrawBudget,
@@ -999,12 +987,12 @@ fn spawn_chunk_writers(
             while let Ok(sorted_record_list) = st_rx.recv() {
                 let thread_counter = thread_counter.fetch_add(1, Ordering::Relaxed) + 1;
                 let temp_fname = format!(
-                    "{}_merge_0_{thread_counter}.tirp.gz",
+                    "{}_merge_0_{thread_counter}",
                     *thread_timestamp_temp_files
                 );
                 let temp_pathbuf = thread_path_temp_dir
                     .join(temp_fname)
-                    .with_extension("tirp.gz");
+                    .with_extension("tirp.bbgz");
 
                 let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
@@ -1014,13 +1002,15 @@ fn spawn_chunk_writers(
                 };
 
                 let temp_output_file = match temp_output_path.create() {
-                    Ok(file) => file,
+                    Ok(file) => {
+                        file
+                    },
                     Err(e) => {
                         log_critical!("Failed to create output file"; "path" => ?temp_pathbuf, "error" => %e);
                     }
                 };
-                
-                let bufwriter = BufWriter::new(temp_output_file.clone());
+
+                let bufwriter = BufWriter::with_capacity(u16::MAX as usize * 32, temp_output_file.clone());
                 let mut bbgzwriter = BBGZWriter::builder()
                     .countof_threads(countof_write_each_compress_threads)
                     .sizeof_compression_buffer(sizeof_write_each_compress_buffer)
@@ -1028,25 +1018,44 @@ fn spawn_chunk_writers(
                     .with_writer(bufwriter)
                     .build();
 
-                for record in &sorted_record_list {
-                    let mut bbgzheader = BBGZHeader::new();
-                    bbgzheader.add_extra(b"ID", record.get_ref::<Id>().to_vec());
-                    let mut blockwriter = bbgzwriter.begin(bbgzheader);
-                    {
-                        let mut tsvwriter = csv::WriterBuilder::new()
-                            .delimiter(b'\t')
-                            .has_headers(false)
-                            .from_writer(&mut blockwriter);
-                        tsvwriter.serialize(record);
+                let mut records_writen = 0;
+                let mut last_id = Vec::new();
+                let mut blockwriter = bbgzwriter.begin(BBGZHeader::new());
+
+                for (id, mut record) in sorted_record_list {
+                    if id != last_id {
+                        blockwriter.flush();
+                        last_id = id;
+
+                        let mut bbgzheader = BBGZHeader::new();
+                        bbgzheader.add_extra(b"ID", last_id.clone());
+                        blockwriter = bbgzwriter.begin(bbgzheader);
                     }
-                    blockwriter.flush();
+
+                    // SAFETY: safe because blockwriter is COW
+                    *record.get_mut::<Id>() = unsafe { std::mem::transmute(last_id.as_slice()) };
+                    let _ = blockwriter.write_all(record.as_bytes::<Id>());
+                    let _ = blockwriter.write_all(b"\t");
+                    let _ = blockwriter.write_all(record.as_bytes::<R1>());
+                    let _ = blockwriter.write_all(b"\t");
+                    let _ = blockwriter.write_all(record.as_bytes::<R2>());
+                    let _ = blockwriter.write_all(b"\t");
+                    let _ = blockwriter.write_all(record.as_bytes::<Q1>());
+                    let _ = blockwriter.write_all(b"\t");
+                    let _ = blockwriter.write_all(record.as_bytes::<Q2>());
+                    let _ = blockwriter.write_all(b"\t");
+                    let _ = blockwriter.write_all(record.as_bytes::<Umi>());
+                    let _ = blockwriter.write_all(b"\n");
+                    records_writen += 1;
                 }
+
+                blockwriter.flush();
 
                 let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
                     Err(e) => panic!("{}", e)
                 };
-                log_info!("Wrote debarcoded cell chunk"; "path" => ?temp_pathbuf, "records written" => sorted_record_list.len());
+                log_info!("Wrote debarcoded cell chunk"; "path" => ?temp_pathbuf, "records written" => records_writen);
                 thread_vec_temp_written.push(temp_input_path);
             }
             return thread_vec_temp_written;
@@ -1067,14 +1076,14 @@ fn spawn_mergesort_workers(
 ) {
     let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
     let (ms_tx, ms_rx) = crossbeam::channel::bounded(4);
-    let countof_sort_threads: u64 = (*budget.threads::<TSort>()).get();
-    let countof_read_threads: u64 = (*budget.threads::<TRead>()).get();
+    let countof_threads_sort: u64 = (*budget.threads::<TSort>()).get();
+    let countof_threads_read: u64 = (*budget.threads::<TRead>()).get();
     let countof_stream_each_threads =
-        BoundedU64::new_saturating(countof_read_threads / (countof_sort_threads * 2));
+        BoundedU64::new_saturating(countof_threads_read / (countof_threads_sort * 2));
     let sizeof_stream_each_arena = stream_arena;
     let sizeof_stream_buffer = budget.mem::<MStreamBuffer>().as_u64();
     let sizeof_stream_each_buffer =
-        ByteSize(sizeof_stream_buffer / (countof_sort_threads * 2));
+        ByteSize(sizeof_stream_buffer / (countof_threads_sort * 2));
 
     let mut thread_handles = Vec::new();
 
@@ -1136,7 +1145,7 @@ fn spawn_mergesort_workers(
     });
     thread_handles.push(producer_handle);
 
-    for thread_idx in 0..countof_sort_threads {
+    for thread_idx in 0..countof_threads_sort {
         let fp_rx = fp_rx.clone();
         let ms_tx = ms_tx.clone();
 
@@ -1281,7 +1290,7 @@ fn spawn_mergesort_writers(
                 );
                 let temp_pathbuf = thread_path_temp_dir
                     .join(temp_fname)
-                    .with_extension("tirp.gz");
+                    .with_extension("tirp.bbgz");
                 let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
                     Err(e) => {
@@ -1334,7 +1343,7 @@ fn spawn_mergesort_writers(
     return thread_handles;
 }
 
-#[derive(Composite, Default)]
+#[derive(Composite, Default, Serialize)]
 #[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = ArenaBacking, marker = AsRecord)]
 pub struct DebarcodedRecord {
     id: &'static [u8],
@@ -1346,36 +1355,37 @@ pub struct DebarcodedRecord {
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
+     #[serde(skip)]
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
-impl Into<OwnedDebarcodedRecord> for DebarcodedRecord {
-    fn into(self) -> OwnedDebarcodedRecord {
-        OwnedDebarcodedRecord {
-            id: self.id.to_vec(),
-            r1: self.r1.to_vec(),
-            r2: self.r2.to_vec(),
-            q1: self.q1.to_vec(),
-            q2: self.q2.to_vec(),
-            umi: self.umi.to_vec(),
-            owned_backing: (),
-        }
-    }
-}
+// impl Into<OwnedDebarcodedRecord> for DebarcodedRecord {
+//     fn into(self) -> OwnedDebarcodedRecord {
+//         OwnedDebarcodedRecord {
+//             id: self.id.to_vec(),
+//             r1: self.r1.to_vec(),
+//             r2: self.r2.to_vec(),
+//             q1: self.q1.to_vec(),
+//             q2: self.q2.to_vec(),
+//             umi: self.umi.to_vec(),
+//             owned_backing: (),
+//         }
+//     }
+// }
 
-#[derive(Composite, Default, Clone, Serialize)]
-#[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = OwnedBacking, marker = AsRecord)]
-pub struct OwnedDebarcodedRecord {
-    id: Vec<u8>,
-    r1: Vec<u8>,
-    r2: Vec<u8>,
-    q1: Vec<u8>,
-    q2: Vec<u8>,
-    umi: Vec<u8>,
+// #[derive(Composite, Default, Clone, Serialize)]
+// #[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = OwnedBacking, marker = AsRecord)]
+// pub struct OwnedDebarcodedRecord {
+//     id: Vec<u8>,
+//     r1: Vec<u8>,
+//     r2: Vec<u8>,
+//     q1: Vec<u8>,
+//     q2: Vec<u8>,
+//     umi: Vec<u8>,
 
-    #[serde(skip)]
-    owned_backing: (),
-}
+//     #[serde(skip)]
+//     owned_backing: (),
+// }
 
 #[derive(Composite, Default, Serialize)]
 #[bascet(

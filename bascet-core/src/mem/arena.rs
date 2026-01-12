@@ -309,7 +309,7 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
     }
 
     pub fn alloc(&self, len: usize) -> ArenaSlice<T> {
-        assert!(len <= self.inner_cap_arenas);
+        assert!(len <= self.inner_cap_arenas, "{:?} > {:?}", len, self.inner_cap_arenas);
         let countof_arenas = self.inner_buf_arenas.len();
 
         unsafe {

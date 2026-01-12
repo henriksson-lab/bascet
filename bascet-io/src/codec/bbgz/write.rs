@@ -1,19 +1,14 @@
 use std::{
-    cell::UnsafeCell,
     io::{Seek, Write},
-    mem::MaybeUninit,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
     },
     thread::JoinHandle,
-    time::{SystemTime, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 
 use bascet_core::{
-    channel::OrderedReceiver,
-    spinpark_loop::{self, SPINPARK_PARKS_BEFORE_WARN},
-    ArenaPool, ArenaSlice, SendCell, SendPtr, DEFAULT_SIZEOF_BUFFER,
+    ArenaPool, DEFAULT_SIZEOF_BUFFER, channel::{OrderedReceiver, OrderedSender}
 };
 
 use bounded_integer::BoundedU64;
@@ -23,7 +18,7 @@ use libdeflater::{CompressionLvl, Compressor};
 
 use crate::{
     bbgz::{
-        usize_MAX_SIZEOF_BLOCK, usize_MIN_SIZEOF_BLOCK, BBGZHeader, Compression, MARKER_EOF,
+        usize_MAX_SIZEOF_BLOCK, BBGZHeader, Compression, MARKER_EOF,
         MAX_SIZEOF_BLOCK,
     },
     BBGZCompressedBlock, BBGZRawBlock, BBGZTrailer, BBGZWriteBlock,
@@ -44,10 +39,10 @@ pub struct BBGZWriter {
     pub(crate) inner_raw_allocator: Arc<ArenaPool<u8>>,
     pub(crate) inner_compression_allocator: Arc<ArenaPool<u8>>,
 
-    pub(crate) inner_compression_key: u64,
-    pub(crate) inner_compression_tx: Sender<(u64, BBGZCompressionJob)>,
-    pub(crate) inner_compression_workers: Vec<JoinHandle<()>>,
+    pub(crate) inner_compression_key: usize,
     pub(crate) inner_compression_level: CompressionLvl,
+    pub(crate) inner_compression_tx: Sender<(usize, BBGZCompressionJob)>,
+    pub(crate) inner_compression_workers: Vec<JoinHandle<()>>,
 
     pub(crate) inner_write_worker: JoinHandle<()>,
 }
@@ -71,23 +66,28 @@ impl BBGZWriter {
         let raw_allocator = Arc::new(ArenaPool::new(sizeof_raw_buffer, MAX_SIZEOF_BLOCK));
         // NOTE: compression workers calculate the size.
         // This should in theory be == deflate_compress_bound(raw.buf.len());
+        // deflate_compress_bound can be slightly larger than input, so add headroom
         let compression_allocator =
             Arc::new(ArenaPool::new(sizeof_compression_buffer, MAX_SIZEOF_BLOCK));
-        let (compression_tx, compression_rx) = crossbeam::channel::unbounded();
         let compression_lvl = CompressionLvl::from(compression);
 
-        let (write_tx, write_rx) = crossbeam::channel::unbounded();
-        let write_rx = OrderedReceiver::new(write_rx, 0, |k: &u64| k + 1);
+        let (compression_tx, compression_rx) = 
+            crossbeam::channel::unbounded();
+        let (write_tx, write_rx) = 
+            bascet_core::channel::ordered::<BBGZCompressionResult, 4096>();
 
         let compression_workers = Self::spawn_compression_workers(
             Arc::clone(&compression_allocator),
             compression_rx,
             compression_lvl,
-            write_tx.clone(),
+            write_tx,
             countof_threads,
         );
 
-        let write_worker = Self::spawn_write_worker(with_writer, write_rx);
+        let write_worker = Self::spawn_write_worker(
+            with_writer,
+            write_rx
+        );
 
         return Self {
             inner_raw_allocator: raw_allocator,
@@ -112,7 +112,7 @@ impl BBGZWriter {
 
     /// SAFETY must ensure contracts for writing a block are met, i.e.: atomic writes only (no splitting across boundaries)
     pub(crate) unsafe fn submit_compress(&mut self, header: BBGZHeader, raw: BBGZRawBlock) {
-        self.inner_compression_tx.send((
+        let _ = self.inner_compression_tx.send((
             self.inner_compression_key,
             BBGZCompressionJob {
                 header: header,
@@ -124,9 +124,9 @@ impl BBGZWriter {
 
     fn spawn_compression_workers(
         compression_alloc: Arc<ArenaPool<u8>>,
-        compression_rx: Receiver<(u64, BBGZCompressionJob)>,
+        compression_rx: Receiver<(usize, BBGZCompressionJob)>,
         compression_lvl: CompressionLvl,
-        write_tx: Sender<(u64, BBGZCompressionResult)>,
+        write_tx: OrderedSender<BBGZCompressionResult, 4096>,
         countof_threads: BoundedU64<1, { u64::MAX }>,
     ) -> Vec<JoinHandle<()>> {
         let mut handles = Vec::new();
@@ -140,15 +140,18 @@ impl BBGZWriter {
                 std::thread::Builder::new()
                     .name(format!("BBGZCompression@{}", idx))
                     .spawn(move || {
-                        while let Ok((k, job)) = thread_compression_rx.recv() {
+                        loop {
+                            let (k, job) = match thread_compression_rx.recv() {
+                                Ok(v) => v,
+                                Err(_) => break,
+                            };
+
                             let mut raw = job.raw;
                             let crc32 = crc32fast::hash(raw.buf.as_slice());
                             raw.crc32 = Some(crc32);
 
-                            let sizeof_alloc_needed =
-                                thread_compressor.deflate_compress_bound(raw.buf.len());
                             let mut buf_compressed =
-                                thread_compression_alloc.alloc(sizeof_alloc_needed);
+                                thread_compression_alloc.alloc(usize_MAX_SIZEOF_BLOCK);
 
                             let buf_compressed = unsafe {
                                 // SAFETY: we always allocate as many bytes as uncompressed data needs therefore this cannot fail
@@ -164,14 +167,13 @@ impl BBGZWriter {
                             let compressed = BBGZCompressedBlock {
                                 buf: buf_compressed,
                             };
-
                             let job_result = BBGZCompressionResult {
                                 header: job.header,
                                 raw: raw,
                                 compressed: compressed,
                             };
 
-                            thread_write_tx.send((k, job_result));
+                            thread_write_tx.send(k, job_result);
                         }
                     })
                     .unwrap(),
@@ -180,18 +182,22 @@ impl BBGZWriter {
         handles
     }
 
-    fn spawn_write_worker<W, F>(
+    fn spawn_write_worker<W>(
         mut writer: W,
-        mut write_rx: OrderedReceiver<u64, BBGZCompressionResult, F>,
+        mut write_rx: OrderedReceiver<BBGZCompressionResult, 4096>,
     ) -> JoinHandle<()>
     where
         W: Write + Seek + Send + 'static,
-        F: Fn(&u64) -> u64 + 'static,
     {
         std::thread::Builder::new()
             .name("BBGZWrite@0".to_string())
             .spawn(move || {
-                while let Ok(res) = write_rx.recv_ordered() {
+                loop {
+                    let res = match write_rx.recv() {
+                        Ok(r) => r,
+                        Err(_) => break,
+                    };
+
                     let mut header = res.header;
                     let raw = res.raw;
                     let compressed = res.compressed;
@@ -203,13 +209,13 @@ impl BBGZWriter {
                         )
                     };
 
-                    header.write_header(&mut writer, compressed.buf.len());
-                    writer.write_all(&compressed.buf.as_slice());
-                    trailer.write_trailer(&mut writer);
+                    let _ = header.write_header(&mut writer, compressed.buf.len());
+                    let _ = writer.write_all(&compressed.buf.as_slice());
+                    let _ = trailer.write_trailer(&mut writer);
                 }
 
-                writer.write_all(MARKER_EOF);
-                writer.flush();
+                let _ = writer.write_all(MARKER_EOF);
+                let _ = writer.flush();
             })
             .unwrap()
     }

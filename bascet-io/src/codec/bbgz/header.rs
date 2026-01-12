@@ -58,9 +58,9 @@ impl BBGZHeader {
         self
     }
 
-    pub fn write_header<W>(&mut self, writer: &mut W, clen: usize) -> Result<(), ()>
+    pub fn write_header<W>(&mut self, writer: &mut W, clen: usize) -> std::io::Result<()>
     where
-        W: Write + Seek,
+        W: Write,
     {
         let xlen: usize = self.FEXTRA.iter().map(|e| e.size()).sum();
         // NOTE: BGZFExtra only has a static size
@@ -69,14 +69,30 @@ impl BBGZHeader {
 
         let bsize = BBGZHeader::SSIZE + xlen + clen + BBGZTrailer::SSIZE - 1;
 
-        BinWrite::write(self, writer);
+        // Write header manually to avoid Seek requirement
+        writer.write_all(&[self.ID1])?;
+        writer.write_all(&[self.ID2])?;
+        writer.write_all(&[self.CM])?;
+        writer.write_all(&[self.FLG])?;
+        writer.write_all(&self.MTIME.to_le_bytes())?;
+        writer.write_all(&[self.XFL])?;
+        writer.write_all(&[self.OS])?;
+        writer.write_all(&self.XLEN.to_le_bytes())?;
+
+        // Write FEXTRA manually
         for extra in &self.FEXTRA {
-            BinWrite::write(extra, writer);
+            writer.write_all(&[extra.SI1])?;
+            writer.write_all(&[extra.SI2])?;
+            writer.write_all(&(extra.DATA.len() as u16).to_le_bytes())?;
+            writer.write_all(&extra.DATA)?;
         }
 
         // NOTE: bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
         let bgzf_extra = BGZFExtra::new(bsize as u16);
-        BinWrite::write(&bgzf_extra, writer);
+        writer.write_all(&[bgzf_extra.SI1])?;
+        writer.write_all(&[bgzf_extra.SI2])?;
+        writer.write_all(&bgzf_extra.LEN.to_le_bytes())?;
+        writer.write_all(&bgzf_extra.BSIZE.to_le_bytes())?;
 
         Ok(())
     }
@@ -174,12 +190,12 @@ impl BBGZTrailer {
         }
     }
 
-    pub fn write_trailer<W>(&self, writer: &mut W) -> Result<(), ()>
+    pub fn write_trailer<W>(&self, writer: &mut W) -> std::io::Result<()>
     where
-        W: Write + Seek,
+        W: Write,
     {
-        self.write(writer);
-
+        writer.write_all(&self.CRC32.to_le_bytes())?;
+        writer.write_all(&self.ISIZE.to_le_bytes())?;
         Ok(())
     }
 }
