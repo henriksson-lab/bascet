@@ -30,9 +30,9 @@ pub trait Composite: Sized {
     fn get_mut<'a, G: crate::Mut<'a, Self>>(&'a mut self) -> G::Output {
         G::get_mut(self)
     }
-    #[inline(always)]                                                                         
-    fn as_bytes<'a, G: crate::AsBytes<'a, Self>>(&'a self) -> G::Output {                     
-        G::as_bytes(self)                                                                     
+    #[inline(always)]
+    fn as_bytes<'a, G: crate::AsBytes<'a, Self>>(&'a self) -> G::Output {
+        G::as_bytes(self)
     }
 }
 

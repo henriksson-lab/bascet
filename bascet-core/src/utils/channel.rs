@@ -1,5 +1,8 @@
-mod ordered_receiver;
-mod peekable_receiver;
+mod ordered;
+mod peekable;
 
-pub use ordered_receiver::OrderedReceiver;
-pub use peekable_receiver::PeekableReceiver;
+pub use ordered::ordered;
+pub use ordered::OrderedReceiver;
+pub use ordered::OrderedSender;
+
+pub use peekable::PeekableReceiver;
