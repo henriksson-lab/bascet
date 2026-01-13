@@ -1,9 +1,9 @@
 use std::io::{BufRead, BufWriter, Cursor, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
@@ -24,6 +24,32 @@ use serde::Serialize;
 use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
 use crate::{bbgz_compression_parser, bounded_parser};
 use crate::{common, log_critical, log_info, log_warning};
+
+struct ChannelStats {
+    name: &'static str,
+    total_wait: AtomicU64,
+    count: AtomicU64,
+}
+
+impl ChannelStats {
+    fn new(name: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            name,
+            total_wait: AtomicU64::new(0),
+            count: AtomicU64::new(0),
+        })
+    }
+
+    fn record_wait(&self, duration: Duration) {
+        self.total_wait.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        let count = self.count.fetch_add(1, Ordering::Relaxed) + 1;
+
+        if count % 10 == 0 {
+            let avg_ms = self.total_wait.load(Ordering::Relaxed) as f64 / count as f64;
+            eprintln!("{}: avg wait {:.2}ns over {}M calls", self.name, avg_ms, count as f64 / 1e6);
+        }
+    }
+}
 
 #[derive(Args)]
 pub struct GetRawCMD {
@@ -216,10 +242,10 @@ struct GetrawBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_read: BoundedU64<2, { u64::MAX }>,
 
-    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.15) as u64))]
+    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.1) as u64))]
     countof_threads_debarcode: BoundedU64<1, { u64::MAX }>,
 
     #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
@@ -227,13 +253,13 @@ struct GetrawBudget {
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
-    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
+    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
     countof_threads_compress: BoundedU64<1, { u64::MAX }>,
 
-    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.3) as u64))]
+    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.4) as u64))]
     sizeof_stream_buffer: ByteSize,
 
-    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
+    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.3) as u64))]
     sizeof_sort_buffer: ByteSize,
 
     #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))]
@@ -728,22 +754,22 @@ fn spawn_debarcode_router(
 
         loop {
         match (r1_rx.recv(), r2_rx.recv()) {
-            (Ok(r1), Ok(r2)) => {
-                let _ = rp_tx.send((r1, r2));
+                (Ok(r1), Ok(r2)) => {
+                    let _ = rp_tx.send((r1, r2));
+                }
+                (Err(_), Err(_)) => {
+                    log_info!("Both R1 and R2 channels closed, router finishing");
+                    break;
+                }
+                (Ok(_), Err(_)) => {
+                    log_warning!("R2 channel closed but R1 still has data");
+                    break;
+                }
+                (Err(_), Ok(_)) => {
+                    log_warning!("R1 channel closed but R2 still has data");
+                    break;
+                }
             }
-            (Err(_), Err(_)) => {
-                log_info!("Both R1 and R2 channels closed, router finishing");
-                break;
-            }
-            (Ok(_), Err(_)) => {
-                log_warning!("R2 channel closed but R1 still has data");
-                break;
-            }
-            (Err(_), Ok(_)) => {
-                log_warning!("R1 channel closed but R2 still has data");
-                break;
-            }
-        }
         }
     });
 
@@ -856,9 +882,23 @@ fn spawn_collector(
             Vec::with_capacity(countof_each_sort_alloc);
         let mut sizeof_sort_alloc = ByteSize(0);
         let timeout = std::time::Duration::from_secs(4);
+
+        let mut time_recv = Duration::ZERO;
+        let mut time_calc = Duration::ZERO;
+        let mut time_send = Duration::ZERO;
+        let mut time_push = Duration::ZERO;
+        let mut count = 0u64;
+
         loop {
-            match db_rx.recv_timeout(timeout) {
+            let start_recv = Instant::now();
+            let recv_result = db_rx.recv_timeout(timeout);
+            time_recv += start_recv.elapsed();
+
+            match recv_result {
                 Ok((bc_index, db_record)) => {
+                    count += 1;
+
+                    let start_calc = Instant::now();
                     let cell_mem_size = ByteSize(
                         (db_record.get_ref::<Id>().len()
                             + db_record.get_ref::<R1>().len()
@@ -867,23 +907,48 @@ fn spawn_collector(
                             + db_record.get_ref::<Q2>().len()
                             + db_record.get_ref::<Umi>().len()) as u64,
                     );
+                    time_calc += start_calc.elapsed();
 
                     if cell_mem_size + sizeof_sort_alloc
                         > sizeof_each_sort_alloc
                     {
-                        let sizeof_mean_sort_alloc = 
+                        let start_send = Instant::now();
+                        let sizeof_mean_sort_alloc =
                             sizeof_sort_alloc.as_u64() / collection_buffer.len() as u64;
                         let _ = ct_tx.send(collection_buffer);
-                        countof_each_sort_alloc = 
+                        countof_each_sort_alloc =
                             (sizeof_sort_alloc.as_u64() / sizeof_mean_sort_alloc) as usize;
 
-                        collection_buffer = 
+                        collection_buffer =
                             Vec::with_capacity(countof_each_sort_alloc);
                         sizeof_sort_alloc = ByteSize(0);
+                        time_send += start_send.elapsed();
                     }
 
+                    let start_push = Instant::now();
                     collection_buffer.push((bc_index, db_record));
+                    let time_push_actual = start_push.elapsed();
+
+                    let start_add = Instant::now();
                     sizeof_sort_alloc += cell_mem_size;
+                    let time_add = start_add.elapsed();
+
+                    time_push += time_push_actual + time_add;
+
+                    if count % 10_000_000 == 0 {
+                        let total_active = time_calc.as_secs_f64() + time_send.as_secs_f64() + time_push.as_secs_f64();
+                        eprintln!("collector[{}M]: recv={:.2}ms | calc={:.2}ms ({:.1}%) send={:.2}ms ({:.1}%) push={:.2}ms ({:.1}%), add={:2}ms({:.1}%))",
+                            count / 1_000_000,
+                            time_recv.as_secs_f64() * 1000.0,
+                            time_calc.as_secs_f64() * 1000.0,
+                            (time_calc.as_secs_f64() / total_active) * 100.0,
+                            time_send.as_secs_f64() * 1000.0,
+                            (time_send.as_secs_f64() / total_active) * 100.0,
+                            time_push.as_secs_f64() * 1000.0,
+                            (time_push.as_secs_f64() / total_active) * 100.0,
+                            time_add.as_secs_f64() * 1000.0,
+                            (time_add.as_secs_f64() / total_active) * 100.0);
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if !collection_buffer.is_empty() {
@@ -919,7 +984,7 @@ fn spawn_sort_workers(
 ) -> (Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>, Vec<JoinHandle<()>>) {
     let countof_threads_sort = (*budget.threads::<TSort>()).get();
     let mut thread_handles = Vec::with_capacity(countof_threads_sort as usize);
-    let (st_tx, st_rx) = crossbeam::channel::bounded(1);
+    let (st_tx, st_rx) = crossbeam::channel::unbounded();
 
     for thread_idx in 0..countof_threads_sort {
         let ct_rx = ct_rx.clone();
@@ -931,7 +996,16 @@ fn spawn_sort_workers(
             let thread_name = thread.name().unwrap_or("unknown thread");
             log_info!("Starting sort worker"; "thread" => thread_name);
 
-            while let Ok(vec_bc_indices_db_records) = ct_rx.recv() {
+            let stats = ChannelStats::new("sort_worker_recv");
+
+            loop {
+                let start = Instant::now();
+                let recv_result = ct_rx.recv();
+                stats.record_wait(start.elapsed());
+
+                let Ok(vec_bc_indices_db_records) = recv_result else {
+                    break;
+                };
                 // HACK: Convert barcode before sorting for correct ordering
                 // NOTE: sort in descending order to be able to pop off the end (O(1) rather than O(n))
                 // NOTE: to save memory conversion to owned cells is NOT done via map but rather by popping
@@ -1075,7 +1149,7 @@ fn spawn_mergesort_workers(
     Vec<JoinHandle<()>>,
 ) {
     let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
-    let (ms_tx, ms_rx) = crossbeam::channel::bounded(4);
+    let (ms_tx, ms_rx) = crossbeam::channel::unbounded();
     let countof_threads_sort: u64 = (*budget.threads::<TSort>()).get();
     let countof_threads_read: u64 = (*budget.threads::<TRead>()).get();
     let countof_stream_each_threads =
@@ -1355,7 +1429,7 @@ pub struct DebarcodedRecord {
 
     // SAFETY: exposed ONLY to allow conversion outside this crate.
     //         be VERY careful modifying this at all
-     #[serde(skip)]
+    #[serde(skip)]
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
