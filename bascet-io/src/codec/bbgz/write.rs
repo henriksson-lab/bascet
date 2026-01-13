@@ -1,14 +1,13 @@
 use std::{
     io::{Seek, Write},
-    sync::{
-        Arc,
-    },
+    sync::Arc,
     thread::JoinHandle,
     time::UNIX_EPOCH,
 };
 
 use bascet_core::{
-    ArenaPool, DEFAULT_SIZEOF_BUFFER, channel::{OrderedReceiver, OrderedSender}
+    channel::{OrderedReceiver, OrderedSender},
+    ArenaPool, DEFAULT_SIZEOF_BUFFER,
 };
 
 use bounded_integer::BoundedU64;
@@ -17,10 +16,7 @@ use crossbeam::channel::{Receiver, Sender};
 use libdeflater::{CompressionLvl, Compressor};
 
 use crate::{
-    bbgz::{
-        usize_MAX_SIZEOF_BLOCK, BBGZHeader, Compression, MARKER_EOF,
-        MAX_SIZEOF_BLOCK,
-    },
+    codec::bbgz::{usize_MAX_SIZEOF_BLOCK, BBGZHeader, Compression, MARKER_EOF, MAX_SIZEOF_BLOCK},
     BBGZCompressedBlock, BBGZRawBlock, BBGZTrailer, BBGZWriteBlock,
 };
 
@@ -71,10 +67,8 @@ impl BBGZWriter {
             Arc::new(ArenaPool::new(sizeof_compression_buffer, MAX_SIZEOF_BLOCK));
         let compression_lvl = CompressionLvl::from(compression);
 
-        let (compression_tx, compression_rx) = 
-            crossbeam::channel::unbounded();
-        let (write_tx, write_rx) = 
-            bascet_core::channel::ordered::<BBGZCompressionResult, 4096>();
+        let (compression_tx, compression_rx) = crossbeam::channel::unbounded();
+        let (write_tx, write_rx) = bascet_core::channel::ordered::<BBGZCompressionResult, 16384>();
 
         let compression_workers = Self::spawn_compression_workers(
             Arc::clone(&compression_allocator),
@@ -84,10 +78,7 @@ impl BBGZWriter {
             countof_threads,
         );
 
-        let write_worker = Self::spawn_write_worker(
-            with_writer,
-            write_rx
-        );
+        let write_worker = Self::spawn_write_worker(with_writer, write_rx);
 
         return Self {
             inner_raw_allocator: raw_allocator,
@@ -126,7 +117,7 @@ impl BBGZWriter {
         compression_alloc: Arc<ArenaPool<u8>>,
         compression_rx: Receiver<(usize, BBGZCompressionJob)>,
         compression_lvl: CompressionLvl,
-        write_tx: OrderedSender<BBGZCompressionResult, 4096>,
+        write_tx: OrderedSender<BBGZCompressionResult, 16384>,
         countof_threads: BoundedU64<1, { u64::MAX }>,
     ) -> Vec<JoinHandle<()>> {
         let mut handles = Vec::new();
@@ -184,7 +175,7 @@ impl BBGZWriter {
 
     fn spawn_write_worker<W>(
         mut writer: W,
-        mut write_rx: OrderedReceiver<BBGZCompressionResult, 4096>,
+        mut write_rx: OrderedReceiver<BBGZCompressionResult, 16384>,
     ) -> JoinHandle<()>
     where
         W: Write + Seek + Send + 'static,

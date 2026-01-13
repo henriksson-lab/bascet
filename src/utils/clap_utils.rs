@@ -17,13 +17,10 @@ macro_rules! bbgz_compression_parser {
         bbgz_compression_parser!(bascet_io::Compression)
     };
     ($compression_type:ty) => {
-        clap::builder::TypedValueParser::try_map(
-            clap::value_parser!(i32).range(0..=12),
-            |n| {
-                bounded_integer::BoundedI32::<0, 12>::new(n)
-                    .map(<$compression_type>::from)
-                    .ok_or("Compression level out of bounds")
-            }
-        )
+        clap::builder::TypedValueParser::try_map(clap::value_parser!(i32).range(0..=12), |n| {
+            bounded_integer::BoundedI32::<0, 12>::new(n)
+                .map(<$compression_type>::from)
+                .ok_or("Compression level out of bounds")
+        })
     };
 }

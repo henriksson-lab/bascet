@@ -176,8 +176,7 @@ impl CountsketchCMD {
                 .with_path(input.path().path())
                 .countof_threads(budget.numof_threads_read)
                 .build();
-            let parser = parse::Tirp::builder()
-                .build();
+            let parser = parse::Tirp::builder().build();
 
             let mut stream = Stream::builder()
                 .with_decoder(decoder)

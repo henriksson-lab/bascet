@@ -153,10 +153,3 @@ where
         }
     }
 }
-
-/*
-Can you check:
-  1. ls -la temp/29432994_* - Are there files in the middle of being written?
-  2. lsof -p <pid> - What files does the process have open?
-  3. strace -p <pid> - What system call is it stuck on?
- */

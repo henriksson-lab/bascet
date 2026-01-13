@@ -8,5 +8,8 @@ bascet_derive::define_attr!(
     Q2,
     Umi,
     Depth,
-    Countsketch
+    Countsketch,
+    Header,
+    Raw,
+    Trailer,
 );

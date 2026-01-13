@@ -5,10 +5,8 @@ mod header;
 mod utils;
 mod write;
 
-
-pub(self) use consts::*;
-
 pub use block::*;
+pub use consts::*;
 pub use decode::*;
 pub use header::*;
 pub use utils::*;

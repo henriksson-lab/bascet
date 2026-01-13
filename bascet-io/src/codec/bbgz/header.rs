@@ -41,6 +41,13 @@ pub struct BBGZHeader {
 impl BBGZHeader {
     pub const SSIZE: usize = 12;
 
+    pub const ID1_MAGIC: u8 = 0x1F;
+    pub const ID2_MAGIC: u8 = 0x8B;
+    pub const CM_DEFLATE: u8 = 8;
+    pub const FLG_DEFAULT: u8 = 0b0000_0101; // FTEXT | FEXTRA
+    pub const XFL_BEST_COMPRESSION: u8 = 2;
+    pub const OS_UNKNOWN: u8 = 255;
+
     pub fn new() -> Self {
         let mtime = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -69,7 +76,6 @@ impl BBGZHeader {
 
         let bsize = BBGZHeader::SSIZE + xlen + clen + BBGZTrailer::SSIZE - 1;
 
-        // Write header manually to avoid Seek requirement
         writer.write_all(&[self.ID1])?;
         writer.write_all(&[self.ID2])?;
         writer.write_all(&[self.CM])?;
@@ -79,7 +85,6 @@ impl BBGZHeader {
         writer.write_all(&[self.OS])?;
         writer.write_all(&self.XLEN.to_le_bytes())?;
 
-        // Write FEXTRA manually
         for extra in &self.FEXTRA {
             writer.write_all(&[extra.SI1])?;
             writer.write_all(&[extra.SI2])?;
@@ -149,6 +154,10 @@ pub struct BGZFExtra {
 
 impl BGZFExtra {
     pub const SSIZE: usize = 6;
+
+    pub const SI1_BGZF: u8 = b'B';
+    pub const SI2_BGZF: u8 = b'C';
+    pub const LEN_BGZF: u16 = 2;
 
     pub fn new(bsize: u16) -> Self {
         Self {
