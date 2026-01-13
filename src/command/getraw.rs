@@ -297,11 +297,14 @@ impl GetRawCMD {
             .build();
 
         budget.validate();
-
+        
         log_info!(
             "Starting GetRaw";
             "using" => %budget,
         );
+        if *self.compression_level.inner() == 0 {
+            log_warning!("Compression level is 0 (uncompressed)")
+        }
 
         let mut vec_input_debarcode_merge = self.skip_debarcode.clone().unwrap_or(Vec::new());
 

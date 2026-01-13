@@ -22,6 +22,10 @@ impl Compression {
     pub const fn fastest() -> Self {
         Self(BoundedI32::const_new::<1>())
     }
+
+    pub fn inner(&self) -> &BoundedI32<0, 12> {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for Compression {
