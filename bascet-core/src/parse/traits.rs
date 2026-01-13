@@ -10,12 +10,14 @@ pub trait Parse<T> {
 
     fn parse_aligned(&mut self, decoded: &T) -> ParseResult<Self::Item, ()>;
 
-    fn parse_spanning(
+    fn parse_spanning<FA>(
         &mut self,
         decoded_spanning_tail: &T,
         decoded_spanning_head: &T,
-        alloc: impl FnMut(usize) -> T,
-    ) -> ParseResult<Self::Item, ()>;
+        alloc: FA,
+    ) -> ParseResult<Self::Item, ()>
+    where
+        FA: FnMut(usize) -> T;
 
     fn parse_finish(&mut self) -> ParseResult<Self::Item, ()>;
 }

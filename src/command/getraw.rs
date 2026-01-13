@@ -1,4 +1,5 @@
-use std::io::{BufRead, BufWriter, Cursor, Write};
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Cursor, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -14,42 +15,19 @@ use clap::{Args, Subcommand};
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use gxhash::HashMapExt;
-use itertools::{Itertools, izip};
+use itertools::{izip, Itertools};
 
 use bascet_core::*;
 use bascet_derive::Budget;
-use bascet_io::{BBGZHeader, BBGZWriter, codec::{self, bbgz}, parse};
+use bascet_io::{
+    codec::{self, bbgz},
+    parse, BBGZHeader, BBGZWriter,
+};
 use serde::Serialize;
 
 use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
 use crate::{bbgz_compression_parser, bounded_parser};
 use crate::{common, log_critical, log_info, log_warning};
-
-struct ChannelStats {
-    name: &'static str,
-    total_wait: AtomicU64,
-    count: AtomicU64,
-}
-
-impl ChannelStats {
-    fn new(name: &'static str) -> Arc<Self> {
-        Arc::new(Self {
-            name,
-            total_wait: AtomicU64::new(0),
-            count: AtomicU64::new(0),
-        })
-    }
-
-    fn record_wait(&self, duration: Duration) {
-        self.total_wait.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
-        let count = self.count.fetch_add(1, Ordering::Relaxed) + 1;
-
-        if count % 10 == 0 {
-            let avg_ms = self.total_wait.load(Ordering::Relaxed) as f64 / count as f64;
-            eprintln!("{}: avg wait {:.2}ns over {}M calls", self.name, avg_ms, count as f64 / 1e6);
-        }
-    }
-}
 
 #[derive(Args)]
 pub struct GetRawCMD {
@@ -256,13 +234,13 @@ struct GetrawBudget {
     #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
     countof_threads_compress: BoundedU64<1, { u64::MAX }>,
 
-    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.4) as u64))]
+    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.5) as u64))]
     sizeof_stream_buffer: ByteSize,
 
-    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.3) as u64))]
+    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))]
     sizeof_sort_buffer: ByteSize,
 
-    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))]
+    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
     sizeof_compress_buffer: ByteSize,
     #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
     sizeof_compress_raw_buffer: ByteSize,
@@ -297,7 +275,7 @@ impl GetRawCMD {
             .build();
 
         budget.validate();
-        
+
         log_info!(
             "Starting GetRaw";
             "using" => %budget,
@@ -588,7 +566,7 @@ impl GetRawCMD {
                     log_warning!("Failed moving {final_path:?} > {output_path:?}"; "error" => %e);
                     let output_path = match OutputPath::try_from(&**final_path.path()) {
                         Ok(path) => path,
-                        Err(e) => panic!("{e}")
+                        Err(e) => panic!("{e}"),
                     };
                     output_paths.push(output_path);
                 }
@@ -597,7 +575,7 @@ impl GetRawCMD {
 
         let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
         for (i, output_path) in output_paths.into_iter().enumerate() {
-             // NOTE fine to use all threads briefly. Nothing else does work anymore
+            // NOTE fine to use all threads briefly. Nothing else does work anymore
             let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
             let decoder = codec::BBGZDecoder::builder()
                 .with_path(output_path.path().path())
@@ -614,7 +592,7 @@ impl GetRawCMD {
                 .build();
 
             let mut query = stream
-                .query::<DebarcodedPartialCell>()
+                .query::<tirp::Cell>()
                 .group_relaxed_with_context::<Id, Id, _>(
                     |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
                         std::cmp::Ordering::Less => panic!("Unordered record list\nCurrent ID: {:?}\nContext ID: {:?}\nCurrent (lossy): {}\nContext (lossy): {}",
@@ -625,7 +603,7 @@ impl GetRawCMD {
                 );
 
             while let Ok(Some(cell)) = query.next() {
-                let n = cell.as_records().len() as u64;
+                let n = cell.get_ref::<R1>().len() as u64;
                 let _ = *hist_hashmap
                     .entry(cell.get_ref::<Id>().to_vec())
                     .and_modify(|c| *c += n)
@@ -637,7 +615,7 @@ impl GetRawCMD {
             } else {
                 match OutputPath::try_from(&format!("{}.hist", output_path)) {
                     Ok(path) => path,
-                    Err(e) => panic!("{e}")
+                    Err(e) => panic!("{e}"),
                 }
             };
 
@@ -691,8 +669,7 @@ fn spawn_paired_readers(
                 .with_path(input_r1.path().path())
                 .countof_threads(stream_each_n_threads)
                 .build();
-            let p1 = parse::Fastq::builder()
-                .build();
+            let p1 = parse::Fastq::builder().build();
 
             let mut s1 = Stream::builder()
                 .with_decoder(d1)
@@ -722,8 +699,7 @@ fn spawn_paired_readers(
                 .with_path(input_r2.path().path())
                 .countof_threads(stream_each_n_threads)
                 .build();
-            let p2 = parse::Fastq::builder()
-                .build();
+            let p2 = parse::Fastq::builder().build();
 
             let mut s2 = Stream::builder()
                 .with_decoder(d2)
@@ -756,7 +732,7 @@ fn spawn_debarcode_router(
         log_info!("Starting debarcode router"; "thread" => thread_name);
 
         loop {
-        match (r1_rx.recv(), r2_rx.recv()) {
+            match (r1_rx.recv(), r2_rx.recv()) {
                 (Ok(r1), Ok(r2)) => {
                     let _ = rp_tx.send((r1, r2));
                 }
@@ -871,8 +847,7 @@ fn spawn_collector(
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
     let countof_threads_sort = (*budget.threads::<TSort>()).get();
     let sizeof_buffer_sort = budget.mem::<MSortBuffer>().as_u64();
-    let sizeof_each_sort_alloc =
-        ByteSize(sizeof_buffer_sort / countof_threads_sort);
+    let sizeof_each_sort_alloc = ByteSize(sizeof_buffer_sort / countof_threads_sort);
     let mut countof_each_sort_alloc = 0;
 
     log_info!("sizeof_each_sort_alloc"; "sizeof_each_sort_alloc" => %sizeof_each_sort_alloc);
@@ -886,22 +861,9 @@ fn spawn_collector(
         let mut sizeof_sort_alloc = ByteSize(0);
         let timeout = std::time::Duration::from_secs(4);
 
-        let mut time_recv = Duration::ZERO;
-        let mut time_calc = Duration::ZERO;
-        let mut time_send = Duration::ZERO;
-        let mut time_push = Duration::ZERO;
-        let mut count = 0u64;
-
         loop {
-            let start_recv = Instant::now();
-            let recv_result = db_rx.recv_timeout(timeout);
-            time_recv += start_recv.elapsed();
-
-            match recv_result {
+            match db_rx.recv_timeout(timeout) {
                 Ok((bc_index, db_record)) => {
-                    count += 1;
-
-                    let start_calc = Instant::now();
                     let cell_mem_size = ByteSize(
                         (db_record.get_ref::<Id>().len()
                             + db_record.get_ref::<R1>().len()
@@ -910,59 +872,31 @@ fn spawn_collector(
                             + db_record.get_ref::<Q2>().len()
                             + db_record.get_ref::<Umi>().len()) as u64,
                     );
-                    time_calc += start_calc.elapsed();
 
-                    if cell_mem_size + sizeof_sort_alloc
-                        > sizeof_each_sort_alloc
-                    {
-                        let start_send = Instant::now();
+                    if cell_mem_size + sizeof_sort_alloc > sizeof_each_sort_alloc {
                         let sizeof_mean_sort_alloc =
                             sizeof_sort_alloc.as_u64() / collection_buffer.len() as u64;
                         let _ = ct_tx.send(collection_buffer);
                         countof_each_sort_alloc =
                             (sizeof_sort_alloc.as_u64() / sizeof_mean_sort_alloc) as usize;
 
-                        collection_buffer =
-                            Vec::with_capacity(countof_each_sort_alloc);
+                        collection_buffer = Vec::with_capacity(countof_each_sort_alloc);
                         sizeof_sort_alloc = ByteSize(0);
-                        time_send += start_send.elapsed();
                     }
-
-                    let start_push = Instant::now();
+                    // NOTE 80-90% of time spent in this thread is spent on pushing data
+                    // TODO [GOOD FIRST ISSUE] improve performance by recycling memory
                     collection_buffer.push((bc_index, db_record));
-                    let time_push_actual = start_push.elapsed();
-
-                    let start_add = Instant::now();
                     sizeof_sort_alloc += cell_mem_size;
-                    let time_add = start_add.elapsed();
-
-                    time_push += time_push_actual + time_add;
-
-                    if count % 10_000_000 == 0 {
-                        let total_active = time_calc.as_secs_f64() + time_send.as_secs_f64() + time_push.as_secs_f64();
-                        eprintln!("collector[{}M]: recv={:.2}ms | calc={:.2}ms ({:.1}%) send={:.2}ms ({:.1}%) push={:.2}ms ({:.1}%), add={:2}ms({:.1}%))",
-                            count / 1_000_000,
-                            time_recv.as_secs_f64() * 1000.0,
-                            time_calc.as_secs_f64() * 1000.0,
-                            (time_calc.as_secs_f64() / total_active) * 100.0,
-                            time_send.as_secs_f64() * 1000.0,
-                            (time_send.as_secs_f64() / total_active) * 100.0,
-                            time_push.as_secs_f64() * 1000.0,
-                            (time_push.as_secs_f64() / total_active) * 100.0,
-                            time_add.as_secs_f64() * 1000.0,
-                            (time_add.as_secs_f64() / total_active) * 100.0);
-                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if !collection_buffer.is_empty() {
-                         let sizeof_mean_sort_alloc = 
+                        let sizeof_mean_sort_alloc =
                             sizeof_sort_alloc.as_u64() / collection_buffer.len() as u64;
                         let _ = ct_tx.send(collection_buffer);
-                        countof_each_sort_alloc = 
+                        countof_each_sort_alloc =
                             (sizeof_sort_alloc.as_u64() / sizeof_mean_sort_alloc) as usize;
 
-                        collection_buffer = 
-                            Vec::with_capacity(countof_each_sort_alloc);
+                        collection_buffer = Vec::with_capacity(countof_each_sort_alloc);
                         sizeof_sort_alloc = ByteSize(0);
                     }
                 }
@@ -984,7 +918,10 @@ fn spawn_sort_workers(
     ct_rx: Receiver<Vec<(u32, DebarcodedRecord)>>,
     chemistry: GetRawChemistry,
     budget: &GetrawBudget,
-) -> (Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>, Vec<JoinHandle<()>>) {
+) -> (
+    Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>,
+    Vec<JoinHandle<()>>,
+) {
     let countof_threads_sort = (*budget.threads::<TSort>()).get();
     let mut thread_handles = Vec::with_capacity(countof_threads_sort as usize);
     let (st_tx, st_rx) = crossbeam::channel::unbounded();
@@ -999,16 +936,7 @@ fn spawn_sort_workers(
             let thread_name = thread.name().unwrap_or("unknown thread");
             log_info!("Starting sort worker"; "thread" => thread_name);
 
-            let stats = ChannelStats::new("sort_worker_recv");
-
-            loop {
-                let start = Instant::now();
-                let recv_result = ct_rx.recv();
-                stats.record_wait(start.elapsed());
-
-                let Ok(vec_bc_indices_db_records) = recv_result else {
-                    break;
-                };
+            while let Ok(vec_bc_indices_db_records) = ct_rx.recv() {
                 // HACK: Convert barcode before sorting for correct ordering
                 // NOTE: sort in descending order to be able to pop off the end (O(1) rather than O(n))
                 // NOTE: to save memory conversion to owned cells is NOT done via map but rather by popping
@@ -1042,9 +970,12 @@ fn spawn_chunk_writers(
 ) -> Vec<JoinHandle<Vec<InputPath>>> {
     let countof_write_threads = (*budget.threads::<TWrite>()).get();
     let countof_compress_threads = (*budget.threads::<TCompress>()).get();
-    let countof_write_each_compress_threads = BoundedU64::new_saturating(countof_compress_threads / countof_write_threads);
-    let sizeof_write_each_compress_buffer = ByteSize(budget.mem::<MCompressBuffer>().as_u64() / countof_write_threads);
-    let sizeof_write_each_compress_raw_buffer = ByteSize(budget.mem::<MCompressRawBuffer>().as_u64() / countof_write_threads);
+    let countof_write_each_compress_threads =
+        BoundedU64::new_saturating(countof_compress_threads / countof_write_threads);
+    let sizeof_write_each_compress_buffer =
+        ByteSize(budget.mem::<MCompressBuffer>().as_u64() / countof_write_threads);
+    let sizeof_write_each_compress_raw_buffer =
+        ByteSize(budget.mem::<MCompressRawBuffer>().as_u64() / countof_write_threads);
     let mut thread_handles = Vec::with_capacity(countof_write_threads as usize);
     let atomic_counter = Arc::new(AtomicUsize::new(0));
 
@@ -1147,20 +1078,17 @@ fn spawn_mergesort_workers(
     debarcode_merge: Vec<InputPath>,
     budget: &GetrawBudget,
     stream_arena: ByteSize,
-) -> (
-    Receiver<Receiver<DebarcodedPartialCell>>,
-    Vec<JoinHandle<()>>,
-) {
+) -> (Receiver<Receiver<parse::bbgz::Block>>, Vec<JoinHandle<()>>) {
     let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
     let (ms_tx, ms_rx) = crossbeam::channel::unbounded();
     let countof_threads_sort: u64 = (*budget.threads::<TSort>()).get();
     let countof_threads_read: u64 = (*budget.threads::<TRead>()).get();
-    let countof_stream_each_threads =
-        BoundedU64::new_saturating(countof_threads_read / (countof_threads_sort * 2));
+    let countof_threads_mergesort: u64 = countof_threads_sort;
+
     let sizeof_stream_each_arena = stream_arena;
     let sizeof_stream_buffer = budget.mem::<MStreamBuffer>().as_u64();
-    let sizeof_stream_each_buffer =
-        ByteSize(sizeof_stream_buffer / (countof_threads_sort * 2));
+    let sizeof_sort_buffer = budget.mem::<MSortBuffer>().as_u64();
+    let sizeof_stream_each_buffer = ByteSize((sizeof_stream_buffer + sizeof_sort_buffer) / (countof_threads_mergesort * 2));
 
     let mut thread_handles = Vec::new();
 
@@ -1177,12 +1105,17 @@ fn spawn_mergesort_workers(
             let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
             let _ = producer_ms_tx.send(mc_rx);
 
-            let d1 = codec::BBGZDecoder::builder()
-                .with_path(last_file.path().path())
-                .countof_threads(countof_stream_each_threads)
+            let f1 = match File::open(&**last_file.path()) {
+                Ok(file_handle) => file_handle,
+                Err(e) => panic!("{e}"),
+            };
+
+            let b1 = BufReader::new(f1);
+            let d1 = codec::plain::PlaintextDecoder::builder()
+                .with_reader(b1)
                 .build();
-            let p1 = parse::Tirp::builder()
-                .build();
+
+            let p1 = parse::bbgz::parser();
 
             let mut s1 = Stream::builder()
                 .with_decoder(d1)
@@ -1191,26 +1124,13 @@ fn spawn_mergesort_workers(
                 .sizeof_decode_buffer(sizeof_stream_each_buffer)
                 .build();
 
-            let mut q1 = s1
-                .query::<DebarcodedPartialCell>()
-                .group_relaxed_with_context::<Id, Id, _>(
-                    |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                        std::cmp::Ordering::Less => panic!(
-                            "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
-                            last_file.path(),
-                            String::from_utf8_lossy(id),
-                            String::from_utf8_lossy(id_ctx)
-                        ),
-                        std::cmp::Ordering::Equal => QueryResult::Keep,
-                        std::cmp::Ordering::Greater => QueryResult::Emit,
-                    },
-                );
+            let mut q1 = s1.query::<parse::bbgz::Block>();
 
             while let Ok(Some(cell)) = q1.next() {
                 let _ = mc_tx.send(cell);
             }
-            if let Err(e) = std::fs::remove_file(last_file.path().path()) {
-                log_critical!("Failed to delete odd file."; "path" => ?last_file.path(), "error" => %e);
+            if let Err(e) = std::fs::remove_file(&**last_file.path()) {
+                log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
             }
         }
 
@@ -1222,7 +1142,7 @@ fn spawn_mergesort_workers(
     });
     thread_handles.push(producer_handle);
 
-    for thread_idx in 0..countof_threads_sort {
+    for thread_idx in 0..countof_threads_mergesort {
         let fp_rx = fp_rx.clone();
         let ms_tx = ms_tx.clone();
 
@@ -1231,18 +1151,23 @@ fn spawn_mergesort_workers(
             let thread_name = thread.name().unwrap_or("unknown thread");
             log_info!("Starting mergesort worker"; "thread" => thread_name);
 
-            while let Ok((fa, fb)) = fp_rx.recv() {
-                log_info!("Merging pair: {:?} + {:?}", &fa.path(), &fb.path());
+            while let Ok((ia, ib)) = fp_rx.recv() {
+                log_info!("Merging pair: {} + {}", &ia, &ib);
                 // HACK: Use bounded channel to prevent memory accumulation when writer is slow
                 let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
                 let _ = ms_tx.send(mc_rx);
 
-                let da = codec::BBGZDecoder::builder()
-                    .with_path(fa.path().path())
-                    .countof_threads(countof_stream_each_threads)
+                let fa = match ia.clone().open() {
+                    Ok(file_handle) => file_handle,
+                    Err(e) => panic!("{e}"),
+                };
+
+                let ba = BufReader::new(fa);
+                let da = codec::plain::PlaintextDecoder::builder()
+                    .with_reader(ba)
                     .build();
-                let pa = parse::Tirp::builder()
-                    .build();
+
+                let pa = parse::bbgz::parser();
 
                 let mut sa = Stream::builder()
                     .with_decoder(da)
@@ -1251,27 +1176,19 @@ fn spawn_mergesort_workers(
                     .sizeof_decode_buffer(sizeof_stream_each_buffer)
                     .build();
 
-                let mut qa = sa
-                    .query::<DebarcodedPartialCell>()
-                    .group_relaxed_with_context::<Id, Id, _>(
-                        |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                            std::cmp::Ordering::Less => panic!(
-                                "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
-                                fa.path(),
-                                String::from_utf8_lossy(id),
-                                String::from_utf8_lossy(id_ctx)
-                            ),
-                            std::cmp::Ordering::Equal => QueryResult::Keep,
-                            std::cmp::Ordering::Greater => QueryResult::Emit,
-                        },
-                    );
+                let mut qa = sa.query::<parse::bbgz::Block>();
 
-                let db = codec::BBGZDecoder::builder()
-                    .with_path(fb.path().path())
-                    .countof_threads(countof_stream_each_threads)
+                let fb = match ib.clone().open() {
+                    Ok(file_handle) => file_handle,
+                    Err(e) => panic!("{e}"),
+                };
+
+                let bb = BufReader::new(fb);
+                let db = codec::plain::PlaintextDecoder::builder()
+                    .with_reader(bb)
                     .build();
-                let pb = parse::Tirp::builder()
-                    .build();
+
+                let pb = parse::bbgz::parser();
 
                 let mut sb = Stream::builder()
                     .with_decoder(db)
@@ -1280,20 +1197,7 @@ fn spawn_mergesort_workers(
                     .sizeof_decode_buffer(sizeof_stream_each_buffer)
                     .build();
 
-                let mut qb = sb
-                    .query::<DebarcodedPartialCell>()
-                    .group_relaxed_with_context::<Id, Id, _>(
-                        |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                            std::cmp::Ordering::Less => panic!(
-                                "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
-                                fb.path(),
-                                String::from_utf8_lossy(id),
-                                String::from_utf8_lossy(id_ctx)
-                            ),
-                            std::cmp::Ordering::Equal => QueryResult::Keep,
-                            std::cmp::Ordering::Greater => QueryResult::Emit,
-                        },
-                    );
+                let mut qb = sb.query::<parse::bbgz::Block>();
 
                 let mut cell_a = qa.next().ok().flatten();
                 let mut cell_b = qb.next().ok().flatten();
@@ -1317,11 +1221,11 @@ fn spawn_mergesort_workers(
                     cell_b = qb.next().ok().flatten();
                 }
 
-                if let Err(e) = std::fs::remove_file(fa.path().path()) {
-                    log_warning!("Failed to delete merged file."; "path" => ?fa.path(), "error" => %e);
+                if let Err(e) = std::fs::remove_file(&**ia.path()) {
+                    log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
                 }
-                if let Err(e) = std::fs::remove_file(fb.path().path()) {
-                    log_warning!("Failed to delete merged file."; "path" => ?fb.path(), "error" => %e);
+                if let Err(e) = std::fs::remove_file(&**ib.path()) {
+                    log_warning!("Failed to delete merged file."; "path" => ?&ib.path(), "error" => %e);
                 }
             }
         });
@@ -1332,7 +1236,7 @@ fn spawn_mergesort_workers(
 }
 
 fn spawn_mergesort_writers(
-    ms_rx: Receiver<Receiver<DebarcodedPartialCell>>,
+    ms_rx: Receiver<Receiver<parse::bbgz::Block>>,
     timestamp_temp_files: String,
     mergeround_temp_files: usize,
     path_temp_dir: PathBuf,
@@ -1340,14 +1244,10 @@ fn spawn_mergesort_writers(
 ) -> Vec<JoinHandle<Vec<InputPath>>> {
     let mut thread_handles = Vec::new();
     let countof_write_threads: u64 = (*budget.threads::<TWrite>()).get();
-    let countof_compress_threads: u64 = (*budget.threads::<TCompress>()).get();
-    let countof_write_each_compress_threads = BoundedU64::new_saturating(countof_compress_threads / countof_write_threads);
-    let sizeof_write_each_compress_buffer = ByteSize(budget.mem::<MCompressBuffer>().as_u64() / countof_write_threads);
-    let sizeof_write_each_compress_raw_buffer = ByteSize(budget.mem::<MCompressRawBuffer>().as_u64() / countof_write_threads);
     let atomic_countof_merges = Arc::new(AtomicUsize::new(0));
 
     let arc_timestamp_temp_files = Arc::new(timestamp_temp_files);
-    for thread_idx in 0..countof_write_threads{
+    for thread_idx in 0..countof_write_threads {
         let ms_rx = ms_rx.clone();
         let thread_countof_merges = Arc::clone(&atomic_countof_merges);
         let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);
@@ -1360,7 +1260,6 @@ fn spawn_mergesort_writers(
             log_info!("Starting worker"; "thread" => thread_name);
 
             while let Ok(mc_rx) = ms_rx.recv() {
-                let mut cells_written = 0;
                 let countof_merges = thread_countof_merges.fetch_add(1, Ordering::Relaxed) + 1;
                 let temp_fname = format!(
                     "{thread_timestamp_temp_files}_merge_{mergeround_temp_files}_{countof_merges}"
@@ -1381,36 +1280,20 @@ fn spawn_mergesort_writers(
                     }
                 };
 
-                let bufwriter = BufWriter::new(temp_output_file);
-                let mut bbgzwriter = BBGZWriter::builder()
-                    .countof_threads(countof_write_each_compress_threads)
-                    .sizeof_compression_buffer(sizeof_write_each_compress_buffer)
-                    .sizeof_raw_buffer(sizeof_write_each_compress_raw_buffer)
-                    .with_writer(bufwriter)
-                    .build();
-
-                while let Ok(cell) = mc_rx.recv() {
-                    let mut bbgzheader = BBGZHeader::new();
-                    bbgzheader.add_extra(b"ID", cell.get_ref::<Id>().to_vec());
-                    let mut blockwriter = bbgzwriter.begin(bbgzheader);
-                    {
-                        for record in cell.as_records() {
-                            let mut tsvwriter = csv::WriterBuilder::new()
-                                .delimiter(b'\t')
-                                .has_headers(false)
-                                .from_writer(&mut blockwriter);
-                            tsvwriter.serialize(record);
-                        }
-                    }
-                    cells_written += 1;
-                    blockwriter.flush();
+                let mut bufwriter = BufWriter::new(temp_output_file);
+                while let Ok(block) = mc_rx.recv() {
+                    bufwriter.write_all(block.as_bytes::<Header>()).unwrap();
+                    bufwriter.write_all(block.as_bytes::<Raw>()).unwrap();
+                    bufwriter.write_all(block.as_bytes::<Trailer>()).unwrap();
                 }
+                bufwriter.write_all(bbgz::MARKER_EOF);
+                bufwriter.flush();
 
                 let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
                     Err(e) => panic!("{}", e)
                 };
-                log_info!("Wrote sorted cell chunk"; "path" => ?temp_pathbuf, "cells" => cells_written);
+                log_info!("Wrote sorted cell chunk"; "path" => ?temp_pathbuf);
                 thread_vec_temp_written.push(temp_input_path);
             }
             return thread_vec_temp_written;
@@ -1434,65 +1317,6 @@ pub struct DebarcodedRecord {
     //         be VERY careful modifying this at all
     #[serde(skip)]
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
-}
-
-// impl Into<OwnedDebarcodedRecord> for DebarcodedRecord {
-//     fn into(self) -> OwnedDebarcodedRecord {
-//         OwnedDebarcodedRecord {
-//             id: self.id.to_vec(),
-//             r1: self.r1.to_vec(),
-//             r2: self.r2.to_vec(),
-//             q1: self.q1.to_vec(),
-//             q2: self.q2.to_vec(),
-//             umi: self.umi.to_vec(),
-//             owned_backing: (),
-//         }
-//     }
-// }
-
-// #[derive(Composite, Default, Clone, Serialize)]
-// #[bascet(attrs = (Id, R1, R2, Q1, Q2, Umi), backing = OwnedBacking, marker = AsRecord)]
-// pub struct OwnedDebarcodedRecord {
-//     id: Vec<u8>,
-//     r1: Vec<u8>,
-//     r2: Vec<u8>,
-//     q1: Vec<u8>,
-//     q2: Vec<u8>,
-//     umi: Vec<u8>,
-
-//     #[serde(skip)]
-//     owned_backing: (),
-// }
-
-#[derive(Composite, Default, Serialize)]
-#[bascet(
-    attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
-    backing = ArenaBacking,
-    marker = AsCell<Accumulate>,
-    intermediate = tirp::Record
-)]
-pub struct DebarcodedPartialCell {
-    id: &'static [u8],
-    #[collection]
-    vec_r1: Vec<&'static [u8]>,
-    #[collection]
-    vec_r2: Vec<&'static [u8]>,
-    #[collection]
-    vec_q1: Vec<&'static [u8]>,
-    #[collection]
-    vec_q2: Vec<&'static [u8]>,
-    #[collection]
-    vec_umis: Vec<&'static [u8]>,
-
-    // SAFETY: exposed ONLY to allow conversion outside this crate.
-    //         be VERY careful modifying this at all
-    #[serde(skip)]
-    pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
-}
-
-// base len off of R1 len. This could in theory be any collection field
-impl CompositeLen for DebarcodedPartialCell {
-    type LenAttr = R1;
 }
 
 #[derive(Clone)]

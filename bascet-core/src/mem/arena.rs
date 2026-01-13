@@ -16,7 +16,7 @@ pub struct ArenaSlice<T>
 where
     T: bytemuck::Pod,
 {
-    slice: NonNull<[T]>,
+    inner: NonNull<[T]>,
     view: ArenaView<T>,
     _not_sync: PhantomData<*const ()>,
 }
@@ -26,9 +26,9 @@ where
     T: bytemuck::Pod,
 {
     #[inline(always)]
-    pub unsafe fn new(slice: &mut [T], arena: SendPtr<Arena<T>>) -> Self {
+    pub unsafe fn from_raw_parts(slice: &mut [T], arena: SendPtr<Arena<T>>) -> Self {
         Self {
-            slice: NonNull::new_unchecked(slice as *mut [T]),
+            inner: NonNull::new_unchecked(slice as *mut [T]),
             view: ArenaView::new(arena),
             _not_sync: PhantomData,
         }
@@ -36,25 +36,25 @@ where
 
     #[inline(always)]
     pub unsafe fn truncate(mut self, len: usize) -> Self {
-        debug_assert!(len <= self.slice.as_ref().len());
-        let ptr = self.slice.as_ptr() as *mut T;
-        self.slice = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
+        debug_assert!(len <= self.inner.as_ref().len());
+        let ptr = self.inner.as_ptr() as *mut T;
+        self.inner = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
         self
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.slice.len()
+        self.inner.len()
     }
 
     #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
-        unsafe { self.slice.as_ref() }
+        unsafe { self.inner.as_ref() }
     }
 
     #[inline(always)]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe { self.slice.as_mut() }
+        unsafe { self.inner.as_mut() }
     }
 
     #[inline(always)]
@@ -76,7 +76,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            slice: self.slice,
+            inner: self.inner,
             view: self.view.clone(),
             _not_sync: PhantomData,
         }
@@ -309,7 +309,12 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
     }
 
     pub fn alloc(&self, len: usize) -> ArenaSlice<T> {
-        assert!(len <= self.inner_cap_arenas, "{:?} > {:?}", len, self.inner_cap_arenas);
+        assert!(
+            len <= self.inner_cap_arenas,
+            "{:?} > {:?}",
+            len,
+            self.inner_cap_arenas
+        );
         let countof_arenas = self.inner_buf_arenas.len();
 
         unsafe {
@@ -335,7 +340,7 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                     // SAFETY   ArenaPool outlives all ArenaSlices due to drop impl
                     //          ArenaSlice::new increments strong count
                     let slice = unsafe {
-                        ArenaSlice::new(
+                        ArenaSlice::from_raw_parts(
                             std::slice::from_raw_parts_mut(ptr, len),
                             SendPtr::new_unchecked(arena as *mut Arena<T>),
                         )

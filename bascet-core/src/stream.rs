@@ -1,3 +1,4 @@
+mod as_block;
 mod as_cell_accumulate;
 mod as_cell_direct;
 mod as_record;
@@ -5,6 +6,6 @@ mod consts;
 mod stream;
 pub mod traits;
 
-pub(self) use consts::*;
+pub use consts::*;
 pub use stream::*;
 pub use traits::*;

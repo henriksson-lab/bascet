@@ -59,12 +59,15 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
     }
 
     #[inline(always)]
-    fn parse_spanning(
+    fn parse_spanning<FA>(
         &mut self,
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
-        mut alloc: impl FnMut(usize) -> ArenaSlice<u8>,
-    ) -> ParseResult<Self::Item, ()> {
+        mut alloc: FA,
+    ) -> ParseResult<Self::Item, ()>
+    where
+        FA: FnMut(usize) -> ArenaSlice<u8>,
+    {
         let slice_tail = decoded_spanning_tail.as_slice();
         let slice_head = decoded_spanning_head.as_slice();
         // NOTE: as_ptr_range is [start, end) and [start', end') => end == start'

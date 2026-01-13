@@ -79,7 +79,7 @@ impl<T, const N: usize> OrderedSender<T, N> {
             }
             self.inner_fastpath.is_init[slot_idx].store(true, Ordering::Release);
         } else {
-            eprintln!("[OrderedSender::send] sending to slow path");
+            // eprintln!("[OrderedSender::send] sending to slow path");
             let _ = self.inner_slowpath_tx.send((index, value));
         }
     }
@@ -120,13 +120,15 @@ impl<T, const N: usize> OrderedReceiver<T, N> {
                 }
 
                 if self
-                    .inner_slowpath.ordered
+                    .inner_slowpath
+                    .ordered
                     .front()
                     .map(|v| v.is_some())
                     .unwrap_or(false)
                 {
                     let val = unsafe {
-                        self.inner_slowpath.ordered
+                        self.inner_slowpath
+                            .ordered
                             .pop_front()
                             .unwrap_unchecked()
                             .unwrap_unchecked()
@@ -154,13 +156,15 @@ impl<T, const N: usize> OrderedReceiver<T, N> {
                     // NOTE:  inner_slowpath.ordered is indexed relative to next_expected. If
                     //          the value there is some this is always going to be == next_expected
                     if self
-                        .inner_slowpath.ordered
+                        .inner_slowpath
+                        .ordered
                         .front()
                         .map(|v| v.is_some())
                         .unwrap_or(false)
                     {
                         let val = unsafe {
-                            self.inner_slowpath.ordered
+                            self.inner_slowpath
+                                .ordered
                                 .pop_front()
                                 // SAFETY:  Guaranteed by above condition
                                 .unwrap_unchecked()
