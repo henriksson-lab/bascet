@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
+use bascet_io::usize_MAX_SIZEOF_BLOCK;
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -493,7 +494,7 @@ impl GetRawCMD {
                 "Mergesort round {mergeround_counter}";
                 "Starting with" => format!("{:?} files", current_count),
                 "Target" => format!("{:?} files", mergeround_target_count),
-                "Remaining merges" => files_to_merge
+                "Remaining merges" => files_to_merge / 2
             );
 
             let (files_to_merge, files_to_keep): (
@@ -1028,21 +1029,28 @@ fn spawn_chunk_writers(
 
                 let mut records_writen = 0;
                 let mut last_id = Vec::new();
+                let mut blockwriter_initialized = false;
                 let mut blockwriter = bbgzwriter.begin(BBGZHeader::new());
 
                 for (id, mut record) in sorted_record_list {
                     if id != last_id {
-                        blockwriter.flush();
+                        if blockwriter_initialized {
+                            blockwriter.flush();
+                        }
                         last_id = id;
 
                         let mut bbgzheader = BBGZHeader::new();
                         bbgzheader.add_extra(b"ID", last_id.clone());
                         blockwriter = bbgzwriter.begin(bbgzheader);
+                        blockwriter_initialized = true;
                     }
 
                     // SAFETY: safe because blockwriter is COW
                     *record.get_mut::<Id>() = unsafe { std::mem::transmute(last_id.as_slice()) };
                     let _ = blockwriter.write_all(record.as_bytes::<Id>());
+                    let _ = blockwriter.write_all(b"1");
+                    let _ = blockwriter.write_all(b"\t");
+                    let _ = blockwriter.write_all(b"1");
                     let _ = blockwriter.write_all(b"\t");
                     let _ = blockwriter.write_all(record.as_bytes::<R1>());
                     let _ = blockwriter.write_all(b"\t");
@@ -1082,13 +1090,10 @@ fn spawn_mergesort_workers(
     let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
     let (ms_tx, ms_rx) = crossbeam::channel::unbounded();
     let countof_threads_sort: u64 = (*budget.threads::<TSort>()).get();
-    let countof_threads_read: u64 = (*budget.threads::<TRead>()).get();
-    let countof_threads_mergesort: u64 = countof_threads_sort;
 
     let sizeof_stream_each_arena = stream_arena;
-    let sizeof_stream_buffer = budget.mem::<MStreamBuffer>().as_u64();
-    let sizeof_sort_buffer = budget.mem::<MSortBuffer>().as_u64();
-    let sizeof_stream_each_buffer = ByteSize((sizeof_stream_buffer + sizeof_sort_buffer) / (countof_threads_mergesort * 2));
+    // NOTE no other job running at this time
+    let sizeof_stream_each_buffer = ByteSize((budget.mem::<Total>().as_u64()) / (countof_threads_sort * 2));
 
     let mut thread_handles = Vec::new();
 
@@ -1142,7 +1147,7 @@ fn spawn_mergesort_workers(
     });
     thread_handles.push(producer_handle);
 
-    for thread_idx in 0..countof_threads_mergesort {
+    for thread_idx in 0..countof_threads_sort {
         let fp_rx = fp_rx.clone();
         let ms_tx = ms_tx.clone();
 
@@ -1280,7 +1285,7 @@ fn spawn_mergesort_writers(
                     }
                 };
 
-                let mut bufwriter = BufWriter::new(temp_output_file);
+                let mut bufwriter = BufWriter::with_capacity(usize_MAX_SIZEOF_BLOCK, temp_output_file);
                 while let Ok(block) = mc_rx.recv() {
                     bufwriter.write_all(block.as_bytes::<Header>()).unwrap();
                     bufwriter.write_all(block.as_bytes::<Raw>()).unwrap();
