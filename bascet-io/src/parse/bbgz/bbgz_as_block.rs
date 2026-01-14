@@ -1,11 +1,8 @@
-use std::ptr::slice_from_raw_parts_mut;
-
-use bascet_core::{ArenaSlice, ArenaView, Parse, ParseResult};
-use memchr::memmem;
+use bascet_core::{ArenaSlice, Parse, ParseResult};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    codec::bbgz::{usize_MIN_SIZEOF_HEADER, MARKER_EOF},
+    codec::bbgz::{usize_MIN_SIZEOF_HEADER, usize_MAX_SIZEOF_BLOCK, MARKER_EOF},
     parse::bbgz::{BBGZParser, Block},
     BBGZExtra, BBGZHeader, BBGZTrailer, BGZFExtra,
 };
@@ -164,7 +161,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
                     std::ptr::copy_nonoverlapping(
                         slice_head.as_ptr(),
                         scratch_slice.as_mut_ptr().add(tail_len),
-                        head_len,
+                        usize_MAX_SIZEOF_BLOCK,
                     );
                 }
             }

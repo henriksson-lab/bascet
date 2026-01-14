@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 
 #[test]
 fn test_stream_bbgz_blocks() {
-    let file = File::open("../temp/1768323488_merge_0_1.tirp.bbgz").unwrap();
+    let file = File::open("../data/filtered.1.tirp.bbgz").unwrap();
     let reader = BufReader::new(file);
     let decoder = codec::plain::PlaintextDecoder::builder()
         .with_reader(reader)
@@ -59,7 +59,7 @@ fn test_stream_bbgz_blocks() {
         total_bytes += block_size;
         bytes_since_last_print += block_size;
 
-        if i % 10_000 == 0 {
+        if i % 100_000 == 0 {
             let now = Instant::now();
             let elapsed = now.duration_since(last_print).as_secs_f64();
             let throughput_bytes_per_sec = bytes_since_last_print as f64 / elapsed;
@@ -99,7 +99,7 @@ fn test_stream_bbgz_blocks() {
     output_writer.flush().unwrap();
     drop(output_writer);
 
-    let input_file = File::open("../temp/1768323488_merge_0_1.tirp.bbgz").unwrap();
+    let input_file = File::open("../data/filtered.1.tirp.bbgz").unwrap();
     let input_reader = BufReader::new(input_file);
     let input_decoder = codec::plain::PlaintextDecoder::builder()
         .with_reader(input_reader)

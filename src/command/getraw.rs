@@ -98,11 +98,18 @@ pub struct GetRawCMD {
 
     #[arg(
         long = "countof-threads-sort",
-        help = "Number of sorting threads",
+        help = "Number of initial sort sorting threads",
         value_name = "1..",
         value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
     countof_threads_sort: Option<BoundedU64<1, { u64::MAX }>>,
+    #[arg(
+        long = "countof-threads-mergesort",
+        help = "Number of second-phase sorting threads",
+        value_name = "2..",
+        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+    )]
+    countof_threads_mergesort: Option<BoundedU64<2, { u64::MAX }>>,
 
     #[arg(
         long = "countof-threads-write",
@@ -229,6 +236,8 @@ struct GetrawBudget {
 
     #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
     countof_threads_sort: BoundedU64<1, { u64::MAX }>,
+    #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<4>())]
+    countof_threads_mergesort: BoundedU64<2, { u64::MAX }>,
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
@@ -255,18 +264,19 @@ impl GetRawCMD {
                     .map(|p| p.get())
                     .unwrap_or_else(|e| {
                         log_warning!("Failed to determine available parallelism, using 6 threads"; "error" => %e);
-                        7
+                        6
                     })
                     .try_into()
                     .unwrap_or_else(|e| {
                         log_warning!("Failed to convert parallelism to valid thread count, using 6 threads"; "error" => %e);
-                        7.try_into().unwrap()
+                        6.try_into().unwrap()
                     })
             }))
             .memory(self.total_mem)
             .maybe_countof_threads_read(self.countof_threads_read)
             .maybe_countof_threads_debarcode(self.countof_threads_debarcode)
             .maybe_countof_threads_sort(self.countof_threads_sort)
+            .maybe_countof_threads_mergesort(self.countof_threads_mergesort)
             .maybe_countof_threads_write(self.countof_threads_write)
             .maybe_countof_threads_compress(self.countof_threads_compress)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
@@ -520,21 +530,9 @@ impl GetRawCMD {
                 &budget,
             );
 
-            log_info!(
-                "Mergesort round {mergeround_counter}: Waiting for {} mergesort threads to finish...",
-                ms_handles.len()
-            );
             for handle in ms_handles {
                 handle.join().unwrap();
             }
-            log_info!(
-                "Mergesort round {mergeround_counter}: All mergesort worker threads finished"
-            );
-
-            log_info!(
-                "Mergesort round {mergeround_counter}: Waiting for {} sorted cell writer threads to finish...",
-                wt_handles.len()
-            );
 
             // Collect outputs from current round
             mergeround_merge_next = files_to_keep; // Start with passthrough files
@@ -560,7 +558,7 @@ impl GetRawCMD {
         for (final_path, output_path) in izip!(&mergeround_merge_next, &self.paths_out) {
             match std::fs::rename(&**final_path.path(), &**output_path.path()) {
                 Ok(_) => {
-                    log_info!("Moved {final_path:?} -> {output_path:?}");
+                    log_info!("Moved {final_path} -> {output_path}");
                     output_paths.push(output_path.clone());
                 }
                 Err(e) => {
@@ -614,9 +612,9 @@ impl GetRawCMD {
             let hist_path = if let Some(ref hist_paths) = self.paths_hist {
                 hist_paths[i].clone()
             } else {
-                match OutputPath::try_from(&format!("{}.hist", output_path)) {
+                match OutputPath::try_from(&format!("{}.hist", output_path.path().path().display())) {
                     Ok(path) => path,
-                    Err(e) => panic!("{e}"),
+                    Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
                 }
             };
 
@@ -627,15 +625,15 @@ impl GetRawCMD {
                 }
             };
 
-            let bufwriter = BufWriter::new(hist_file);
-            let mut histwriter = csv::WriterBuilder::new()
-                .has_headers(false)
-                .from_writer(bufwriter);
+            let mut bufwriter = BufWriter::new(hist_file);
             for (id, count) in hist_hashmap.iter() {
-                histwriter.write_record(&[id, count.to_string().as_bytes()]);
+                bufwriter.write_all(&id);
+                bufwriter.write_all(b"\t");
+                bufwriter.write_all(count.to_string().as_bytes());
             }
 
-            histwriter.flush();
+            bufwriter.flush();
+            log_info!("Wrote histogram at {}", hist_path);
             hist_hashmap.clear();
         }
 
@@ -950,7 +948,7 @@ fn spawn_sort_workers(
                         .collect();
 
                 glidesort::sort_by(&mut records_with_bc, |(bc_a, _), (bc_b, _)| {
-                    Ord::cmp(bc_b, bc_a)
+                    Ord::cmp(bc_a, bc_b)
                 });
 
                 let _ = st_tx.send(records_with_bc);
@@ -1090,7 +1088,7 @@ fn spawn_mergesort_workers(
 ) -> (Receiver<Receiver<parse::bbgz::Block>>, Vec<JoinHandle<()>>) {
     let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
     let (ms_tx, ms_rx) = crossbeam::channel::unbounded();
-    let countof_threads_sort: u64 = (*budget.threads::<TSort>()).get();
+    let countof_threads_sort: u64 = (*budget.threads::<TMergeSort>()).get();
 
     let sizeof_stream_each_arena = stream_arena;
     // NOTE no other job running at this time
@@ -1130,7 +1128,12 @@ fn spawn_mergesort_workers(
                 .sizeof_decode_buffer(sizeof_stream_each_buffer)
                 .build();
 
-            let mut q1 = s1.query::<parse::bbgz::Block>();
+            let mut q1 = s1.query::<parse::bbgz::Block>()
+                .assert_with_context::<Id, Id, _>(
+                    |id_current: &&'static [u8], id_context: &&'static [u8]|
+                    id_current >= id_context,
+                    "id_current < id_context"
+                );
 
             while let Ok(Some(cell)) = q1.next() {
                 let _ = mc_tx.send(cell);
@@ -1182,7 +1185,12 @@ fn spawn_mergesort_workers(
                     .sizeof_decode_buffer(sizeof_stream_each_buffer)
                     .build();
 
-                let mut qa = sa.query::<parse::bbgz::Block>();
+                let mut qa = sa.query::<parse::bbgz::Block>()
+                    .assert_with_context::<Id, Id, _>(
+                        |id_current: &&'static [u8], id_context: &&'static [u8]|
+                        id_current >= id_context,
+                        "id_current < id_context"
+                    );
 
                 let fb = match ib.clone().open() {
                     Ok(file_handle) => file_handle,
@@ -1203,7 +1211,12 @@ fn spawn_mergesort_workers(
                     .sizeof_decode_buffer(sizeof_stream_each_buffer)
                     .build();
 
-                let mut qb = sb.query::<parse::bbgz::Block>();
+                let mut qb = sb.query::<parse::bbgz::Block>()
+                    .assert_with_context::<Id, Id, _>(
+                        |id_current: &&'static [u8], id_context: &&'static [u8]|
+                        id_current >= id_context,
+                        "id_current < id_context"
+                    );
 
                 let mut cell_a = qa.next().ok().flatten();
                 let mut cell_b = qb.next().ok().flatten();
@@ -1292,8 +1305,8 @@ fn spawn_mergesort_writers(
                     bufwriter.write_all(block.as_bytes::<Raw>()).unwrap();
                     bufwriter.write_all(block.as_bytes::<Trailer>()).unwrap();
                 }
-                bufwriter.write_all(bbgz::MARKER_EOF);
-                bufwriter.flush();
+                bufwriter.write_all(bbgz::MARKER_EOF).unwrap();
+                bufwriter.flush().unwrap();
 
                 let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
