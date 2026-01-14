@@ -77,9 +77,8 @@ where
             };
 
             match query.apply(&parsed, &parsed) {
-                QueryResult::Emit => return Ok(Some(parsed)),
+                QueryResult::Emit | QueryResult::Keep => return Ok(Some(parsed)),
                 QueryResult::Discard => continue,
-                QueryResult::Keep => unreachable!(),
             }
         }
     }

@@ -85,6 +85,6 @@ bascet_variadic::variadic! {
 }
 
 impl<'s, P, D, C, M, Q> crate::Query<'s, P, D, C, M, Q> {
-    impl_query!(assume<A, F>(predicate: F, message: &'static str) -> Assume<A, F>);
-    impl_query!(assume_with_context<PA, CA, F>(predicate: F, message: &'static str) -> AssumeWithContext<PA, CA, F>);
+    impl_query!(assert<A, F>(predicate: F, message: &'static str) -> Assume<A, F>);
+    impl_query!(assert_with_context<PA, CA, F>(predicate: F, message: &'static str) -> AssumeWithContext<PA, CA, F>);
 }
