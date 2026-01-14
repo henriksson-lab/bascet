@@ -131,7 +131,7 @@ pub struct GetRawCMD {
         short = 'm',
         long = "memory",
         help = "Total memory budget",
-        default_value_t = ByteSize::gib(16),
+        default_value_t = ByteSize::gib(32),
         value_parser = clap::value_parser!(ByteSize),
     )]
     total_mem: ByteSize,
