@@ -1048,6 +1048,7 @@ fn spawn_chunk_writers(
                     // SAFETY: safe because blockwriter is COW
                     *record.get_mut::<Id>() = unsafe { std::mem::transmute(last_id.as_slice()) };
                     let _ = blockwriter.write_all(record.as_bytes::<Id>());
+                    let _ = blockwriter.write_all(b"\t");
                     let _ = blockwriter.write_all(b"1");
                     let _ = blockwriter.write_all(b"\t");
                     let _ = blockwriter.write_all(b"1");
