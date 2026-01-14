@@ -72,10 +72,10 @@ impl Record {
         let umi = buf_record.get_unchecked(pos_tab[6] + 1..);
 
         if likely_unlikely::unlikely(r1.len() != q1.len()) {
-            panic!("r1/q1 length mismatch: {:?} != {:?}", r1.len(), q1.len());
+            panic!("r1/q1 length mismatch: {:?} != {:?} in {:?}", r1.len(), q1.len(), String::from_utf8_lossy(buf_record));
         }
         if likely_unlikely::unlikely(r2.len() != q2.len()) {
-            panic!("r1/q1 length mismatch: {:?} != {:?}", r2.len(), q2.len());
+            panic!("r1/q1 length mismatch: {:?} != {:?} in {:?}", r2.len(), q2.len(), String::from_utf8_lossy(buf_record));
         }
 
         // SAFETY: transmute slices to static lifetime kept alive by ArenaView refcount

@@ -88,13 +88,8 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         }
 
         // Both BC and ID subfields must exist
-        // If they're missing, check if this is the EOF marker
         if slice_bc.is_empty() || slice_id.is_empty() {
-            if buf_remaining.starts_with(MARKER_EOF) {
-                return ParseResult::Partial;
-            }
-            panic!("Missing BC/ID subfield in header (not EOF marker)");
-            return ParseResult::Error(());
+            return ParseResult::Partial;
         }
 
         // SAFETY: BC subfield is guaranteed to have at least 2 bytes (BSIZE is u16)
@@ -102,18 +97,19 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             u16::from_le_bytes([*slice_bc.get_unchecked(0), *slice_bc.get_unchecked(1)]) as usize
                 + 1
         };
-        let pos_end_block = bsize;
-        if pos_end_block > buf_remaining_len {
+        if bsize > buf_remaining_len {
             return ParseResult::Partial;
         }
 
         // SAFETY: block_end bounds checked above
-        let slice_header = unsafe { buf_remaining.get_unchecked(..cursor_fextra) };
+        let slice_header = unsafe { 
+            buf_remaining.get_unchecked(..cursor_fextra) // 
+        };
         let slice_raw = unsafe {
-            buf_remaining.get_unchecked(cursor_fextra..(pos_end_block - BBGZTrailer::SSIZE))
+            buf_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE))
         };
         let slice_trailer = unsafe {
-            buf_remaining.get_unchecked((pos_end_block - BBGZTrailer::SSIZE)..pos_end_block)
+            buf_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize)
         };
         self.inner_cursor += bsize;
 
@@ -253,7 +249,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             if slice_combined.starts_with(MARKER_EOF) {
                 return ParseResult::Partial;
             }
-            panic!("Missing BC/ID subfield in header (not EOF marker)");
+            panic!("Missing BC/ID subfield in header. Header: {:?}", String::from_utf8_lossy(&slice_combined.get(..cursor_fextra).unwrap_or(&[])));
             return ParseResult::Error(());
         }
 
