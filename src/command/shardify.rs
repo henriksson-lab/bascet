@@ -102,7 +102,7 @@ struct ShardifyBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead)]
+    #[threads(TRead, |_, _| BoundedU64::const_new::<2>())]
     countof_threads_read: BoundedU64<2, { u64::MAX }>,
 
     #[threads(TWrite, |_, _| BoundedU64::const_new::<1>())]
@@ -116,11 +116,11 @@ impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let budget = ShardifyBudget::builder()
             .threads(
-                self.total_threads.unwrap_or(
+                self.total_threads.unwrap_or_else( ||
                     (self.paths_in.len() + 1)
                         .try_into()
                         .expect("At least two input files and one output file required"),
-                ),
+                )
             )
             .memory(self.total_mem)
             .countof_threads_read(
@@ -129,11 +129,11 @@ impl ShardifyCMD {
                     .expect("At least two input files required"),
             )
             .countof_threads_write(
-                self.numof_threads_write.unwrap_or(
+                self.numof_threads_write.unwrap_or_else( ||
                     (self.paths_out.len())
                         .try_into()
                         .expect("At least one output file required"),
-                ),
+                )
             )
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();

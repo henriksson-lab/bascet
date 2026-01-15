@@ -24,8 +24,9 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             buf_remaining.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
         } {
             panic!(
-                "Magic bytes not found, found instead: {:?}",
-                [buf_remaining.get(0), buf_remaining.get(1)]
+                "Magic bytes not found, found instead: {:?} ({:?})",
+                [buf_remaining.get(0), buf_remaining.get(1)],
+                String::from_utf8_lossy(&[*buf_remaining.get(0).unwrap_or(&b'#'), *buf_remaining.get(1).unwrap_or(&b'#')])
             );
             return ParseResult::Error(());
         }
