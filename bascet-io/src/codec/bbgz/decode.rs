@@ -33,7 +33,6 @@ impl BBGZDecoder {
         let hts_tpool = htsutils::hts_tpool_init(countof_threads, hts_file_ptr.as_ptr());
         let hts_send_tpool = unsafe { SendCell::new(hts_tpool) };
 
-
         // NOTE alloc size in terms of alloc slots not bytes
         // NOTE impossible to determine block size in decoding step for bbgz
         let hts_sizeof_block = ByteSize::kib(64);

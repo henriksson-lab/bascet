@@ -1,17 +1,19 @@
 use anyhow::Result;
 use bascet_core::{
+    channel::PeekableReceiver,
     spinpark_loop::{self, SPINPARK_PARKS_BEFORE_WARN},
     *,
 };
 use bascet_derive::Budget;
-use bascet_io::{codec, parse, tirp};
+use bascet_io::{BBGZHeader, BBGZTrailer, codec, parse, tirp, usize_MAX_SIZEOF_BLOCK};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use clap::Args;
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{self, Sender};
-use itertools::izip;
+use itertools::{izip, Itertools};
+use smallvec::SmallVec;
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
@@ -19,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{bounded_parser, log_critical, log_info, log_warning, threading::PeekableReceiver};
+use crate::{bounded_parser, log_critical, log_info, log_warning};
 
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
@@ -136,7 +138,7 @@ impl ShardifyCMD {
         let numof_streams = self.paths_in.len() as u64;
         let numof_writers = self.paths_out.len() as u64;
 
-        let each_stream_numof_threads = budget.threads::<TRead>().get() / numof_streams;
+        let each_stream_numof_threads = (*budget.threads::<TRead>()).get() / numof_streams;
         let each_stream_numof_threads: BoundedU64<1, { u64::MAX }> =
             BoundedU64::new(each_stream_numof_threads).unwrap_or_else(|| {
                 let saturated: BoundedU64<1, _> =
@@ -161,15 +163,16 @@ impl ShardifyCMD {
             "cells in filter" => arc_filter.len()
         );
 
+        let pairs: Vec<(
+            Sender<parse::bbgz::Block>,
+            PeekableReceiver<parse::bbgz::Block>,
+        )> = (0..numof_streams)
+            .map(|_| bascet_core::channel::peekable::<parse::bbgz::Block>())
+            .collect();
         let (vec_coordinator_tx, mut vec_coordinator_rx): (
-            Vec<Sender<ShardifyPartialCell>>,
-            Vec<PeekableReceiver<ShardifyPartialCell>>,
-        ) = (0..numof_streams)
-            .map(|_| {
-                let (tx, rx) = channel::unbounded::<ShardifyPartialCell>();
-                (tx, PeekableReceiver::new(rx))
-            })
-            .unzip();
+            Vec<Sender<parse::bbgz::Block>>,
+            Vec<PeekableReceiver<parse::bbgz::Block>>,
+        ) = pairs.into_iter().unzip();
 
         // let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(numof_streams)));
         let mut vec_reader_handles = Vec::with_capacity(numof_streams as usize);
@@ -199,40 +202,39 @@ impl ShardifyCMD {
                 let thread_name = thread.name().unwrap_or("unknown thread"); 
                 log_info!("Starting stream"; "thread" => thread_name, "path" => %thread_input);
 
-                let thread_decoder = decode::Bgzf::builder()
-                    .path(thread_input.path().path())
-                    .num_threads(each_stream_numof_threads)
-                    .build()
-                    .unwrap();
-                let thread_parser = parse::Tirp::builder()
-                    .build()
-                    .unwrap();
+                let thread_file = match thread_input.clone().open() {
+                    Ok(file) => file,
+                    Err(e) => panic!("{e}")
+                };
+
+                let thread_bufreader = BufReader::with_capacity(
+                    usize_MAX_SIZEOF_BLOCK, 
+                    thread_file
+                );
+
+                let thread_decoder = codec::PlaintextDecoder::builder()
+                    .with_reader(thread_bufreader)
+                    .build();
+                let thread_parser = parse::bbgz::parser();
 
                 let mut thread_stream = Stream::builder()
                     .with_decoder(thread_decoder)
                     .with_parser(thread_parser)
                     .sizeof_decode_arena(thread_stream_arena_size)
                     .sizeof_decode_buffer(thread_stream_buffer_size)
-                    .build()
-                    .unwrap();
+                    .build();
 
                 let mut query = thread_stream
-                    .query::<tirp::Cell>()
-                    .group_relaxed_with_context::<Id, Id, _>(
-                        |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                            std::cmp::Ordering::Less => panic!(
-                                "Unordered record list: {:?}, id: {:?}, ctx: {:?}",
-                                thread_input.path(),
-                                String::from_utf8_lossy(id),
-                                String::from_utf8_lossy(id_ctx)
-                            ),
-                            std::cmp::Ordering::Equal => QueryResult::Keep,
-                            std::cmp::Ordering::Greater => QueryResult::Emit,
+                    .query::<parse::bbgz::Block>()
+                    .assert_with_context::<Id, Id, _>(
+                        |id_current: &&'static [u8], id_context: &&'static [u8]| {
+                            id_current >= id_context
                         },
+                        "id_current < id_context",
                     );
 
                 loop {
-                    let cell = match query.next_into::<ShardifyPartialCell>() {
+                    let block = match query.next() {
                         Ok(Some(cell)) => {
                             cell
                         },
@@ -240,34 +242,32 @@ impl ShardifyCMD {
                             break;
                         }
                         Err(e) => {
-                            // log_critical!("Reader: error"; "thread" => thread_name, "error" => ?e);
                             panic!("{:?}", e);
                         },
                     };
-                    // log_info!("Prudced data at stream"; "thread" => thread_name);
 
                     let global_processed = global_processed_counter
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     let global_kept = global_kept_counter
                         .load(std::sync::atomic::Ordering::Relaxed);
 
-                    if global_processed % 10_000 == 0 {
+                    if global_processed % 1_000 == 0 {
                         let keep_ratio = (global_kept as f64) / (global_processed as f64);
                         log_info!(
                             "Processing";
-                            "(partial) cells processed" => global_processed,
-                            "(partial) cells kept" => format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio)
+                            "bbgz blocks processed" => global_processed,
+                            "bbgz blocks kept" => format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio)
                         );
                     }
 
                     // SAFETY: deref safe as long as cell is alive
-                    if !thread_filter.contains(*cell.get_ref::<Id>()) {
+                    if !thread_filter.contains(block.as_bytes::<Id>()) {
                         continue;
                     }
 
                     global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                    let _ = thread_cell_tx.send(cell);
+                    let _ = thread_cell_tx.send(block);
                     // log_info!("Stream sent notification"; "thread_idx" => thread_idx);
                     if thread_cell_tx.len() == 1 {
                         // NOTE: this means we just sent to an empty cell channel. Notify the coordinator!
@@ -278,7 +278,7 @@ impl ShardifyCMD {
         }
         drop(notify_tx);
 
-        let (write_tx, write_rx) = crossbeam::channel::unbounded::<Vec<ShardifyPartialCell>>();
+        let (write_tx, write_rx) = crossbeam::channel::unbounded::<Vec<parse::bbgz::Block>>();
         let global_cells_written = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
         for (thread_idx, thread_output) in
@@ -286,17 +286,14 @@ impl ShardifyCMD {
         {
             log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => %thread_output);
 
-            let thread_file = match std::fs::File::create(thread_output.path().path()) {
+            let thread_file = match thread_output.clone().create() {
                 Ok(file) => file,
                 Err(e) => {
                     log_critical!("Failed to create output file"; "path" => ?thread_output.path(), "error" => %e);
                 }
             };
 
-            let thread_buf_writer = BufWriter::new(thread_file);
-            let mut thread_bgzf_writer = TsvWriter::with::<<ShardifyPartialCell as Composite>::Attrs>(
-                BGZFMultiThreadWriter::new(thread_buf_writer, Compression::fast()),
-            );
+            let mut thread_buf_writer = BufWriter::new(thread_file);
             let thread_write_rx = write_rx.clone();
 
             let global_counter = Arc::clone(&global_cells_written);
@@ -305,28 +302,98 @@ impl ShardifyCMD {
                 let thread_name = thread.name().unwrap_or("unknown thread");
                 log_info!("Starting writer"; "thread" => thread_name, "path" => %thread_output);
 
-                while let Ok(vec_partial_cell) = thread_write_rx.recv() {
-                    for partial_cell in vec_partial_cell {
-                        for record in partial_cell.records() {
-                            thread_bgzf_writer.serialize(&record);
-                        }
-                    }
+                while let Ok(vec_blocks) = thread_write_rx.recv() {
+                    let mut merge_blocks: SmallVec<[parse::bbgz::Block; 32]> = SmallVec::new();
+                    let mut merge_bsize = 0;
 
+                    for block in vec_blocks {
+                        let header_bytes = block.as_bytes::<Header>();
+                        let raw_bytes = block.as_bytes::<Raw>();
+                        let trailer_bytes = block.as_bytes::<Trailer>();
+
+                        let bsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len() - 1;
+                        if bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK {
+                            // SAFETY at this point we will always have at least 1 merge block
+                            let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
+                            let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();
+
+                            let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
+                            let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
+
+                            for merge_block in merge_blocks.iter().skip(1) {
+                                let merge_header_bytes = merge_block.as_bytes::<Header>();
+                                let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
+
+                                let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
+                                let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+
+                                // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
+                                unsafe {
+                                    new_header.merge_unchecked(merge_header)
+                                };
+                                new_trailer.merge(merge_trailer);
+                            }
+
+                            new_header.write_with_bsize(&mut thread_buf_writer, merge_bsize).unwrap();
+                            for merge_block in &merge_blocks {
+                                let merge_raw_bytes = merge_block.as_bytes::<Raw>();
+                                thread_buf_writer.write_all(merge_raw_bytes).unwrap();
+                            }
+                            new_trailer.write_with(&mut thread_buf_writer).unwrap();
+
+                            merge_blocks.clear();
+                            merge_bsize = 0;
+                        }
+                        let header = BBGZHeader::from_bytes(header_bytes).unwrap();
+                        merge_blocks.push(block);
+                        merge_bsize += header.BC.BSIZE as usize;
+                    }
+                    if merge_blocks.len() > 0 {
+                        // SAFETY at this point we will always have at least 1 merge block
+                        let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
+                        let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();
+
+                        let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
+                        let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
+
+                        for merge_block in merge_blocks.iter().skip(1) {
+                            let merge_header_bytes = merge_block.as_bytes::<Header>();
+                            let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
+
+                            let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
+                            let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+
+                            // SAFETY if block was larger than usize_MAX_BLOCK_SIZE then it wouldve been flushed earlier
+                            unsafe {
+                                new_header.merge_unchecked(merge_header)
+                            };
+                            new_trailer.merge(merge_trailer);
+                        }
+
+                        new_header.write_with_bsize(&mut thread_buf_writer, merge_bsize).unwrap();
+                        for merge_block in &merge_blocks {
+                            let merge_raw_bytes = merge_block.as_bytes::<Raw>();
+                            thread_buf_writer.write_all(merge_raw_bytes).unwrap();
+                        }
+                        new_trailer.write_with(&mut thread_buf_writer).unwrap();
+                    }
+                    
                     let global_count =
                         global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if global_count % 1_000 == 0 {
-                        log_info!("Writing"; "(complete) cells written" => global_count);
+                        log_info!("Writing"; "bbgz blocks written" => global_count);
                     }
                 }
-                let _ = thread_bgzf_writer.into_inner().flush();
+                thread_buf_writer.write_all(codec::bbgz::MARKER_EOF).unwrap();
+                thread_buf_writer.flush().unwrap();
             }));
         }
 
         let mut coordinator_spinpark_counter = 0;
         let mut coordinator_min_cell: Option<&[u8]> = None;
         let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(numof_streams as usize);
-        let mut coordinator_vec_send: Vec<ShardifyPartialCell> =
-            Vec::with_capacity(numof_streams as usize); // Local vec
+        let mut coordinator_vec_send: Vec<parse::bbgz::Block> =
+            Vec::with_capacity(numof_streams as usize);
 
         loop {
             match notify_rx.try_recv() {
@@ -435,33 +502,4 @@ fn read_filter<P: AsRef<Path>>(input: P) -> Arc<gxhash::HashSet<Vec<u8>>> {
         );
     }
     return Arc::new(filter);
-}
-#[derive(Composite, Clone, Default)]
-#[bascet(
-    attrs = (Id, R1 = vec_r1, R2 = vec_r2, Q1 = vec_q1, Q2 = vec_q2, Umi = vec_umis),
-    backing = ArenaBacking,
-    marker = AsCell<Accumulate>,
-    intermediate = tirp::Record
-)]
-pub struct ShardifyPartialCell {
-    id: &'static [u8],
-    #[collection]
-    vec_r1: Vec<&'static [u8]>,
-    #[collection]
-    vec_r2: Vec<&'static [u8]>,
-    #[collection]
-    vec_q1: Vec<&'static [u8]>,
-    #[collection]
-    vec_q2: Vec<&'static [u8]>,
-    #[collection]
-    vec_umis: Vec<&'static [u8]>,
-
-    // SAFETY: exposed ONLY to allow conversion outside this crate.
-    //         be VERY careful modifying this at all
-    pub(crate) arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
-}
-impl CompositeLen for ShardifyPartialCell {
-    fn len(&self) -> usize {
-        self.get_ref::<R1>().len()
-    }
 }

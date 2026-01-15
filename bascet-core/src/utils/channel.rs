@@ -5,4 +5,5 @@ pub use ordered::ordered;
 pub use ordered::OrderedReceiver;
 pub use ordered::OrderedSender;
 
+pub use peekable::peekable;
 pub use peekable::PeekableReceiver;
