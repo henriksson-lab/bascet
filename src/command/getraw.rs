@@ -1111,6 +1111,7 @@ fn spawn_mergesort_workers(
         // Handle odd file case by copying the last file directly
         if debarcode_merge.len() % 2 == 1 {
             let last_file = debarcode_merge.last().unwrap();
+            log_info!("Producer handling odd file: {}", last_file);
             // HACK: Use bounded channel to prevent memory accumulation when writer is slow
             let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
             let _ = producer_ms_tx.send(mc_rx);
@@ -1146,12 +1147,15 @@ fn spawn_mergesort_workers(
             while let Ok(Some(cell)) = q1.next() {
                 let _ = mc_tx.send(cell);
             }
+
+            // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
+            drop(mc_tx);
+
             if let Err(e) = std::fs::remove_file(&**last_file.path()) {
                 log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
             }
         }
 
-        // Process pairs normally
         let debarcode_merge_paired = debarcode_merge.into_iter().tuples();
         for (a, b) in debarcode_merge_paired {
             let _ = fp_tx.send((a, b));
@@ -1248,6 +1252,9 @@ fn spawn_mergesort_workers(
                     cell_b = qb.next().ok().flatten();
                 }
 
+                // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
+                drop(mc_tx);
+
                 if let Err(e) = std::fs::remove_file(&**ia.path()) {
                     log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
                 }
@@ -1319,10 +1326,11 @@ fn spawn_mergesort_writers(
                     let trailer_bytes = block.as_bytes::<Trailer>();
 
                     let bsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len() - 1;
-                    if bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK {
+                    if merge_bsize + bsize > usize_MAX_SIZEOF_BLOCK {
+
                         // SAFETY at this point we will always have at least 1 merge block
                         let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
-                        let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();
+                        let new_trailer_bytes = merge_blocks[0].as_bytes::<Trailer>();
 
                         let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
                         let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
@@ -1347,7 +1355,6 @@ fn spawn_mergesort_writers(
                             bufwriter.write_all(merge_raw_bytes).unwrap();
                         }
                         new_trailer.write_with(&mut bufwriter).unwrap();
-
                         merge_blocks.clear();
                         merge_bsize = 0;
                     }
@@ -1356,49 +1363,53 @@ fn spawn_mergesort_writers(
                         let header = BBGZHeader::from_bytes(header_bytes).unwrap();
                         merge_blocks.push(block);
                         merge_bsize += header.BC.BSIZE as usize;
-                    } else if merge_blocks.len() == 0 {
-                        let header = BBGZHeader::from_bytes(header_bytes).unwrap();
-                        merge_id = id_bytes.to_smallvec();
-                        merge_blocks.push(block);
-                        merge_bsize = header.BC.BSIZE as usize;
-                    } else if merge_blocks.len() > 0 {
-                        // SAFETY at this point we will always have at least 1 merge block
-                        let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
-                        let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();
+                    } else {
+                        if merge_blocks.len() == 0 {
+                            let header = BBGZHeader::from_bytes(header_bytes).unwrap();
+                            merge_id = id_bytes.to_smallvec();
+                            merge_blocks.push(block);
+                            merge_bsize = header.BC.BSIZE as usize;
+                        } else if merge_blocks.len() > 0 {
+                            // SAFETY at this point we will always have at least 1 merge block
+                            let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
+                            let new_trailer_bytes = merge_blocks[0].as_bytes::<Trailer>();
 
-                        let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                        let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
+                            let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
+                            let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
 
-                        for merge_block in merge_blocks.iter().skip(1) {
-                            let merge_header_bytes = merge_block.as_bytes::<Header>();
-                            let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
+                            for merge_block in merge_blocks.iter().skip(1) {
+                                let merge_header_bytes = merge_block.as_bytes::<Header>();
+                                let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
 
-                            let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                            let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+                                let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
+                                let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
-                            // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
-                            unsafe {
-                                new_header.merge_unchecked(merge_header)
-                            };
-                            new_trailer.merge(merge_trailer);
+                                // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
+                                unsafe {
+                                    new_header.merge_unchecked(merge_header)
+                                };
+                                new_trailer.merge(merge_trailer);
+                            }
+
+                            new_header.write_with_bsize(&mut bufwriter, merge_bsize).unwrap();
+                            for merge_block in &merge_blocks {
+                                let merge_raw_bytes = merge_block.as_bytes::<Raw>();
+                                bufwriter.write_all(merge_raw_bytes).unwrap();
+                            }
+                            new_trailer.write_with(&mut bufwriter).unwrap();
+
+                            let header = BBGZHeader::from_bytes(header_bytes).unwrap();
+                            merge_id = id_bytes.to_smallvec();
+                            merge_blocks.clear();
+                            merge_blocks.push(block);
+                            merge_bsize = header.BC.BSIZE as usize;
                         }
-
-                        new_header.write_with_bsize(&mut bufwriter, merge_bsize).unwrap();
-                        for merge_block in &merge_blocks {
-                            let merge_raw_bytes = merge_block.as_bytes::<Raw>();
-                            bufwriter.write_all(merge_raw_bytes).unwrap();
-                        }
-                        new_trailer.write_with(&mut bufwriter).unwrap();
-
-                        merge_id = id_bytes.to_smallvec();
-                        merge_blocks.clear();
-                        merge_bsize = 0;
-                    }
+                    } 
                 }
                 if merge_blocks.len() > 0 {
                     // SAFETY at this point we will always have at least 1 merge block
                     let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
-                    let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();
+                    let new_trailer_bytes = merge_blocks[0].as_bytes::<Trailer>();
 
                     let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
                     let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
