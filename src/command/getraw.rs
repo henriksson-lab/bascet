@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
-use bascet_io::{usize_MAX_SIZEOF_BLOCK, BBGZTrailer, BBGZWriteBlock};
+use bascet_io::{BBGZTrailer, BBGZWriteBlock, MAX_SIZEOF_BLOCKusize};
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -1151,9 +1151,9 @@ fn spawn_mergesort_workers(
             // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
             drop(mc_tx);
 
-            if let Err(e) = std::fs::remove_file(&**last_file.path()) {
-                log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
-            }
+            // if let Err(e) = std::fs::remove_file(&**last_file.path()) {
+            //     log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
+            // }
         }
 
         let debarcode_merge_paired = debarcode_merge.into_iter().tuples();
@@ -1197,11 +1197,13 @@ fn spawn_mergesort_workers(
                     .sizeof_decode_buffer(sizeof_stream_each_buffer)
                     .build();
 
-                let mut qa = sa.query::<parse::bbgz::Block>()
+                let mut qa = sa
+                    .query::<parse::bbgz::Block>()
                     .assert_with_context::<Id, Id, _>(
-                        |id_current: &&'static [u8], id_context: &&'static [u8]|
-                        id_current >= id_context,
-                        "id_current < id_context"
+                        |id_current: &&'static [u8], id_context: &&'static [u8]| {
+                            id_current >= id_context
+                        },
+                        "id_current < id_context",
                     );
 
                 let fb = match ib.clone().open() {
@@ -1223,11 +1225,13 @@ fn spawn_mergesort_workers(
                     .sizeof_decode_buffer(sizeof_stream_each_buffer)
                     .build();
 
-                let mut qb = sb.query::<parse::bbgz::Block>()
+                let mut qb = sb
+                    .query::<parse::bbgz::Block>()
                     .assert_with_context::<Id, Id, _>(
-                        |id_current: &&'static [u8], id_context: &&'static [u8]|
-                        id_current >= id_context,
-                        "id_current < id_context"
+                        |id_current: &&'static [u8], id_context: &&'static [u8]| {
+                            id_current >= id_context
+                        },
+                        "id_current < id_context",
                     );
 
                 let mut cell_a = qa.next().ok().flatten();
@@ -1255,12 +1259,12 @@ fn spawn_mergesort_workers(
                 // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
                 drop(mc_tx);
 
-                if let Err(e) = std::fs::remove_file(&**ia.path()) {
-                    log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
-                }
-                if let Err(e) = std::fs::remove_file(&**ib.path()) {
-                    log_warning!("Failed to delete merged file."; "path" => ?&ib.path(), "error" => %e);
-                }
+                // if let Err(e) = std::fs::remove_file(&**ia.path()) {
+                //     log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
+                // }
+                // if let Err(e) = std::fs::remove_file(&**ib.path()) {
+                //     log_warning!("Failed to delete merged file."; "path" => ?&ib.path(), "error" => %e);
+                // }
             }
         });
         thread_handles.push(thread_handle);
@@ -1294,7 +1298,7 @@ fn spawn_mergesort_writers(
             log_info!("Starting worker"; "thread" => thread_name);
 
             while let Ok(mc_rx) = ms_rx.recv() {
-                let countof_merges = thread_countof_merges.fetch_add(1, Ordering::Relaxed) + 1;
+                let countof_merges = thread_countof_merges.fetch_add(1, Ordering::Relaxed);
                 let temp_fname = format!(
                     "{thread_timestamp_temp_files}_merge_{mergeround_temp_files}_{countof_merges}"
                 );
@@ -1314,24 +1318,31 @@ fn spawn_mergesort_writers(
                     }
                 };
 
-                let mut bufwriter = BufWriter::with_capacity(usize_MAX_SIZEOF_BLOCK, temp_output_file);
+                let mut bufwriter = BufWriter::with_capacity(MAX_SIZEOF_BLOCKusize, temp_output_file);
                 let mut merge_id: SmallVec<[u8; 16]> = SmallVec::new();
                 let mut merge_blocks: SmallVec<[parse::bbgz::Block; 4]> = SmallVec::new();
-                let mut merge_bsize = 0;
+                let mut merge_csize = 0;
+                let mut merge_hsize = 0;
 
                 while let Ok(block) = mc_rx.recv() {
                     let id_bytes = block.as_bytes::<Id>();
                     let header_bytes = block.as_bytes::<Header>();
                     let raw_bytes = block.as_bytes::<Raw>();
                     let trailer_bytes = block.as_bytes::<Trailer>();
+                    let csize = raw_bytes.len();
+                    let hsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len();
 
-                    let bsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len() - 1;
-                    if merge_bsize + bsize > usize_MAX_SIZEOF_BLOCK {
-
+                    // SAFETY   this only checks if the raw CONTENTS fit into a block
+                    if merge_hsize + hsize > MAX_SIZEOF_BLOCKusize {
                         // SAFETY at this point we will always have at least 1 merge block
-                        let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
-                        let new_trailer_bytes = merge_blocks[0].as_bytes::<Trailer>();
+                        let (new_header_bytes, new_trailer_bytes) = unsafe { 
+                            (
+                                merge_blocks.get_unchecked(0).as_bytes::<Header>(),
+                                merge_blocks.get_unchecked(0).as_bytes::<Trailer>()
+                            ) 
+                        };
 
+                        // log_info!(""; "csize" => merge_csize, "diff" => ((u16::MAX as usize) - merge_csize));
                         let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
                         let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
 
@@ -1349,63 +1360,81 @@ fn spawn_mergesort_writers(
                             new_trailer.merge(merge_trailer);
                         }
 
-                        new_header.write_with_bsize(&mut bufwriter, merge_bsize).unwrap();
+                        new_header.write_with_csize(&mut bufwriter, merge_csize);
                         for merge_block in &merge_blocks {
                             let merge_raw_bytes = merge_block.as_bytes::<Raw>();
                             bufwriter.write_all(merge_raw_bytes).unwrap();
                         }
                         new_trailer.write_with(&mut bufwriter).unwrap();
                         merge_blocks.clear();
-                        merge_bsize = 0;
+                        merge_csize = 0;
+                        merge_hsize = 0;
                     }
 
                     if *id_bytes == *merge_id {
-                        let header = BBGZHeader::from_bytes(header_bytes).unwrap();
-                        merge_blocks.push(block);
-                        merge_bsize += header.BC.BSIZE as usize;
+                        match merge_blocks.len() {
+                            0 => {
+                                merge_blocks.push(block);
+                                merge_csize = csize;
+                                merge_hsize = hsize;
+                            }
+                            1.. => {
+                                merge_blocks.push(block);
+                                merge_csize += csize;
+                                merge_hsize += hsize;
+                            }
+                        }
                     } else {
-                        if merge_blocks.len() == 0 {
-                            let header = BBGZHeader::from_bytes(header_bytes).unwrap();
-                            merge_id = id_bytes.to_smallvec();
-                            merge_blocks.push(block);
-                            merge_bsize = header.BC.BSIZE as usize;
-                        } else if merge_blocks.len() > 0 {
-                            // SAFETY at this point we will always have at least 1 merge block
-                            let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
-                            let new_trailer_bytes = merge_blocks[0].as_bytes::<Trailer>();
-
-                            let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                            let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
-
-                            for merge_block in merge_blocks.iter().skip(1) {
-                                let merge_header_bytes = merge_block.as_bytes::<Header>();
-                                let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
-
-                                let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                                let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
-
-                                // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
-                                unsafe {
-                                    new_header.merge_unchecked(merge_header)
+                        match merge_blocks.len() {
+                            0 => {
+                                merge_id = id_bytes.to_smallvec();
+                                merge_blocks.push(block);
+                                merge_csize = csize;
+                                merge_hsize = hsize;
+                            } 
+                            1.. => {
+                                // SAFETY merge_blocks.len() > 0
+                                let (new_header_bytes, new_trailer_bytes) = unsafe { 
+                                    (
+                                        merge_blocks.get_unchecked(0).as_bytes::<Header>(),
+                                        merge_blocks.get_unchecked(0).as_bytes::<Trailer>()
+                                    ) 
                                 };
-                                new_trailer.merge(merge_trailer);
-                            }
 
-                            new_header.write_with_bsize(&mut bufwriter, merge_bsize).unwrap();
-                            for merge_block in &merge_blocks {
-                                let merge_raw_bytes = merge_block.as_bytes::<Raw>();
-                                bufwriter.write_all(merge_raw_bytes).unwrap();
-                            }
-                            new_trailer.write_with(&mut bufwriter).unwrap();
+                                let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
+                                let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
 
-                            let header = BBGZHeader::from_bytes(header_bytes).unwrap();
-                            merge_id = id_bytes.to_smallvec();
-                            merge_blocks.clear();
-                            merge_blocks.push(block);
-                            merge_bsize = header.BC.BSIZE as usize;
+                                for merge_block in merge_blocks.iter().skip(1) {
+                                    let merge_header_bytes = merge_block.as_bytes::<Header>();
+                                    let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
+
+                                    let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
+                                    let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+
+                                    // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
+                                    unsafe {
+                                        new_header.merge(merge_header)
+                                    };
+                                    new_trailer.merge(merge_trailer);
+                                }
+
+                                new_header.write_with_csize(&mut bufwriter, merge_csize);
+                                for merge_block in &merge_blocks {
+                                    let merge_raw_bytes = merge_block.as_bytes::<Raw>();
+                                    bufwriter.write_all(merge_raw_bytes).unwrap();
+                                }
+                                new_trailer.write_with(&mut bufwriter).unwrap();
+
+                                merge_id = id_bytes.to_smallvec();
+                                merge_blocks.clear();
+                                merge_blocks.push(block);
+                                merge_csize = csize;
+                                merge_hsize = hsize;
+                            }
                         }
                     } 
                 }
+
                 if merge_blocks.len() > 0 {
                     // SAFETY at this point we will always have at least 1 merge block
                     let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
@@ -1423,18 +1452,19 @@ fn spawn_mergesort_writers(
 
                         // SAFETY if block was larger than usize_MAX_BLOCK_SIZE then it wouldve been flushed earlier
                         unsafe {
-                            new_header.merge_unchecked(merge_header)
+                            new_header.merge(merge_header)
                         };
                         new_trailer.merge(merge_trailer);
                     }
 
-                    new_header.write_with_bsize(&mut bufwriter, merge_bsize).unwrap();
+                    new_header.write_with_csize(&mut bufwriter, merge_csize);
                     for merge_block in &merge_blocks {
                         let merge_raw_bytes = merge_block.as_bytes::<Raw>();
                         bufwriter.write_all(merge_raw_bytes).unwrap();
                     }
                     new_trailer.write_with(&mut bufwriter).unwrap();
                 }
+
                 bufwriter.write_all(bbgz::MARKER_EOF).unwrap();
                 bufwriter.flush().unwrap();
 

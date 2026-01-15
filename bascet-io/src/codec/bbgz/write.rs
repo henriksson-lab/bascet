@@ -16,7 +16,7 @@ use crossbeam::channel::{Receiver, Sender};
 use libdeflater::{CompressionLvl, Compressor};
 
 use crate::{
-    codec::bbgz::{usize_MAX_SIZEOF_BLOCK, BBGZHeader, Compression, MARKER_EOF, MAX_SIZEOF_BLOCK},
+    codec::bbgz::{BBGZHeader, Compression, MAX_SIZEOF_BLOCKusize, MARKER_EOF, MAX_SIZEOF_BLOCK},
     BBGZCompressedBlock, BBGZRawBlock, BBGZTrailer, BBGZWriteBlock,
 };
 
@@ -97,7 +97,7 @@ impl BBGZWriter {
 
     pub(crate) fn alloc_raw(&mut self) -> BBGZRawBlock {
         // NOTE: usize_MAX_SIZEOF_BLOCK is the max LEN. alloc allocates n SLOTS.
-        let buf = self.inner_raw_allocator.alloc(usize_MAX_SIZEOF_BLOCK - 1);
+        let buf = self.inner_raw_allocator.alloc(MAX_SIZEOF_BLOCKusize - 1);
         BBGZRawBlock { buf, crc32: None }
     }
 
@@ -142,7 +142,7 @@ impl BBGZWriter {
                             raw.crc32 = Some(crc32);
 
                             let mut buf_compressed =
-                                thread_compression_alloc.alloc(usize_MAX_SIZEOF_BLOCK);
+                                thread_compression_alloc.alloc(MAX_SIZEOF_BLOCKusize);
 
                             let buf_compressed = unsafe {
                                 // SAFETY: we always allocate as many bytes as uncompressed data needs therefore this cannot fail

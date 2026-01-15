@@ -5,8 +5,7 @@ use bascet_core::{
     *,
 };
 use bascet_derive::Budget;
-use bascet_io::{codec, parse, tirp, usize_MAX_SIZEOF_BLOCK, BBGZHeader, BBGZTrailer};
-use bgzip::{write::BGZFMultiThreadWriter, Compression};
+use bascet_io::{codec, parse, BBGZHeader, BBGZTrailer, MAX_SIZEOF_BLOCKusize};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use clap::Args;
@@ -115,26 +114,22 @@ struct ShardifyBudget {
 impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let budget = ShardifyBudget::builder()
-            .threads(
-                self.total_threads.unwrap_or_else( ||
-                    (self.paths_in.len() + 1)
-                        .try_into()
-                        .expect("At least two input files and one output file required"),
-                )
-            )
+            .threads(self.total_threads.unwrap_or_else(|| {
+                (self.paths_in.len() + 1)
+                    .try_into()
+                    .expect("At least two input files and one output file required")
+            }))
             .memory(self.total_mem)
             .countof_threads_read(
                 (self.paths_in.len())
                     .try_into()
                     .expect("At least two input files required"),
             )
-            .countof_threads_write(
-                self.numof_threads_write.unwrap_or_else( ||
-                    (self.paths_out.len())
-                        .try_into()
-                        .expect("At least one output file required"),
-                )
-            )
+            .countof_threads_write(self.numof_threads_write.unwrap_or_else(|| {
+                (self.paths_out.len())
+                    .try_into()
+                    .expect("At least one output file required")
+            }))
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
         budget.validate();
@@ -197,11 +192,11 @@ impl ShardifyCMD {
                 };
 
                 let thread_bufreader = BufReader::with_capacity(
-                    usize_MAX_SIZEOF_BLOCK, 
+                    MAX_SIZEOF_BLOCKusize, 
                     thread_file
                 );
 
-                let thread_decoder = codec::PlaintextDecoder::builder()
+                let thread_decoder = codec::plain::PlaintextDecoder::builder()
                     .with_reader(thread_bufreader)
                     .build();
                 let thread_parser = parse::bbgz::parser();
@@ -301,7 +296,7 @@ impl ShardifyCMD {
                         let trailer_bytes = block.as_bytes::<Trailer>();
 
                         let bsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len() - 1;
-                        if bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK {
+                        if bsize + merge_bsize > MAX_SIZEOF_BLOCKusize {
                             // SAFETY at this point we will always have at least 1 merge block
                             let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
                             let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();

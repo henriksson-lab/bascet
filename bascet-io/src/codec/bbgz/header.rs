@@ -2,7 +2,7 @@ use std::io::Write;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{usize_MAX_SIZEOF_BLOCK, BBGZTrailer};
+use crate::{BBGZTrailer, MAX_SIZEOF_BLOCKusize};
 
 // NOTE this is very much an incomplete and unsound implementation of the _general_ gzip protocol
 //      and the bgzf protocol. However, we right now generate this data as the sole source
@@ -87,7 +87,7 @@ impl BBGZHeader {
     }
 
     pub fn merge(&mut self, other: Self) -> Result<&mut Self, ()> {
-        if (self.BC.BSIZE as usize) + (other.BC.BSIZE as usize) > usize_MAX_SIZEOF_BLOCK {
+        if ((self.BC.BSIZE as usize) + (other.BC.BSIZE as usize) - 1) > MAX_SIZEOF_BLOCKusize {
             return Err(());
         }
         self.base.MTIME = self.base.MTIME.max(other.base.MTIME);
@@ -119,6 +119,8 @@ impl BBGZHeader {
 
         self.base.XLEN = xlen as u16;
         self.BC.BSIZE = (BBGZHeaderBase::SSIZE + xlen + csize + BBGZTrailer::SSIZE - 1) as u16;
+        // let bsize = self.BC.BSIZE;
+        // eprintln!("write_with_csize: BSIZE={}, xlen={}, csize={}", bsize, xlen, csize);
 
         writer.write_all(self.base.as_bytes())?;
 
@@ -130,7 +132,6 @@ impl BBGZHeader {
 
         // HACK bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
         writer.write_all(self.BC.as_bytes())?;
-
         Ok(())
     }
 
