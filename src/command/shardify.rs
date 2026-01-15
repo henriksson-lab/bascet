@@ -5,7 +5,7 @@ use bascet_core::{
     *,
 };
 use bascet_derive::Budget;
-use bascet_io::{BBGZHeader, BBGZTrailer, codec, parse, tirp, usize_MAX_SIZEOF_BLOCK};
+use bascet_io::{codec, parse, tirp, usize_MAX_SIZEOF_BLOCK, BBGZHeader, BBGZTrailer};
 use bgzip::{write::BGZFMultiThreadWriter, Compression};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -60,14 +60,6 @@ pub struct ShardifyCMD {
     total_threads: Option<BoundedU64<3, { u64::MAX }>>,
 
     #[arg(
-        long = "numof-threads-read",
-        help = "Number of reader threads (default: number of input files)",
-        value_name = "2..",
-        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
-    )]
-    numof_threads_read: Option<BoundedU64<2, { u64::MAX }>>,
-
-    #[arg(
         long = "numof-threads-write",
         help = "Number of writer threads",
         value_name = "1..",
@@ -110,11 +102,11 @@ struct ShardifyBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new(total_threads.saturating_sub(1).max(2)).unwrap())]
-    numof_threads_read: BoundedU64<2, { u64::MAX }>,
+    #[threads(TRead)]
+    countof_threads_read: BoundedU64<2, { u64::MAX }>,
 
-    #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]
-    numof_threads_write: BoundedU64<1, { u64::MAX }>,
+    #[threads(TWrite, |_, _| BoundedU64::const_new::<1>())]
+    countof_threads_write: BoundedU64<1, { u64::MAX }>,
 
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
@@ -124,12 +116,25 @@ impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let budget = ShardifyBudget::builder()
             .threads(
-                self.total_threads
-                    .unwrap_or((self.paths_in.len() + 1).try_into().unwrap()),
+                self.total_threads.unwrap_or(
+                    (self.paths_in.len() + 1)
+                        .try_into()
+                        .expect("At least two input files and one output file required"),
+                ),
             )
             .memory(self.total_mem)
-            .maybe_numof_threads_read(self.numof_threads_read)
-            .maybe_numof_threads_write(self.numof_threads_write)
+            .countof_threads_read(
+                (self.paths_in.len())
+                    .try_into()
+                    .expect("At least two input files required"),
+            )
+            .countof_threads_write(
+                self.numof_threads_write.unwrap_or(
+                    (self.paths_out.len())
+                        .try_into()
+                        .expect("At least one output file required"),
+                ),
+            )
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
         budget.validate();
@@ -138,28 +143,12 @@ impl ShardifyCMD {
         let numof_streams = self.paths_in.len() as u64;
         let numof_writers = self.paths_out.len() as u64;
 
-        let each_stream_numof_threads = (*budget.threads::<TRead>()).get() / numof_streams;
-        let each_stream_numof_threads: BoundedU64<1, { u64::MAX }> =
-            BoundedU64::new(each_stream_numof_threads).unwrap_or_else(|| {
-                let saturated: BoundedU64<1, _> =
-                    BoundedU64::new_saturating(each_stream_numof_threads);
-                log_warning!(
-                    "Thread allocation per stream below minimum";
-                    "determined" => each_stream_numof_threads,
-                    "saturating to" => %saturated
-                );
-                saturated
-            });
-
-        let each_stream_sizeof_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / numof_streams);
+        let sizeof_stream_each_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / numof_streams);
 
         log_info!(
             "Starting Shardify";
             "using" => %budget,
-            "streams" => numof_streams,
-            "writers" => numof_writers,
-            "threads per stream" => %each_stream_numof_threads,
-            "memory per stream" => %each_stream_sizeof_buffer,
+            "memory per stream" => %sizeof_stream_each_buffer,
             "cells in filter" => arc_filter.len()
         );
 
@@ -191,7 +180,7 @@ impl ShardifyCMD {
             let thread_filter = Arc::clone(&arc_filter);
             let thread_notify_tx = notify_tx.clone();
 
-            let thread_stream_buffer_size = each_stream_sizeof_buffer;
+            let thread_stream_buffer_size = sizeof_stream_each_buffer;
             let thread_stream_arena_size = self.sizeof_stream_arena;
 
             let global_processed_counter = Arc::clone(&global_cells_processed);
@@ -318,23 +307,26 @@ impl ShardifyCMD {
                             let new_trailer_bytes = merge_blocks[0].as_bytes::<Header>();
 
                             let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                            let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
+                            let mut new_trailer =
+                                BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
 
                             for merge_block in merge_blocks.iter().skip(1) {
                                 let merge_header_bytes = merge_block.as_bytes::<Header>();
                                 let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
 
-                                let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                                let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+                                let merge_header =
+                                    BBGZHeader::from_bytes(merge_header_bytes).unwrap();
+                                let merge_trailer =
+                                    BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
                                 // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
-                                unsafe {
-                                    new_header.merge_unchecked(merge_header)
-                                };
+                                unsafe { new_header.merge_unchecked(merge_header) };
                                 new_trailer.merge(merge_trailer);
                             }
 
-                            new_header.write_with_bsize(&mut thread_buf_writer, merge_bsize).unwrap();
+                            new_header
+                                .write_with_bsize(&mut thread_buf_writer, merge_bsize)
+                                .unwrap();
                             for merge_block in &merge_blocks {
                                 let merge_raw_bytes = merge_block.as_bytes::<Raw>();
                                 thread_buf_writer.write_all(merge_raw_bytes).unwrap();
@@ -361,30 +353,33 @@ impl ShardifyCMD {
                             let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
 
                             let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                            let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+                            let merge_trailer =
+                                BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
                             // SAFETY if block was larger than usize_MAX_BLOCK_SIZE then it wouldve been flushed earlier
-                            unsafe {
-                                new_header.merge_unchecked(merge_header)
-                            };
+                            unsafe { new_header.merge_unchecked(merge_header) };
                             new_trailer.merge(merge_trailer);
                         }
 
-                        new_header.write_with_bsize(&mut thread_buf_writer, merge_bsize).unwrap();
+                        new_header
+                            .write_with_bsize(&mut thread_buf_writer, merge_bsize)
+                            .unwrap();
                         for merge_block in &merge_blocks {
                             let merge_raw_bytes = merge_block.as_bytes::<Raw>();
                             thread_buf_writer.write_all(merge_raw_bytes).unwrap();
                         }
                         new_trailer.write_with(&mut thread_buf_writer).unwrap();
                     }
-                    
+
                     let global_count =
                         global_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if global_count % 1_000 == 0 {
                         log_info!("Writing"; "bbgz blocks written" => global_count);
                     }
                 }
-                thread_buf_writer.write_all(codec::bbgz::MARKER_EOF).unwrap();
+                thread_buf_writer
+                    .write_all(codec::bbgz::MARKER_EOF)
+                    .unwrap();
                 thread_buf_writer.flush().unwrap();
             }));
         }
