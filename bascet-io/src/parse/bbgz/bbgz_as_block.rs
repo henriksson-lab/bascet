@@ -2,7 +2,7 @@ use bascet_core::{ArenaSlice, Parse, ParseResult};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    codec::bbgz::{usize_MAX_SIZEOF_BLOCK, usize_MIN_SIZEOF_HEADER, MARKER_EOF},
+    codec::bbgz::{MAX_SIZEOF_BLOCKusize, MIN_SIZEOF_HEADERusize, MARKER_EOF},
     parse::bbgz::{BBGZParser, Block},
     BBGZExtra, BBGZHeader, BBGZHeaderBase, BBGZTrailer, BGZFExtra,
 };
@@ -11,22 +11,28 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
     type Item = Block;
 
     fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item, ()> {
-        let buf_remaining = &decoded.as_slice()[self.inner_cursor..];
-        let buf_remaining_len = buf_remaining.len();
+        let slice_remaining = &decoded.as_slice()[self.inner_cursor..];
+        let slice_remaining_len = slice_remaining.len();
 
-        if buf_remaining_len < usize_MIN_SIZEOF_HEADER {
+        if slice_remaining_len < MIN_SIZEOF_HEADERusize {
             return ParseResult::Partial;
         }
 
         // SAFETY: checked size above
         if unsafe {
-            buf_remaining.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||  // cargo fmt stop unaligning these!
-            buf_remaining.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
+            slice_remaining.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||  // cargo fmt stop unaligning these!
+            slice_remaining.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
         } {
             panic!(
-                "Magic bytes not found, found instead: {:?} ({:?})",
-                [buf_remaining.get(0), buf_remaining.get(1)],
-                String::from_utf8_lossy(&[*buf_remaining.get(0).unwrap_or(&b'#'), *buf_remaining.get(1).unwrap_or(&b'#')])
+                "Magic bytes not found (cursor {:?}), found instead: {:?} ({:?}); Buffer {:x?}, ({:?})",
+                self.inner_cursor,
+                [slice_remaining.get(0), slice_remaining.get(1)],
+                String::from_utf8_lossy(&[
+                    *slice_remaining.get(0).unwrap_or(&b'#'),
+                    *slice_remaining.get(1).unwrap_or(&b'#')
+                ]),
+                &slice_remaining[..slice_remaining_len.min(500)],
+                String::from_utf8_lossy(&slice_remaining[..slice_remaining_len.min(500)])
             );
             return ParseResult::Error(());
         }
@@ -36,8 +42,8 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         // SAFETY: checked minimum size above, cursor + 11 is within bounds
         let xlen = unsafe {
             u16::from_le_bytes([
-                *buf_remaining.get_unchecked(10),
-                *buf_remaining.get_unchecked(11),
+                *slice_remaining.get_unchecked(10),
+                *slice_remaining.get_unchecked(11),
             ]) as usize
         };
 
@@ -45,7 +51,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let mut cursor_fextra = BBGZHeaderBase::SSIZE;
         let pos_end_fextra = cursor_fextra + xlen;
 
-        if buf_remaining_len < pos_end_fextra {
+        if slice_remaining_len < pos_end_fextra {
             return ParseResult::Partial;
         }
 
@@ -56,11 +62,11 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             // SAFETY: extra_cursor is bounded by extra_end which is derived from xlen in the header
             let (si1, si2, len) = unsafe {
                 (
-                    *buf_remaining.get_unchecked(cursor_fextra),
-                    *buf_remaining.get_unchecked(cursor_fextra + 1),
+                    *slice_remaining.get_unchecked(cursor_fextra),
+                    *slice_remaining.get_unchecked(cursor_fextra + 1),
                     u16::from_le_bytes([
-                        *buf_remaining.get_unchecked(cursor_fextra + 2),
-                        *buf_remaining.get_unchecked(cursor_fextra + 3),
+                        *slice_remaining.get_unchecked(cursor_fextra + 2),
+                        *slice_remaining.get_unchecked(cursor_fextra + 3),
                     ]) as usize,
                 )
             };
@@ -69,7 +75,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             let pos_begin_data = cursor_fextra + BBGZExtra::SSIZE;
             let pos_end_data = pos_begin_data + len;
             // SAFETY: data_end is bounded by extra_end which was checked above
-            let data = unsafe { buf_remaining.get_unchecked(pos_begin_data..pos_end_data) };
+            let data = unsafe { slice_remaining.get_unchecked(pos_begin_data..pos_end_data) };
 
             match (si1, si2) {
                 (b'B', b'C') => {
@@ -95,18 +101,20 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             u16::from_le_bytes([*slice_bc.get_unchecked(0), *slice_bc.get_unchecked(1)]) as usize
                 + 1
         };
-        if buf_remaining_len < bsize {
+        if slice_remaining_len < bsize {
             return ParseResult::Partial;
         }
 
         // SAFETY: block_end bounds checked above
         let slice_header = unsafe {
-            buf_remaining.get_unchecked(..cursor_fextra) //
+            slice_remaining.get_unchecked(..cursor_fextra) //
         };
-        let slice_raw =
-            unsafe { buf_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) };
-        let slice_trailer =
-            unsafe { buf_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) };
+        let slice_raw = unsafe { 
+            slice_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) //
+        };
+        let slice_trailer = unsafe { 
+            slice_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) //
+        };
         self.inner_cursor += bsize;
 
         let block = Block {
@@ -160,7 +168,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
                     std::ptr::copy_nonoverlapping(
                         slice_head.as_ptr(),
                         scratch_slice.as_mut_ptr().add(tail_len),
-                        usize_MAX_SIZEOF_BLOCK.min(head_len),
+                        MAX_SIZEOF_BLOCKusize.min(head_len),
                     );
                 }
             }
@@ -170,7 +178,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         };
         let slice_combined_len = slice_combined.len();
 
-        if slice_combined_len < usize_MIN_SIZEOF_HEADER {
+        if slice_combined_len < MIN_SIZEOF_HEADERusize {
             panic!("Spanning block too small");
             return ParseResult::Error(());
         }
@@ -263,11 +271,15 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             return ParseResult::Error(());
         }
         // SAFETY: block_end bounds checked above
-        let slice_header = unsafe { slice_combined.get_unchecked(..cursor_fextra) };
-        let slice_raw =
-            unsafe { slice_combined.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) };
-        let slice_trailer =
-            unsafe { slice_combined.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) };
+        let slice_header = unsafe {
+            slice_combined.get_unchecked(..cursor_fextra) //
+        };
+        let slice_raw = unsafe { 
+            slice_combined.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) //
+        };
+        let slice_trailer = unsafe { 
+            slice_combined.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) //
+        };
         self.inner_cursor = bsize.saturating_sub(tail_len);
 
         let block = Block {

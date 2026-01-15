@@ -3,15 +3,18 @@ use bytesize::ByteSize;
 use crate::{BBGZExtra, BBGZHeaderBase, BBGZTrailer, BGZFExtra};
 
 pub const MAX_SIZEOF_BLOCK: ByteSize = ByteSize::kib(64);
-pub const usize_MAX_SIZEOF_BLOCK: usize = MAX_SIZEOF_BLOCK.as_u64() as usize;
+#[allow(non_upper_case_globals)]
+pub const MAX_SIZEOF_BLOCKusize: usize = MAX_SIZEOF_BLOCK.as_u64() as usize;
 
-pub const usize_MIN_SIZEOF_BLOCK: usize =
+#[allow(non_upper_case_globals)]
+pub const MIN_SIZEOF_BLOCKusize: usize =
     BBGZHeaderBase::SSIZE + BBGZExtra::SSIZE + BGZFExtra::SSIZE + BBGZTrailer::SSIZE;
-pub const MIN_SIZEOF_BLOCK: ByteSize = ByteSize(usize_MIN_SIZEOF_BLOCK as u64);
+pub const MIN_SIZEOF_BLOCK: ByteSize = ByteSize(MIN_SIZEOF_BLOCKusize as u64);
 
-pub const usize_MIN_SIZEOF_HEADER: usize =
+#[allow(non_upper_case_globals)]
+pub const MIN_SIZEOF_HEADERusize: usize =
     BBGZHeaderBase::SSIZE + BBGZExtra::SSIZE + BGZFExtra::SSIZE;
-pub const MIN_SIZEOF_HEADER: ByteSize = ByteSize(usize_MIN_SIZEOF_HEADER as u64);
+pub const MIN_SIZEOF_HEADER: ByteSize = ByteSize(MIN_SIZEOF_HEADERusize as u64);
 
 pub const MAX_SIZEOF_FEXTRA: ByteSize = ByteSize::kib(64);
 
