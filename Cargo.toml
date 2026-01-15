@@ -42,6 +42,7 @@ bytesize = "2.3.1"
 clap = { version = "4.5.23", features = ["derive"] }
 clio = { version = "0.3.5", features = ["clap-parse"] }
 const_format = "0.2.34"
+crc32fast = "1.5.0"
 crossbeam = "0.8.4"
 csv = "1.2.2"
 delegate = "0.13.1"

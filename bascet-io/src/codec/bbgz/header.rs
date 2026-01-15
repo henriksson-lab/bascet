@@ -1,210 +1,299 @@
-use std::{
-    io::{Seek, Write},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::io::Write;
 
-use binrw::{binrw, BinWrite};
-use smart_default::SmartDefault;
+use bytemuck::{Pod, Zeroable};
 
-#[derive(Debug, Clone, SmartDefault)]
-#[binrw]
-#[brw(little)]
+use crate::{usize_MAX_SIZEOF_BLOCK, BBGZTrailer};
+
+// NOTE this is very much an incomplete and unsound implementation of the _general_ gzip protocol
+//      and the bgzf protocol. However, we right now generate this data as the sole source
+//      and therefore for now, we are able to ignore certain things like the FLG field or
+//      additional trailer fields. This may change in the future
+
+// Complete GZIP header with extra fields
+#[derive(Debug, Clone)]
 #[allow(non_snake_case)]
 pub struct BBGZHeader {
-    // Magic number. Must be 0x1F
-    #[default = 0x1F]
-    pub ID1: u8,
-    // Magic number. Must be 0x8B
-    #[default = 0x8B]
-    pub ID2: u8,
-    // Compression method. Must be 8 (Deflate)
-    #[default = 8]
-    pub CM: u8,
-    // Flags (FTEXT | FEXTRA)
-    #[default = 0b0000_0101]
-    pub FLG: u8,
-    // Unix timestamp or 0 if unavailable
-    pub MTIME: u32,
-    // Extra flags: 0=None, 2=Best compression, 4=Fastest (not sure this matters)
-    #[default = 2]
-    pub XFL: u8,
-    // Filesystem: 255=Unknown (this is irrelevant to us)
-    #[default = 255]
-    pub OS: u8,
-    // Size of extra field
-    pub XLEN: u16,
-    // Extra field subfields
-    #[brw(ignore)]
+    pub base: BBGZHeaderBase,
+    pub BC: BGZFExtra,
     pub FEXTRA: Vec<BBGZExtra>,
 }
 
 impl BBGZHeader {
-    pub const SSIZE: usize = 12;
-
-    pub const ID1_MAGIC: u8 = 0x1F;
-    pub const ID2_MAGIC: u8 = 0x8B;
-    pub const CM_DEFLATE: u8 = 8;
-    pub const FLG_DEFAULT: u8 = 0b0000_0101; // FTEXT | FEXTRA
-    pub const XFL_BEST_COMPRESSION: u8 = 2;
-    pub const OS_UNKNOWN: u8 = 255;
-
     pub fn new() -> Self {
-        let mtime = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as u32;
-
         Self {
-            MTIME: mtime,
-            ..Default::default()
+            base: BBGZHeaderBase::TEMPLATE,
+            BC: BGZFExtra::TEMPLATE,
+            FEXTRA: Vec::new(),
         }
     }
 
     pub fn add_extra(&mut self, id: &[u8; 2], data: Vec<u8>) -> &mut Self {
         self.FEXTRA.push(BBGZExtra::new(id, data));
-        self
+        return self;
     }
 
-    pub fn write_header<W>(&mut self, writer: &mut W, clen: usize) -> std::io::Result<()>
-    where
-        W: Write,
-    {
-        let xlen: usize = self.FEXTRA.iter().map(|e| e.size()).sum();
-        // NOTE: BGZFExtra only has a static size
-        let xlen: usize = xlen + BGZFExtra::SSIZE;
-        self.XLEN = xlen as u16;
+    pub fn add_extra_unique(&mut self, id: &[u8; 2], data: Vec<u8>) -> &mut Self {
+        if self.FEXTRA.iter().any(|e| e.SI1 == id[0] && e.SI2 == id[1]) {
+            return self;
+        }
+        self.FEXTRA.push(BBGZExtra::new(id, data));
+        return self;
+    }
 
-        let bsize = BBGZHeader::SSIZE + xlen + clen + BBGZTrailer::SSIZE - 1;
+    pub fn size(&self) -> usize {
+        let mut size = BBGZHeaderBase::SSIZE + BGZFExtra::SSIZE;
+        size += self.FEXTRA.iter().map(|e| e.size()).sum::<usize>();
+        return size;
+    }
 
-        writer.write_all(&[self.ID1])?;
-        writer.write_all(&[self.ID2])?;
-        writer.write_all(&[self.CM])?;
-        writer.write_all(&[self.FLG])?;
-        writer.write_all(&self.MTIME.to_le_bytes())?;
-        writer.write_all(&[self.XFL])?;
-        writer.write_all(&[self.OS])?;
-        writer.write_all(&self.XLEN.to_le_bytes())?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+        let base = BBGZHeaderBase::from_bytes(bytes)?;
+        let xlen = base.XLEN as usize;
+
+        let extras_start = BBGZHeaderBase::SSIZE;
+        let extras_end = extras_start + xlen;
+        if bytes.len() < extras_end {
+            return Err(());
+        }
+
+        let mut header = Self {
+            base,
+            BC: BGZFExtra::TEMPLATE,
+            FEXTRA: Vec::new(),
+        };
+
+        let mut cursor = extras_start;
+        while cursor + BBGZExtra::SSIZE <= extras_end {
+            let si1 = bytes[cursor];
+            let si2 = bytes[cursor + 1];
+            let len = u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]) as usize;
+
+            let data_start = cursor + BBGZExtra::SSIZE;
+            let data_end = data_start + len;
+            if data_end > extras_end {
+                return Err(());
+            }
+
+            match (si1, si2) {
+                (b'B', b'C') => header.BC = BGZFExtra::from_bytes(&bytes[cursor..])?,
+                _ => {
+                    header.add_extra_unique(&[si1, si2], bytes[data_start..data_end].to_vec());
+                }
+            }
+            cursor = data_end;
+        }
+
+        Ok(header)
+    }
+
+    pub fn merge(&mut self, other: Self) -> Result<&mut Self, ()> {
+        if (self.BC.BSIZE as usize) + (other.BC.BSIZE as usize) > usize_MAX_SIZEOF_BLOCK {
+            return Err(());
+        }
+        self.base.MTIME = self.base.MTIME.max(other.base.MTIME);
+        for fmerge in other.FEXTRA {
+            // NOTE I do not think checking if xlen > usize_MAX_SIZEOF_FEXTRA is neccessary
+            //      because BSIZE is total blocksize
+            self.add_extra_unique(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
+        }
+
+        return Ok(self);
+    }
+
+    pub unsafe fn merge_unchecked(&mut self, other: Self) -> &mut Self {
+        self.base.MTIME = self.base.MTIME.max(other.base.MTIME);
+        for fmerge in other.FEXTRA {
+            self.add_extra_unique(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
+        }
+
+        return self;
+    }
+
+    pub fn write_with_csize<W: Write>(
+        &mut self,
+        writer: &mut W,
+        csize: usize,
+    ) -> std::io::Result<()> {
+        let mut xlen: usize = BGZFExtra::SSIZE;
+        xlen += self.FEXTRA.iter().map(|e| e.size()).sum::<usize>();
+
+        self.base.XLEN = xlen as u16;
+        self.BC.BSIZE = (BBGZHeaderBase::SSIZE + xlen + csize + BBGZTrailer::SSIZE - 1) as u16;
+
+        writer.write_all(self.base.as_bytes())?;
 
         for extra in &self.FEXTRA {
-            writer.write_all(&[extra.SI1])?;
-            writer.write_all(&[extra.SI2])?;
+            writer.write_all(&[extra.SI1, extra.SI2])?;
             writer.write_all(&(extra.DATA.len() as u16).to_le_bytes())?;
             writer.write_all(&extra.DATA)?;
         }
 
-        // NOTE: bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
-        let bgzf_extra = BGZFExtra::new(bsize as u16);
-        writer.write_all(&[bgzf_extra.SI1])?;
-        writer.write_all(&[bgzf_extra.SI2])?;
-        writer.write_all(&bgzf_extra.LEN.to_le_bytes())?;
-        writer.write_all(&bgzf_extra.BSIZE.to_le_bytes())?;
+        // HACK bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
+        writer.write_all(self.BC.as_bytes())?;
+
+        Ok(())
+    }
+
+    pub fn write_with_bsize<W: Write>(
+        &mut self,
+        writer: &mut W,
+        bsize: usize,
+    ) -> std::io::Result<()> {
+        let mut xlen: usize = BGZFExtra::SSIZE;
+        xlen += self.FEXTRA.iter().map(|e| e.size()).sum::<usize>();
+
+        self.base.XLEN = xlen as u16;
+        self.BC.BSIZE = bsize as u16;
+
+        writer.write_all(self.base.as_bytes())?;
+
+        for extra in &self.FEXTRA {
+            writer.write_all(&[extra.SI1, extra.SI2])?;
+            writer.write_all(&(extra.DATA.len() as u16).to_le_bytes())?;
+            writer.write_all(&extra.DATA)?;
+        }
+
+        // HACK bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
+        writer.write_all(self.BC.as_bytes())?;
 
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, SmartDefault)]
-#[binrw]
-#[brw(little)]
+/// Base BGZF/GZIP header (without FEXTRA)
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[allow(non_snake_case)]
+pub struct BBGZHeaderBase {
+    /// Magic number (0x1F)
+    pub ID1: u8,
+    /// Magic number (0x8B)
+    pub ID2: u8,
+    /// Compression method (8 = Deflate)
+    pub CM: u8,
+    /// Flags (FTEXT | FEXTRA = 0x05)
+    pub FLG: u8,
+    /// Unix timestamp
+    pub MTIME: u32,
+    /// Extra flags (2 = best compression)
+    pub XFL: u8,
+    /// Filesystem (255 = unknown)
+    pub OS: u8,
+    /// Size of extra field
+    pub XLEN: u16,
+}
+
+impl BBGZHeaderBase {
+    pub const SSIZE: usize = 12;
+    pub const TEMPLATE: Self = Self {
+        ID1: 0x1F,
+        ID2: 0x8B,
+        CM: 8,
+        FLG: 0x05,
+        MTIME: 0,
+        XFL: 2,
+        OS: 255,
+        XLEN: 0,
+    };
+
+    #[inline]
+    pub fn new(mtime: u32, xlen: u16) -> Self {
+        Self {
+            MTIME: mtime,
+            XLEN: xlen,
+            ..Self::TEMPLATE
+        }
+    }
+
+    #[inline]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+        match bytes.get(..Self::SSIZE) {
+            Some(b) => match bytemuck::try_from_bytes(b) {
+                Ok(v) => Ok(*v),
+                Err(_) => Err(()),
+            },
+            None => Err(()),
+        }
+    }
+
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+// Generic extra field
+#[derive(Debug, Clone)]
 #[allow(non_snake_case)]
 pub struct BBGZExtra {
-    // Subfield ID byte 1
     pub SI1: u8,
-    // Subfield ID byte 2
     pub SI2: u8,
-    // Length of DATA
-    pub LEN: u16,
-    // Subfield data
-    #[br(count = LEN)]
     pub DATA: Vec<u8>,
 }
 
 impl BBGZExtra {
-    pub const SSIZE: usize = 4;
+    pub const SSIZE: usize = 4; // SI1 + SI2 + LEN1 + LEN2
 
     pub fn new(id: &[u8; 2], data: Vec<u8>) -> Self {
         Self {
             SI1: id[0],
             SI2: id[1],
-            LEN: data.len() as u16,
             DATA: data,
         }
     }
 
+    #[inline]
     pub fn size(&self) -> usize {
         Self::SSIZE + self.DATA.len()
     }
 }
 
-#[derive(Debug, Clone, SmartDefault)]
-#[binrw]
-#[brw(little)]
+// BGZF extra field
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[allow(non_snake_case)]
 pub struct BGZFExtra {
-    #[default = b'B']
+    /// Subfield ID byte 1 ('B')
     pub SI1: u8,
-    #[default = b'C']
+    /// Subfield ID byte 2 ('C')
     pub SI2: u8,
-    // Length of DATA (only 2 for BSIZE)
-    #[default = 2]
+    /// Length of data (always 2)
     pub LEN: u16,
-    // TOTAL Block size minus 1
+    /// Total block size minus 1
     pub BSIZE: u16,
 }
 
 impl BGZFExtra {
     pub const SSIZE: usize = 6;
 
-    pub const SI1_BGZF: u8 = b'B';
-    pub const SI2_BGZF: u8 = b'C';
-    pub const LEN_BGZF: u16 = 2;
+    pub const TEMPLATE: Self = Self {
+        SI1: b'B',
+        SI2: b'C',
+        LEN: 2,
+        BSIZE: 0,
+    };
 
+    #[inline]
     pub fn new(bsize: u16) -> Self {
         Self {
             BSIZE: bsize,
-            ..Default::default()
-        }
-    }
-}
-
-impl From<BGZFExtra> for BBGZExtra {
-    fn from(bgzf: BGZFExtra) -> Self {
-        Self {
-            SI1: bgzf.SI1,
-            SI2: bgzf.SI2,
-            LEN: bgzf.LEN,
-            DATA: bgzf.BSIZE.to_le_bytes().to_vec(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-#[binrw]
-#[brw(little)]
-#[allow(non_snake_case)]
-pub struct BBGZTrailer {
-    // CRC-32 of uncompressed data
-    pub CRC32: u32,
-    // Size of uncompressed data (mod 2^32)
-    pub ISIZE: u32,
-}
-
-impl BBGZTrailer {
-    pub const SSIZE: usize = 8;
-
-    pub fn new(crc32: u32, isize: u32) -> Self {
-        Self {
-            CRC32: crc32,
-            ISIZE: isize,
+            ..Self::TEMPLATE
         }
     }
 
-    pub fn write_trailer<W>(&self, writer: &mut W) -> std::io::Result<()>
-    where
-        W: Write,
-    {
-        writer.write_all(&self.CRC32.to_le_bytes())?;
-        writer.write_all(&self.ISIZE.to_le_bytes())?;
-        Ok(())
+    #[inline]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+        match bytes.get(..Self::SSIZE) {
+            Some(b) => match bytemuck::try_from_bytes(b) {
+                Ok(v) => Ok(*v),
+                Err(_) => Err(()),
+            },
+            None => Err(()),
+        }
+    }
+
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
     }
 }

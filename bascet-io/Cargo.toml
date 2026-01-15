@@ -12,6 +12,7 @@ bascet-variadic = { path = "../bascet-variadic" }
 binrw = "0.15.0"
 bon = "3.8.1"
 bounded-integer = "0.6.1"
+bytemuck = { version = "1.24.0", features = ["derive"] }
 bytesize = "2.2.0"
 crc32fast = "1.5.0"
 crossbeam = "0.8.4"

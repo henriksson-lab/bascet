@@ -12,7 +12,6 @@ pub struct BBGZDecoder {
     inner_hts_tpool: SendCell<htslib::htsThreadPool>,
     inner_hts_tpool_n: u64,
 
-    inner_hts_block_size: ByteSize,
     inner_hts_sizeof_alloc: usize,
 }
 
@@ -27,15 +26,6 @@ impl BBGZDecoder {
         >,
     ) -> Self {
         let path = with_path.as_ref();
-
-        let mut file = match File::open(path) {
-            Ok(f) => f,
-            Err(_) => todo!(),
-        };
-
-        let mut bgzf_hdr = [0u8; 18];
-        file.read_exact(&mut bgzf_hdr).unwrap();
-
         let hts_file_ptr = unsafe { SendPtr::new_unchecked(htsutils::hts_open(path)) };
 
         let hts_bgzf_ptr =
@@ -43,14 +33,11 @@ impl BBGZDecoder {
         let hts_tpool = htsutils::hts_tpool_init(countof_threads, hts_file_ptr.as_ptr());
         let hts_send_tpool = unsafe { SendCell::new(hts_tpool) };
 
-        let sizeof_bgzf_block = ByteSize::b(
-            u16::from_le_bytes([bgzf_hdr[16], bgzf_hdr[17]])
-                .checked_add(1)
-                .expect("//TODO") as u64,
-        );
 
-        // NOTE: alloc size in terms of alloc slots not bytes
-        let hts_sizeof_alloc = ((countof_threads.get() * sizeof_bgzf_block.as_u64())
+        // NOTE alloc size in terms of alloc slots not bytes
+        // NOTE impossible to determine block size in decoding step for bbgz
+        let hts_sizeof_block = ByteSize::kib(64);
+        let hts_sizeof_alloc = ((countof_threads.get() * hts_sizeof_block.as_u64())
             / (size_of::<u8>() as u64)) as usize;
 
         return Self {
@@ -60,7 +47,6 @@ impl BBGZDecoder {
             inner_hts_tpool: hts_send_tpool,
             inner_hts_tpool_n: countof_threads.get(),
 
-            inner_hts_block_size: sizeof_bgzf_block,
             inner_hts_sizeof_alloc: hts_sizeof_alloc,
         };
     }

@@ -2,9 +2,9 @@ use bascet_core::{ArenaSlice, Parse, ParseResult};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    codec::bbgz::{usize_MIN_SIZEOF_HEADER, usize_MAX_SIZEOF_BLOCK, MARKER_EOF},
+    codec::bbgz::{usize_MAX_SIZEOF_BLOCK, usize_MIN_SIZEOF_HEADER, MARKER_EOF},
     parse::bbgz::{BBGZParser, Block},
-    BBGZExtra, BBGZHeader, BBGZTrailer, BGZFExtra,
+    BBGZExtra, BBGZHeader, BBGZHeaderBase, BBGZTrailer, BGZFExtra,
 };
 
 impl Parse<ArenaSlice<u8>> for BBGZParser {
@@ -20,8 +20,8 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
 
         // SAFETY: checked size above
         if unsafe {
-            buf_remaining.get_unchecked(0) != &BBGZHeader::ID1_MAGIC ||  // cargo fmt stop unaligning these!
-            buf_remaining.get_unchecked(1) != &BBGZHeader::ID2_MAGIC
+            buf_remaining.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||  // cargo fmt stop unaligning these!
+            buf_remaining.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
         } {
             panic!(
                 "Magic bytes not found, found instead: {:?}",
@@ -41,17 +41,17 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         };
 
         // Parse extra fields (start at last static-sized byte (End of static header), continue for XLEN bytes)
-        let mut cursor_fextra = BBGZHeader::SSIZE;
+        let mut cursor_fextra = BBGZHeaderBase::SSIZE;
         let pos_end_fextra = cursor_fextra + xlen;
 
-        if pos_end_fextra > buf_remaining_len {
+        if buf_remaining_len < pos_end_fextra {
             return ParseResult::Partial;
         }
 
         let mut slice_bc: &[u8] = &[];
         let mut slice_id: &[u8] = &[];
 
-        while cursor_fextra < pos_end_fextra {
+        while pos_end_fextra > cursor_fextra {
             // SAFETY: extra_cursor is bounded by extra_end which is derived from xlen in the header
             let (si1, si2, len) = unsafe {
                 (
@@ -94,20 +94,18 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             u16::from_le_bytes([*slice_bc.get_unchecked(0), *slice_bc.get_unchecked(1)]) as usize
                 + 1
         };
-        if bsize > buf_remaining_len {
+        if buf_remaining_len < bsize {
             return ParseResult::Partial;
         }
 
         // SAFETY: block_end bounds checked above
-        let slice_header = unsafe { 
-            buf_remaining.get_unchecked(..cursor_fextra) // 
+        let slice_header = unsafe {
+            buf_remaining.get_unchecked(..cursor_fextra) //
         };
-        let slice_raw = unsafe {
-            buf_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE))
-        };
-        let slice_trailer = unsafe {
-            buf_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize)
-        };
+        let slice_raw =
+            unsafe { buf_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) };
+        let slice_trailer =
+            unsafe { buf_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) };
         self.inner_cursor += bsize;
 
         let block = Block {
@@ -161,7 +159,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
                     std::ptr::copy_nonoverlapping(
                         slice_head.as_ptr(),
                         scratch_slice.as_mut_ptr().add(tail_len),
-                        usize_MAX_SIZEOF_BLOCK,
+                        usize_MAX_SIZEOF_BLOCK.min(head_len),
                     );
                 }
             }
@@ -178,8 +176,8 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
 
         // SAFETY: checked size in parse_spanning
         if unsafe {
-            slice_combined.get_unchecked(0) != &BBGZHeader::ID1_MAGIC || // cargo fmt stop unaligning these!
-            slice_combined.get_unchecked(1) != &BBGZHeader::ID2_MAGIC
+            slice_combined.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||  // cargo fmt stop unaligning these!
+            slice_combined.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
         } {
             panic!("Magic bytes not found");
             return ParseResult::Error(());
@@ -197,10 +195,10 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
 
         // Parse extra fields (start at last static-sized byte (End of static header), continue for XLEN bytes)
         // slice_combined starts at 0 => do not use cursor
-        let mut cursor_fextra = BBGZHeader::SSIZE;
+        let mut cursor_fextra = BBGZHeaderBase::SSIZE;
         let pos_end_fextra = cursor_fextra + xlen;
 
-        if pos_end_fextra > slice_combined_len {
+        if slice_combined_len < pos_end_fextra {
             panic!("Spanning block too small");
             return ParseResult::Error(());
         }
@@ -246,7 +244,10 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             if slice_combined.starts_with(MARKER_EOF) {
                 return ParseResult::Partial;
             }
-            panic!("Missing BC/ID subfield in header. Header: {:?}", String::from_utf8_lossy(&slice_combined.get(..cursor_fextra).unwrap_or(&[])));
+            panic!(
+                "Missing BC/ID subfield in header. Header: {:?}",
+                String::from_utf8_lossy(&slice_combined.get(..cursor_fextra).unwrap_or(&[]))
+            );
             return ParseResult::Error(());
         }
 
@@ -255,20 +256,18 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             u16::from_le_bytes([*slice_bc.get_unchecked(0), *slice_bc.get_unchecked(1)]) as usize
                 + 1
         };
-        let pos_end_block = bsize;
-        if pos_end_block > slice_combined_len {
+
+        if slice_combined_len < bsize {
             panic!("Combined block too small");
             return ParseResult::Error(());
         }
         // SAFETY: block_end bounds checked above
         let slice_header = unsafe { slice_combined.get_unchecked(..cursor_fextra) };
-        let slice_raw = unsafe {
-            slice_combined.get_unchecked(cursor_fextra..(pos_end_block - BBGZTrailer::SSIZE))
-        };
-        let slice_trailer = unsafe {
-            slice_combined.get_unchecked((pos_end_block - BBGZTrailer::SSIZE)..pos_end_block)
-        };
-        self.inner_cursor = pos_end_block.saturating_sub(tail_len);
+        let slice_raw =
+            unsafe { slice_combined.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) };
+        let slice_trailer =
+            unsafe { slice_combined.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) };
+        self.inner_cursor = bsize.saturating_sub(tail_len);
 
         let block = Block {
             id: unsafe { std::mem::transmute(slice_id) },
