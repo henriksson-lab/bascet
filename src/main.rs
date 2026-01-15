@@ -83,7 +83,7 @@ fn main() -> std::process::ExitCode {
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
-        // Commands::Shardify(mut cmd) => cmd.try_execute(),
+        Commands::Shardify(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),

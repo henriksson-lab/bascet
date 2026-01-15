@@ -1,4 +1,10 @@
-use crossbeam::channel::{Receiver, TryRecvError};
+use crossbeam::channel::{Receiver, Sender, TryRecvError};
+
+pub fn peekable<T>() -> (Sender<T>, PeekableReceiver<T>) {
+    let (tx, rx) = crossbeam::channel::unbounded();
+    let peekable_rx = PeekableReceiver::new(rx);
+    (tx, peekable_rx)
+}
 
 pub struct PeekableReceiver<T> {
     receiver: Receiver<T>,

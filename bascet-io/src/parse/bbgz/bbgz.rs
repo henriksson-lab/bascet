@@ -9,7 +9,7 @@ pub fn parser() -> BBGZParser {
     BBGZParser { inner_cursor: 0 }
 }
 
-#[derive(Composite, Default, Serialize)]
+#[derive(Composite, Clone, Default, Serialize)]
 #[bascet(attrs = (Id, Header, Raw, Trailer), backing = ArenaBacking, marker = AsBlock)]
 pub struct Block {
     pub id: &'static [u8],
