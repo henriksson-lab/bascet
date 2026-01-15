@@ -200,9 +200,9 @@ impl BBGZWriter {
                         )
                     };
 
-                    let _ = header.write_header(&mut writer, compressed.buf.len());
+                    let _ = header.write_with_csize(&mut writer, compressed.buf.len());
                     let _ = writer.write_all(&compressed.buf.as_slice());
-                    let _ = trailer.write_trailer(&mut writer);
+                    let _ = trailer.write_with(&mut writer);
                 }
 
                 let _ = writer.write_all(MARKER_EOF);
