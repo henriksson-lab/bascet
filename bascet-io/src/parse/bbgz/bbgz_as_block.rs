@@ -109,10 +109,11 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let slice_header = unsafe {
             slice_remaining.get_unchecked(..cursor_fextra) //
         };
-        let slice_raw = unsafe { 
-            slice_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) //
+        let slice_raw = unsafe {
+            slice_remaining.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE))
+            //
         };
-        let slice_trailer = unsafe { 
+        let slice_trailer = unsafe {
             slice_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) //
         };
         self.inner_cursor += bsize;
@@ -120,7 +121,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let block = Block {
             id: unsafe { std::mem::transmute(slice_id) },
             header: unsafe { std::mem::transmute(slice_header) },
-            raw: unsafe { std::mem::transmute(slice_raw) },
+            compressed: unsafe { std::mem::transmute(slice_raw) },
             trailer: unsafe { std::mem::transmute(slice_trailer) },
             arena_backing: smallvec![decoded.clone_view()],
         };
@@ -250,7 +251,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         // Both BC and ID subfields must exist
         // If they're missing, check if this is the EOF marker
         if slice_bc.is_empty() || slice_id.is_empty() {
-            if slice_combined.starts_with(MARKER_EOF) {
+            if slice_combined.starts_with(&MARKER_EOF) {
                 return ParseResult::Partial;
             }
             panic!(
@@ -274,10 +275,11 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let slice_header = unsafe {
             slice_combined.get_unchecked(..cursor_fextra) //
         };
-        let slice_raw = unsafe { 
-            slice_combined.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE)) //
+        let slice_raw = unsafe {
+            slice_combined.get_unchecked(cursor_fextra..(bsize - BBGZTrailer::SSIZE))
+            //
         };
-        let slice_trailer = unsafe { 
+        let slice_trailer = unsafe {
             slice_combined.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) //
         };
         self.inner_cursor = bsize.saturating_sub(tail_len);
@@ -285,7 +287,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let block = Block {
             id: unsafe { std::mem::transmute(slice_id) },
             header: unsafe { std::mem::transmute(slice_header) },
-            raw: unsafe { std::mem::transmute(slice_raw) },
+            compressed: unsafe { std::mem::transmute(slice_raw) },
             trailer: unsafe { std::mem::transmute(slice_trailer) },
             arena_backing: arena_backings.iter().map(|b| b.clone_view()).collect(),
         };

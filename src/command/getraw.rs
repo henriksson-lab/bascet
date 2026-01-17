@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
-use bascet_io::{BBGZTrailer, BBGZWriteBlock, MAX_SIZEOF_BLOCKusize};
+use bascet_io::{BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize};
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -238,7 +238,7 @@ struct GetrawBudget {
 
     #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
     countof_threads_sort: BoundedU64<1, { u64::MAX }>,
-    #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<4>())]
+    #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<2>())]
     countof_threads_mergesort: BoundedU64<2, { u64::MAX }>,
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
@@ -995,7 +995,7 @@ fn spawn_chunk_writers(
             log_info!("Starting chunk writer"; "thread" => thread_name);
 
             while let Ok(sorted_record_list) = st_rx.recv() {
-                let thread_counter = thread_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                let thread_counter = thread_counter.fetch_add(1, Ordering::Relaxed);
                 let temp_fname = format!(
                     "{}_merge_0_{thread_counter}",
                     *thread_timestamp_temp_files
@@ -1040,7 +1040,9 @@ fn spawn_chunk_writers(
                         last_id = id.to_smallvec();
 
                         let mut bbgzheader = BBGZHeader::new();
-                        bbgzheader.add_extra(b"ID", id.clone());
+                        unsafe { 
+                            bbgzheader.add_extra_unchecked(b"ID", id.clone());
+                        }
                         blockwriter_opt = Some(bbgzwriter.begin(bbgzheader));
                     }
 
@@ -1093,7 +1095,7 @@ fn spawn_mergesort_workers(
 ) -> (Receiver<Receiver<parse::bbgz::Block>>, Vec<JoinHandle<()>>) {
     let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
     let (ms_tx, ms_rx) = crossbeam::channel::unbounded();
-    let countof_threads_sort: u64 = (*budget.threads::<TMergeSort>()).get();
+    let countof_threads_sort: u64 = (*budget.threads::<TMergeSort>()).get() / 2;
 
     let sizeof_stream_each_arena = stream_arena;
     // NOTE no other job running at this time
@@ -1151,9 +1153,9 @@ fn spawn_mergesort_workers(
             // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
             drop(mc_tx);
 
-            // if let Err(e) = std::fs::remove_file(&**last_file.path()) {
-            //     log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
-            // }
+            if let Err(e) = std::fs::remove_file(&**last_file.path()) {
+                log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
+            }
         }
 
         let debarcode_merge_paired = debarcode_merge.into_iter().tuples();
@@ -1259,12 +1261,12 @@ fn spawn_mergesort_workers(
                 // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
                 drop(mc_tx);
 
-                // if let Err(e) = std::fs::remove_file(&**ia.path()) {
-                //     log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
-                // }
-                // if let Err(e) = std::fs::remove_file(&**ib.path()) {
-                //     log_warning!("Failed to delete merged file."; "path" => ?&ib.path(), "error" => %e);
-                // }
+                if let Err(e) = std::fs::remove_file(&**ia.path()) {
+                    log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
+                }
+                if let Err(e) = std::fs::remove_file(&**ib.path()) {
+                    log_warning!("Failed to delete merged file."; "path" => ?&ib.path(), "error" => %e);
+                }
             }
         });
         thread_handles.push(thread_handle);
@@ -1320,29 +1322,28 @@ fn spawn_mergesort_writers(
 
                 let mut bufwriter = BufWriter::with_capacity(MAX_SIZEOF_BLOCKusize, temp_output_file);
                 let mut merge_id: SmallVec<[u8; 16]> = SmallVec::new();
-                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 4]> = SmallVec::new();
+                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 8]> = SmallVec::new();
                 let mut merge_csize = 0;
                 let mut merge_hsize = 0;
-
+                
                 while let Ok(block) = mc_rx.recv() {
                     let id_bytes = block.as_bytes::<Id>();
                     let header_bytes = block.as_bytes::<Header>();
-                    let raw_bytes = block.as_bytes::<Raw>();
-                    let trailer_bytes = block.as_bytes::<Trailer>();
-                    let csize = raw_bytes.len();
-                    let hsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len();
+                    let compressed_bytes = block.as_bytes::<Compressed>();
 
-                    // SAFETY   this only checks if the raw CONTENTS fit into a block
-                    if merge_hsize + hsize > MAX_SIZEOF_BLOCKusize {
+                    let csize = compressed_bytes.len();
+                    let hsize = header_bytes.len() + csize;
+
+                    if merge_hsize + hsize + BBGZTrailer::SSIZE > MAX_SIZEOF_BLOCKusize {
                         // SAFETY at this point we will always have at least 1 merge block
                         let (new_header_bytes, new_trailer_bytes) = unsafe { 
+                            let merge_first = merge_blocks.get_unchecked(0);
                             (
-                                merge_blocks.get_unchecked(0).as_bytes::<Header>(),
-                                merge_blocks.get_unchecked(0).as_bytes::<Trailer>()
+                                merge_first.as_bytes::<Header>(),
+                                merge_first.as_bytes::<Trailer>()
                             ) 
                         };
 
-                        // log_info!(""; "csize" => merge_csize, "diff" => ((u16::MAX as usize) - merge_csize));
                         let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
                         let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
 
@@ -1353,19 +1354,25 @@ fn spawn_mergesort_writers(
                             let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
                             let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
-                            // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
-                            unsafe {
-                                new_header.merge_unchecked(merge_header)
-                            };
-                            new_trailer.merge(merge_trailer);
+                            new_header.merge(merge_header).unwrap();
+                            new_trailer.merge(merge_trailer).unwrap();
                         }
 
-                        new_header.write_with_csize(&mut bufwriter, merge_csize);
-                        for merge_block in &merge_blocks {
-                            let merge_raw_bytes = merge_block.as_bytes::<Raw>();
-                            bufwriter.write_all(merge_raw_bytes).unwrap();
+                        new_header.write_with_csize(&mut bufwriter, merge_csize).unwrap();
+                        let last_idx = merge_blocks.len() - 1;
+                        for i in 0..last_idx {
+                            let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
+                            let merge_raw_bytes_len = merge_raw_bytes.len();
+                            bufwriter.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
                         }
+                        // Write last block with BFINAL=1 intact
+                        let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
+                        let last_raw_bytes_len = last_raw_bytes.len();
+                        bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
+                        bufwriter.write_all(&[0x03, 00]).unwrap();
                         new_trailer.write_with(&mut bufwriter).unwrap();
+                        let bsize = new_header.BC.BSIZE as usize;
+                        assert_eq!(bsize, new_header.size() + merge_csize + BBGZTrailer::SSIZE - 1);
                         merge_blocks.clear();
                         merge_csize = 0;
                         merge_hsize = 0;
@@ -1377,10 +1384,10 @@ fn spawn_mergesort_writers(
                                 merge_blocks.push(block);
                                 merge_csize = csize;
                                 merge_hsize = hsize;
-                            }
+                            } 
                             1.. => {
                                 merge_blocks.push(block);
-                                merge_csize += csize;
+                                merge_csize += csize - 2;
                                 merge_hsize += hsize;
                             }
                         }
@@ -1395,9 +1402,10 @@ fn spawn_mergesort_writers(
                             1.. => {
                                 // SAFETY merge_blocks.len() > 0
                                 let (new_header_bytes, new_trailer_bytes) = unsafe { 
+                                    let merge_first = merge_blocks.get_unchecked(0);
                                     (
-                                        merge_blocks.get_unchecked(0).as_bytes::<Header>(),
-                                        merge_blocks.get_unchecked(0).as_bytes::<Trailer>()
+                                        merge_first.as_bytes::<Header>(),
+                                        merge_first.as_bytes::<Trailer>()
                                     ) 
                                 };
 
@@ -1411,20 +1419,25 @@ fn spawn_mergesort_writers(
                                     let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
                                     let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
-                                    // SAFETY bsize + merge_bsize > usize_MAX_SIZEOF_BLOCK guarantees blocks can be merged
-                                    unsafe {
-                                        new_header.merge(merge_header)
-                                    };
-                                    new_trailer.merge(merge_trailer);
+                                    new_header.merge(merge_header).unwrap();
+                                    new_trailer.merge(merge_trailer).unwrap();
                                 }
 
-                                new_header.write_with_csize(&mut bufwriter, merge_csize);
-                                for merge_block in &merge_blocks {
-                                    let merge_raw_bytes = merge_block.as_bytes::<Raw>();
-                                    bufwriter.write_all(merge_raw_bytes).unwrap();
+                                new_header.write_with_csize(&mut bufwriter, merge_csize).unwrap();
+                                let last_idx = merge_blocks.len() - 1;
+                                for i in 0..last_idx {
+                                    let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
+                                    let merge_raw_bytes_len = merge_raw_bytes.len();
+                                    bufwriter.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
                                 }
+                                // Write last block with BFINAL=1 intact
+                                let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
+                                let last_raw_bytes_len = last_raw_bytes.len();
+                                bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
+                                bufwriter.write_all(&[0x03, 00]).unwrap();
                                 new_trailer.write_with(&mut bufwriter).unwrap();
-
+                                let bsize = new_header.BC.BSIZE as usize;
+                                assert_eq!(bsize, new_header.size() + merge_csize + BBGZTrailer::SSIZE - 1);
                                 merge_id = id_bytes.to_smallvec();
                                 merge_blocks.clear();
                                 merge_blocks.push(block);
@@ -1437,8 +1450,13 @@ fn spawn_mergesort_writers(
 
                 if merge_blocks.len() > 0 {
                     // SAFETY at this point we will always have at least 1 merge block
-                    let new_header_bytes = merge_blocks[0].as_bytes::<Header>();
-                    let new_trailer_bytes = merge_blocks[0].as_bytes::<Trailer>();
+                    let (new_header_bytes, new_trailer_bytes) = unsafe { 
+                        let merge_first = merge_blocks.get_unchecked(0);
+                        (
+                            merge_first.as_bytes::<Header>(),
+                            merge_first.as_bytes::<Trailer>()
+                        ) 
+                    };
 
                     let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
                     let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
@@ -1450,22 +1468,28 @@ fn spawn_mergesort_writers(
                         let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
                         let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
-                        // SAFETY if block was larger than usize_MAX_BLOCK_SIZE then it wouldve been flushed earlier
-                        unsafe {
-                            new_header.merge(merge_header)
-                        };
-                        new_trailer.merge(merge_trailer);
+                        new_header.merge(merge_header).unwrap();
+                        new_trailer.merge(merge_trailer).unwrap();
                     }
 
-                    new_header.write_with_csize(&mut bufwriter, merge_csize);
-                    for merge_block in &merge_blocks {
-                        let merge_raw_bytes = merge_block.as_bytes::<Raw>();
-                        bufwriter.write_all(merge_raw_bytes).unwrap();
+                    new_header.write_with_csize(&mut bufwriter, merge_csize).unwrap();
+                    let last_idx = merge_blocks.len() - 1;
+                    for i in 0..last_idx {
+                        let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
+                        let merge_raw_bytes_len = merge_raw_bytes.len();
+                        bufwriter.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
                     }
+                    // Write last block with BFINAL=1 intact
+                    let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
+                    let last_raw_bytes_len = last_raw_bytes.len();
+                    bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
+                    bufwriter.write_all(&[0x03, 00]).unwrap();
                     new_trailer.write_with(&mut bufwriter).unwrap();
+                    let bsize = new_header.BC.BSIZE as usize;
+                    assert_eq!(bsize, new_header.size() + merge_csize + BBGZTrailer::SSIZE - 1);
                 }
 
-                bufwriter.write_all(bbgz::MARKER_EOF).unwrap();
+                bufwriter.write_all(&bbgz::MARKER_EOF).unwrap();
                 bufwriter.flush().unwrap();
 
                 let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
