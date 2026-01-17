@@ -292,7 +292,7 @@ impl ShardifyCMD {
 
                     for block in vec_blocks {
                         let header_bytes = block.as_bytes::<Header>();
-                        let raw_bytes = block.as_bytes::<Raw>();
+                        let raw_bytes = block.as_bytes::<Compressed>();
                         let trailer_bytes = block.as_bytes::<Trailer>();
 
                         let bsize = header_bytes.len() + raw_bytes.len() + trailer_bytes.len() - 1;
@@ -319,11 +319,11 @@ impl ShardifyCMD {
                                 new_trailer.merge(merge_trailer);
                             }
 
-                            new_header
-                                .write_with_bsize(&mut thread_buf_writer, merge_bsize)
-                                .unwrap();
+                            // new_header
+                            //     .write_with_bsize(&mut thread_buf_writer, merge_bsize)
+                            //     .unwrap();
                             for merge_block in &merge_blocks {
-                                let merge_raw_bytes = merge_block.as_bytes::<Raw>();
+                                let merge_raw_bytes = merge_block.as_bytes::<Compressed>();
                                 thread_buf_writer.write_all(merge_raw_bytes).unwrap();
                             }
                             new_trailer.write_with(&mut thread_buf_writer).unwrap();
@@ -333,7 +333,7 @@ impl ShardifyCMD {
                         }
                         let header = BBGZHeader::from_bytes(header_bytes).unwrap();
                         merge_blocks.push(block);
-                        merge_bsize += header.BC.BSIZE as usize;
+                        // merge_bsize += header.BC.BSIZE as usize;
                     }
                     if merge_blocks.len() > 0 {
                         // SAFETY at this point we will always have at least 1 merge block
@@ -356,11 +356,11 @@ impl ShardifyCMD {
                             new_trailer.merge(merge_trailer);
                         }
 
-                        new_header
-                            .write_with_bsize(&mut thread_buf_writer, merge_bsize)
-                            .unwrap();
+                        // new_header
+                        //     .write_with_bsize(&mut thread_buf_writer, merge_bsize)
+                        //     .unwrap();
                         for merge_block in &merge_blocks {
-                            let merge_raw_bytes = merge_block.as_bytes::<Raw>();
+                            let merge_raw_bytes = merge_block.as_bytes::<Compressed>();
                             thread_buf_writer.write_all(merge_raw_bytes).unwrap();
                         }
                         new_trailer.write_with(&mut thread_buf_writer).unwrap();
@@ -373,7 +373,7 @@ impl ShardifyCMD {
                     }
                 }
                 thread_buf_writer
-                    .write_all(codec::bbgz::MARKER_EOF)
+                    .write_all(&codec::bbgz::MARKER_EOF)
                     .unwrap();
                 thread_buf_writer.flush().unwrap();
             }));

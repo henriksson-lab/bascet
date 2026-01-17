@@ -13,37 +13,41 @@ use crate::{BBGZTrailer, MAX_SIZEOF_BLOCKusize};
 #[derive(Debug, Clone)]
 #[allow(non_snake_case)]
 pub struct BBGZHeader {
-    pub base: BBGZHeaderBase,
+    pub BASE: BBGZHeaderBase,
     pub BC: BGZFExtra,
     pub FEXTRA: Vec<BBGZExtra>,
+
+    pub size: usize,
 }
 
 impl BBGZHeader {
     pub fn new() -> Self {
         Self {
-            base: BBGZHeaderBase::TEMPLATE,
+            BASE: BBGZHeaderBase::TEMPLATE,
             BC: BGZFExtra::TEMPLATE,
             FEXTRA: Vec::new(),
+
+            size: BBGZHeaderBase::SSIZE + BGZFExtra::SSIZE,
         }
     }
 
-    pub fn add_extra(&mut self, id: &[u8; 2], data: Vec<u8>) -> &mut Self {
+    pub unsafe fn add_extra_unchecked(&mut self, id: &[u8; 2], data: Vec<u8>) -> &mut Self {
+        self.size += BBGZExtra::SSIZE + data.len();
         self.FEXTRA.push(BBGZExtra::new(id, data));
         return self;
     }
 
-    pub fn add_extra_unique(&mut self, id: &[u8; 2], data: Vec<u8>) -> &mut Self {
+    pub fn add_extra(&mut self, id: &[u8; 2], data: Vec<u8>) -> Result<&mut Self, ()> {
         if self.FEXTRA.iter().any(|e| e.SI1 == id[0] && e.SI2 == id[1]) {
-            return self;
+            return Err(());
         }
+        self.size += BBGZExtra::SSIZE + data.len();
         self.FEXTRA.push(BBGZExtra::new(id, data));
-        return self;
+        return Ok(self);
     }
 
     pub fn size(&self) -> usize {
-        let mut size = BBGZHeaderBase::SSIZE + BGZFExtra::SSIZE;
-        size += self.FEXTRA.iter().map(|e| e.size()).sum::<usize>();
-        return size;
+        return self.size;
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
@@ -57,9 +61,10 @@ impl BBGZHeader {
         }
 
         let mut header = Self {
-            base,
+            BASE: base,
             BC: BGZFExtra::TEMPLATE,
             FEXTRA: Vec::new(),
+            size: BBGZHeaderBase::SSIZE + BGZFExtra::SSIZE,
         };
 
         let mut cursor = extras_start;
@@ -77,7 +82,7 @@ impl BBGZHeader {
             match (si1, si2) {
                 (b'B', b'C') => header.BC = BGZFExtra::from_bytes(&bytes[cursor..])?,
                 _ => {
-                    header.add_extra_unique(&[si1, si2], bytes[data_start..data_end].to_vec());
+                    let _ = header.add_extra(&[si1, si2], bytes[data_start..data_end].to_vec());
                 }
             }
             cursor = data_end;
@@ -87,23 +92,27 @@ impl BBGZHeader {
     }
 
     pub fn merge(&mut self, other: Self) -> Result<&mut Self, ()> {
-        if ((self.BC.BSIZE as usize) + (other.BC.BSIZE as usize) - 1) > MAX_SIZEOF_BLOCKusize {
-            return Err(());
-        }
-        self.base.MTIME = self.base.MTIME.max(other.base.MTIME);
+        // if ((self.BC.BSIZE as usize) + (other.BC.BSIZE as usize) + 1) > MAX_SIZEOF_BLOCKusize {
+        //     let ss = self.BC.BSIZE;
+        //     let os = other.BC.BSIZE;
+        //     eprintln!("{:?} + {:?} = {:?}", ss, os, (ss as u64) + (os as u64) + 1);
+        //     return Err(());
+        // }
+        self.BASE.MTIME = self.BASE.MTIME.max(other.BASE.MTIME);
         for fmerge in other.FEXTRA {
             // NOTE I do not think checking if xlen > usize_MAX_SIZEOF_FEXTRA is neccessary
             //      because BSIZE is total blocksize
-            self.add_extra_unique(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
+            // NOTE add_extra only returns if it added the field successfully
+            let _ = self.add_extra(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
         }
 
         return Ok(self);
     }
 
     pub unsafe fn merge_unchecked(&mut self, other: Self) -> &mut Self {
-        self.base.MTIME = self.base.MTIME.max(other.base.MTIME);
+        self.BASE.MTIME = self.BASE.MTIME.max(other.BASE.MTIME);
         for fmerge in other.FEXTRA {
-            self.add_extra_unique(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
+            self.add_extra_unchecked(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
         }
 
         return self;
@@ -114,15 +123,10 @@ impl BBGZHeader {
         writer: &mut W,
         csize: usize,
     ) -> std::io::Result<()> {
-        let mut xlen: usize = BGZFExtra::SSIZE;
-        xlen += self.FEXTRA.iter().map(|e| e.size()).sum::<usize>();
+        self.BASE.XLEN = (self.size() - BBGZHeaderBase::SSIZE).try_into().expect("Overflow");
+        self.BC.BSIZE = (self.size() + csize + BBGZTrailer::SSIZE - 1).try_into().expect("Overflow");
 
-        self.base.XLEN = xlen as u16;
-        self.BC.BSIZE = (BBGZHeaderBase::SSIZE + xlen + csize + BBGZTrailer::SSIZE - 1) as u16;
-        // let bsize = self.BC.BSIZE;
-        // eprintln!("write_with_csize: BSIZE={}, xlen={}, csize={}", bsize, xlen, csize);
-
-        writer.write_all(self.base.as_bytes())?;
+        writer.write_all(self.BASE.as_bytes())?;
 
         for extra in &self.FEXTRA {
             writer.write_all(&[extra.SI1, extra.SI2])?;
@@ -132,31 +136,6 @@ impl BBGZHeader {
 
         // HACK bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
         writer.write_all(self.BC.as_bytes())?;
-        Ok(())
-    }
-
-    pub fn write_with_bsize<W: Write>(
-        &mut self,
-        writer: &mut W,
-        bsize: usize,
-    ) -> std::io::Result<()> {
-        let mut xlen: usize = BGZFExtra::SSIZE;
-        xlen += self.FEXTRA.iter().map(|e| e.size()).sum::<usize>();
-
-        self.base.XLEN = xlen as u16;
-        self.BC.BSIZE = bsize as u16;
-
-        writer.write_all(self.base.as_bytes())?;
-
-        for extra in &self.FEXTRA {
-            writer.write_all(&[extra.SI1, extra.SI2])?;
-            writer.write_all(&(extra.DATA.len() as u16).to_le_bytes())?;
-            writer.write_all(&extra.DATA)?;
-        }
-
-        // HACK bgzf extra field must be written last, otherwise bgzip with multiple threads breaks
-        writer.write_all(self.BC.as_bytes())?;
-
         Ok(())
     }
 }

@@ -10,6 +10,6 @@ bascet_derive::define_attr!(
     Depth,
     Countsketch,
     Header,
-    Raw,
+    Compressed,
     Trailer,
 );

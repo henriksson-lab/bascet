@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, u64};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -45,13 +45,17 @@ impl BBGZTrailer {
         writer.write_all(self.as_bytes())
     }
 
-    pub fn merge(&mut self, other: Self) -> &mut Self {
-        self.ISIZE = self.ISIZE.wrapping_add(other.ISIZE);
-        let mut hasher_self = crc32fast::Hasher::new_with_initial(self.CRC32);
-        let hasher_other = crc32fast::Hasher::new_with_initial(other.CRC32);
+    pub fn merge(&mut self, other: Self) -> Result<&mut Self, ()> {
+        let mut hasher_self = crc32fast::Hasher::new_with_initial_len(self.CRC32, self.ISIZE as u64);
+        let hasher_other = crc32fast::Hasher::new_with_initial_len(other.CRC32, other.ISIZE as u64);
+
         hasher_self.combine(&hasher_other);
         self.CRC32 = hasher_self.finalize();
+        self.ISIZE = match self.ISIZE.checked_add(other.ISIZE) {
+            Some(isize) => isize,
+            None => return Err(())
+        };
 
-        return self;
+        return Ok(self);
     }
 }
