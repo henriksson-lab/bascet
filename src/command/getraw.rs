@@ -1095,10 +1095,18 @@ fn spawn_mergesort_workers(
             let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
             let _ = producer_ms_tx.send(mc_rx);
 
+            let f1 = match File::open(&**last_file.path()) {
+                Ok(file_handle) => file_handle,
+                Err(e) => panic!("{e}"),
+            };
+
+            let b1 = BufReader::with_capacity(
+                ByteSize::mib(4).as_u64() as usize,
+                f1
+            );
             let d1 = codec::plain::PlaintextDecoder::builder()
-                .with_path(&**last_file.path())
-                .build()
-                .expect("Failed to mmap file");
+                .with_reader(b1)
+                .build();
 
             let p1 = parse::bbgz::parser();
 
@@ -1149,7 +1157,6 @@ fn spawn_mergesort_workers(
             // Reuse arena pool across all merges in this thread
             let a_thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
             let b_thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
-
             while let Ok((ia, ib)) = fp_rx.recv() {
                 log_info!("Merging pair: {} + {}", &ia, &ib);
                 // HACK: Use bounded channel to prevent memory accumulation when writer is slow
@@ -1162,7 +1169,7 @@ fn spawn_mergesort_workers(
                 };
 
                 let ba = BufReader::with_capacity(
-                    ByteSize::mib(2).as_u64() as usize,
+                    ByteSize::mib(4).as_u64() as usize,
                     fa
                 );
                 let da = codec::plain::PlaintextDecoder::builder()
@@ -1192,7 +1199,7 @@ fn spawn_mergesort_workers(
                 };
 
                 let bb = BufReader::with_capacity(
-                    ByteSize::mib(2).as_u64() as usize,
+                    ByteSize::mib(4).as_u64() as usize,
                     fb
                 );
                 let db = codec::plain::PlaintextDecoder::builder()
