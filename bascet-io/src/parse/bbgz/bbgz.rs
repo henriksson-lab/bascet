@@ -1,4 +1,4 @@
-use bascet_core::{ArenaView, Composite, Header, Id, Compressed, Trailer};
+use bascet_core::{ArenaView, Composite, Compressed, Header, Id, Trailer};
 use serde::Serialize;
 use smallvec::SmallVec;
 

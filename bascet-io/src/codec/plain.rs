@@ -1,47 +1,55 @@
-use std::io::Read;
+use std::fs::File;
+use std::path::Path;
 
-use bascet_core::Decode;
+use bascet_core::{Decode, DecodeResult};
 use bytesize::ByteSize;
+use memmap2::Mmap;
 
-pub struct PlaintextDecoder<R>
-where
-    R: Read,
-{
-    inner_reader: R,
-    sizeof_target_alloc: ByteSize,
+pub struct PlaintextDecoder {
+    mmap: Mmap,
+    offset: usize,
+    chunk_size: usize,
 }
 
 #[bon::bon]
-impl<R> PlaintextDecoder<R>
-where
-    R: Read,
-{
+impl PlaintextDecoder {
     #[builder]
     pub fn new(
-        with_reader: R,
-        #[builder(default = ByteSize::mib(8))] sizeof_target_alloc: ByteSize,
-    ) -> Self {
-        PlaintextDecoder {
-            inner_reader: with_reader,
-            sizeof_target_alloc: sizeof_target_alloc,
+        with_path: &Path,
+        #[builder(default = ByteSize::mib(4))] sizeof_chunk: ByteSize,
+    ) -> std::io::Result<Self> {
+        let file = File::open(with_path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = mmap.advise(memmap2::Advice::Sequential);
         }
+
+        Ok(PlaintextDecoder {
+            mmap,
+            offset: 0,
+            chunk_size: sizeof_chunk.as_u64() as usize,
+        })
     }
 }
 
-impl<R> Decode for PlaintextDecoder<R>
-where
-    R: Read,
-{
+impl Decode for PlaintextDecoder {
     fn sizeof_target_alloc(&self) -> usize {
-        self.sizeof_target_alloc.as_u64() as usize
+        self.chunk_size
     }
 
-    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> bascet_core::DecodeResult<()> {
-        match self.inner_reader.read(buf.as_mut()) {
-            Ok(n) if n > 0 => bascet_core::DecodeResult::Decoded(n),
-            Ok(0) => bascet_core::DecodeResult::Eof,
-            Err(_) => bascet_core::DecodeResult::Error(()),
-            Ok(_) => unreachable!(),
+    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> DecodeResult<()> {
+        if self.offset >= self.mmap.len() {
+            return DecodeResult::Eof;
         }
+
+        let end = (self.offset + self.chunk_size).min(self.mmap.len());
+        let len = end - self.offset;
+
+        buf.as_mut()[..len].copy_from_slice(&self.mmap[self.offset..end]);
+        self.offset = end;
+
+        DecodeResult::Decoded(len)
     }
 }

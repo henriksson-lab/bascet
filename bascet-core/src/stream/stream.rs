@@ -50,11 +50,11 @@ where
             2,
             { usize::MAX },
         >,
-        with_opt_decode_arena_pool: Option<Arc<ArenaPool<u8>>>
+        with_opt_decode_arena_pool: Option<Arc<ArenaPool<u8>>>,
     ) -> Self {
         let arc_decoder_arena_pool = if let Some(arena_pool) = with_opt_decode_arena_pool {
             arena_pool
-        } else { 
+        } else {
             Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena))
         };
 

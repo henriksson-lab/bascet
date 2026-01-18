@@ -20,7 +20,7 @@ pub const MAX_SIZEOF_FEXTRA: ByteSize = ByteSize::kib(64);
 #[allow(non_upper_case_globals)]
 pub const MAX_SIZEOF_FEXTRAusize: usize = MAX_SIZEOF_FEXTRA.as_u64() as usize;
 
-pub const MARKER_DEFLATE_ALIGN_BYTES: [u8; 5] = [0x00, 0x00, 0x00, 0xFF, 0xFF];
+pub const MARKER_DEFLATE_ALIGN_BYTES: [u8; 7] = [0x00, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00];
 #[allow(non_upper_case_globals)]
 pub const SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize: usize = MARKER_DEFLATE_ALIGN_BYTES.len();
 
@@ -32,11 +32,11 @@ pub const MARKER_EOF: [u8; 28] = [
 pub const SIZEOF_MARKER_EOFusize: usize = MARKER_EOF.len();
 
 // The windowBits parameter is the base two logarithm of the window size (the size of the history buffer).
-// windowBits can be –8..–15 for raw deflate. In this case, -windowBits determines the window size. 
-// deflate() will then generate raw deflate data with no zlib header or trailer, and will not compute a check value. 
+// windowBits can be –8..–15 for raw deflate. In this case, -windowBits determines the window size.
+// deflate() will then generate raw deflate data with no zlib header or trailer, and will not compute a check value.
 pub(crate) const ZLIB_WINDOW_SIZE: i8 = -15;
 // The memLevel parameter specifies how much memory should be allocated for the internal compression state.
-// memLevel=1 uses minimum memory but is slow and reduces compression ratio; 
-// memLevel=9 uses maximum memory for optimal speed. 
-// See zconf.h for total memory usage as a function of windowBits and memLevel. 
+// memLevel=1 uses minimum memory but is slow and reduces compression ratio;
+// memLevel=9 uses maximum memory for optimal speed.
+// See zconf.h for total memory usage as a function of windowBits and memLevel.
 pub(crate) const ZLIB_MEM_LEVEL: i8 = 9;
