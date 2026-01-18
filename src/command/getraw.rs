@@ -129,6 +129,7 @@ pub struct GetRawCMD {
     countof_threads_compress: Option<BoundedU64<1, { u64::MAX }>>,
     // 1 prev 3634s
     // 2 prev 3698s
+    // 3 prev 
     #[arg(
         short = 'm',
         long = "memory",
@@ -238,7 +239,7 @@ struct GetrawBudget {
 
     #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
     countof_threads_sort: BoundedU64<1, { u64::MAX }>,
-    #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<2>())]
+    #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<4>())]
     countof_threads_mergesort: BoundedU64<2, { u64::MAX }>,
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
@@ -293,7 +294,7 @@ impl GetRawCMD {
             "Starting GetRaw";
             "using" => %budget,
         );
-        if *self.compression_level.inner() == 0 {
+        if self.compression_level.level() == 0 {
             log_warning!("Compression level is 0 (uncompressed)")
         }
 
@@ -633,6 +634,7 @@ impl GetRawCMD {
                 bufwriter.write_all(&id);
                 bufwriter.write_all(b"\t");
                 bufwriter.write_all(count.to_string().as_bytes());
+                bufwriter.write_all(b"\n");
             }
 
             bufwriter.flush();
@@ -666,6 +668,9 @@ fn spawn_paired_readers(
         let thread_name = thread.name().unwrap_or("unknown thread");
         log_info!("Starting R1 reader"; "thread" => thread_name);
 
+        // Reuse arena pool across all input files in this thread
+        let thread_shared_stream_arena = Arc::new(ArenaPool::new(stream_each_sizeof_buffer, stream_each_sizeof_arena));
+
         for (input_r1, _) in &*input_r1 {
             let d1 = codec::bgzf::Bgzf::builder()
                 .with_path(input_r1.path().path())
@@ -676,8 +681,7 @@ fn spawn_paired_readers(
             let mut s1 = Stream::builder()
                 .with_decoder(d1)
                 .with_parser(p1)
-                .sizeof_decode_arena(stream_each_sizeof_arena)
-                .sizeof_decode_buffer(stream_each_sizeof_buffer)
+                .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena))
                 .build();
 
             let mut q1 = s1.query::<fastq::Record>();
@@ -696,6 +700,9 @@ fn spawn_paired_readers(
         let thread_name = thread.name().unwrap_or("unknown thread");
         log_info!("Starting R2 reader"; "thread" => thread_name);
 
+        // Reuse arena pool across all input files in this thread
+        let thread_shared_stream_arena = Arc::new(ArenaPool::new(stream_each_sizeof_buffer, stream_each_sizeof_arena));
+
         for (_, input_r2) in &*input_r2 {
             let d2 = codec::bgzf::Bgzf::builder()
                 .with_path(input_r2.path().path())
@@ -706,8 +713,7 @@ fn spawn_paired_readers(
             let mut s2 = Stream::builder()
                 .with_decoder(d2)
                 .with_parser(p2)
-                .sizeof_decode_arena(stream_each_sizeof_arena)
-                .sizeof_decode_buffer(stream_each_sizeof_buffer)
+                .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena))
                 .build();
 
             let mut q2 = s2.query::<fastq::Record>();
@@ -994,6 +1000,10 @@ fn spawn_chunk_writers(
             let thread_name = thread.name().unwrap_or("unknown thread");
             log_info!("Starting chunk writer"; "thread" => thread_name);
 
+            // Reuse arena pools across all chunks in this thread
+            let thread_shared_raw_arena = Arc::new(ArenaPool::new(sizeof_write_each_compress_raw_buffer, codec::bbgz::MAX_SIZEOF_BLOCK));
+            let thread_shared_compression_arena = Arc::new(ArenaPool::new(sizeof_write_each_compress_buffer, codec::bbgz::MAX_SIZEOF_BLOCK));
+
             while let Ok(sorted_record_list) = st_rx.recv() {
                 let thread_counter = thread_counter.fetch_add(1, Ordering::Relaxed);
                 let temp_fname = format!(
@@ -1020,11 +1030,14 @@ fn spawn_chunk_writers(
                     }
                 };
 
-                let bufwriter = BufWriter::with_capacity(u16::MAX as usize * 32, temp_output_file.clone());
+                let bufwriter = BufWriter::with_capacity(
+                    ByteSize::mib(1).as_u64() as usize,
+                    temp_output_file.clone()
+                );
                 let mut bbgzwriter = BBGZWriter::builder()
                     .countof_threads(countof_write_each_compress_threads)
-                    .sizeof_compression_buffer(sizeof_write_each_compress_buffer)
-                    .sizeof_raw_buffer(sizeof_write_each_compress_raw_buffer)
+                    .with_opt_raw_arena_pool(Arc::clone(&thread_shared_raw_arena))
+                    .with_opt_compression_arena_pool(Arc::clone(&thread_shared_compression_arena))
                     .with_writer(bufwriter)
                     .build();
 
@@ -1123,7 +1136,10 @@ fn spawn_mergesort_workers(
                 Err(e) => panic!("{e}"),
             };
 
-            let b1 = BufReader::new(f1);
+            let b1 = BufReader::with_capacity(
+                ByteSize::mib(8).as_u64() as usize,
+                f1
+            );
             let d1 = codec::plain::PlaintextDecoder::builder()
                 .with_reader(b1)
                 .build();
@@ -1174,6 +1190,9 @@ fn spawn_mergesort_workers(
             let thread_name = thread.name().unwrap_or("unknown thread");
             log_info!("Starting mergesort worker"; "thread" => thread_name);
 
+            // Reuse arena pool across all merges in this thread
+            let thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
+
             while let Ok((ia, ib)) = fp_rx.recv() {
                 log_info!("Merging pair: {} + {}", &ia, &ib);
                 // HACK: Use bounded channel to prevent memory accumulation when writer is slow
@@ -1185,7 +1204,10 @@ fn spawn_mergesort_workers(
                     Err(e) => panic!("{e}"),
                 };
 
-                let ba = BufReader::new(fa);
+                let ba = BufReader::with_capacity(
+                    ByteSize::mib(8).as_u64() as usize,
+                    fa
+                );
                 let da = codec::plain::PlaintextDecoder::builder()
                     .with_reader(ba)
                     .build();
@@ -1195,8 +1217,7 @@ fn spawn_mergesort_workers(
                 let mut sa = Stream::builder()
                     .with_decoder(da)
                     .with_parser(pa)
-                    .sizeof_decode_arena(sizeof_stream_each_arena)
-                    .sizeof_decode_buffer(sizeof_stream_each_buffer)
+                    .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena))
                     .build();
 
                 let mut qa = sa
@@ -1213,7 +1234,10 @@ fn spawn_mergesort_workers(
                     Err(e) => panic!("{e}"),
                 };
 
-                let bb = BufReader::new(fb);
+                let bb = BufReader::with_capacity(
+                    ByteSize::mib(8).as_u64() as usize,
+                    fb
+                );
                 let db = codec::plain::PlaintextDecoder::builder()
                     .with_reader(bb)
                     .build();
@@ -1223,8 +1247,7 @@ fn spawn_mergesort_workers(
                 let mut sb = Stream::builder()
                     .with_decoder(db)
                     .with_parser(pb)
-                    .sizeof_decode_arena(sizeof_stream_each_arena)
-                    .sizeof_decode_buffer(sizeof_stream_each_buffer)
+                    .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena))
                     .build();
 
                 let mut qb = sb
@@ -1320,7 +1343,7 @@ fn spawn_mergesort_writers(
                     }
                 };
 
-                let mut bufwriter = BufWriter::with_capacity(MAX_SIZEOF_BLOCKusize, temp_output_file);
+                let mut bufwriter = BufWriter::with_capacity(ByteSize::mib(8).as_u64() as usize, temp_output_file);
                 let mut merge_id: SmallVec<[u8; 16]> = SmallVec::new();
                 let mut merge_blocks: SmallVec<[parse::bbgz::Block; 8]> = SmallVec::new();
                 let mut merge_csize = 0;

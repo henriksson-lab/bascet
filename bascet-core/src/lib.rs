@@ -10,7 +10,6 @@ pub mod query;
 pub mod serialise;
 pub mod stream;
 pub mod utils;
-pub mod writer;
 
 pub use attr::*;
 pub use backing::*;
@@ -24,6 +23,5 @@ pub use query::*;
 pub use serialise::*;
 pub use stream::*;
 pub use utils::*;
-pub use writer::*;
 
 pub use bascet_derive::{define_attr, define_backing, Composite};

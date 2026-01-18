@@ -1,5 +1,5 @@
 use bytesize::ByteSize;
-use memmap2::MmapMut;
+use memmap2::{MmapMut, MmapOptions};
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
@@ -285,7 +285,26 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
         unsafe {
             let mut vec_arenas = Vec::with_capacity(countof_arenas);
             // TODO: construct with MmapOptions for explicit use of Huge Pages?
-            let mut mmap = MmapMut::map_anon(sizeof_buffer.as_u64() as usize).unwrap();
+            let mut mmap = MmapOptions::new()
+                .len(sizeof_buffer.as_u64() as usize)
+                .huge(None)
+                .map_anon()
+                .unwrap_or_else(|_| { 
+                    let mmap = MmapOptions::new()
+                        .len(sizeof_buffer.as_u64() as usize)
+                        .map_anon()
+                        .unwrap();
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = mmap.advise(memmap2::Advice::HugePage);
+                    }
+                    mmap
+                });
+
+            #[cfg(target_os = "linux")] 
+            {
+                let _ = mmap.advise(memmap2::Advice::WillNeed);
+            }
 
             let ptrbase_arena = mmap.as_mut_ptr() as *mut T;
             for i in 0..countof_arenas {

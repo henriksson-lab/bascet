@@ -1,24 +1,18 @@
 use std::{
-    ffi::c_int,
-    io::{Seek, Write},
-    sync::Arc,
-    thread::JoinHandle,
+    ffi::c_int, io::{Seek, Write}, mem::MaybeUninit, sync::Arc, thread::JoinHandle
 };
 
 use bascet_core::{
-    channel::{OrderedReceiver, OrderedSender},
-    ArenaPool, DEFAULT_SIZEOF_BUFFER,
+    ArenaPool, DEFAULT_SIZEOF_BUFFER, SendPtr, channel::{OrderedReceiver, OrderedSender}
 };
 
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
-use cloudflare_zlib_sys as zlib;
+use libz_ng_sys as zlib;
 use crossbeam::channel::{Receiver, Sender};
-use flate2::Compression;
 
 use crate::{
-    codec::bbgz::{BBGZHeader, MAX_SIZEOF_BLOCK, MAX_SIZEOF_BLOCKusize, MARKER_EOF},
-    BBGZCompressedBlock, BBGZRawBlock, BBGZTrailer, BBGZWriteBlock,
+    BBGZCompressedBlock, BBGZRawBlock, BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL, ZLIB_WINDOW_SIZE, codec::bbgz::{BBGZHeader, MARKER_EOF, MAX_SIZEOF_BLOCK, MAX_SIZEOF_BLOCKusize}
 };
 
 pub struct BBGZCompressionJob {
@@ -55,18 +49,23 @@ impl BBGZWriter {
             1,
             { u64::MAX },
         >,
-        #[builder(default = Compression::fast())] compression: Compression,
+        #[builder(default = Compression::balanced())] compression_level: Compression,
+        with_opt_raw_arena_pool: Option<Arc<ArenaPool<u8>>>,
+        with_opt_compression_arena_pool: Option<Arc<ArenaPool<u8>>>
     ) -> Self
     where
         W: Write + Seek + Send + 'static,
     {
-        let raw_allocator = Arc::new(ArenaPool::new(sizeof_raw_buffer, MAX_SIZEOF_BLOCK));
-        // NOTE: compression workers calculate the size.
-        // This should in theory be == deflate_compress_bound(raw.buf.len());
-        // deflate_compress_bound can be slightly larger than input, so add headroom
-        let compression_allocator =
-            Arc::new(ArenaPool::new(sizeof_compression_buffer, MAX_SIZEOF_BLOCK));
-        let compression_lvl = compression;
+        let raw_allocator = if let Some(arena_pool) = with_opt_raw_arena_pool {
+            arena_pool
+        } else {
+            Arc::new(ArenaPool::new(sizeof_raw_buffer, MAX_SIZEOF_BLOCK))
+        };
+        let compression_allocator = if let Some(arena_pool) = with_opt_compression_arena_pool {
+            arena_pool
+        } else {
+            Arc::new(ArenaPool::new(sizeof_compression_buffer, MAX_SIZEOF_BLOCK))
+        };
 
         let (compression_tx, compression_rx) = crossbeam::channel::unbounded();
         let (write_tx, write_rx) = bascet_core::channel::ordered::<BBGZCompressionResult, 16384>();
@@ -74,7 +73,7 @@ impl BBGZWriter {
         let compression_workers = Self::spawn_compression_workers(
             Arc::clone(&compression_allocator),
             compression_rx,
-            compression_lvl,
+            compression_level,
             write_tx,
             countof_threads,
         );
@@ -87,7 +86,7 @@ impl BBGZWriter {
             inner_compression_key: 0,
             inner_compression_tx: compression_tx,
             inner_compression_workers: compression_workers,
-            inner_compression_level: compression_lvl,
+            inner_compression_level: compression_level,
             inner_write_worker: write_worker,
         };
     }
@@ -117,7 +116,7 @@ impl BBGZWriter {
     fn spawn_compression_workers(
         compression_alloc: Arc<ArenaPool<u8>>,
         compression_rx: Receiver<(usize, BBGZCompressionJob)>,
-        compression_lvl: Compression,
+        compression_level: Compression,
         write_tx: OrderedSender<BBGZCompressionResult, 16384>,
         countof_threads: BoundedU64<1, { u64::MAX }>,
     ) -> Vec<JoinHandle<()>> {
@@ -130,7 +129,21 @@ impl BBGZWriter {
             handles.push(
                 std::thread::Builder::new()
                     .name(format!("BBGZCompression@{}", idx))
-                    .spawn(move || {
+                    .spawn(move || {                                                                                                      
+                        let mut mu_thread_compressor: MaybeUninit<zlib::z_stream> = MaybeUninit::zeroed();                                                                            
+                        unsafe {                                                                                                                
+                            let res = zlib::zng_deflateInit2(                                                                                       
+                                mu_thread_compressor.as_mut_ptr(),                                                                                                     
+                                compression_level.level() as c_int,                                                                                   
+                                zlib::Z_DEFLATED,                                                                                               
+                                ZLIB_WINDOW_SIZE as c_int,                                                                                      
+                                ZLIB_MEM_LEVEL as c_int,                                                                                        
+                                zlib::Z_DEFAULT_STRATEGY,                                                                                       
+                            );                                                                                                                  
+                            assert!(res == zlib::Z_OK, "deflateInit2 failed: {}", res);                                                         
+                        }
+                        let thread_compressor = unsafe { mu_thread_compressor.assume_init_mut() };                                                                                                                        
+
                         loop {
                             let (k, job) = match thread_compression_rx.recv() {
                                 Ok(v) => v,
@@ -143,61 +156,46 @@ impl BBGZWriter {
 
                             let mut buf_compressed =
                                 thread_compression_alloc.alloc(MAX_SIZEOF_BLOCKusize);
-
+                            
                             let buf_compressed = {
-                                // Use raw zlib API for precise control over deflate output
-                                // Z_SYNC_FLUSH produces: [huffman data, all BFINAL=0] [sync: 00 00 00 ff ff]
-                                let out_slice = buf_compressed.as_mut_slice();
-                                let in_slice = raw.buf.as_slice();
+                                let slice_raw = raw.buf.as_mut_slice();
+                                let slice_compressed = buf_compressed.as_mut_slice();
 
                                 let total_out = unsafe {
-                                    let mut stream: zlib::z_stream = std::mem::zeroed();
+                                    thread_compressor.next_in = slice_raw.as_mut_ptr();
+                                    thread_compressor.avail_in = slice_raw.len() as zlib::uInt;
+                                    thread_compressor.next_out = slice_compressed.as_mut_ptr();
+                                    thread_compressor.avail_out = slice_compressed.len() as zlib::uInt;
 
-                                    // Initialize for raw deflate (negative windowBits = no zlib/gzip header)
-                                    let ret = zlib::deflateInit2(
-                                        &mut stream,
-                                        compression_lvl.level() as c_int,
-                                        zlib::Z_DEFLATED,
-                                        -15, // raw deflate, window size 32KB
-                                        8,   // default memory level
-                                        zlib::Z_DEFAULT_STRATEGY,
+                                    // Z_SYNC_FLUSH produces: [huffman data, all BFINAL=0] [sync: <unaligned byte> 00 00 ff ff]
+                                    let res_compressor_deflate = zlib::deflate(
+                                        thread_compressor, 
+                                        zlib::Z_SYNC_FLUSH
                                     );
-                                    assert_eq!(ret, zlib::Z_OK, "deflateInit2 failed: {}", ret);
 
-                                    stream.next_in = in_slice.as_ptr() as *mut u8;
-                                    stream.avail_in = in_slice.len() as zlib::uInt;
-                                    stream.next_out = out_slice.as_mut_ptr();
-                                    stream.avail_out = out_slice.len() as zlib::uInt;
+                                    assert!(
+                                        res_compressor_deflate == zlib::Z_OK ||
+                                        res_compressor_deflate == zlib::Z_STREAM_END,
+                                        "deflate failed: {}", res_compressor_deflate
+                                    );
 
-                                    // Compress with Z_SYNC_FLUSH to get sync marker and BFINAL=0
-                                    let ret = zlib::deflate(&mut stream, zlib::Z_FULL_FLUSH);
-                                    assert!(ret == zlib::Z_OK || ret == zlib::Z_STREAM_END,
-                                        "deflate failed: {}", ret);
-
-                                    let total_out = stream.total_out as usize;
-                                    zlib::deflateEnd(&mut stream);
+                                    let total_out = thread_compressor.total_out as usize;
+                                    let res_compressor_reset = zlib::deflateReset(thread_compressor);
+                                    assert!(
+                                        res_compressor_reset == zlib::Z_OK,
+                                        "deflateReset failed: {}", res_compressor_reset
+                                    );
                                     total_out
                                 };
 
-                                // Verify sync marker is present
-                                let sync_marker = &out_slice[total_out - 4..total_out];
-                                if sync_marker != [0x00, 0x00, 0xff, 0xff] {
-                                    eprintln!("[WARN] Unexpected sync marker: {:02x?}", sync_marker);
-                                }
-
-                                // Append empty fixed Huffman block with BFINAL=1: 03 00
-                                // Structure: [huffman data] [sync: 00 00 00 ff ff] [terminator: 03 00]
-                                // For merging: strip last 2 bytes from intermediate blocks
-                                out_slice[total_out] = 0x03;
-                                out_slice[total_out + 1] = 0x00;
+                                // Structure: [data] [sync: <unaligned byte> 0x00 0x00 0xff 0xff] [terminator: 0x03 0x00]
+                                // For merging: strip terminator bytes from intermediate blocks and append
+                                // terminator to last
+                                slice_compressed[total_out] = 0x03;
+                                slice_compressed[total_out + 1] = 0x00;
 
                                 unsafe { buf_compressed.truncate(total_out + 2) }
                             };
-
-                            let sync_marker = &buf_compressed.as_slice()[(buf_compressed.len() - 6)..buf_compressed.len()];
-                            if sync_marker != [0x00, 0x00, 0xff, 0xff, 0x03, 0x00] {
-                                eprintln!("[WARN] Unexpected sync marker: {:02x?}", sync_marker);
-                            }
 
                             let compressed = BBGZCompressedBlock {
                                 buf: buf_compressed,
@@ -209,6 +207,14 @@ impl BBGZWriter {
                             };
 
                             thread_write_tx.send(k, job_result);
+                        }
+
+                        unsafe {
+                            let res_compressor_end = zlib::deflateEnd(thread_compressor);
+                            assert!(
+                                res_compressor_end == zlib::Z_OK, 
+                                "deflateEnd failed: {}", res_compressor_end
+                            )
                         }
                     })
                     .unwrap(),

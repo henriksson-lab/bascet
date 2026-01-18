@@ -50,9 +50,14 @@ where
             2,
             { usize::MAX },
         >,
+        with_opt_decode_arena_pool: Option<Arc<ArenaPool<u8>>>
     ) -> Self {
-        let arc_decoder_arena_pool =
-            Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena));
+        let arc_decoder_arena_pool = if let Some(arena_pool) = with_opt_decode_arena_pool {
+            arena_pool
+        } else { 
+            Arc::new(ArenaPool::new(sizeof_decode_buffer, sizeof_decode_arena))
+        };
+
         let arc_decoder_stop_flag = Arc::new(AtomicBool::new(false));
         let arc_shutdown_barrier = Arc::new(Barrier::new(2));
         let (handle, rx) = Self::spawn_decode_worker(
