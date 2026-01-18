@@ -186,10 +186,19 @@ impl ShardifyCMD {
                 let thread_name = thread.name().unwrap_or("unknown thread"); 
                 log_info!("Starting stream"; "thread" => thread_name, "path" => %thread_input);
 
+                let thread_file = match thread_input.clone().open() {
+                    Ok(file) => file,
+                    Err(e) => panic!("{e}")
+                };
+
+                let thread_bufreader = BufReader::with_capacity(
+                    MAX_SIZEOF_BLOCKusize, 
+                    thread_file
+                );
+
                 let thread_decoder = codec::plain::PlaintextDecoder::builder()
-                    .with_path(&*thread_input.path())
-                    .build()
-                    .unwrap();
+                    .with_reader(thread_bufreader)
+                    .build();
                 let thread_parser = parse::bbgz::parser();
 
                 let mut thread_stream = Stream::builder()
