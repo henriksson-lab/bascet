@@ -123,8 +123,12 @@ impl BBGZHeader {
         writer: &mut W,
         csize: usize,
     ) -> std::io::Result<()> {
-        self.BASE.XLEN = (self.size() - BBGZHeaderBase::SSIZE).try_into().expect("Overflow");
-        self.BC.BSIZE = (self.size() + csize + BBGZTrailer::SSIZE - 1).try_into().expect("Overflow");
+        self.BASE.XLEN = (self.size() - BBGZHeaderBase::SSIZE)
+            .try_into()
+            .expect("Overflow");
+        self.BC.BSIZE = (self.size() + csize + BBGZTrailer::SSIZE - 1)
+            .try_into()
+            .expect("Overflow");
 
         writer.write_all(self.BASE.as_bytes())?;
 

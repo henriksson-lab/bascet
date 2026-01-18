@@ -289,7 +289,7 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                 .len(sizeof_buffer.as_u64() as usize)
                 .huge(None)
                 .map_anon()
-                .unwrap_or_else(|_| { 
+                .unwrap_or_else(|_| {
                     let mmap = MmapOptions::new()
                         .len(sizeof_buffer.as_u64() as usize)
                         .map_anon()
@@ -301,7 +301,7 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                     mmap
                 });
 
-            #[cfg(target_os = "linux")] 
+            #[cfg(target_os = "linux")]
             {
                 let _ = mmap.advise(memmap2::Advice::WillNeed);
             }

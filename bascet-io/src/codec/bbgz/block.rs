@@ -2,7 +2,10 @@ use std::io::{Seek, Write};
 
 use bascet_core::ArenaSlice;
 
-use crate::{BBGZHeader, BBGZTrailer, BBGZWriter, codec::bbgz::consts::SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize};
+use crate::{
+    codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
+    BBGZHeader, BBGZTrailer, BBGZWriter,
+};
 
 pub struct BBGZRawBlock {
     pub(crate) buf: ArenaSlice<u8>,
@@ -36,13 +39,12 @@ impl<'a> BBGZWriteBlock<'a> {
 impl<'a> std::io::Write for BBGZWriteBlock<'a> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // NOTE hsize assumes the entire data is written as one incompressible block
-        let hsize =
-            self.inner_raw_bytes_written +
-            self.inner_header.size() +
-            SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize +
-            BBGZTrailer::SSIZE;
+        let hsize = self.inner_raw_bytes_written
+            + self.inner_header.size()
+            + SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize
+            + BBGZTrailer::SSIZE;
 
-        if buf.len() + hsize > self.inner_raw.buf.len() {
+        if buf.len() + hsize > MAX_SIZEOF_BLOCKusize {
             let new_raw = self.inner_compressor.alloc_raw();
             let mut send_raw = std::mem::replace(&mut self.inner_raw, new_raw);
             unsafe {
