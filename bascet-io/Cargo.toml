@@ -21,6 +21,7 @@ csv = "1.4.0"
 flate2 = { version = "1.1.8", features = ["cloudflare_zlib"] }
 libdeflate-sys = "1.25.0"
 libdeflater = "1.25.0"
+libz-ng-sys = "1.1.23"
 memchr = "2.7.6"
 parking_lot = "0.12.5"
 rust-htslib = "0.51.0"

@@ -19,7 +19,7 @@ where
     #[builder]
     pub fn new(
         with_reader: R,
-        #[builder(default = ByteSize::kib(64))] sizeof_target_alloc: ByteSize,
+        #[builder(default = ByteSize::mib(8))] sizeof_target_alloc: ByteSize,
     ) -> Self {
         PlaintextDecoder {
             inner_reader: with_reader,
