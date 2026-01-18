@@ -575,72 +575,36 @@ impl GetRawCMD {
             }
         }
 
-        let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
-        for (i, output_path) in output_paths.into_iter().enumerate() {
-            // NOTE fine to use all threads briefly. Nothing else does work anymore
-            let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
-            let decoder = codec::BBGZDecoder::builder()
-                .with_path(output_path.path().path())
-                // SAFETY budget.threads::<Total>() is 7..
-                .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
-                .build();
-            let parser = parse::Tirp::builder().build();
+        // Build (output_path, hist_path) pairs for histogram workers
+        let output_hist_pairs: Vec<(OutputPath, OutputPath)> = output_paths
+            .into_iter()
+            .enumerate()
+            .map(|(i, output_path)| {
+                let hist_path = if let Some(ref hist_paths) = self.paths_hist {
+                    hist_paths[i].clone()
+                } else {
+                    match OutputPath::try_from(&format!("{}.hist", output_path.path().path().display()))
+                    {
+                        Ok(path) => path,
+                        Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
+                    }
+                };
+                (output_path, hist_path)
+            })
+            .collect();
 
-            let mut stream = Stream::builder()
-                .with_decoder(decoder)
-                .with_parser(parser)
-                .sizeof_decode_arena(self.sizeof_stream_arena)
-                .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
-                .build();
+        let hist_handles = spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
 
-            let mut query = stream
-                .query::<tirp::Cell>()
-                .group_relaxed_with_context::<Id, Id, _>(
-                    |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                        std::cmp::Ordering::Less => panic!("Unordered record list\nCurrent ID: {:?}\nContext ID: {:?}\nCurrent (lossy): {}\nContext (lossy): {}",
-                            id, id_ctx, String::from_utf8_lossy(id), String::from_utf8_lossy(id_ctx)),
-                        std::cmp::Ordering::Equal => QueryResult::Keep,
-                        std::cmp::Ordering::Greater => QueryResult::Emit,
-                    },
-                );
-
-            while let Ok(Some(cell)) = query.next() {
-                let n = cell.get_ref::<R1>().len() as u64;
-                let _ = *hist_hashmap
-                    .entry(cell.get_ref::<Id>().to_vec())
-                    .and_modify(|c| *c += n)
-                    .or_insert(n);
-            }
-
-            let hist_path = if let Some(ref hist_paths) = self.paths_hist {
-                hist_paths[i].clone()
-            } else {
-                match OutputPath::try_from(&format!("{}.hist", output_path.path().path().display()))
-                {
-                    Ok(path) => path,
-                    Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
-                }
-            };
-
-            let hist_file = match hist_path.clone().create() {
-                Ok(file) => file,
-                Err(e) => {
-                    log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
-                }
-            };
-
-            let mut bufwriter = BufWriter::new(hist_file);
-            for (id, count) in hist_hashmap.iter() {
-                bufwriter.write_all(&id);
-                bufwriter.write_all(b"\t");
-                bufwriter.write_all(count.to_string().as_bytes());
-                bufwriter.write_all(b"\n");
-            }
-
-            bufwriter.flush();
-            log_info!("Wrote histogram at {}", hist_path);
-            hist_hashmap.clear();
+        log_info!(
+            "Waiting for {} histogram worker threads to finish...",
+            hist_handles.len()
+        );
+        for (i, handle) in hist_handles.into_iter().enumerate() {
+            handle
+                .join()
+                .expect(&format!("Histogram worker thread {} panicked", i));
         }
+        log_info!("All histogram worker threads finished");
 
         Ok(())
     }
@@ -1205,7 +1169,7 @@ fn spawn_mergesort_workers(
                 };
 
                 let ba = BufReader::with_capacity(
-                    ByteSize::mib(8).as_u64() as usize,
+                    ByteSize::mib(2).as_u64() as usize,
                     fa
                 );
                 let da = codec::plain::PlaintextDecoder::builder()
@@ -1235,7 +1199,7 @@ fn spawn_mergesort_workers(
                 };
 
                 let bb = BufReader::with_capacity(
-                    ByteSize::mib(8).as_u64() as usize,
+                    ByteSize::mib(2).as_u64() as usize,
                     fb
                 );
                 let db = codec::plain::PlaintextDecoder::builder()
@@ -1527,6 +1491,105 @@ fn spawn_mergesort_writers(
     }
 
     return thread_handles;
+}
+
+fn spawn_histogram_workers(
+    output_hist_pairs: Vec<(OutputPath, OutputPath)>,
+    budget: &GetrawBudget,
+    stream_arena: ByteSize,
+) -> Vec<JoinHandle<()>> {
+    let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
+    let (pair_tx, pair_rx) = crossbeam::channel::unbounded();
+    let mut thread_handles = Vec::new();
+
+    // Producer thread that sends (output_path, hist_path) pairs
+    let producer_handle = budget.spawn::<Total, _, _>(0, move || {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unknown thread");
+        log_info!("Starting histogram producer"; "thread" => thread_name);
+
+        for pair in output_hist_pairs {
+            let _ = pair_tx.send(pair);
+        }
+    });
+    thread_handles.push(producer_handle);
+
+    // Determine how many worker threads to use (leave 1 for producer)
+    let countof_worker_threads = (countof_threads_total - 1).max(1);
+    let countof_threads_per_worker = BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
+    let sizeof_stream_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
+
+    for thread_idx in 0..countof_worker_threads {
+        let pair_rx = pair_rx.clone();
+        let thread_stream_arena = stream_arena;
+        let thread_stream_buffer = sizeof_stream_buffer;
+        let thread_countof_threads = countof_threads_per_worker;
+
+        let worker_handle = budget.spawn::<Total, _, _>(thread_idx + 1, move || {
+            let thread = std::thread::current();
+            let thread_name = thread.name().unwrap_or("unknown thread");
+            log_info!("Starting histogram worker"; "thread" => thread_name);
+
+            while let Ok((output_path, hist_path)) = pair_rx.recv() {
+                log_info!("Processing histogram for {}", output_path);
+
+                let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
+
+                let decoder = codec::BBGZDecoder::builder()
+                    .with_path(output_path.path().path())
+                    .countof_threads(thread_countof_threads)
+                    .build();
+                let parser = parse::Tirp::builder().build();
+
+                let mut stream = Stream::builder()
+                    .with_decoder(decoder)
+                    .with_parser(parser)
+                    .sizeof_decode_arena(thread_stream_arena)
+                    .sizeof_decode_buffer(thread_stream_buffer)
+                    .build();
+
+                let mut query = stream
+                    .query::<tirp::Cell>()
+                    .group_relaxed_with_context::<Id, Id, _>(
+                        |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
+                            std::cmp::Ordering::Less => panic!("Unordered record list\nCurrent ID: {:?}\nContext ID: {:?}\nCurrent (lossy): {}\nContext (lossy): {}",
+                                id, id_ctx, String::from_utf8_lossy(id), String::from_utf8_lossy(id_ctx)),
+                            std::cmp::Ordering::Equal => QueryResult::Keep,
+                            std::cmp::Ordering::Greater => QueryResult::Emit,
+                        },
+                    );
+
+                while let Ok(Some(cell)) = query.next() {
+                    let n = cell.get_ref::<R1>().len() as u64;
+                    let _ = *hist_hashmap
+                        .entry(cell.get_ref::<Id>().to_vec())
+                        .and_modify(|c| *c += n)
+                        .or_insert(n);
+                }
+
+                let hist_file = match hist_path.clone().create() {
+                    Ok(file) => file,
+                    Err(e) => {
+                        log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
+                    }
+                };
+
+                let mut bufwriter = BufWriter::new(hist_file);
+                for (id, count) in hist_hashmap.iter() {
+                    bufwriter.write_all(&id);
+                    bufwriter.write_all(b"\t");
+                    bufwriter.write_all(count.to_string().as_bytes());
+                    bufwriter.write_all(b"\n");
+                }
+
+                bufwriter.flush();
+                log_info!("Wrote histogram at {}", hist_path);
+            }
+        });
+        thread_handles.push(worker_handle);
+    }
+
+    thread_handles
 }
 
 #[derive(Composite, Default, Serialize)]
