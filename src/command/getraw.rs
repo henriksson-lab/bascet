@@ -8,10 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
-use bascet_io::{
-    BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, MAX_SIZEOF_BLOCKusize,
-    SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize,
-};
+use bascet_io::{BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize};
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -132,7 +129,7 @@ pub struct GetRawCMD {
     countof_threads_compress: Option<BoundedU64<1, { u64::MAX }>>,
     // 1 prev 3634s
     // 2 prev 3698s
-    // 3 prev
+    // 3 prev 
     #[arg(
         short = 'm',
         long = "memory",
@@ -586,10 +583,8 @@ impl GetRawCMD {
                 let hist_path = if let Some(ref hist_paths) = self.paths_hist {
                     hist_paths[i].clone()
                 } else {
-                    match OutputPath::try_from(&format!(
-                        "{}.hist",
-                        output_path.path().path().display()
-                    )) {
+                    match OutputPath::try_from(&format!("{}.hist", output_path.path().path().display()))
+                    {
                         Ok(path) => path,
                         Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
                     }
@@ -598,8 +593,7 @@ impl GetRawCMD {
             })
             .collect();
 
-        let hist_handles =
-            spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
+        let hist_handles = spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
 
         log_info!(
             "Waiting for {} histogram worker threads to finish...",
@@ -639,10 +633,7 @@ fn spawn_paired_readers(
         log_info!("Starting R1 reader"; "thread" => thread_name);
 
         // Reuse arena pool across all input files in this thread
-        let thread_shared_stream_arena = Arc::new(ArenaPool::new(
-            stream_each_sizeof_buffer,
-            stream_each_sizeof_arena,
-        ));
+        let thread_shared_stream_arena = Arc::new(ArenaPool::new(stream_each_sizeof_buffer, stream_each_sizeof_arena));
 
         for (input_r1, _) in &*input_r1 {
             let d1 = codec::bgzf::Bgzf::builder()
@@ -674,10 +665,7 @@ fn spawn_paired_readers(
         log_info!("Starting R2 reader"; "thread" => thread_name);
 
         // Reuse arena pool across all input files in this thread
-        let thread_shared_stream_arena = Arc::new(ArenaPool::new(
-            stream_each_sizeof_buffer,
-            stream_each_sizeof_arena,
-        ));
+        let thread_shared_stream_arena = Arc::new(ArenaPool::new(stream_each_sizeof_buffer, stream_each_sizeof_arena));
 
         for (_, input_r2) in &*input_r2 {
             let d2 = codec::bgzf::Bgzf::builder()
@@ -1159,8 +1147,8 @@ fn spawn_mergesort_workers(
             log_info!("Starting mergesort worker"; "thread" => thread_name);
 
             // Reuse arena pool across all merges in this thread
-            let thread_shared_stream_arena_a = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
-            let thread_shared_stream_arena_b = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
+            let a_thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
+            let b_thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
 
             while let Ok((ia, ib)) = fp_rx.recv() {
                 log_info!("Merging pair: {} + {}", &ia, &ib);
@@ -1168,17 +1156,25 @@ fn spawn_mergesort_workers(
                 let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
                 let _ = ms_tx.send(mc_rx);
 
+                let fa = match ia.clone().open() {
+                    Ok(file_handle) => file_handle,
+                    Err(e) => panic!("{e}"),
+                };
+
+                let ba = BufReader::with_capacity(
+                    ByteSize::mib(2).as_u64() as usize,
+                    fa
+                );
                 let da = codec::plain::PlaintextDecoder::builder()
-                    .with_path(&**ia.path())
-                    .build()
-                    .expect("Failed to mmap file");
+                    .with_reader(ba)
+                    .build();
 
                 let pa = parse::bbgz::parser();
 
                 let mut sa = Stream::builder()
                     .with_decoder(da)
                     .with_parser(pa)
-                    .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena_a))
+                    .with_opt_decode_arena_pool(Arc::clone(&a_thread_shared_stream_arena))
                     .build();
 
                 let mut qa = sa
@@ -1190,17 +1186,25 @@ fn spawn_mergesort_workers(
                         "id_current < id_context",
                     );
 
+                let fb = match ib.clone().open() {
+                    Ok(file_handle) => file_handle,
+                    Err(e) => panic!("{e}"),
+                };
+
+                let bb = BufReader::with_capacity(
+                    ByteSize::mib(2).as_u64() as usize,
+                    fb
+                );
                 let db = codec::plain::PlaintextDecoder::builder()
-                    .with_path(&**ib.path())
-                    .build()
-                    .expect("Failed to mmap file");
+                    .with_reader(bb)
+                    .build();
 
                 let pb = parse::bbgz::parser();
 
                 let mut sb = Stream::builder()
                     .with_decoder(db)
                     .with_parser(pb)
-                    .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena_b))
+                    .with_opt_decode_arena_pool(Arc::clone(&b_thread_shared_stream_arena))
                     .build();
 
                 let mut qb = sb
@@ -1505,10 +1509,8 @@ fn spawn_histogram_workers(
 
     // Determine how many worker threads to use (leave 1 for producer)
     let countof_worker_threads = (countof_threads_total - 1).max(1);
-    let countof_threads_per_worker =
-        BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
-    let sizeof_stream_buffer =
-        ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
+    let countof_threads_per_worker = BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
+    let sizeof_stream_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
 
     for thread_idx in 0..countof_worker_threads {
         let pair_rx = pair_rx.clone();
