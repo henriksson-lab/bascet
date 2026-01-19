@@ -7,8 +7,7 @@ use std::{
 };
 
 use bascet_core::{
-    channel::{OrderedReceiver, OrderedSender},
-    ArenaPool, SendPtr, DEFAULT_SIZEOF_BUFFER,
+    ArenaPool, ArenaSlice, DEFAULT_SIZEOF_BUFFER, SendPtr, channel::{OrderedReceiver, OrderedSender}
 };
 
 use bounded_integer::BoundedU64;
@@ -18,19 +17,20 @@ use libz_ng_sys as zlib;
 
 use crate::{
     codec::bbgz::{BBGZHeader, MAX_SIZEOF_BLOCKusize, MARKER_EOF, MAX_SIZEOF_BLOCK},
-    BBGZCompressedBlock, BBGZRawBlock, BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL,
+    BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL,
     ZLIB_WINDOW_SIZE,
 };
 
 pub struct BBGZCompressionJob {
     pub header: BBGZHeader,
-    pub raw: BBGZRawBlock,
+    pub raw: ArenaSlice<u8>,
 }
 
 pub struct BBGZCompressionResult {
     pub header: BBGZHeader,
-    pub raw: BBGZRawBlock,
-    pub compressed: BBGZCompressedBlock,
+    pub compressed: ArenaSlice<u8>,
+    pub crc32: u32,
+    pub isize: usize,
 }
 
 pub struct BBGZWriter {
@@ -102,20 +102,17 @@ impl BBGZWriter {
         BBGZWriteBlock::new(self, header)
     }
 
-    pub(crate) fn alloc_raw(&mut self) -> BBGZRawBlock {
+    pub(crate) fn alloc_raw(&mut self) -> ArenaSlice<u8> {
         // NOTE: usize_MAX_SIZEOF_BLOCK is the max LEN. alloc allocates n SLOTS.
         let buf = self.inner_raw_allocator.alloc(MAX_SIZEOF_BLOCKusize);
-        BBGZRawBlock { buf, crc32: None }
+        buf
     }
 
     /// SAFETY must ensure contracts for writing a block are met, i.e.: atomic writes only (no splitting across boundaries)
-    pub(crate) unsafe fn submit_compress(&mut self, header: BBGZHeader, raw: BBGZRawBlock) {
+    pub(crate) unsafe fn submit_compress(&mut self, job: BBGZCompressionJob) {
         let _ = self.inner_compression_tx.send((
             self.inner_compression_key,
-            BBGZCompressionJob {
-                header: header,
-                raw: raw,
-            },
+            job
         ));
         self.inner_compression_key += 1;
     }
@@ -158,15 +155,14 @@ impl BBGZWriter {
                                 Err(_) => break,
                             };
 
-                            let mut raw = job.raw;
-                            let crc32 = crc32fast::hash(raw.buf.as_slice());
-                            raw.crc32 = Some(crc32);
+                            let mut buf_raw = job.raw;
+                            let crc32_raw = crc32fast::hash(buf_raw.as_slice());
 
                             let mut buf_compressed =
                                 thread_compression_alloc.alloc(MAX_SIZEOF_BLOCKusize);
 
                             let buf_compressed = {
-                                let slice_raw = raw.buf.as_mut_slice();
+                                let slice_raw = buf_raw.as_mut_slice();
                                 let slice_compressed = buf_compressed.as_mut_slice();
 
                                 let total_out = unsafe {
@@ -207,13 +203,11 @@ impl BBGZWriter {
                                 unsafe { buf_compressed.truncate(total_out + 2) }
                             };
 
-                            let compressed = BBGZCompressedBlock {
-                                buf: buf_compressed,
-                            };
                             let job_result = BBGZCompressionResult {
                                 header: job.header,
-                                raw: raw,
-                                compressed: compressed,
+                                compressed: buf_compressed,
+                                crc32: crc32_raw,
+                                isize: buf_raw.len()
                             };
 
                             thread_write_tx.send(k, job_result);
@@ -251,18 +245,14 @@ impl BBGZWriter {
                     };
 
                     let mut header = res.header;
-                    let raw = res.raw;
                     let compressed = res.compressed;
-                    let trailer = unsafe {
-                        BBGZTrailer::new(
-                            // SAFETY: we set the crc32 to Some(crc32) when compressing
-                            raw.crc32.unwrap_unchecked(),
-                            raw.buf.len() as u32,
-                        )
-                    };
+                    let trailer = BBGZTrailer::new(
+                        res.crc32,
+                        res.isize.try_into().unwrap(),
+                    );
 
-                    let _ = header.write_with_csize(&mut writer, compressed.buf.len());
-                    let _ = writer.write_all(&compressed.buf.as_slice());
+                    let _ = header.write_with_csize(&mut writer, compressed.len());
+                    let _ = writer.write_all(&compressed.as_slice());
                     let _ = trailer.write_with(&mut writer);
                 }
 

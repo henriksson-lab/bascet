@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
-use bascet_io::{BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize};
+use bascet_io::{BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, Compression, MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize};
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -129,7 +129,7 @@ pub struct GetRawCMD {
     countof_threads_compress: Option<BoundedU64<1, { u64::MAX }>>,
     // 1 prev 3634s
     // 2 prev 3698s
-    // 3 prev 
+    // 3 prev 2666s
     #[arg(
         short = 'm',
         long = "memory",
@@ -441,6 +441,7 @@ impl GetRawCMD {
                 timestamp_temp_files.clone(),
                 path_temp_dir.clone(),
                 &budget,
+                self.compression_level
             );
 
             log_info!("Waiting for R1 and R2 reader threads to finish...");
@@ -630,7 +631,7 @@ fn spawn_paired_readers(
 
         for (input_r1, _) in &*input_r1 {
             let d1 = codec::bgzf::Bgzf::builder()
-                .with_path(input_r1.path().path())
+                .with_path(&**input_r1.path())
                 .countof_threads(stream_each_n_threads)
                 .build();
             let p1 = parse::Fastq::builder().build();
@@ -659,7 +660,7 @@ fn spawn_paired_readers(
 
         for (_, input_r2) in &*input_r2 {
             let d2 = codec::bgzf::Bgzf::builder()
-                .with_path(input_r2.path().path())
+                .with_path(&**input_r2.path())
                 .countof_threads(stream_each_n_threads)
                 .build();
             let p2 = parse::Fastq::builder().build();
@@ -929,6 +930,7 @@ fn spawn_chunk_writers(
     timestamp_temp_files: String,
     path_temp_dir: PathBuf,
     budget: &GetrawBudget,
+    compression_level: Compression,
 ) -> Vec<JoinHandle<Vec<InputPath>>> {
     let countof_write_threads = (*budget.threads::<TWrite>()).get();
     let countof_compress_threads = (*budget.threads::<TCompress>()).get();
@@ -990,6 +992,7 @@ fn spawn_chunk_writers(
                 );
                 let mut bbgzwriter = BBGZWriter::builder()
                     .countof_threads(countof_write_each_compress_threads)
+                    .compression_level(compression_level)
                     .with_opt_raw_arena_pool(Arc::clone(&thread_shared_raw_arena))
                     .with_opt_compression_arena_pool(Arc::clone(&thread_shared_compression_arena))
                     .with_writer(bufwriter)
@@ -1090,12 +1093,12 @@ fn spawn_mergesort_workers(
                 Err(e) => panic!("{e}"),
             };
 
-            let b1 = BufReader::with_capacity(
-                ByteSize::mib(4).as_u64() as usize,
-                f1
-            );
+            // let b1 = Reader::with_capacity(
+            //     ByteSize::mib(4).as_u64() as usize,
+            //     f1
+            // );
             let d1 = codec::plain::PlaintextDecoder::builder()
-                .with_reader(b1)
+                .with_reader(f1)
                 .build();
 
             let p1 = parse::bbgz::parser();
@@ -1158,12 +1161,12 @@ fn spawn_mergesort_workers(
                     Err(e) => panic!("{e}"),
                 };
 
-                let ba = BufReader::with_capacity(
-                    ByteSize::mib(4).as_u64() as usize,
-                    fa
-                );
+                // let ba = BufReader::with_capacity(
+                //     ByteSize::mib(4).as_u64() as usize,
+                //     fa
+                // );
                 let da = codec::plain::PlaintextDecoder::builder()
-                    .with_reader(ba)
+                    .with_reader(fa)
                     .build();
 
                 let pa = parse::bbgz::parser();
@@ -1188,12 +1191,12 @@ fn spawn_mergesort_workers(
                     Err(e) => panic!("{e}"),
                 };
 
-                let bb = BufReader::with_capacity(
-                    ByteSize::mib(4).as_u64() as usize,
-                    fb
-                );
+                // let bb = BufReader::with_capacity(
+                //     ByteSize::mib(4).as_u64() as usize,
+                //     fb
+                // );
                 let db = codec::plain::PlaintextDecoder::builder()
-                    .with_reader(bb)
+                    .with_reader(fb)
                     .build();
 
                 let pb = parse::bbgz::parser();
@@ -1527,17 +1530,12 @@ fn spawn_histogram_workers(
                     "id_current < id_context",
                 );
 
-            let mut cnt = 0;
             while let Ok(Some(record)) = query.next() {
                 let id = record.get_ref::<Id>();
                 if let Some(count) = hist_hashmap.get_mut(*id) {
                     *count += 1;
                 } else {
                     hist_hashmap.insert(id.to_vec(), 1);
-                }
-                cnt += 1;
-                if cnt % 1_000_000 == 0 {
-                    log_info!("{cnt}");
                 }
             }
 
