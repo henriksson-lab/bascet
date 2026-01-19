@@ -3,23 +3,13 @@ use std::io::{Seek, Write};
 use bascet_core::ArenaSlice;
 
 use crate::{
-    codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
-    BBGZHeader, BBGZTrailer, BBGZWriter,
+    BBGZCompressionJob, BBGZHeader, BBGZTrailer, BBGZWriter, codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize}
 };
-
-pub struct BBGZRawBlock {
-    pub(crate) buf: ArenaSlice<u8>,
-    pub(crate) crc32: Option<u32>,
-}
-
-pub struct BBGZCompressedBlock {
-    pub(crate) buf: ArenaSlice<u8>,
-}
 
 pub struct BBGZWriteBlock<'a> {
     inner_compressor: &'a mut BBGZWriter,
     inner_header: BBGZHeader,
-    inner_raw: BBGZRawBlock,
+    inner_raw: ArenaSlice<u8>,
     inner_raw_bytes_written: usize,
 }
 
@@ -48,14 +38,18 @@ impl<'a> std::io::Write for BBGZWriteBlock<'a> {
             let new_raw = self.inner_compressor.alloc_raw();
             let mut send_raw = std::mem::replace(&mut self.inner_raw, new_raw);
             unsafe {
-                send_raw.buf = send_raw.buf.truncate(self.inner_raw_bytes_written);
+                send_raw = send_raw.truncate(self.inner_raw_bytes_written);
+                let send_job = BBGZCompressionJob {
+                    header: self.inner_header.clone(),
+                    raw: send_raw,
+                };
                 self.inner_compressor
-                    .submit_compress(self.inner_header.clone(), send_raw);
+                    .submit_compress(send_job);
             }
             self.inner_raw_bytes_written = 0;
         }
 
-        let raw_buf = self.inner_raw.buf.as_mut_slice();
+        let raw_buf = self.inner_raw.as_mut_slice();
         unsafe {
             let raw_buf_ptr = raw_buf.as_mut_ptr().add(self.inner_raw_bytes_written);
             std::ptr::copy_nonoverlapping(buf.as_ptr(), raw_buf_ptr, buf.len());
@@ -69,11 +63,14 @@ impl<'a> std::io::Write for BBGZWriteBlock<'a> {
         if self.inner_raw_bytes_written > 0 {
             let new_raw = self.inner_compressor.alloc_raw();
             let mut send_raw = std::mem::replace(&mut self.inner_raw, new_raw);
-
             unsafe {
-                send_raw.buf = send_raw.buf.truncate(self.inner_raw_bytes_written);
+                send_raw = send_raw.truncate(self.inner_raw_bytes_written);
+                let send_job = BBGZCompressionJob {
+                    header: self.inner_header.clone(),
+                    raw: send_raw,
+                };
                 self.inner_compressor
-                    .submit_compress(self.inner_header.clone(), send_raw);
+                    .submit_compress(send_job);
             }
             self.inner_raw_bytes_written = 0;
         }
