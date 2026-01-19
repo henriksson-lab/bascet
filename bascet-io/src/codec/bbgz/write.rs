@@ -7,7 +7,8 @@ use std::{
 };
 
 use bascet_core::{
-    ArenaPool, ArenaSlice, DEFAULT_SIZEOF_BUFFER, SendPtr, channel::{OrderedReceiver, OrderedSender}
+    channel::{OrderedReceiver, OrderedSender},
+    ArenaPool, ArenaSlice, SendPtr, DEFAULT_SIZEOF_BUFFER,
 };
 
 use bounded_integer::BoundedU64;
@@ -17,8 +18,7 @@ use libz_ng_sys as zlib;
 
 use crate::{
     codec::bbgz::{BBGZHeader, MAX_SIZEOF_BLOCKusize, MARKER_EOF, MAX_SIZEOF_BLOCK},
-    BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL,
-    ZLIB_WINDOW_SIZE,
+    BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL, ZLIB_WINDOW_SIZE,
 };
 
 pub struct BBGZCompressionJob {
@@ -110,10 +110,9 @@ impl BBGZWriter {
 
     /// SAFETY must ensure contracts for writing a block are met, i.e.: atomic writes only (no splitting across boundaries)
     pub(crate) unsafe fn submit_compress(&mut self, job: BBGZCompressionJob) {
-        let _ = self.inner_compression_tx.send((
-            self.inner_compression_key,
-            job
-        ));
+        let _ = self
+            .inner_compression_tx
+            .send((self.inner_compression_key, job));
         self.inner_compression_key += 1;
     }
 
@@ -207,7 +206,7 @@ impl BBGZWriter {
                                 header: job.header,
                                 compressed: buf_compressed,
                                 crc32: crc32_raw,
-                                isize: buf_raw.len()
+                                isize: buf_raw.len(),
                             };
 
                             thread_write_tx.send(k, job_result);
@@ -246,10 +245,7 @@ impl BBGZWriter {
 
                     let mut header = res.header;
                     let compressed = res.compressed;
-                    let trailer = BBGZTrailer::new(
-                        res.crc32,
-                        res.isize.try_into().unwrap(),
-                    );
+                    let trailer = BBGZTrailer::new(res.crc32, res.isize.try_into().unwrap());
 
                     let _ = header.write_with_csize(&mut writer, compressed.len());
                     let _ = writer.write_all(&compressed.as_slice());

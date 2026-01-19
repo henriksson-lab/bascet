@@ -3,7 +3,8 @@ use std::io::{Seek, Write};
 use bascet_core::ArenaSlice;
 
 use crate::{
-    BBGZCompressionJob, BBGZHeader, BBGZTrailer, BBGZWriter, codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize}
+    codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
+    BBGZCompressionJob, BBGZHeader, BBGZTrailer, BBGZWriter,
 };
 
 pub struct BBGZWriteBlock<'a> {
@@ -43,8 +44,7 @@ impl<'a> std::io::Write for BBGZWriteBlock<'a> {
                     header: self.inner_header.clone(),
                     raw: send_raw,
                 };
-                self.inner_compressor
-                    .submit_compress(send_job);
+                self.inner_compressor.submit_compress(send_job);
             }
             self.inner_raw_bytes_written = 0;
         }
@@ -69,8 +69,7 @@ impl<'a> std::io::Write for BBGZWriteBlock<'a> {
                     header: self.inner_header.clone(),
                     raw: send_raw,
                 };
-                self.inner_compressor
-                    .submit_compress(send_job);
+                self.inner_compressor.submit_compress(send_job);
             }
             self.inner_raw_bytes_written = 0;
         }

@@ -8,7 +8,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
-use bascet_io::{BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, Compression, MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize};
+use bascet_io::{
+    BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, Compression, MAX_SIZEOF_BLOCKusize,
+    SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize,
+};
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
@@ -234,28 +237,25 @@ struct GetrawBudget {
     #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_read: BoundedU64<2, { u64::MAX }>,
 
-    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.1) as u64))]
+    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.125) as u64))]
     countof_threads_debarcode: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
+    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_sort: BoundedU64<1, { u64::MAX }>,
     #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<4>())]
     countof_threads_mergesort: BoundedU64<2, { u64::MAX }>,
 
-    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
+    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.125) as u64))]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
-    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
+    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_compress: BoundedU64<1, { u64::MAX }>,
 
-    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.5) as u64))]
+    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.7) as u64))]
     sizeof_stream_buffer: ByteSize,
 
-    #[mem(MSortBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))]
-    sizeof_sort_buffer: ByteSize,
-
-    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
+    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.15) as u64))]
     sizeof_compress_buffer: ByteSize,
-    #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.2) as u64))]
+    #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.15) as u64))]
     sizeof_compress_raw_buffer: ByteSize,
 }
 
@@ -283,7 +283,7 @@ impl GetRawCMD {
             .maybe_countof_threads_write(self.countof_threads_write)
             .maybe_countof_threads_compress(self.countof_threads_compress)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
-            .maybe_sizeof_sort_buffer(self.sizeof_sort_buffer)
+            // .maybe_sizeof_sort_buffer(self.sizeof_sort_buffer)
             .maybe_sizeof_compress_buffer(self.sizeof_compress_buffer)
             .maybe_sizeof_compress_raw_buffer(self.sizeof_compress_raw_buffer)
             .build();
@@ -441,7 +441,7 @@ impl GetRawCMD {
                 timestamp_temp_files.clone(),
                 path_temp_dir.clone(),
                 &budget,
-                self.compression_level
+                self.compression_level,
             );
 
             log_info!("Waiting for R1 and R2 reader threads to finish...");
@@ -582,8 +582,10 @@ impl GetRawCMD {
                 let hist_path = if let Some(ref hist_paths) = self.paths_hist {
                     hist_paths[i].clone()
                 } else {
-                    match OutputPath::try_from(&format!("{}.hist", output_path.path().path().display()))
-                    {
+                    match OutputPath::try_from(&format!(
+                        "{}.hist",
+                        output_path.path().path().display()
+                    )) {
                         Ok(path) => path,
                         Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
                     }
@@ -592,7 +594,8 @@ impl GetRawCMD {
             })
             .collect();
 
-        let hist_handles = spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
+        let hist_handles =
+            spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
 
         for (i, handle) in hist_handles.into_iter().enumerate() {
             handle
@@ -618,7 +621,8 @@ fn spawn_paired_readers(
     let arc_vec_input = Arc::new(vec_input);
     let countof_threads_read = (*budget.threads::<TRead>()).get();
     let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
-    let stream_shared_alloc = Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
+    let stream_shared_alloc =
+        Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
     let r1_shared_alloc = Arc::clone(&stream_shared_alloc);
     let r2_shared_alloc = Arc::clone(&stream_shared_alloc);
     drop(stream_shared_alloc);
@@ -809,8 +813,7 @@ fn spawn_collector(
 ) -> (Receiver<Vec<(u32, DebarcodedRecord)>>, JoinHandle<()>) {
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
     let countof_threads_sort = (*budget.threads::<TSort>()).get();
-    let sizeof_buffer_sort = budget.mem::<MSortBuffer>().as_u64();
-    let sizeof_each_sort_alloc = ByteSize(sizeof_buffer_sort / countof_threads_sort);
+    let sizeof_each_sort_alloc = ByteSize::gib(1);
     let mut countof_each_sort_alloc = 0;
 
     log_info!("sizeof_each_sort_alloc"; "sizeof_each_sort_alloc" => %sizeof_each_sort_alloc);
@@ -1494,9 +1497,11 @@ fn spawn_histogram_workers(
 
     let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
     let countof_worker_threads = (countof_histograms as u64).min(countof_threads_total);
-    let countof_threads_per_worker = BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
+    let countof_threads_per_worker =
+        BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
 
-    let shared_stream_arena = Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
+    let shared_stream_arena =
+        Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
     let mut thread_handles = Vec::with_capacity(countof_worker_threads as usize);
 
     for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {

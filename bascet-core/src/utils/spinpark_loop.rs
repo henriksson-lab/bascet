@@ -29,10 +29,10 @@ pub fn spinpark_loop_warn<const MAX_SPINS: usize, const PARKS_BEFORE_MSG: usize>
 
 #[cold]
 fn spinpark_loop_slow<const MAX_SPINS: usize, const PARKS_BEFORE_MSG: usize>(
-    park_count: usize,
+    spinpark_counter: usize,
     msg: &str,
 ) {
-    if likely_unlikely::unlikely(PARKS_BEFORE_MSG > 0 && park_count % PARKS_BEFORE_MSG == 0) {
+    if likely_unlikely::unlikely(spinpark_counter % PARKS_BEFORE_MSG == 0) {
         eprintln!(
             "[SPINPARK WARNING] Parked {} times ({}ms): {}",
             PARKS_BEFORE_MSG,
@@ -41,6 +41,6 @@ fn spinpark_loop_slow<const MAX_SPINS: usize, const PARKS_BEFORE_MSG: usize>(
         );
     }
     std::thread::park_timeout(
-        SPINPARK_PARK_MICROS_TIMEOUT.mul_f64((park_count / MAX_SPINS) as f64),
+        SPINPARK_PARK_MICROS_TIMEOUT.mul_f64(1.0 + ((spinpark_counter / MAX_SPINS) as f64 * 0.1)),
     );
 }
