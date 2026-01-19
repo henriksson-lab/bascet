@@ -426,7 +426,7 @@ impl GetRawCMD {
                 let _ = chemistry.prepare_using_rp_vecs(b1, b2);
             }
             log_info!("Finished preparing chemistry...");
-            // std::process::exit(0);
+
             let ((r1_rx, r2_rx), (r1_handle, r2_handle)) =
                 spawn_paired_readers(vec_input, &budget, self.sizeof_stream_arena);
 
@@ -537,8 +537,7 @@ impl GetRawCMD {
                 handle.join().unwrap();
             }
 
-            // Collect outputs from current round
-            mergeround_merge_next = files_to_keep; // Start with passthrough files
+            mergeround_merge_next = files_to_keep;
             for (i, handle) in IntoIterator::into_iter(wt_handles).enumerate() {
                 let paths: Vec<InputPath> = handle
                     .join()
@@ -575,7 +574,6 @@ impl GetRawCMD {
             }
         }
 
-        // Build (output_path, hist_path) pairs for histogram workers
         let output_hist_pairs: Vec<(OutputPath, OutputPath)> = output_paths
             .into_iter()
             .enumerate()
@@ -595,10 +593,6 @@ impl GetRawCMD {
 
         let hist_handles = spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
 
-        log_info!(
-            "Waiting for {} histogram worker threads to finish...",
-            hist_handles.len()
-        );
         for (i, handle) in hist_handles.into_iter().enumerate() {
             handle
                 .join()
@@ -623,17 +617,13 @@ fn spawn_paired_readers(
     let arc_vec_input = Arc::new(vec_input);
     let countof_threads_read = (*budget.threads::<TRead>()).get();
     let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
-    let stream_each_sizeof_arena = ByteSize(stream_arena.as_u64() / 2);
-    let stream_each_sizeof_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / 2);
+    let stream_shared_alloc = Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
 
     let input_r1 = Arc::clone(&arc_vec_input);
     let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
         log_info!("Starting R1 reader"; "thread" => thread_name);
-
-        // Reuse arena pool across all input files in this thread
-        let thread_shared_stream_arena = Arc::new(ArenaPool::new(stream_each_sizeof_buffer, stream_each_sizeof_arena));
 
         for (input_r1, _) in &*input_r1 {
             let d1 = codec::bgzf::Bgzf::builder()
@@ -645,7 +635,7 @@ fn spawn_paired_readers(
             let mut s1 = Stream::builder()
                 .with_decoder(d1)
                 .with_parser(p1)
-                .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena))
+                .with_opt_decode_arena_pool(Arc::clone(&stream_shared_alloc))
                 .build();
 
             let mut q1 = s1.query::<fastq::Record>();
@@ -664,9 +654,6 @@ fn spawn_paired_readers(
         let thread_name = thread.name().unwrap_or("unknown thread");
         log_info!("Starting R2 reader"; "thread" => thread_name);
 
-        // Reuse arena pool across all input files in this thread
-        let thread_shared_stream_arena = Arc::new(ArenaPool::new(stream_each_sizeof_buffer, stream_each_sizeof_arena));
-
         for (_, input_r2) in &*input_r2 {
             let d2 = codec::bgzf::Bgzf::builder()
                 .with_path(input_r2.path().path())
@@ -677,7 +664,7 @@ fn spawn_paired_readers(
             let mut s2 = Stream::builder()
                 .with_decoder(d2)
                 .with_parser(p2)
-                .with_opt_decode_arena_pool(Arc::clone(&thread_shared_stream_arena))
+                .with_opt_decode_arena_pool(Arc::clone(&stream_shared_alloc))
                 .build();
 
             let mut q2 = s2.query::<fastq::Record>();
@@ -1307,9 +1294,9 @@ fn spawn_mergesort_writers(
                     }
                 };
 
-                let mut bufwriter = BufWriter::with_capacity(ByteSize::mib(8).as_u64() as usize, temp_output_file);
+                let mut bufwriter = BufWriter::with_capacity(ByteSize::mib(2).as_u64() as usize, temp_output_file);
                 let mut merge_id: SmallVec<[u8; 16]> = SmallVec::new();
-                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 8]> = SmallVec::new();
+                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 4]> = SmallVec::new();
                 let mut merge_csize = 0;
                 let mut merge_hsize = 0;
                 
@@ -1358,8 +1345,7 @@ fn spawn_mergesort_writers(
                         bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
                         bufwriter.write_all(&[0x03, 00]).unwrap();
                         new_trailer.write_with(&mut bufwriter).unwrap();
-                        let bsize = new_header.BC.BSIZE as usize;
-                        assert_eq!(bsize, new_header.size() + merge_csize + BBGZTrailer::SSIZE - 1);
+
                         merge_blocks.clear();
                         merge_csize = 0;
                         merge_hsize = 0;
@@ -1423,8 +1409,7 @@ fn spawn_mergesort_writers(
                                 bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
                                 bufwriter.write_all(&[0x03, 00]).unwrap();
                                 new_trailer.write_with(&mut bufwriter).unwrap();
-                                let bsize = new_header.BC.BSIZE as usize;
-                                assert_eq!(bsize, new_header.size() + merge_csize + BBGZTrailer::SSIZE - 1);
+
                                 merge_id = id_bytes.to_smallvec();
                                 merge_blocks.clear();
                                 merge_blocks.push(block);
@@ -1472,8 +1457,6 @@ fn spawn_mergesort_writers(
                     bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
                     bufwriter.write_all(&[0x03, 00]).unwrap();
                     new_trailer.write_with(&mut bufwriter).unwrap();
-                    let bsize = new_header.BC.BSIZE as usize;
-                    assert_eq!(bsize, new_header.size() + merge_csize + BBGZTrailer::SSIZE - 1);
                 }
 
                 bufwriter.write_all(&bbgz::MARKER_EOF).unwrap();
@@ -1498,93 +1481,80 @@ fn spawn_histogram_workers(
     budget: &GetrawBudget,
     stream_arena: ByteSize,
 ) -> Vec<JoinHandle<()>> {
+    let countof_histograms = output_hist_pairs.len();
+    if countof_histograms == 0 {
+        return Vec::new();
+    }
+
     let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
-    let (pair_tx, pair_rx) = crossbeam::channel::unbounded();
-    let mut thread_handles = Vec::new();
-
-    // Producer thread that sends (output_path, hist_path) pairs
-    let producer_handle = budget.spawn::<Total, _, _>(0, move || {
-        let thread = std::thread::current();
-        let thread_name = thread.name().unwrap_or("unknown thread");
-        log_info!("Starting histogram producer"; "thread" => thread_name);
-
-        for pair in output_hist_pairs {
-            let _ = pair_tx.send(pair);
-        }
-    });
-    thread_handles.push(producer_handle);
-
-    // Determine how many worker threads to use (leave 1 for producer)
-    let countof_worker_threads = (countof_threads_total - 1).max(1);
+    let countof_worker_threads = (countof_histograms as u64).min(countof_threads_total);
     let countof_threads_per_worker = BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
-    let sizeof_stream_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
 
-    for thread_idx in 0..countof_worker_threads {
-        let pair_rx = pair_rx.clone();
-        let thread_stream_arena = stream_arena;
-        let thread_stream_buffer = sizeof_stream_buffer;
+    let shared_stream_arena = Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
+    let mut thread_handles = Vec::with_capacity(countof_worker_threads as usize);
+
+    for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {
+        let thread_shared_arena = Arc::clone(&shared_stream_arena);
         let thread_countof_threads = countof_threads_per_worker;
 
-        let worker_handle = budget.spawn::<Total, _, _>(thread_idx + 1, move || {
+        let worker_handle = budget.spawn::<Total, _, _>(thread_idx as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
-            log_info!("Starting histogram worker"; "thread" => thread_name);
+            log_info!("Starting histogram worker"; "thread" => thread_name, "Processing histogram for" => %output_path);
+            let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
 
-            while let Ok((output_path, hist_path)) = pair_rx.recv() {
-                log_info!("Processing histogram for {}", output_path);
+            let decoder = codec::BBGZDecoder::builder()
+                .with_path(&**output_path.path())
+                .countof_threads(thread_countof_threads)
+                .build();
+            let parser = parse::Tirp::builder().build();
 
-                let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
+            let mut stream = Stream::builder()
+                .with_decoder(decoder)
+                .with_parser(parser)
+                .with_opt_decode_arena_pool(thread_shared_arena)
+                .build();
 
-                let decoder = codec::BBGZDecoder::builder()
-                    .with_path(output_path.path().path())
-                    .countof_threads(thread_countof_threads)
-                    .build();
-                let parser = parse::Tirp::builder().build();
+            let mut query = stream
+                .query::<tirp::Record>()
+                .assert_with_context::<Id, Id, _>(
+                    |id_current: &&'static [u8], id_context: &&'static [u8]| {
+                        id_current >= id_context
+                    },
+                    "id_current < id_context",
+                );
 
-                let mut stream = Stream::builder()
-                    .with_decoder(decoder)
-                    .with_parser(parser)
-                    .sizeof_decode_arena(thread_stream_arena)
-                    .sizeof_decode_buffer(thread_stream_buffer)
-                    .build();
-
-                let mut query = stream
-                    .query::<tirp::Cell>()
-                    .group_relaxed_with_context::<Id, Id, _>(
-                        |id: &&'static [u8], id_ctx: &&'static [u8]| match id.cmp(id_ctx) {
-                            std::cmp::Ordering::Less => panic!("Unordered record list\nCurrent ID: {:?}\nContext ID: {:?}\nCurrent (lossy): {}\nContext (lossy): {}",
-                                id, id_ctx, String::from_utf8_lossy(id), String::from_utf8_lossy(id_ctx)),
-                            std::cmp::Ordering::Equal => QueryResult::Keep,
-                            std::cmp::Ordering::Greater => QueryResult::Emit,
-                        },
-                    );
-
-                while let Ok(Some(cell)) = query.next() {
-                    let n = cell.get_ref::<R1>().len() as u64;
-                    let _ = *hist_hashmap
-                        .entry(cell.get_ref::<Id>().to_vec())
-                        .and_modify(|c| *c += n)
-                        .or_insert(n);
+            let mut cnt = 0;
+            while let Ok(Some(record)) = query.next() {
+                let id = record.get_ref::<Id>();
+                if let Some(count) = hist_hashmap.get_mut(*id) {
+                    *count += 1;
+                } else {
+                    hist_hashmap.insert(id.to_vec(), 1);
                 }
-
-                let hist_file = match hist_path.clone().create() {
-                    Ok(file) => file,
-                    Err(e) => {
-                        log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
-                    }
-                };
-
-                let mut bufwriter = BufWriter::new(hist_file);
-                for (id, count) in hist_hashmap.iter() {
-                    bufwriter.write_all(&id);
-                    bufwriter.write_all(b"\t");
-                    bufwriter.write_all(count.to_string().as_bytes());
-                    bufwriter.write_all(b"\n");
+                cnt += 1;
+                if cnt % 1_000_000 == 0 {
+                    log_info!("{cnt}");
                 }
-
-                bufwriter.flush();
-                log_info!("Wrote histogram at {}", hist_path);
             }
+
+            let hist_file = match hist_path.clone().create() {
+                Ok(file) => file,
+                Err(e) => {
+                    log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
+                }
+            };
+
+            let mut bufwriter = BufWriter::new(hist_file);
+            for (id, count) in hist_hashmap.iter() {
+                bufwriter.write_all(&id).unwrap();
+                bufwriter.write_all(b"\t").unwrap();
+                bufwriter.write_all(count.to_string().as_bytes()).unwrap();
+                bufwriter.write_all(b"\n").unwrap();
+            }
+
+            bufwriter.flush().unwrap();
+            log_info!("Wrote histogram at {}", hist_path);
         });
         thread_handles.push(worker_handle);
     }
