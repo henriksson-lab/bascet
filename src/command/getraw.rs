@@ -618,6 +618,9 @@ fn spawn_paired_readers(
     let countof_threads_read = (*budget.threads::<TRead>()).get();
     let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
     let stream_shared_alloc = Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
+    let r1_shared_alloc = Arc::clone(&stream_shared_alloc);
+    let r2_shared_alloc = Arc::clone(&stream_shared_alloc);
+    drop(stream_shared_alloc);
 
     let input_r1 = Arc::clone(&arc_vec_input);
     let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
@@ -635,7 +638,7 @@ fn spawn_paired_readers(
             let mut s1 = Stream::builder()
                 .with_decoder(d1)
                 .with_parser(p1)
-                .with_opt_decode_arena_pool(Arc::clone(&stream_shared_alloc))
+                .with_opt_decode_arena_pool(Arc::clone(&r1_shared_alloc))
                 .build();
 
             let mut q1 = s1.query::<fastq::Record>();
@@ -664,7 +667,7 @@ fn spawn_paired_readers(
             let mut s2 = Stream::builder()
                 .with_decoder(d2)
                 .with_parser(p2)
-                .with_opt_decode_arena_pool(Arc::clone(&stream_shared_alloc))
+                .with_opt_decode_arena_pool(Arc::clone(&r2_shared_alloc))
                 .build();
 
             let mut q2 = s2.query::<fastq::Record>();
