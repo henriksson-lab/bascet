@@ -986,16 +986,16 @@ fn spawn_chunk_writers(
                     }
                 };
 
-                let bufwriter = BufWriter::with_capacity(
-                    ByteSize::mib(1).as_u64() as usize,
-                    temp_output_file.clone()
-                );
+                // let bufwriter = BufWriter::with_capacity(
+                //     ByteSize::mib(1).as_u64() as usize,
+                //     temp_output_file.clone()
+                // );
                 let mut bbgzwriter = BBGZWriter::builder()
                     .countof_threads(countof_write_each_compress_threads)
                     .compression_level(compression_level)
                     .with_opt_raw_arena_pool(Arc::clone(&thread_shared_raw_arena))
                     .with_opt_compression_arena_pool(Arc::clone(&thread_shared_compression_arena))
-                    .with_writer(bufwriter)
+                    .with_writer(temp_output_file)
                     .build();
 
                 let mut records_writen = 0;
