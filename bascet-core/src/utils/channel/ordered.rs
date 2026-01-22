@@ -11,27 +11,27 @@ use std::{
 
 use crate::spinpark_loop::{self, SpinPark, SPINPARK_PARKS_BEFORE_WARN};
 
-pub fn ordered<T, const N: usize>() -> (OrderedSender<T, N>, OrderedReceiver<T, N>) {
+pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedDenseReceiver<T, N>) {
     let (tx, rx) = crossbeam::channel::unbounded();
 
-    let fastpath = Arc::new(OrderedFastpathInner {
+    let fastpath = Arc::new(OrderedDenseFastpathInner {
         base: AtomicUsize::new(0),
         is_init: Box::new(std::array::from_fn(|_| AtomicBool::new(false))),
         ordered: Box::new(std::array::from_fn(|_| {
             UnsafeCell::new(MaybeUninit::uninit())
         })),
     });
-    let slowpath = OrderedSlowpathInner {
+    let slowpath = OrderedDenseSlowpathInner {
         base: 0,
         ordered: VecDeque::with_capacity(N),
     };
 
     (
-        OrderedSender {
+        OrderedDenseSender {
             inner_fastpath: Arc::clone(&fastpath),
             inner_slowpath_tx: tx,
         },
-        OrderedReceiver {
+        OrderedDenseReceiver {
             inner_next: 0,
             inner_fastpath: Arc::clone(&fastpath),
             inner_slowpath: slowpath,
@@ -41,25 +41,25 @@ pub fn ordered<T, const N: usize>() -> (OrderedSender<T, N>, OrderedReceiver<T, 
     )
 }
 
-pub struct OrderedFastpathInner<T, const N: usize> {
+pub struct OrderedDenseFastpathInner<T, const N: usize> {
     pub base: AtomicUsize,
     pub is_init: Box<[AtomicBool; N]>,
     pub ordered: Box<[UnsafeCell<MaybeUninit<T>>; N]>,
 }
 
-pub struct OrderedSlowpathInner<T> {
+pub struct OrderedDenseSlowpathInner<T> {
     pub base: usize,
     pub ordered: VecDeque<Option<T>>,
 }
 
-unsafe impl<T: Send, const N: usize> Sync for OrderedFastpathInner<T, N> {}
+unsafe impl<T: Send, const N: usize> Sync for OrderedDenseFastpathInner<T, N> {}
 
-pub struct OrderedSender<T, const N: usize> {
-    inner_fastpath: Arc<OrderedFastpathInner<T, N>>,
+pub struct OrderedDenseSender<T, const N: usize> {
+    inner_fastpath: Arc<OrderedDenseFastpathInner<T, N>>,
     inner_slowpath_tx: Sender<(usize, T)>,
 }
 
-impl<T, const N: usize> Clone for OrderedSender<T, N> {
+impl<T, const N: usize> Clone for OrderedDenseSender<T, N> {
     fn clone(&self) -> Self {
         Self {
             inner_fastpath: Arc::clone(&self.inner_fastpath),
@@ -68,7 +68,7 @@ impl<T, const N: usize> Clone for OrderedSender<T, N> {
     }
 }
 
-impl<T, const N: usize> OrderedSender<T, N> {
+impl<T, const N: usize> OrderedDenseSender<T, N> {
     pub fn send(&self, index: usize, value: T) {
         let current_base = self.inner_fastpath.base.load(Ordering::Acquire);
 
@@ -85,17 +85,17 @@ impl<T, const N: usize> OrderedSender<T, N> {
     }
 }
 
-pub struct OrderedReceiver<T, const N: usize> {
+pub struct OrderedDenseReceiver<T, const N: usize> {
     inner_next: usize,
 
-    pub inner_fastpath: Arc<OrderedFastpathInner<T, N>>,
+    pub inner_fastpath: Arc<OrderedDenseFastpathInner<T, N>>,
 
-    pub inner_slowpath: OrderedSlowpathInner<T>,
+    pub inner_slowpath: OrderedDenseSlowpathInner<T>,
     inner_slowpath_rx: Receiver<(usize, T)>,
     inner_slowpath_disconnected: bool,
 }
 
-impl<T, const N: usize> OrderedReceiver<T, N> {
+impl<T, const N: usize> OrderedDenseReceiver<T, N> {
     pub fn recv(&mut self) -> Result<T, RecvError> {
         let mut spinpark_counter = 0;
 

@@ -122,10 +122,10 @@ struct CountsketchBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 * 0.4) as u64).unwrap())]
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 * 0.5) as u64).unwrap())]
     numof_threads_read: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TWork, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads.saturating_sub(1).max(1) as f64 * 0.6) as u64).unwrap())]
+    #[threads(TWork, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads.saturating_sub(1).max(1) as f64 * 0.5) as u64).unwrap())]
     numof_threads_work: BoundedU64<1, { u64::MAX }>,
 
     #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]

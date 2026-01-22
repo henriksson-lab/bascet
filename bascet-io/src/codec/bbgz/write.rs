@@ -7,7 +7,7 @@ use std::{
 };
 
 use bascet_core::{
-    channel::{OrderedReceiver, OrderedSender},
+    channel::{OrderedDenseReceiver, OrderedDenseSender},
     ArenaPool, ArenaSlice, SendPtr, DEFAULT_SIZEOF_BUFFER,
 };
 
@@ -75,7 +75,7 @@ impl BBGZWriter {
         };
 
         let (compression_tx, compression_rx) = crossbeam::channel::unbounded();
-        let (write_tx, write_rx) = bascet_core::channel::ordered::<BBGZCompressionResult, 16384>();
+        let (write_tx, write_rx) = bascet_core::channel::ordered_dense::<BBGZCompressionResult, 16384>();
 
         let compression_workers = Self::spawn_compression_workers(
             Arc::clone(&compression_allocator),
@@ -120,7 +120,7 @@ impl BBGZWriter {
         compression_alloc: Arc<ArenaPool<u8>>,
         compression_rx: Receiver<(usize, BBGZCompressionJob)>,
         compression_level: Compression,
-        write_tx: OrderedSender<BBGZCompressionResult, 16384>,
+        write_tx: OrderedDenseSender<BBGZCompressionResult, 16384>,
         countof_threads: BoundedU64<1, { u64::MAX }>,
     ) -> Vec<JoinHandle<()>> {
         let mut handles = Vec::new();
@@ -229,7 +229,7 @@ impl BBGZWriter {
 
     fn spawn_write_worker<W>(
         mut writer: W,
-        mut write_rx: OrderedReceiver<BBGZCompressionResult, 16384>,
+        mut write_rx: OrderedDenseReceiver<BBGZCompressionResult, 16384>,
     ) -> JoinHandle<()>
     where
         W: Write + Seek + Send + 'static,
