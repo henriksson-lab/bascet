@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bascet_core::{
     channel::PeekableReceiver,
-    spinpark_loop::{self, SPINPARK_PARKS_BEFORE_WARN},
+    spinpark_loop::{self, SPINPARK_PARKS_BEFORE_WARN, SpinPark},
     *,
 };
 use bascet_derive::Budget;
@@ -12,7 +12,7 @@ use clap::Args;
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{self, Sender};
 use itertools::{izip, Itertools};
-use smallvec::{SmallVec, ToSmallVec};
+use smallvec::{smallvec, SmallVec, ToSmallVec};
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
@@ -115,7 +115,7 @@ impl ShardifyCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let budget = ShardifyBudget::builder()
             .threads(self.total_threads.unwrap_or_else(|| {
-                (self.paths_in.len() + 1)
+                (self.paths_in.len() + self.paths_out.len())
                     .try_into()
                     .expect("At least two input files and one output file required")
             }))
@@ -214,15 +214,12 @@ impl ShardifyCMD {
 
                 loop {
                     let block = match query.next() {
-                        Ok(Some(cell)) => {
-                            cell
-                        },
+                        Ok(Some(block)) => block,
+                        Err(e) => panic!("{e:?}"),
                         Ok(None) => {
+                            log_info!("Stream finished"; "thread" => thread_name);
                             break;
                         }
-                        Err(e) => {
-                            panic!("{:?}", e);
-                        },
                     };
 
                     let global_processed = global_processed_counter
@@ -246,12 +243,15 @@ impl ShardifyCMD {
                     global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     let _ = thread_cell_tx.send(block);
-                    // log_info!("Stream sent notification"; "thread_idx" => thread_idx);
                     if thread_cell_tx.len() == 1 {
                         // NOTE: this means we just sent to an empty cell channel. Notify the coordinator!
                         let _ = thread_notify_tx.send(());
                     }
                 }
+                let _ = thread_notify_tx.send(());
+                drop(thread_notify_tx);
+                drop(thread_cell_tx);
+                log_info!("Reader thread exiting"; "thread" => thread_name);
             }));
         }
         drop(notify_tx);
@@ -283,12 +283,16 @@ impl ShardifyCMD {
                 let thread_name = thread.name().unwrap_or("unknown thread");
                 log_info!("Starting writer"; "thread" => thread_name, "path" => %thread_output);
 
-                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 4]> = SmallVec::new();
-                let mut merge_csize = 0;
-                let mut merge_hsize = 0;
+                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 32]> = SmallVec::new();
+                let mut merge_csize;
+                let mut merge_hsize;
 
                 while let Ok(vec_blocks) = thread_write_rx.recv() {
                     let n = vec_blocks.len() as u64;
+                    merge_blocks.clear();
+                    merge_csize = 0;
+                    merge_hsize = 0;
+
                     for block in vec_blocks {
                         let header_bytes = block.as_bytes::<Header>();
                         let compressed_bytes = block.as_bytes::<Compressed>();
@@ -389,114 +393,129 @@ impl ShardifyCMD {
                         thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
                         new_trailer.write_with(&mut thread_buf_writer).unwrap();
                     }
-
+                    
                     let last_counter = global_counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
                     let new_counter = last_counter + n;
                     if last_counter / 100_000 != new_counter / 100_000 {
                         log_info!("Writing"; "bbgz blocks written" => new_counter);
                     }
                 }
-
+                
                 thread_buf_writer
                     .write_all(&codec::bbgz::MARKER_EOF)
                     .unwrap();
                 thread_buf_writer.flush().unwrap();
+                log_info!("Exiting writer {thread_idx}");
             }));
         }
 
         let mut coordinator_spinpark_counter = 0;
         let mut coordinator_min_cell: Option<&[u8]> = None;
         let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(numof_streams as usize);
-        let mut coordinator_vec_send: Vec<parse::bbgz::Block> =
-            Vec::with_capacity(numof_streams as usize);
+        let mut coordinator_vec_send: Vec<parse::bbgz::Block> = Vec::with_capacity(numof_streams as usize);
+        // min cell is always alive during sweeps so this can be a slice. last sends are not always alive during sweeps so they must be cloned
+        let mut coordinator_vec_last: SmallVec<[SmallVec<[u8; 16]>; 32]> = smallvec![smallvec![0; 16]; numof_streams as usize];
 
-        loop {
-            match notify_rx.try_recv() {
-                Ok(idx) => idx,
-                Err(channel::TryRecvError::Empty) => {
-                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                        &mut coordinator_spinpark_counter,
-                        "Shardify (coordinator): channel peek (channel empty, producer slow)",
-                    );
-                    continue;
-                }
-                Err(channel::TryRecvError::Disconnected) => {
-                    break;
-                }
-            };
+        'notify: loop {
+            // Wait for notification (Ok/Disconnected both must proceed to sweep)
+            if let Err(channel::TryRecvError::Empty) = notify_rx.try_recv() {
+                spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                    &mut coordinator_spinpark_counter,
+                    "Shardify (coordinator): waiting for notification",
+                );
+                continue;
+            }
             coordinator_spinpark_counter = 0;
 
             'sweep: loop {
+                coordinator_min_cell = None;
+                coordinator_vec_take.clear();
                 let mut sweeps_connected = vec_coordinator_rx.len();
+
                 for (sweep_idx, sweep_rx) in vec_coordinator_rx.iter_mut().enumerate() {
-                    let sweep_cell = match sweep_rx.peek() {
-                        Ok(token) => token,
+                    let sweep_block = match sweep_rx.peek() {
+                        Ok(block) => {
+                            let block_id = block.as_bytes::<Id>();
+                            let last_id = &mut coordinator_vec_last[sweep_idx];
+                            if block_id > &**last_id {
+                                last_id.clear();
+                                last_id.extend_from_slice(block_id);
+                            }
+                            block
+                        }
                         Err(channel::TryRecvError::Disconnected) => {
                             sweeps_connected -= 1;
-                            log_info!("Sweep channel disconnected! Channel idx: {sweep_idx}");
-                            if likely_unlikely::likely(sweeps_connected > 0) {
-                                continue;
-                            } else {
-                                break;
-                            }
+                            continue;
                         }
                         Err(channel::TryRecvError::Empty) => {
-                            coordinator_vec_take.clear();
-                            break 'sweep;
+                            // Channel empty - check if we need to wait for it
+                            let last_id = &coordinator_vec_last[sweep_idx];
+                            match coordinator_min_cell {
+                                // This channel might produce a lower/equal ID than the min would be, must wait
+                                None => break 'sweep,
+                                // This channel might produce a lower/equal ID, must wait
+                                Some(cmc) if &**last_id <= cmc => break 'sweep,
+                                // This channel's last ID is higher, safe to skip
+                                Some(_) => continue,
+                            }
                         }
                     };
-                    let sweep_cell_id = sweep_cell.get_ref::<Id>();
+
+                    let sweep_id = sweep_block.as_bytes::<Id>();
                     match coordinator_min_cell {
                         None => {
-                            coordinator_min_cell = Some(sweep_cell_id);
+                            coordinator_min_cell = Some(sweep_id);
                             coordinator_vec_take.push(sweep_idx);
-                            continue;
                         }
-                        Some(cmc) if *sweep_cell_id < cmc => {
-                            coordinator_min_cell = Some(sweep_cell_id);
+                        Some(cmc) if sweep_id < cmc => {
+                            coordinator_min_cell = Some(sweep_id);
                             coordinator_vec_take.clear();
                             coordinator_vec_take.push(sweep_idx);
                         }
-                        Some(cmc) if *sweep_cell_id == cmc => {
+                        Some(cmc) if sweep_id == cmc => {
                             coordinator_vec_take.push(sweep_idx);
                         }
-                        Some(cmc) if *sweep_cell_id > cmc => {
-                            continue;
-                        }
-                        _ => unreachable!(),
+                        _ => { }
                     }
                 }
 
+                // All channels scanned - take the minimum blocks
                 for take_idx in &coordinator_vec_take {
                     let take_rx = &mut vec_coordinator_rx[*take_idx];
                     match take_rx.try_recv() {
-                        Ok(take_cell) => {
-                            coordinator_vec_send.push(take_cell);
-                        }
-                        Err(e) => {
-                            log_critical!("try_recv failed!"; "stream" => take_idx, "error" => ?e, "vec_take" => ?coordinator_vec_take);
-                        }
+                        Ok(take_cell) => coordinator_vec_send.push(take_cell),
+                        Err(e) => log_critical!("try_recv failed!"; "stream" => take_idx, "error" => ?e),
                     }
                 }
 
-                let _ = write_tx.send(coordinator_vec_send.clone());
+                if !coordinator_vec_send.is_empty() {
+                    let _ = write_tx.send(coordinator_vec_send.clone());
+                    coordinator_vec_send.clear();
+                }
 
-                coordinator_min_cell = None;
-                coordinator_vec_take.clear();
-                coordinator_vec_send.clear();
+                if likely_unlikely::unlikely(sweeps_connected == 0) {
+                    log_info!("All channels disconnected, exiting coordinator");
+                    break 'notify;
+                }
             }
-        }
 
-        for handle in vec_reader_handles {
-            handle.join().expect("Stream thread panicked");
+            // Broke out of sweep without sending - spinpark before retrying
+            spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                &mut coordinator_spinpark_counter,
+                "Shardify (coordinator): sweep waiting for data",
+            );
         }
-        log_info!("Stream handles closed");
 
         drop(write_tx);
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");
         }
         log_info!("Write handles closed");
+
+        for handle in vec_reader_handles {
+            handle.join().expect("Reader thread panicked");
+        }
+        log_info!("Reader handles closed");
 
         log_info!("Shardify complete";
             "input files processed" => self.paths_in.len(),

@@ -27,21 +27,21 @@ impl fmt::Display for crate::runtime::ErrorMode {
 #[macro_export]
 macro_rules! log_trace {
     ($($args:tt)*) => {
-        slog_scope::trace!($($args)*);
+        slog_scope::trace!($($args)*)
     };
 }
 
 #[macro_export]
 macro_rules! log_debug {
     ($($args:tt)*) => {
-        slog_scope::debug!($($args)*);
+        slog_scope::debug!($($args)*)
     };
 }
 
 #[macro_export]
 macro_rules! log_info {
     ($($args:tt)*) => {
-        slog_scope::info!($($args)*);
+        slog_scope::info!($($args)*)
     };
 }
 
