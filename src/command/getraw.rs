@@ -1022,21 +1022,38 @@ fn spawn_chunk_writers(
                     // SAFETY: safe because blockwriter is COW
                     *record.get_mut::<Id>() = unsafe { std::mem::transmute(last_id.as_slice()) };
                     if let Some(ref mut blockwriter) = blockwriter_opt {
-                        let _ = blockwriter.write_all(record.as_bytes::<Id>());
+                        let id_bytes = record.as_bytes::<Id>();
+                        let r1_bytes = record.as_bytes::<R1>();
+                        let r2_bytes = record.as_bytes::<R2>();
+                        let q1_bytes = record.as_bytes::<Q1>();
+                        let q2_bytes = record.as_bytes::<Q2>();
+                        let umi_bytes = record.as_bytes::<Umi>();
+
+                        // Reserve space for entire record to prevent splitting across blocks
+                        let record_size = 11 + // 8x '\t' + '1' + '1' + '\n'
+                            id_bytes.len() +
+                            r1_bytes.len() +
+                            r2_bytes.len() +
+                            q1_bytes.len() +
+                            q2_bytes.len() +
+                            umi_bytes.len(); 
+                        blockwriter.reserve(record_size);
+
+                        let _ = blockwriter.write_all(id_bytes);
                         let _ = blockwriter.write_all(b"\t");
                         let _ = blockwriter.write_all(b"1");
                         let _ = blockwriter.write_all(b"\t");
                         let _ = blockwriter.write_all(b"1");
                         let _ = blockwriter.write_all(b"\t");
-                        let _ = blockwriter.write_all(record.as_bytes::<R1>());
+                        let _ = blockwriter.write_all(r1_bytes);
                         let _ = blockwriter.write_all(b"\t");
-                        let _ = blockwriter.write_all(record.as_bytes::<R2>());
+                        let _ = blockwriter.write_all(r2_bytes);
                         let _ = blockwriter.write_all(b"\t");
-                        let _ = blockwriter.write_all(record.as_bytes::<Q1>());
+                        let _ = blockwriter.write_all(q1_bytes);
                         let _ = blockwriter.write_all(b"\t");
-                        let _ = blockwriter.write_all(record.as_bytes::<Q2>());
+                        let _ = blockwriter.write_all(q2_bytes);
                         let _ = blockwriter.write_all(b"\t");
-                        let _ = blockwriter.write_all(record.as_bytes::<Umi>());
+                        let _ = blockwriter.write_all(umi_bytes);
                         let _ = blockwriter.write_all(b"\n");
                         records_writen += 1;
                     }

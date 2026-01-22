@@ -25,6 +25,27 @@ impl<'a> BBGZWriteBlock<'a> {
             inner_raw_bytes_written: 0,
         }
     }
+
+    pub fn reserve(&mut self, size: usize) {
+        let hsize = self.inner_raw_bytes_written
+            + self.inner_header.size()
+            + SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize
+            + BBGZTrailer::SSIZE;
+
+        if size + hsize > MAX_SIZEOF_BLOCKusize && self.inner_raw_bytes_written > 0 {
+            let new_raw = self.inner_compressor.alloc_raw();
+            let mut send_raw = std::mem::replace(&mut self.inner_raw, new_raw);
+            unsafe {
+                send_raw = send_raw.truncate(self.inner_raw_bytes_written);
+                let send_job = BBGZCompressionJob {
+                    header: self.inner_header.clone(),
+                    raw: send_raw,
+                };
+                self.inner_compressor.submit_compress(send_job);
+            }
+            self.inner_raw_bytes_written = 0;
+        }
+    }
 }
 
 impl<'a> std::io::Write for BBGZWriteBlock<'a> {
