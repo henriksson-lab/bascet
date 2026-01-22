@@ -527,8 +527,8 @@ impl ShardifyCMD {
                 if !coordinator_vec_send.is_empty() {
                     let cell_id = unsafe { coordinator_vec_send.get_unchecked(0) }.as_bytes::<Id>();
                     let shard_idx = (gxhash::gxhash64(cell_id, 0x00) % numof_writers) as usize;
-                    std::mem::take(&mut coordinator_vec_send);
-                    // let _ = vec_write_tx[shard_idx].send(std::mem::take(&mut coordinator_vec_send));
+                    // std::mem::take(&mut coordinator_vec_send);
+                    let _ = vec_write_tx[shard_idx].send(std::mem::take(&mut coordinator_vec_send));
                 }
 
                 if likely_unlikely::unlikely(sweep_connected == 0) {
