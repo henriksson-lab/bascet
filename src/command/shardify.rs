@@ -289,6 +289,18 @@ impl ShardifyCMD {
 
                 while let Ok(vec_blocks) = thread_write_rx.recv() {
                     let n = vec_blocks.len() as u64;
+
+                    if let Some(first_block) = vec_blocks.first() {
+                        let first_id = first_block.as_bytes::<Id>();
+                        let all_same = vec_blocks.iter().all(|b| b.as_bytes::<Id>() == first_id);
+                        if !all_same {
+                            log_critical!("ID mismatch in batch!";
+                                "first_id" => ?first_id,
+                                "all_ids" => ?vec_blocks.iter().map(|b| b.as_bytes::<Id>()).collect::<Vec<_>>()
+                            );
+                        }
+                    }
+
                     merge_blocks.clear();
                     merge_csize = 0;
                     merge_hsize = 0;
