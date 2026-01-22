@@ -16,8 +16,8 @@ use smallvec::{smallvec, SmallVec, ToSmallVec};
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
-    path::Path,
-    sync::Arc,
+    path::{Path, PathBuf},
+    sync::Arc, time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{bounded_parser, log_critical, log_info, log_warning};
@@ -48,6 +48,12 @@ pub struct ShardifyCMD {
         help = "File with list of cells to include (one per line)"
     )]
     pub path_include: InputPath,
+
+    #[arg(
+        long = "temp",
+        help = "Temporary storage directory. Defaults to <path_out>"
+    )]
+    pub path_temp: Option<PathBuf>,
 
     #[arg(
         short = '@',
@@ -133,6 +139,26 @@ impl ShardifyCMD {
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
         budget.validate();
+
+        let timestamp_temp_files = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let timestamp_temp_files = timestamp_temp_files.to_string();
+
+        let path_temp_dir = if let Some(temp_path) = self.path_temp.clone() {
+            temp_path
+        } else {
+            self.paths_out
+                .first()
+                .unwrap()
+                .path()
+                .parent()
+                .unwrap_or_else(|| {
+                    log_critical!("No valid output parent directory found.");
+                })
+                .to_path_buf()
+        };
 
         let arc_filter = read_filter(&self.path_include.path().path());
         let numof_streams = self.paths_in.len() as u64;
@@ -501,7 +527,8 @@ impl ShardifyCMD {
                 if !coordinator_vec_send.is_empty() {
                     let cell_id = unsafe { coordinator_vec_send.get_unchecked(0) }.as_bytes::<Id>();
                     let shard_idx = (gxhash::gxhash64(cell_id, 0x00) % numof_writers) as usize;
-                    let _ = vec_write_tx[shard_idx].send(std::mem::take(&mut coordinator_vec_send));
+                    std::mem::take(&mut coordinator_vec_send);
+                    // let _ = vec_write_tx[shard_idx].send(std::mem::take(&mut coordinator_vec_send));
                 }
 
                 if likely_unlikely::unlikely(sweep_connected == 0) {
