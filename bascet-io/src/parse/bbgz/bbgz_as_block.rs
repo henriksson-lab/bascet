@@ -116,10 +116,13 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let slice_trailer = unsafe {
             slice_remaining.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) //
         };
+        let offset = self.inner_absolute_cursor;
         self.inner_cursor += bsize;
+        self.inner_absolute_cursor += bsize as u64;
 
         let block = Block {
             id: unsafe { std::mem::transmute(slice_id) },
+            offset: offset,
             header: unsafe { std::mem::transmute(slice_header) },
             compressed: unsafe { std::mem::transmute(slice_raw) },
             trailer: unsafe { std::mem::transmute(slice_trailer) },
@@ -282,10 +285,13 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let slice_trailer = unsafe {
             slice_combined.get_unchecked((bsize - BBGZTrailer::SSIZE)..bsize) //
         };
+        let offset = self.inner_absolute_cursor;
         self.inner_cursor = bsize.saturating_sub(tail_len);
+        self.inner_absolute_cursor += bsize as u64;
 
         let block = Block {
             id: unsafe { std::mem::transmute(slice_id) },
+            offset: offset,
             header: unsafe { std::mem::transmute(slice_header) },
             compressed: unsafe { std::mem::transmute(slice_raw) },
             trailer: unsafe { std::mem::transmute(slice_trailer) },

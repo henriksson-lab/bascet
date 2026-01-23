@@ -75,7 +75,8 @@ impl BBGZWriter {
         };
 
         let (compression_tx, compression_rx) = crossbeam::channel::unbounded();
-        let (write_tx, write_rx) = bascet_core::channel::ordered_dense::<BBGZCompressionResult, 16384>();
+        let (write_tx, write_rx) =
+            bascet_core::channel::ordered_dense::<BBGZCompressionResult, 16384>();
 
         let compression_workers = Self::spawn_compression_workers(
             Arc::clone(&compression_allocator),

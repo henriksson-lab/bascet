@@ -11,7 +11,8 @@ use std::{
 
 use crate::spinpark_loop::{self, SpinPark, SPINPARK_PARKS_BEFORE_WARN};
 
-pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedDenseReceiver<T, N>) {
+pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedDenseReceiver<T, N>)
+{
     let (tx, rx) = crossbeam::channel::unbounded();
 
     let fastpath = Arc::new(OrderedDenseFastpathInner {

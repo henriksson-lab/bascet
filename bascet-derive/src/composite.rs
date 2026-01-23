@@ -3,32 +3,32 @@ use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
 use syn::{
-    parse::Parse, parse::ParseStream, parse_macro_input, Data, DeriveInput, Fields, Ident, Token,
-    Type,
+    parse::Parse, parse::ParseStream, parse_macro_input, Data, DeriveInput, Fields, Ident, Path,
+    Token, Type,
 };
 
 enum AttrSpec {
     Default {
-        trait_ident: Ident,
+        trait_path: Path,
     },
     Override {
-        trait_ident: Ident,
+        trait_path: Path,
         field_ident: Ident,
     },
 }
 
 impl Parse for AttrSpec {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let trait_ident = input.parse()?;
+        let trait_path: Path = input.parse()?;
         if input.peek(Token![=]) {
             input.parse::<Token![=]>()?;
             let field_ident = input.parse()?;
             return Ok(AttrSpec::Override {
-                trait_ident,
+                trait_path,
                 field_ident,
             });
         }
-        Ok(AttrSpec::Default { trait_ident })
+        Ok(AttrSpec::Default { trait_path })
     }
 }
 
@@ -40,7 +40,7 @@ struct CompositeDef {
 }
 
 struct AttrDef {
-    trait_ident: Ident,
+    trait_path: Path,
     field_ident: Ident,
     field_type: Type,
     is_collection: bool,
@@ -126,27 +126,31 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
     let attr_defs: Vec<AttrDef> = trait_list_specs
         .iter()
         .map(|spec| {
-            let (trait_ident, field_ident, field_type, is_collection) = match spec {
-                AttrSpec::Default { trait_ident } => {
-                    let tname = trait_ident.to_string();
+            let (trait_path, field_ident, field_type, is_collection) = match spec {
+                AttrSpec::Default { trait_path } => {
+                    let last_segment = trait_path.segments.last().expect("Empty path");
+                    let tname = last_segment.ident.to_string();
                     let snake = tname.to_snake_case();
                     let field = fields
                         .iter()
-                        .find(|f| f.ident.as_ref() == Some(&Ident::new(&snake, trait_ident.span())))
+                        .find(|f| {
+                            f.ident.as_ref() == Some(&Ident::new(&snake, last_segment.ident.span()))
+                        })
                         .unwrap_or_else(|| panic!("No field '{}' for {}", snake, tname));
                     let is_collection = field.attrs.iter().any(|a| a.path().is_ident("collection"));
                     (
-                        trait_ident.clone(),
+                        trait_path.clone(),
                         field.ident.clone().unwrap(),
                         field.ty.clone(),
                         is_collection,
                     )
                 }
                 AttrSpec::Override {
-                    trait_ident,
+                    trait_path,
                     field_ident,
                 } => {
-                    let tname = trait_ident.to_string();
+                    let last_segment = trait_path.segments.last().expect("Empty path");
+                    let tname = last_segment.ident.to_string();
                     let field = fields
                         .iter()
                         .find(|f| f.ident.as_ref() == Some(field_ident))
@@ -155,7 +159,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
                         });
                     let is_collection = field.attrs.iter().any(|a| a.path().is_ident("collection"));
                     (
-                        trait_ident.clone(),
+                        trait_path.clone(),
                         field_ident.clone(),
                         field.ty.clone(),
                         is_collection,
@@ -164,7 +168,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
             };
 
             AttrDef {
-                trait_ident,
+                trait_path,
                 field_ident,
                 field_type,
                 is_collection,
@@ -178,14 +182,14 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
             .retain(|attr| !attr.path().is_ident("collection"));
     }
 
-    let attr_idents = attr_defs.iter().map(|def| &def.trait_ident);
+    let attr_paths = attr_defs.iter().map(|def| &def.trait_path);
 
     let attr_impls = attr_defs.iter().map(|def| {
-        let trait_ident = &def.trait_ident;
+        let trait_path = &def.trait_path;
         let fname = &def.field_ident;
         let ftype = &def.field_type;
         quote! {
-            impl bascet_core::Get<#trait_ident> for #name {
+            impl bascet_core::Get<#trait_path> for #name {
                 type Value = #ftype;
                 fn as_ref(&self) -> &Self::Value { &self.#fname }
                 fn as_mut(&mut self) -> &mut Self::Value { &mut self.#fname }
@@ -194,7 +198,7 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
     });
 
     let attr_type = quote! {
-        type Attrs = (#(#attr_idents),*);
+        type Attrs = (#(#attr_paths),*);
     };
 
     let (backing_type_assoc, backing_impl) = if let Some(backing_ty) = backing_type {
@@ -253,13 +257,13 @@ pub fn derive_composite(item: TokenStream) -> TokenStream {
     let collection_attrs: Vec<_> = attr_defs
         .iter()
         .filter(|def| def.is_collection)
-        .map(|def| &def.trait_ident)
+        .map(|def| &def.trait_path)
         .collect();
 
     let single_attrs: Vec<_> = attr_defs
         .iter()
         .filter(|def| !def.is_collection)
-        .map(|def| &def.trait_ident)
+        .map(|def| &def.trait_path)
         .collect();
 
     let collection_type_assoc = if !collection_attrs.is_empty() {

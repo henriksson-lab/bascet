@@ -1,7 +1,8 @@
 use anyhow::Result;
 use bascet_core::{
+    attr::{block::*, meta::*},
     channel::PeekableReceiver,
-    spinpark_loop::{self, SPINPARK_PARKS_BEFORE_WARN, SpinPark},
+    spinpark_loop::{self, SpinPark, SPINPARK_PARKS_BEFORE_WARN},
     *,
 };
 use bascet_derive::Budget;
@@ -17,7 +18,8 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::Arc, time::{SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{bounded_parser, log_critical, log_info, log_warning};
@@ -282,7 +284,6 @@ impl ShardifyCMD {
         }
         drop(notify_tx);
 
-        // Create per-shard channels for deterministic routing
         let shard_channels: Vec<_> = (0..numof_writers)
             .map(|_| crossbeam::channel::unbounded::<Vec<parse::bbgz::Block>>())
             .collect();
@@ -302,10 +303,8 @@ impl ShardifyCMD {
                 }
             };
 
-            let mut thread_buf_writer = BufWriter::with_capacity(
-                ByteSize::mib(8).as_u64() as usize,
-                thread_file
-            );
+            let mut thread_buf_writer =
+                BufWriter::with_capacity(ByteSize::mib(8).as_u64() as usize, thread_file);
 
             let global_counter = Arc::clone(&global_cells_written);
             vec_writer_handles.push(budget.spawn::<TWrite, _, _>(thread_idx as u64, move || {
@@ -337,34 +336,47 @@ impl ShardifyCMD {
                                     let merge_first = merge_blocks.get_unchecked(0);
                                     (
                                         merge_first.as_bytes::<Header>(),
-                                        merge_first.as_bytes::<Trailer>()
+                                        merge_first.as_bytes::<Trailer>(),
                                     )
                                 };
 
-                                let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                                let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
+                                let mut new_header =
+                                    BBGZHeader::from_bytes(new_header_bytes).unwrap();
+                                let mut new_trailer =
+                                    BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
 
                                 for merge_block in merge_blocks.iter().skip(1) {
                                     let merge_header_bytes = merge_block.as_bytes::<Header>();
                                     let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
 
-                                    let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                                    let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+                                    let merge_header =
+                                        BBGZHeader::from_bytes(merge_header_bytes).unwrap();
+                                    let merge_trailer =
+                                        BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
                                     new_header.merge(merge_header).unwrap();
                                     new_trailer.merge(merge_trailer).unwrap();
                                 }
 
-                                new_header.write_with_csize(&mut thread_buf_writer, merge_csize).unwrap();
+                                new_header
+                                    .write_with_csize(&mut thread_buf_writer, merge_csize)
+                                    .unwrap();
                                 let last_idx = merge_blocks.len() - 1;
                                 for i in 0..last_idx {
-                                    let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
+                                    let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }
+                                        .as_bytes::<Compressed>();
                                     let merge_raw_bytes_len = merge_raw_bytes.len();
-                                    thread_buf_writer.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
+                                    thread_buf_writer
+                                        .write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)])
+                                        .unwrap();
                                 }
-                                let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
+                                let last_raw_bytes =
+                                    unsafe { merge_blocks.get_unchecked(last_idx) }
+                                        .as_bytes::<Compressed>();
                                 let last_raw_bytes_len = last_raw_bytes.len();
-                                thread_buf_writer.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
+                                thread_buf_writer
+                                    .write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)])
+                                    .unwrap();
                                 thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
                                 new_trailer.write_with(&mut thread_buf_writer).unwrap();
 
@@ -393,7 +405,7 @@ impl ShardifyCMD {
                             let merge_first = merge_blocks.get_unchecked(0);
                             (
                                 merge_first.as_bytes::<Header>(),
-                                merge_first.as_bytes::<Trailer>()
+                                merge_first.as_bytes::<Trailer>(),
                             )
                         };
 
@@ -405,33 +417,43 @@ impl ShardifyCMD {
                             let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
 
                             let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                            let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
+                            let merge_trailer =
+                                BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
 
                             new_header.merge(merge_header).unwrap();
                             new_trailer.merge(merge_trailer).unwrap();
                         }
 
-                        new_header.write_with_csize(&mut thread_buf_writer, merge_csize).unwrap();
+                        new_header
+                            .write_with_csize(&mut thread_buf_writer, merge_csize)
+                            .unwrap();
                         let last_idx = merge_blocks.len() - 1;
                         for i in 0..last_idx {
-                            let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
+                            let merge_raw_bytes =
+                                unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
                             let merge_raw_bytes_len = merge_raw_bytes.len();
-                            thread_buf_writer.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
+                            thread_buf_writer
+                                .write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)])
+                                .unwrap();
                         }
-                        let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
+                        let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }
+                            .as_bytes::<Compressed>();
                         let last_raw_bytes_len = last_raw_bytes.len();
-                        thread_buf_writer.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
+                        thread_buf_writer
+                            .write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)])
+                            .unwrap();
                         thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
                         new_trailer.write_with(&mut thread_buf_writer).unwrap();
                     }
-                    
-                    let last_counter = global_counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+
+                    let last_counter =
+                        global_counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
                     let new_counter = last_counter + n;
                     if last_counter / 100_000 != new_counter / 100_000 {
                         log_info!("Writing"; "bbgz blocks written" => new_counter);
                     }
                 }
-                
+
                 thread_buf_writer
                     .write_all(&codec::bbgz::MARKER_EOF)
                     .unwrap();
@@ -440,9 +462,11 @@ impl ShardifyCMD {
             }));
         }
 
-        let mut coordinator_vec_last_id: SmallVec<[SmallVec<[u8; 16]>; 32]> = smallvec![smallvec![0; 16]; numof_streams as usize];
+        let mut coordinator_vec_last_id: SmallVec<[SmallVec<[u8; 16]>; 32]> =
+            smallvec![smallvec![0; 16]; numof_streams as usize];
         let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(numof_streams as usize);
-        let mut coordinator_vec_send: Vec<parse::bbgz::Block> = Vec::with_capacity(numof_streams as usize);
+        let mut coordinator_vec_send: Vec<parse::bbgz::Block> =
+            Vec::with_capacity(numof_streams as usize);
         let mut coordinator_spinpark_counter = 0;
         let mut sweep_spinpark_counter = 0;
 
@@ -480,14 +504,20 @@ impl ShardifyCMD {
                             let last_id = &coordinator_vec_last_id[sweep_idx];
                             match sweep_min_cell {
                                 None => {
-                                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                                    spinpark_loop::spinpark_loop_warn::<
+                                        100,
+                                        SPINPARK_PARKS_BEFORE_WARN,
+                                    >(
                                         &mut sweep_spinpark_counter,
                                         "Shardify (coordinator): sweep waiting for data",
                                     );
                                     break 'sweep;
                                 }
                                 Some(mc) if &**last_id <= mc => {
-                                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                                    spinpark_loop::spinpark_loop_warn::<
+                                        100,
+                                        SPINPARK_PARKS_BEFORE_WARN,
+                                    >(
                                         &mut sweep_spinpark_counter,
                                         "Shardify (coordinator): sweep waiting for data",
                                     );
@@ -520,7 +550,9 @@ impl ShardifyCMD {
                 for &sweep_idx in &coordinator_vec_take {
                     match vec_coordinator_rx[sweep_idx].try_recv() {
                         Ok(block) => coordinator_vec_send.push(block),
-                        Err(e) => log_critical!("try_recv failed!"; "stream" => sweep_idx, "error" => ?e),
+                        Err(e) => {
+                            log_critical!("try_recv failed!"; "stream" => sweep_idx, "error" => ?e)
+                        }
                     }
                 }
 

@@ -21,8 +21,8 @@ pub trait Chemistry {
         _vec_r2: Vec<C>,
     ) -> anyhow::Result<()>
     where
-        C: bascet_core::Get<bascet_core::R0>,
-        <C as bascet_core::Get<bascet_core::R0>>::Value: AsRef<[u8]>,
+        C: bascet_core::Get<bascet_core::attr::sequence::R0>,
+        <C as bascet_core::Get<bascet_core::attr::sequence::R0>>::Value: AsRef<[u8]>,
     {
         unimplemented!();
     }

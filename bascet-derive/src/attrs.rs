@@ -7,7 +7,6 @@ pub fn define_attr(input: TokenStream) -> TokenStream {
     let idents = parse_macro_input!(input with parser);
 
     let impls = idents.iter().map(|name| {
-        // Convert identifier to lowercase string for field name
         let name_str = name.to_string().to_lowercase();
         quote! {
             pub struct #name;
