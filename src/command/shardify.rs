@@ -358,27 +358,27 @@ impl ShardifyCMD {
                                     new_trailer.merge(merge_trailer).unwrap();
                                 }
 
-                                // new_header
-                                //     .write_with_csize(&mut thread_buf_writer, merge_csize)
-                                //     .unwrap();
+                                new_header
+                                    .write_with_csize(&mut thread_buf_writer, merge_csize)
+                                    .unwrap();
                                 let last_idx = merge_blocks.len() - 1;
                                 for i in 0..last_idx {
                                     let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }
                                         .as_bytes::<Compressed>();
                                     let merge_raw_bytes_len = merge_raw_bytes.len();
-                                    // thread_buf_writer
-                                    //     .write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)])
-                                    //     .unwrap();
+                                    thread_buf_writer
+                                        .write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)])
+                                        .unwrap();
                                 }
                                 let last_raw_bytes =
                                     unsafe { merge_blocks.get_unchecked(last_idx) }
                                         .as_bytes::<Compressed>();
                                 let last_raw_bytes_len = last_raw_bytes.len();
-                                // thread_buf_writer
-                                //     .write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)])
-                                //     .unwrap();
-                                // thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
-                                // new_trailer.write_with(&mut thread_buf_writer).unwrap();
+                                thread_buf_writer
+                                    .write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)])
+                                    .unwrap();
+                                thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
+                                new_trailer.write_with(&mut thread_buf_writer).unwrap();
 
                                 merge_blocks.clear();
                                 merge_csize = 0;
@@ -424,26 +424,26 @@ impl ShardifyCMD {
                             new_trailer.merge(merge_trailer).unwrap();
                         }
 
-                        // new_header
-                        //     .write_with_csize(&mut thread_buf_writer, merge_csize)
-                        //     .unwrap();
+                        new_header
+                            .write_with_csize(&mut thread_buf_writer, merge_csize)
+                            .unwrap();
                         let last_idx = merge_blocks.len() - 1;
                         for i in 0..last_idx {
                             let merge_raw_bytes =
                                 unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
                             let merge_raw_bytes_len = merge_raw_bytes.len();
-                            // thread_buf_writer
-                            //     .write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)])
-                            //     .unwrap();
+                            thread_buf_writer
+                                .write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)])
+                                .unwrap();
                         }
                         let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }
                             .as_bytes::<Compressed>();
                         let last_raw_bytes_len = last_raw_bytes.len();
-                        // thread_buf_writer
-                        //     .write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)])
-                        //     .unwrap();
-                        // thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
-                        // new_trailer.write_with(&mut thread_buf_writer).unwrap();
+                        thread_buf_writer
+                            .write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)])
+                            .unwrap();
+                        thread_buf_writer.write_all(&[0x03, 0x00]).unwrap();
+                        new_trailer.write_with(&mut thread_buf_writer).unwrap();
                     }
 
                     let last_counter =
@@ -454,10 +454,10 @@ impl ShardifyCMD {
                     }
                 }
 
-                // thread_buf_writer
-                //     .write_all(&codec::bbgz::MARKER_EOF)
-                //     .unwrap();
-                // thread_buf_writer.flush().unwrap();
+                thread_buf_writer
+                    .write_all(&codec::bbgz::MARKER_EOF)
+                    .unwrap();
+                thread_buf_writer.flush().unwrap();
                 log_info!("Exiting writer {thread_idx}");
             }));
         }
