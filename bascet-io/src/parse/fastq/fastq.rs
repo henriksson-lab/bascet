@@ -1,3 +1,4 @@
+use bascet_core::attr::{meta::*, quality::*, sequence::*};
 use bascet_core::*;
 use serde::Serialize;
 

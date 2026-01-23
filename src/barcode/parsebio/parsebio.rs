@@ -2,8 +2,8 @@ use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
 use crate::log_info;
+use bascet_core::attr::sequence;
 use bascet_core::AsCollection;
-use bascet_core::R0;
 use blart::AsBytes;
 use seq_io::fastq::Reader as FastqReader;
 
@@ -131,8 +131,8 @@ impl Chemistry for ParseBioChemistry3 {
         vec_r2: Vec<C>,
     ) -> anyhow::Result<()>
     where
-        C: bascet_core::Get<bascet_core::R0>,
-        <C as bascet_core::Get<bascet_core::R0>>::Value: AsRef<[u8]>,
+        C: bascet_core::Get<bascet_core::attr::sequence::R0>,
+        <C as bascet_core::Get<bascet_core::attr::sequence::R0>>::Value: AsRef<[u8]>,
     {
         /*
         let a=str_to_barcode_8bp("ATCGGGGG");
@@ -173,7 +173,7 @@ impl Chemistry for ParseBioChemistry3 {
             let mut map_chem_match_cnt = HashMap::new();
             for i in 0..vec_r2.len() {
                 //Parse bio barcode is in R2
-                let read = vec_r2[i].as_bytes::<R0>();
+                let read = vec_r2[i].as_bytes::<sequence::R0>();
                 log_info!("{:?}", String::from_utf8_lossy(read));
                 for (chem_name, bcs) in &map_round_bcs {
                     let total_distance_cutoff = 4;
