@@ -32,6 +32,7 @@ use serde::Serialize;
 use smallvec::{SmallVec, ToSmallVec};
 
 use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
+use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
 use crate::{common, log_critical, log_info, log_warning};
 
@@ -200,6 +201,14 @@ pub struct GetRawCMD {
         help = "Skip debarcoding phase and merge existing chunk files (comma-separated list of chunk files)"
     )]
     pub skip_debarcode: Option<Vec<InputPath>>,
+
+    #[arg(
+        long = "countof-merge-streams",
+        help = "Number of files to merge simultaneously. Defaults to memory / sizeof-stream-arena.",
+        value_name = "2..",
+        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+    )]
+    countof_merge_streams: Option<BoundedU64<2, { u64::MAX }>>,
 
     #[command(subcommand)]
     pub chemistry: GetRawChemistryCMD,
@@ -497,58 +506,71 @@ impl GetRawCMD {
             );
         }
 
+        let countof_merge_streams = self.countof_merge_streams
+            .map(|v| v.get() as usize)
+            .unwrap_or_else(|| {
+                (self.total_mem.as_u64() / self.sizeof_stream_arena.as_u64()).max(2) as usize
+            });
+
         let mergeround_target_count = self.paths_out.len();
         let mut mergeround_counter = 1;
         let mut mergeround_merge_next = vec_input_debarcode_merge;
 
         while mergeround_merge_next.len() > mergeround_target_count {
             let current_count = mergeround_merge_next.len();
-            let files_to_merge = current_count - mergeround_target_count;
 
             log_info!(
                 "Mergesort round {mergeround_counter}";
-                "Starting with" => format!("{:?} files", current_count),
-                "Target" => format!("{:?} files", mergeround_target_count),
-                "Remaining merges" => files_to_merge / 2
+                "Starting with" => format!("{} files", current_count),
+                "Target" => format!("{} files", mergeround_target_count),
+                "Merge streams" => countof_merge_streams
             );
 
-            let (files_to_merge, files_to_keep): (
-                Vec<(usize, InputPath)>,
-                Vec<(usize, InputPath)>,
-            ) = IntoIterator::into_iter(mergeround_merge_next)
-                .enumerate()
-                .partition(|(i, _)| *i < files_to_merge * 2);
+            let mut next_round_files: Vec<InputPath> = Vec::new();
 
-            let files_to_merge: Vec<InputPath> =
-                files_to_merge.into_iter().map(|(_, file)| file).collect();
-            let files_to_keep: Vec<InputPath> =
-                files_to_keep.into_iter().map(|(_, file)| file).collect();
+            for (batch_idx, batch) in mergeround_merge_next.chunks(countof_merge_streams).enumerate() {
+                if batch.len() == 1 {
+                    next_round_files.push(batch[0].clone());
+                    continue;
+                }
 
-            let (ms_rx, ms_handles) =
-                spawn_mergesort_workers(files_to_merge, &budget, self.sizeof_stream_arena);
+                let temp_fname = format!(
+                    "{}_merge_{mergeround_counter}_{batch_idx}",
+                    timestamp_temp_files
+                );
+                let temp_pathbuf = path_temp_dir
+                    .join(temp_fname)
+                    .with_extension("tirp.bbgz");
 
-            let wt_handles = spawn_mergesort_writers(
-                ms_rx,
-                timestamp_temp_files.clone(),
-                mergeround_counter,
-                path_temp_dir.clone(),
-                &budget,
-            );
+                let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        log_critical!("Failed to create output path"; "path" => ?temp_pathbuf, "error" => %e);
+                    }
+                };
 
-            for handle in ms_handles {
-                handle.join().unwrap();
+                spawn_mergesort_workers(
+                    batch,
+                    temp_output_path,
+                    path_temp_dir.clone(),
+                    &budget,
+                    self.sizeof_stream_arena,
+                );
+
+                for path in batch {
+                    if let Err(e) = std::fs::remove_file(&**path.path()) {
+                        log_warning!("Failed to delete merged file"; "path" => ?path.path(), "error" => %e);
+                    }
+                }
+
+                let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
+                    Ok(path) => path,
+                    Err(e) => panic!("{e}")
+                };
+                next_round_files.push(temp_input_path);
             }
 
-            mergeround_merge_next = files_to_keep;
-            for (i, handle) in IntoIterator::into_iter(wt_handles).enumerate() {
-                let paths: Vec<InputPath> = handle
-                    .join()
-                    .expect(&format!("Writer thread {} panicked", i))
-                    .into_iter()
-                    .collect();
-
-                mergeround_merge_next.extend(paths);
-            }
+            mergeround_merge_next = next_round_files;
 
             log_info!(
                 "Mergesort round {}: Finished with {} files",
@@ -1078,427 +1100,31 @@ fn spawn_chunk_writers(
 }
 
 fn spawn_mergesort_workers(
-    debarcode_merge: Vec<InputPath>,
+    paths_in: &[InputPath],
+    path_out: OutputPath,
+    path_temp: PathBuf,
     budget: &GetrawBudget,
-    stream_arena: ByteSize,
-) -> (Receiver<Receiver<parse::bbgz::Block>>, Vec<JoinHandle<()>>) {
-    let (fp_tx, fp_rx) = crossbeam::channel::unbounded();
-    let (ms_tx, ms_rx) = crossbeam::channel::unbounded();
-    let countof_threads_sort: u64 = (*budget.threads::<TMergeSort>()).get() / 2;
+    sizeof_stream_arena: ByteSize,
+) {
+    let mut shardify_cmd = ShardifyCMD {
+        paths_in: paths_in.to_vec(),
+        paths_out: vec![path_out],
+        path_include: None,
+        path_temp: Some(path_temp),
+        // SAFETY Total is at least 7 threads
+        total_threads: Some(unsafe { BoundedU64::new_unchecked((*budget.threads::<Total>()).get()) }),
+        numof_threads_write: None,
+        total_mem: *budget.mem::<Total>(),
+        sizeof_stream_buffer: None,
+        sizeof_stream_arena: sizeof_stream_arena,
 
-    let sizeof_stream_each_arena = stream_arena;
-    // NOTE no other job running at this time
-    let sizeof_stream_each_buffer =
-        ByteSize((budget.mem::<Total>().as_u64()) / (countof_threads_sort * 2));
+        show_filter_warning: false,
+        show_startup_message: false,
+    };
 
-    let mut thread_handles = Vec::new();
-
-    let producer_ms_tx = ms_tx.clone();
-    let producer_handle = budget.spawn::<TMergeSort, _, _>(0, move || {
-        let thread = std::thread::current();
-        let thread_name = thread.name().unwrap_or("unknown thread");
-        log_info!("Starting mergesort producer"; "thread" => thread_name);
-
-        // Handle odd file case by copying the last file directly
-        if debarcode_merge.len() % 2 == 1 {
-            let last_file = debarcode_merge.last().unwrap();
-            log_info!("Producer handling odd file: {}", last_file);
-            // HACK: Use bounded channel to prevent memory accumulation when writer is slow
-            let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
-            let _ = producer_ms_tx.send(mc_rx);
-
-            let f1 = match File::open(&**last_file.path()) {
-                Ok(file_handle) => file_handle,
-                Err(e) => panic!("{e}"),
-            };
-
-            // let b1 = Reader::with_capacity(
-            //     ByteSize::mib(4).as_u64() as usize,
-            //     f1
-            // );
-            let d1 = codec::plain::PlaintextDecoder::builder()
-                .with_reader(f1)
-                .build();
-
-            let p1 = parse::bbgz::parser();
-
-            let mut s1 = Stream::builder()
-                .with_decoder(d1)
-                .with_parser(p1)
-                .sizeof_decode_arena(sizeof_stream_each_arena)
-                .sizeof_decode_buffer(sizeof_stream_each_buffer)
-                .build();
-
-            let mut q1 = s1
-                .query::<parse::bbgz::Block>()
-                .assert_with_context::<Id, Id, _>(
-                    |id_current: &&'static [u8], id_context: &&'static [u8]| {
-                        id_current >= id_context
-                    },
-                    "id_current < id_context",
-                );
-
-            while let Ok(Some(cell)) = q1.next() {
-                let _ = mc_tx.send(cell);
-            }
-
-            // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
-            drop(mc_tx);
-
-            if let Err(e) = std::fs::remove_file(&**last_file.path()) {
-                log_critical!("Failed to delete odd file."; "path" => ?last_file, "error" => %e);
-            }
-        }
-
-        let debarcode_merge_paired = debarcode_merge.into_iter().tuples();
-        for (a, b) in debarcode_merge_paired {
-            let _ = fp_tx.send((a, b));
-        }
-    });
-    thread_handles.push(producer_handle);
-
-    for thread_idx in 0..countof_threads_sort {
-        let fp_rx = fp_rx.clone();
-        let ms_tx = ms_tx.clone();
-
-        let thread_handle = budget.spawn::<TMergeSort, _, _>(thread_idx, move || {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unknown thread");
-            log_info!("Starting mergesort worker"; "thread" => thread_name);
-
-            // Reuse arena pool across all merges in this thread
-            let a_thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
-            let b_thread_shared_stream_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, sizeof_stream_each_arena));
-            while let Ok((ia, ib)) = fp_rx.recv() {
-                log_info!("Merging pair: {} + {}", &ia, &ib);
-                // HACK: Use bounded channel to prevent memory accumulation when writer is slow
-                let (mc_tx, mc_rx) = crossbeam::channel::unbounded();
-                let _ = ms_tx.send(mc_rx);
-
-                let fa = match ia.clone().open() {
-                    Ok(file_handle) => file_handle,
-                    Err(e) => panic!("{e}"),
-                };
-
-                // let ba = BufReader::with_capacity(
-                //     ByteSize::mib(4).as_u64() as usize,
-                //     fa
-                // );
-                let da = codec::plain::PlaintextDecoder::builder()
-                    .with_reader(fa)
-                    .build();
-
-                let pa = parse::bbgz::parser();
-
-                let mut sa = Stream::builder()
-                    .with_decoder(da)
-                    .with_parser(pa)
-                    .with_opt_decode_arena_pool(Arc::clone(&a_thread_shared_stream_arena))
-                    .build();
-
-                let mut qa = sa
-                    .query::<parse::bbgz::Block>()
-                    .assert_with_context::<Id, Id, _>(
-                        |id_current: &&'static [u8], id_context: &&'static [u8]| {
-                            id_current >= id_context
-                        },
-                        "id_current < id_context",
-                    );
-
-                let fb = match ib.clone().open() {
-                    Ok(file_handle) => file_handle,
-                    Err(e) => panic!("{e}"),
-                };
-
-                // let bb = BufReader::with_capacity(
-                //     ByteSize::mib(4).as_u64() as usize,
-                //     fb
-                // );
-                let db = codec::plain::PlaintextDecoder::builder()
-                    .with_reader(fb)
-                    .build();
-
-                let pb = parse::bbgz::parser();
-
-                let mut sb = Stream::builder()
-                    .with_decoder(db)
-                    .with_parser(pb)
-                    .with_opt_decode_arena_pool(Arc::clone(&b_thread_shared_stream_arena))
-                    .build();
-
-                let mut qb = sb
-                    .query::<parse::bbgz::Block>()
-                    .assert_with_context::<Id, Id, _>(
-                        |id_current: &&'static [u8], id_context: &&'static [u8]| {
-                            id_current >= id_context
-                        },
-                        "id_current < id_context",
-                    );
-
-                let mut cell_a = qa.next().ok().flatten();
-                let mut cell_b = qb.next().ok().flatten();
-
-                while let (Some(ref ca), Some(ref cb)) = (&cell_a, &cell_b) {
-                    if ca.get_ref::<Id>() <= cb.get_ref::<Id>() {
-                        let _ = mc_tx.send(cell_a.take().unwrap());
-                        cell_a = qa.next().ok().flatten();
-                    } else {
-                        let _ = mc_tx.send(cell_b.take().unwrap());
-                        cell_b = qb.next().ok().flatten();
-                    }
-                }
-
-                while let Some(ca) = cell_a {
-                    let _ = mc_tx.send(ca);
-                    cell_a = qa.next().ok().flatten();
-                }
-                while let Some(cb) = cell_b {
-                    let _ = mc_tx.send(cb);
-                    cell_b = qb.next().ok().flatten();
-                }
-
-                // NOTE must drop mc_tx BEFORE Streams drop, so writer can finish
-                drop(mc_tx);
-
-                if let Err(e) = std::fs::remove_file(&**ia.path()) {
-                    log_warning!("Failed to delete merged file."; "path" => ?&ia.path(), "error" => %e);
-                }
-                if let Err(e) = std::fs::remove_file(&**ib.path()) {
-                    log_warning!("Failed to delete merged file."; "path" => ?&ib.path(), "error" => %e);
-                }
-            }
-        });
-        thread_handles.push(thread_handle);
+    if let Err(e) = shardify_cmd.try_execute() {
+        log_critical!("Shardify merge failed"; "error" => %e);
     }
-
-    return (ms_rx, thread_handles);
-}
-
-fn spawn_mergesort_writers(
-    ms_rx: Receiver<Receiver<parse::bbgz::Block>>,
-    timestamp_temp_files: String,
-    mergeround_temp_files: usize,
-    path_temp_dir: PathBuf,
-    budget: &GetrawBudget,
-) -> Vec<JoinHandle<Vec<InputPath>>> {
-    let mut thread_handles = Vec::new();
-    let countof_write_threads: u64 = (*budget.threads::<TWrite>()).get();
-    let atomic_countof_merges = Arc::new(AtomicUsize::new(0));
-
-    let arc_timestamp_temp_files = Arc::new(timestamp_temp_files);
-    for thread_idx in 0..countof_write_threads {
-        let ms_rx = ms_rx.clone();
-        let thread_countof_merges = Arc::clone(&atomic_countof_merges);
-        let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);
-        let thread_path_temp_dir = path_temp_dir.clone();
-        let mut thread_vec_temp_written = Vec::new();
-
-        thread_handles.push(budget.spawn::<TWrite, _, _>(thread_idx as u64, move || {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unknown thread"); 
-            log_info!("Starting worker"; "thread" => thread_name);
-
-            while let Ok(mc_rx) = ms_rx.recv() {
-                let countof_merges = thread_countof_merges.fetch_add(1, Ordering::Relaxed);
-                let temp_fname = format!(
-                    "{thread_timestamp_temp_files}_merge_{mergeround_temp_files}_{countof_merges}"
-                );
-                let temp_pathbuf = thread_path_temp_dir
-                    .join(temp_fname)
-                    .with_extension("tirp.bbgz");
-                let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        log_critical!("Failed to create output path"; "path" => ?temp_pathbuf, "error" => %e);
-                    }
-                };
-                let temp_output_file = match temp_output_path.create() {
-                    Ok(file) => file,
-                    Err(e) => {
-                        log_critical!("Failed to create output file"; "path" => ?temp_pathbuf, "error" => %e);
-                    }
-                };
-
-                let mut bufwriter = BufWriter::with_capacity(ByteSize::mib(2).as_u64() as usize, temp_output_file);
-                let mut merge_id: SmallVec<[u8; 16]> = SmallVec::new();
-                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 4]> = SmallVec::new();
-                let mut merge_csize = 0;
-                let mut merge_hsize = 0;
-                
-                while let Ok(block) = mc_rx.recv() {
-                    let id_bytes = block.as_bytes::<Id>();
-                    let header_bytes = block.as_bytes::<Header>();
-                    let compressed_bytes = block.as_bytes::<Compressed>();
-
-                    let csize = compressed_bytes.len();
-                    let hsize = header_bytes.len() + csize;
-
-                    if merge_hsize + hsize + BBGZTrailer::SSIZE > MAX_SIZEOF_BLOCKusize {
-                        // SAFETY at this point we will always have at least 1 merge block
-                        let (new_header_bytes, new_trailer_bytes) = unsafe { 
-                            let merge_first = merge_blocks.get_unchecked(0);
-                            (
-                                merge_first.as_bytes::<Header>(),
-                                merge_first.as_bytes::<Trailer>()
-                            ) 
-                        };
-
-                        let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                        let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
-
-                        for merge_block in merge_blocks.iter().skip(1) {
-                            let merge_header_bytes = merge_block.as_bytes::<Header>();
-                            let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
-
-                            let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                            let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
-
-                            new_header.merge(merge_header).unwrap();
-                            new_trailer.merge(merge_trailer).unwrap();
-                        }
-
-                        new_header.write_with_csize(&mut bufwriter, merge_csize).unwrap();
-                        let last_idx = merge_blocks.len() - 1;
-                        for i in 0..last_idx {
-                            let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
-                            let merge_raw_bytes_len = merge_raw_bytes.len();
-                            bufwriter.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
-                        }
-                        // Write last block with BFINAL=1 intact
-                        let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
-                        let last_raw_bytes_len = last_raw_bytes.len();
-                        bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
-                        bufwriter.write_all(&[0x03, 00]).unwrap();
-                        new_trailer.write_with(&mut bufwriter).unwrap();
-
-                        merge_blocks.clear();
-                        merge_csize = 0;
-                        merge_hsize = 0;
-                    }
-
-                    if *id_bytes == *merge_id {
-                        match merge_blocks.len() {
-                            0 => {
-                                merge_blocks.push(block);
-                                merge_csize = csize;
-                                merge_hsize = hsize;
-                            } 
-                            1.. => {
-                                merge_blocks.push(block);
-                                merge_csize += csize - 2;
-                                merge_hsize += hsize;
-                            }
-                        }
-                    } else {
-                        match merge_blocks.len() {
-                            0 => {
-                                merge_id = id_bytes.to_smallvec();
-                                merge_blocks.push(block);
-                                merge_csize = csize;
-                                merge_hsize = hsize;
-                            } 
-                            1.. => {
-                                // SAFETY merge_blocks.len() > 0
-                                let (new_header_bytes, new_trailer_bytes) = unsafe { 
-                                    let merge_first = merge_blocks.get_unchecked(0);
-                                    (
-                                        merge_first.as_bytes::<Header>(),
-                                        merge_first.as_bytes::<Trailer>()
-                                    ) 
-                                };
-
-                                let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                                let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
-
-                                for merge_block in merge_blocks.iter().skip(1) {
-                                    let merge_header_bytes = merge_block.as_bytes::<Header>();
-                                    let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
-
-                                    let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                                    let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
-
-                                    new_header.merge(merge_header).unwrap();
-                                    new_trailer.merge(merge_trailer).unwrap();
-                                }
-
-                                new_header.write_with_csize(&mut bufwriter, merge_csize).unwrap();
-                                let last_idx = merge_blocks.len() - 1;
-                                for i in 0..last_idx {
-                                    let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
-                                    let merge_raw_bytes_len = merge_raw_bytes.len();
-                                    bufwriter.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
-                                }
-                                // Write last block with BFINAL=1 intact
-                                let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
-                                let last_raw_bytes_len = last_raw_bytes.len();
-                                bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
-                                bufwriter.write_all(&[0x03, 00]).unwrap();
-                                new_trailer.write_with(&mut bufwriter).unwrap();
-
-                                merge_id = id_bytes.to_smallvec();
-                                merge_blocks.clear();
-                                merge_blocks.push(block);
-                                merge_csize = csize;
-                                merge_hsize = hsize;
-                            }
-                        }
-                    } 
-                }
-
-                if merge_blocks.len() > 0 {
-                    // SAFETY at this point we will always have at least 1 merge block
-                    let (new_header_bytes, new_trailer_bytes) = unsafe { 
-                        let merge_first = merge_blocks.get_unchecked(0);
-                        (
-                            merge_first.as_bytes::<Header>(),
-                            merge_first.as_bytes::<Trailer>()
-                        ) 
-                    };
-
-                    let mut new_header = BBGZHeader::from_bytes(new_header_bytes).unwrap();
-                    let mut new_trailer = BBGZTrailer::from_bytes(new_trailer_bytes).unwrap();
-
-                    for merge_block in merge_blocks.iter().skip(1) {
-                        let merge_header_bytes = merge_block.as_bytes::<Header>();
-                        let merge_trailer_bytes = merge_block.as_bytes::<Trailer>();
-
-                        let merge_header = BBGZHeader::from_bytes(merge_header_bytes).unwrap();
-                        let merge_trailer = BBGZTrailer::from_bytes(merge_trailer_bytes).unwrap();
-
-                        new_header.merge(merge_header).unwrap();
-                        new_trailer.merge(merge_trailer).unwrap();
-                    }
-
-                    new_header.write_with_csize(&mut bufwriter, merge_csize).unwrap();
-                    let last_idx = merge_blocks.len() - 1;
-                    for i in 0..last_idx {
-                        let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }.as_bytes::<Compressed>();
-                        let merge_raw_bytes_len = merge_raw_bytes.len();
-                        bufwriter.write_all(&merge_raw_bytes[..(merge_raw_bytes_len - 2)]).unwrap();
-                    }
-                    // Write last block with BFINAL=1 intact
-                    let last_raw_bytes = unsafe { merge_blocks.get_unchecked(last_idx) }.as_bytes::<Compressed>();
-                    let last_raw_bytes_len = last_raw_bytes.len();
-                    bufwriter.write_all(&last_raw_bytes[..(last_raw_bytes_len - 2)]).unwrap();
-                    bufwriter.write_all(&[0x03, 00]).unwrap();
-                    new_trailer.write_with(&mut bufwriter).unwrap();
-                }
-
-                bufwriter.write_all(&bbgz::MARKER_EOF).unwrap();
-                bufwriter.flush().unwrap();
-
-                let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
-                    Ok(path) => path,
-                    Err(e) => panic!("{}", e)
-                };
-                log_info!("Wrote sorted cell chunk"; "path" => ?temp_pathbuf);
-                thread_vec_temp_written.push(temp_input_path);
-            }
-            return thread_vec_temp_written;
-        }));
-    }
-
-    return thread_handles;
 }
 
 fn spawn_histogram_workers(
