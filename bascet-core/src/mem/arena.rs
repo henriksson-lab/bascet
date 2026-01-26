@@ -372,7 +372,7 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
 
             spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
                 &mut count_spun,
-                "ArenaPool (alloc): waiting for arena to be freed",
+                "ArenaPool (alloc): waiting for arena to be freed (possible deadlock if cell exceeds buffer size)",
             );
         }
     }
