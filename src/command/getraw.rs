@@ -506,11 +506,13 @@ impl GetRawCMD {
             );
         }
 
+        let max_merge_streams = (*budget.threads::<Total>()).get() as usize;
         let countof_merge_streams = self.countof_merge_streams
             .map(|v| v.get() as usize)
             .unwrap_or_else(|| {
                 (self.total_mem.as_u64() / self.sizeof_stream_arena.as_u64()).max(2) as usize
-            });
+            })
+            .min(max_merge_streams);
 
         let mergeround_target_count = self.paths_out.len();
         let mut mergeround_counter = 1;
@@ -549,17 +551,20 @@ impl GetRawCMD {
                     }
                 };
 
+                let batch_vec = batch.to_vec();
+                let batch_paths: Vec<_> = batch_vec.iter().map(|p| p.path().to_path_buf()).collect();
+
                 spawn_mergesort_workers(
-                    batch,
+                    batch_vec,
                     temp_output_path,
                     path_temp_dir.clone(),
                     &budget,
                     self.sizeof_stream_arena,
                 );
 
-                for path in batch {
-                    if let Err(e) = std::fs::remove_file(&**path.path()) {
-                        log_warning!("Failed to delete merged file"; "path" => ?path.path(), "error" => %e);
+                for path in batch_paths {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        log_warning!("Failed to delete merged file"; "path" => ?path, "error" => %e);
                     }
                 }
 
@@ -1100,23 +1105,22 @@ fn spawn_chunk_writers(
 }
 
 fn spawn_mergesort_workers(
-    paths_in: &[InputPath],
+    paths_in: Vec<InputPath>,
     path_out: OutputPath,
     path_temp: PathBuf,
     budget: &GetrawBudget,
     sizeof_stream_arena: ByteSize,
 ) {
     let mut shardify_cmd = ShardifyCMD {
-        paths_in: paths_in.to_vec(),
+        paths_in,
         paths_out: vec![path_out],
         path_include: None,
         path_temp: Some(path_temp),
-        // SAFETY Total is at least 7 threads
-        total_threads: Some(unsafe { BoundedU64::new_unchecked((*budget.threads::<Total>()).get()) }),
+        total_threads: Some(BoundedU64::new_saturating((*budget.threads::<Total>()).get())),
         numof_threads_write: None,
         total_mem: *budget.mem::<Total>(),
         sizeof_stream_buffer: None,
-        sizeof_stream_arena: sizeof_stream_arena,
+        sizeof_stream_arena,
 
         show_filter_warning: false,
         show_startup_message: true,
