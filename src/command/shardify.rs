@@ -47,9 +47,9 @@ pub struct ShardifyCMD {
 
     #[arg(
         long = "include",
-        help = "File with list of cells to include (one per line)"
+        help = "File with list of cells to include (one per line). If omitted, all cells are kept."
     )]
-    pub path_include: InputPath,
+    pub path_include: Option<InputPath>,
 
     #[arg(
         long = "temp",
@@ -64,7 +64,7 @@ pub struct ShardifyCMD {
         value_name = "3..",        
         value_parser = bounded_parser!(BoundedU64<3, { u64::MAX }>),
     )]
-    total_threads: Option<BoundedU64<3, { u64::MAX }>>,
+    pub total_threads: Option<BoundedU64<3, { u64::MAX }>>,
 
     #[arg(
         long = "numof-threads-write",
@@ -72,7 +72,7 @@ pub struct ShardifyCMD {
         value_name = "1..",
         value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
-    numof_threads_write: Option<BoundedU64<1, { u64::MAX }>>,
+    pub numof_threads_write: Option<BoundedU64<1, { u64::MAX }>>,
 
     #[arg(
         short = 'm',
@@ -81,7 +81,7 @@ pub struct ShardifyCMD {
         default_value_t = ByteSize::gib(32),
         value_parser = clap::value_parser!(ByteSize),
     )]
-    total_mem: ByteSize,
+    pub total_mem: ByteSize,
 
     #[arg(
         long = "sizeof-stream-buffer",
@@ -89,7 +89,7 @@ pub struct ShardifyCMD {
         value_name = "100%",
         value_parser = clap::value_parser!(ByteSize),
     )]
-    sizeof_stream_buffer: Option<ByteSize>,
+    pub sizeof_stream_buffer: Option<ByteSize>,
 
     #[arg(
         long = "sizeof-stream-arena",
@@ -98,7 +98,21 @@ pub struct ShardifyCMD {
         default_value_t = DEFAULT_SIZEOF_ARENA,
         value_parser = clap::value_parser!(ByteSize),
     )]
-    sizeof_stream_arena: ByteSize,
+    pub sizeof_stream_arena: ByteSize,
+
+    #[arg(
+        long = "show-filter-warning",
+        default_value_t = true,
+        hide = true
+    )]
+    pub show_filter_warning: bool,
+
+    #[arg(
+        long = "show-startup-message",
+        default_value_t = true,
+        hide = true
+    )]
+    pub show_startup_message: bool,
 }
 
 #[derive(Budget, Debug)]
@@ -162,18 +176,23 @@ impl ShardifyCMD {
                 .to_path_buf()
         };
 
-        let arc_filter = read_filter(&self.path_include.path().path());
+        let arc_filter = match &self.path_include {
+            Some(path) => read_filter(&**path.path(), self.show_filter_warning),
+            None => Arc::new(None),
+        };
         let countof_streams_input = self.paths_in.len() as u64;
         let countof_writers_output = self.paths_out.len() as u64;
 
         let sizeof_stream_each_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / countof_streams_input);
 
-        log_info!(
-            "Starting Shardify";
-            "using" => %budget,
-            "memory per stream" => %sizeof_stream_each_buffer,
-            "cells in filter" => arc_filter.len()
-        );
+        if !self.show_startup_message {
+            log_info!(
+                "Starting Shardify";
+                "using" => %budget,
+                "memory per stream" => %sizeof_stream_each_buffer,
+                "cells in filter" => (&*arc_filter).as_ref().map_or(0, |f| f.len())
+            );
+        }
 
         let pairs: Vec<(
             Sender<parse::bbgz::Block>,
@@ -264,8 +283,10 @@ impl ShardifyCMD {
                         );
                     }
 
-                    if !thread_filter.contains(block.as_bytes::<Id>()) {
-                        continue;
+                    if let Some(ref filter) = *thread_filter {
+                        if !filter.contains(block.as_bytes::<Id>()) {
+                            continue;
+                        }
                     }
 
                     global_kept_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -593,7 +614,7 @@ impl ShardifyCMD {
     }
 }
 
-fn read_filter<P: AsRef<Path>>(input: P) -> Arc<gxhash::HashSet<Vec<u8>>> {
+fn read_filter<P: AsRef<Path>>(input: P, show_warning: bool) -> Arc<Option<gxhash::HashSet<Vec<u8>>>> {
     // TODO [GOOD FIRST ISSUE] Improve this
     let file = File::open(input).unwrap();
     let reader = BufReader::new(file);
@@ -602,10 +623,10 @@ fn read_filter<P: AsRef<Path>>(input: P) -> Arc<gxhash::HashSet<Vec<u8>>> {
         .map(|l| l.unwrap())
         .collect::<gxhash::HashSet<Vec<u8>>>();
 
-    if filter.is_empty() {
+    if filter.is_empty() && show_warning {
         log_warning!(
             "Empty cell list detected! This configuration will DUPLICATE the input datasets."
         );
     }
-    return Arc::new(filter);
+    Arc::new(Some(filter))
 }
