@@ -622,11 +622,9 @@ fn spawn_paired_readers(
     let arc_vec_input = Arc::new(vec_input);
     let countof_threads_read = (*budget.threads::<TRead>()).get();
     let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
-    let stream_shared_alloc =
-        Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
-    let r1_shared_alloc = Arc::clone(&stream_shared_alloc);
-    let r2_shared_alloc = Arc::clone(&stream_shared_alloc);
-    drop(stream_shared_alloc);
+    let sizeof_stream_each_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / 2);
+    let r1_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
+    let r2_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
 
     let input_r1 = Arc::clone(&arc_vec_input);
     let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
@@ -1518,12 +1516,11 @@ fn spawn_histogram_workers(
     let countof_threads_per_worker =
         BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
 
-    let shared_stream_arena =
-        Arc::new(ArenaPool::new(*budget.mem::<MStreamBuffer>(), stream_arena));
+    let sizeof_stream_each_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
     let mut thread_handles = Vec::with_capacity(countof_worker_threads as usize);
 
     for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {
-        let thread_shared_arena = Arc::clone(&shared_stream_arena);
+        let thread_shared_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
         let thread_countof_threads = countof_threads_per_worker;
 
         let worker_handle = budget.spawn::<Total, _, _>(thread_idx as u64, move || {

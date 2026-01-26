@@ -3,7 +3,11 @@ use crate::{
     log_warning,
 };
 
-use bascet_core::{attr::{meta::*, sequence::*}, spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
+use bascet_core::{
+    attr::{meta::*, sequence::*},
+    spinpark_loop::SPINPARK_PARKS_BEFORE_WARN,
+    *,
+};
 use bascet_derive::Budget;
 use bascet_io::{codec, parse, tirp, BBGZHeader, BBGZWriter};
 
