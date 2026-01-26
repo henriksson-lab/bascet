@@ -506,13 +506,7 @@ impl GetRawCMD {
             );
         }
 
-        let max_merge_streams = (*budget.threads::<Total>()).get() as usize;
-        let countof_merge_streams = self.countof_merge_streams
-            .map(|v| v.get() as usize)
-            .unwrap_or_else(|| {
-                (self.total_mem.as_u64() / self.sizeof_stream_arena.as_u64()).max(2) as usize
-            })
-            .min(max_merge_streams);
+        let countof_merge_streams = (*budget.threads::<Total>()).get() as usize;
 
         let mergeround_target_count = self.paths_out.len();
         let mut mergeround_counter = 1;
@@ -528,56 +522,55 @@ impl GetRawCMD {
                 "Merge streams" => countof_merge_streams
             );
 
-            let mut next_round_files: Vec<InputPath> = Vec::new();
+            let mut vec_next_round: Vec<InputPath> = Vec::new();
 
-            for (batch_idx, batch) in mergeround_merge_next.chunks(countof_merge_streams).enumerate() {
-                if batch.len() == 1 {
-                    next_round_files.push(batch[0].clone());
-                    continue;
-                }
+            let countof_files_merge = (current_count - mergeround_target_count + 1).min(countof_merge_streams);
+            let (vec_merge, vec_passthrough) = mergeround_merge_next.split_at(countof_files_merge);
 
-                let temp_fname = format!(
-                    "{}_merge_{mergeround_counter}_{batch_idx}",
-                    timestamp_temp_files
-                );
-                let temp_pathbuf = path_temp_dir
-                    .join(temp_fname)
-                    .with_extension("tirp.bbgz");
-
-                let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        log_critical!("Failed to create output path"; "path" => ?temp_pathbuf, "error" => %e);
-                    }
-                };
-
-                let batch_vec = batch.to_vec();
-                let batch_paths: Vec<_> = batch_vec.iter().map(|p| p.path().to_path_buf()).collect();
-
-                spawn_mergesort_workers(
-                    batch_vec,
-                    temp_output_path,
-                    path_temp_dir.clone(),
-                    &budget,
-                    self.sizeof_stream_arena,
-                );
-
-                log_info!("Finished mergesort round {mergeround_counter}");
-
-                for path in batch_paths {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        log_warning!("Failed to delete merged file"; "path" => ?path, "error" => %e);
-                    }
-                }
-
-                let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
-                    Ok(path) => path,
-                    Err(e) => panic!("{e}")
-                };
-                next_round_files.push(temp_input_path);
+            for path in vec_passthrough {
+                vec_next_round.push(path.clone());
             }
 
-            mergeround_merge_next = next_round_files;
+            let temp_fname = format!(
+                "{}_merge_{mergeround_counter}_0",
+                timestamp_temp_files
+            );
+            let temp_pathbuf = path_temp_dir
+                .join(temp_fname)
+                .with_extension("tirp.bbgz");
+
+            let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
+                Ok(path) => path,
+                Err(e) => {
+                    log_critical!("Failed to create output path"; "path" => ?temp_pathbuf, "error" => %e);
+                }
+            };
+
+            let vec_merge_paths: Vec<_> = vec_merge.iter().map(|p| p.path().to_path_buf()).collect();
+
+            spawn_mergesort_workers(
+                vec_merge.to_vec(),
+                temp_output_path,
+                path_temp_dir.clone(),
+                &budget,
+                self.sizeof_stream_arena,
+            );
+
+            log_info!("Finished mergesort round {mergeround_counter}");
+
+            for path in vec_merge_paths {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    log_warning!("Failed to delete merged file"; "path" => ?path, "error" => %e);
+                }
+            }
+
+            let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
+                Ok(path) => path,
+                Err(e) => panic!("{e}")
+            };
+            vec_next_round.push(temp_input_path);
+
+            mergeround_merge_next = vec_next_round;
 
             log_info!(
                 "Mergesort round {}: Finished with {} files",
