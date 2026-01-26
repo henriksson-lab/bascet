@@ -562,6 +562,8 @@ impl GetRawCMD {
                     self.sizeof_stream_arena,
                 );
 
+                log_info!("Finished mergesort round {mergeround_counter}");
+
                 for path in batch_paths {
                     if let Err(e) = std::fs::remove_file(&path) {
                         log_warning!("Failed to delete merged file"; "path" => ?path, "error" => %e);
