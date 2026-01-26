@@ -11,7 +11,7 @@ use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use clap::Args;
 use clio::{InputPath, OutputPath};
-use crossbeam::channel::{self, Sender};
+use crossbeam::channel::{self, Receiver, Sender};
 use itertools::{izip, Itertools};
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 use std::{
@@ -163,10 +163,10 @@ impl ShardifyCMD {
         };
 
         let arc_filter = read_filter(&self.path_include.path().path());
-        let numof_streams = self.paths_in.len() as u64;
-        let numof_writers = self.paths_out.len() as u64;
+        let countof_streams_input = self.paths_in.len() as u64;
+        let countof_writers_output = self.paths_out.len() as u64;
 
-        let sizeof_stream_each_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / numof_streams);
+        let sizeof_stream_each_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / countof_streams_input);
 
         log_info!(
             "Starting Shardify";
@@ -178,7 +178,7 @@ impl ShardifyCMD {
         let pairs: Vec<(
             Sender<parse::bbgz::Block>,
             PeekableReceiver<parse::bbgz::Block>,
-        )> = (0..numof_streams)
+        )> = (0..countof_streams_input)
             .map(|_| bascet_core::channel::peekable::<parse::bbgz::Block>())
             .collect();
         let (vec_coordinator_tx, mut vec_coordinator_rx): (
@@ -187,9 +187,9 @@ impl ShardifyCMD {
         ) = pairs.into_iter().unzip();
 
         // let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(numof_streams)));
-        let mut vec_reader_handles = Vec::with_capacity(numof_streams as usize);
+        let mut vec_reader_handles = Vec::with_capacity(countof_streams_input as usize);
         // // let mut vec_worker_handles = Vec::with_capacity(self.threads_work);
-        let mut vec_writer_handles = Vec::with_capacity(numof_writers as usize);
+        let mut vec_writer_handles = Vec::with_capacity(countof_writers_output as usize);
 
         let global_cells_processed = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let global_cells_kept = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -284,7 +284,10 @@ impl ShardifyCMD {
         }
         drop(notify_tx);
 
-        let shard_channels: Vec<_> = (0..numof_writers)
+        let shard_channels: Vec<(
+            Sender<Vec<parse::bbgz::Block>>,
+            Receiver<Vec<parse::bbgz::Block>>,
+        )> = (0..countof_writers_output)
             .map(|_| crossbeam::channel::unbounded::<Vec<parse::bbgz::Block>>())
             .collect();
         let (vec_write_tx, vec_write_rx): (Vec<_>, Vec<_>) = shard_channels.into_iter().unzip();
@@ -463,10 +466,10 @@ impl ShardifyCMD {
         }
 
         let mut coordinator_vec_last_id: SmallVec<[SmallVec<[u8; 16]>; 32]> =
-            smallvec![smallvec![0; 16]; numof_streams as usize];
-        let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(numof_streams as usize);
+            smallvec![smallvec![0; 16]; countof_streams_input as usize];
+        let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(countof_streams_input as usize);
         let mut coordinator_vec_send: Vec<parse::bbgz::Block> =
-            Vec::with_capacity(numof_streams as usize);
+            Vec::with_capacity(countof_streams_input as usize);
         let mut coordinator_spinpark_counter = 0;
         let mut sweep_spinpark_counter = 0;
 
@@ -558,7 +561,7 @@ impl ShardifyCMD {
 
                 if !coordinator_vec_send.is_empty() {
                     let cell_id = unsafe { coordinator_vec_send.get_unchecked(0) }.as_bytes::<Id>();
-                    let shard_idx = (gxhash::gxhash64(cell_id, 0x00) % numof_writers) as usize;
+                    let shard_idx = (gxhash::gxhash64(cell_id, 0x00) % countof_writers_output) as usize;
                     // std::mem::take(&mut coordinator_vec_send);
                     let _ = vec_write_tx[shard_idx].send(std::mem::take(&mut coordinator_vec_send));
                 }
