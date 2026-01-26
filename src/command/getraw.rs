@@ -1119,7 +1119,7 @@ fn spawn_mergesort_workers(
         sizeof_stream_arena: sizeof_stream_arena,
 
         show_filter_warning: false,
-        show_startup_message: false,
+        show_startup_message: true,
     };
 
     if let Err(e) = shardify_cmd.try_execute() {
