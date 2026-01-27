@@ -61,10 +61,10 @@ pub struct ShardifyCMD {
         short = '@',
         long = "threads",                                                                               
         help = "Total threads to use",                   
-        value_name = "3..",        
-        value_parser = bounded_parser!(BoundedU64<3, { u64::MAX }>),
+        value_name = "2..",        
+        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
     )]
-    pub total_threads: Option<BoundedU64<3, { u64::MAX }>>,
+    pub total_threads: Option<BoundedU64<2, { u64::MAX }>>,
 
     #[arg(
         long = "numof-threads-write",
@@ -118,13 +118,13 @@ pub struct ShardifyCMD {
 #[derive(Budget, Debug)]
 struct ShardifyBudget {
     #[threads(Total)]
-    threads: BoundedU64<3, { u64::MAX }>,
+    threads: BoundedU64<2, { u64::MAX }>,
 
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |_, _| BoundedU64::const_new::<2>())]
-    countof_threads_read: BoundedU64<2, { u64::MAX }>,
+    #[threads(TRead, |_, _| BoundedU64::const_new::<1>())]
+    countof_threads_read: BoundedU64<1, { u64::MAX }>,
 
     #[threads(TWrite, |_, _| BoundedU64::const_new::<1>())]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
@@ -139,13 +139,13 @@ impl ShardifyCMD {
             .threads(self.total_threads.unwrap_or_else(|| {
                 (self.paths_in.len() + self.paths_out.len())
                     .try_into()
-                    .expect("At least two input files and one output file required")
+                    .expect("At least one input file and one output file required")
             }))
             .memory(self.total_mem)
             .countof_threads_read(
                 (self.paths_in.len())
                     .try_into()
-                    .expect("At least two input files required"),
+                    .expect("At least one input file required"),
             )
             .countof_threads_write(self.numof_threads_write.unwrap_or_else(|| {
                 (self.paths_out.len())
@@ -155,26 +155,6 @@ impl ShardifyCMD {
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
         budget.validate();
-
-        let timestamp_temp_files = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let timestamp_temp_files = timestamp_temp_files.to_string();
-
-        let path_temp_dir = if let Some(temp_path) = self.path_temp.clone() {
-            temp_path
-        } else {
-            self.paths_out
-                .first()
-                .unwrap()
-                .path()
-                .parent()
-                .unwrap_or_else(|| {
-                    log_critical!("No valid output parent directory found.");
-                })
-                .to_path_buf()
-        };
 
         let arc_filter = match &self.path_include {
             Some(path) => read_filter(&**path.path(), self.show_filter_warning),
