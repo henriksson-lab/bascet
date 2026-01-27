@@ -53,6 +53,8 @@ impl Bgzf {
         let hts_sizeof_alloc = ((countof_threads.get() * sizeof_bgzf_block.as_u64())
             / (size_of::<u8>() as u64)) as usize;
 
+        let hts_sizeof_alloc = ByteSize::mib(2).as_u64() as usize;
+        
         return Self {
             inner_hts_file_ptr: hts_file_ptr,
             inner_hts_bgzf_ptr: hts_bgzf_ptr,
