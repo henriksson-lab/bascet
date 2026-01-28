@@ -1,4 +1,6 @@
-use crate::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
+use bascet_runtime::logging::warn;
+use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
+use crate::*;
 
 impl<P, D, C> crate::Next<C> for Stream<P, D, C, AsBlock>
 where
@@ -15,10 +17,10 @@ where
         loop {
             let buffer_status = match self.inner_decoder_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
-                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                        &mut spinpark_counter,
-                        "Consumer (AsBlock): waiting for data (buffer empty, decoder slow or finished)"
-                    );
+                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut spinpark_counter) {
+                        SpinPark::Warn => warn!(source = "Stream::next (AsBlock)", "waiting for data (buffer empty, decoder slow or finished)"),
+                        _ => {}
+                    }
                     continue;
                 }
                 Ok(status) => {

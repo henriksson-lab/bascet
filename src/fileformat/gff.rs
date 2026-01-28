@@ -231,7 +231,10 @@ impl FeatureCollection {
         //See if it worked
         let num_features = gff.list_feature.len();
         println!("Done reading GFF; number of features: {}", num_features);
-        println!("Number of features for which name field was missing: {}  (not all files have a name field - feature ID will be reported instead)", gff.failed_to_get_name);
+        println!(
+            "Number of features for which name field was missing: {}  (not all files have a name field - feature ID will be reported instead)",
+            gff.failed_to_get_name
+        );
         if num_features == 0 {
             anyhow::bail!("Stopping because there are no features");
         }

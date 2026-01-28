@@ -34,7 +34,8 @@ use smallvec::{SmallVec, ToSmallVec};
 use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
 use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
-use crate::{common, log_critical, log_info, log_warning};
+use crate::common;
+use bascet_runtime::logging::{debug, error, info, warn};
 
 #[derive(Args)]
 pub struct GetRawCMD {
@@ -276,12 +277,12 @@ impl GetRawCMD {
                 std::thread::available_parallelism()
                     .map(|p| p.get())
                     .unwrap_or_else(|e| {
-                        log_warning!("Failed to determine available parallelism, using 6 threads"; "error" => %e);
+                        warn!(error = %e, "Failed to determine available parallelism, using 6 threads");
                         6
                     })
                     .try_into()
                     .unwrap_or_else(|e| {
-                        log_warning!("Failed to convert parallelism to valid thread count, using 6 threads"; "error" => %e);
+                        warn!(error = %e, "Failed to convert parallelism to valid thread count, using 6 threads");
                         6.try_into().unwrap()
                     })
             }))
@@ -300,20 +301,16 @@ impl GetRawCMD {
 
         budget.validate();
 
-        log_info!(
-            "Starting GetRaw";
-            "using" => %budget,
-        );
+        info!(using = %budget, "Starting GetRaw");
         if self.compression_level.level() == 0 {
-            log_warning!("Compression level is 0 (uncompressed)")
+            warn!("Compression level is 0 (uncompressed)")
         }
 
         let mut vec_input_debarcode_merge = self.skip_debarcode.clone().unwrap_or(Vec::new());
 
         if self.paths_out.is_empty() {
-            log_critical!(
-                "No valid output file paths specified. All output paths failed verification."
-            );
+            error!("No valid output file paths specified. All output paths failed verification.");
+            panic!("No valid output file paths specified");
         }
 
         if self.paths_hist.is_some()
@@ -321,9 +318,8 @@ impl GetRawCMD {
         {
             let n_hist = self.paths_hist.as_ref().unwrap().len();
             let n_out = self.paths_out.len();
-            log_critical!(
-                "Number of histogram paths ({n_hist}) does not match number of output paths ({n_out})"
-            );
+            error!("Number of histogram paths ({n_hist}) does not match number of output paths ({n_out})");
+            panic!("Histogram paths count mismatch");
         }
 
         let timestamp_temp_files = SystemTime::now()
@@ -342,7 +338,8 @@ impl GetRawCMD {
                 .path()
                 .parent()
                 .unwrap_or_else(|| {
-                    log_critical!("No valid output parent directory found.");
+                    error!("No valid output parent directory found.");
+                    panic!("No valid output parent directory found");
                 })
                 .to_path_buf()
         };
@@ -352,9 +349,8 @@ impl GetRawCMD {
                 izip!(self.paths_r1.clone(), self.paths_r2.clone()).collect();
 
             if vec_input.is_empty() {
-                log_critical!(
-                    "No valid input files found. All input files failed to open or do not exist."
-                );
+                error!("No valid input files found. All input files failed to open or do not exist.");
+                panic!("No valid input files found");
             }
 
             let mut chemistry = match &self.chemistry {
@@ -367,7 +363,7 @@ impl GetRawCMD {
             };
 
             {
-                log_info!("Preparing chemistry...");
+                info!("Preparing chemistry...");
                 let (input_r1, input_r2) = &vec_input.first().unwrap();
                 // NOTE fine to use all threads briefly. Nothing else does work yet.
                 let countof_threads_total = (*budget.threads::<Total>()).get();
@@ -398,7 +394,7 @@ impl GetRawCMD {
                     }
                 }
 
-                log_info!("Finished reading first 10000 reads of R1...");
+                info!("Finished reading first 10000 reads of R1...");
                 unsafe {
                     s1.shutdown();
                 }
@@ -428,14 +424,14 @@ impl GetRawCMD {
                     }
                 }
 
-                log_info!("Finished reading first 10000 reads of R2...");
+                info!("Finished reading first 10000 reads of R2...");
                 unsafe {
                     s2.shutdown();
                 }
 
                 let _ = chemistry.prepare_using_rp_vecs(b1, b2);
             }
-            log_info!("Finished preparing chemistry...");
+            info!("Finished preparing chemistry...");
 
             let ((r1_rx, r2_rx), (r1_handle, r2_handle)) =
                 spawn_paired_readers(vec_input, &budget, self.sizeof_stream_arena);
@@ -454,16 +450,16 @@ impl GetRawCMD {
                 self.compression_level,
             );
 
-            log_info!("Waiting for R1 and R2 reader threads to finish...");
+            info!("Waiting for R1 and R2 reader threads to finish...");
             r1_handle.join().expect("R1 reader thread panicked");
             r2_handle.join().expect("R2 reader thread panicked");
-            log_info!("R1 and R2 reader threads finished");
+            info!("R1 and R2 reader threads finished");
 
-            log_info!("Waiting for router thread to finish...");
+            info!("Waiting for router thread to finish...");
             rt_handle.join().expect("Router thread panicked");
-            log_info!("Router thread finished");
+            info!("Router thread finished");
 
-            log_info!(
+            debug!(
                 "Waiting for {} debarcode worker threads to finish...",
                 db_handles.len()
             );
@@ -472,13 +468,13 @@ impl GetRawCMD {
                     .join()
                     .expect(&format!("Worker thread {} panicked", i));
             }
-            log_info!("All debarcode worker threads finished");
+            debug!("All debarcode worker threads finished");
 
-            log_info!("Waiting for collector thread to finish...");
+            debug!("Waiting for collector thread to finish...");
             ct_handle.join().expect("Collector thread panicked");
-            log_info!("Collector thread finished");
+            debug!("Collector thread finished");
 
-            log_info!(
+            debug!(
                 "Waiting for {} sort worker threads to finish...",
                 st_handles.len()
             );
@@ -487,9 +483,9 @@ impl GetRawCMD {
                     .join()
                     .expect(&format!("Sort worker thread {} panicked", i));
             }
-            log_info!("All sort worker threads finished");
+            debug!("All sort worker threads finished");
 
-            log_info!(
+            debug!(
                 "Waiting for {} chunk writer threads to finish...",
                 wt_handles.len()
             );
@@ -500,7 +496,7 @@ impl GetRawCMD {
 
                 vec_input_debarcode_merge.extend(paths);
             }
-            log_info!(
+            debug!(
                 "All chunk writer threads finished. Total chunks: {}",
                 vec_input_debarcode_merge.len()
             );
@@ -515,17 +511,18 @@ impl GetRawCMD {
         while mergeround_merge_next.len() > mergeround_target_count {
             let current_count = mergeround_merge_next.len();
 
-            log_info!(
-                "Mergesort round {mergeround_counter}";
-                "Starting with" => format!("{} files", current_count),
-                "Target" => format!("{} files", mergeround_target_count),
-                "Merge streams" => countof_merge_streams
+            info!(
+                starting_with = current_count,
+                target = mergeround_target_count,
+                merge_streams = countof_merge_streams,
+                "Mergesort round {mergeround_counter}"
             );
 
             let mut vec_next_round: Vec<InputPath> = Vec::new();
             let mut batch_idx = 0;
 
-            let countof_merged_outputs = (current_count + countof_merge_streams - 1) / countof_merge_streams;
+            let countof_merged_outputs =
+                (current_count + countof_merge_streams - 1) / countof_merge_streams;
             let countof_passthrough = if countof_merged_outputs < mergeround_target_count {
                 mergeround_target_count - countof_merged_outputs
             } else {
@@ -545,23 +542,21 @@ impl GetRawCMD {
                     continue;
                 }
 
-                let temp_fname = format!(
-                    "{}_{mergeround_counter}_{batch_idx}",
-                    timestamp_temp_files
-                );
-                let temp_pathbuf = path_temp_dir
-                    .join(temp_fname)
-                    .with_extension("tirp.bbgz");
+                let temp_fname =
+                    format!("{}_{mergeround_counter}_{batch_idx}", timestamp_temp_files);
+                let temp_pathbuf = path_temp_dir.join(temp_fname).with_extension("tirp.bbgz");
 
                 let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
                     Err(e) => {
-                        log_critical!("Failed to create output path"; "path" => ?temp_pathbuf, "error" => %e);
+                        error!(path = ?temp_pathbuf, error = %e, "Failed to create output path");
+                        panic!("Failed to create output path");
                     }
                 };
 
                 let vec_batch = batch.to_vec();
-                let vec_batch_paths: Vec<_> = vec_batch.iter().map(|p| p.path().to_path_buf()).collect();
+                let vec_batch_paths: Vec<_> =
+                    vec_batch.iter().map(|p| p.path().to_path_buf()).collect();
 
                 spawn_mergesort_workers(
                     vec_batch,
@@ -573,23 +568,23 @@ impl GetRawCMD {
 
                 for path in vec_batch_paths {
                     if let Err(e) = std::fs::remove_file(&path) {
-                        log_warning!("Failed to delete merged file"; "path" => ?path, "error" => %e);
+                        warn!(path = ?path, error = %e, "Failed to delete merged file");
                     }
                 }
 
                 let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
-                    Err(e) => panic!("{e}")
+                    Err(e) => panic!("{e}"),
                 };
                 vec_next_round.push(temp_input_path);
                 batch_idx += 1;
             }
 
-            log_info!("Finished mergesort round {mergeround_counter}");
+            debug!("Finished mergesort round {mergeround_counter}");
 
             mergeround_merge_next = vec_next_round;
 
-            log_info!(
+            info!(
                 "Mergesort round {}: Finished with {} files",
                 mergeround_counter,
                 mergeround_merge_next.len()
@@ -601,11 +596,11 @@ impl GetRawCMD {
         for (final_path, output_path) in izip!(&mergeround_merge_next, &self.paths_out) {
             match std::fs::rename(&**final_path.path(), &**output_path.path()) {
                 Ok(_) => {
-                    log_info!("Moved {final_path} -> {output_path}");
+                    debug!("Moved {final_path} -> {output_path}");
                     output_paths.push(output_path.clone());
                 }
                 Err(e) => {
-                    log_warning!("Failed moving {final_path:?} > {output_path:?}"; "error" => %e);
+                    warn!(error = %e, "Failed moving {final_path:?} > {output_path:?}");
                     let output_path = match OutputPath::try_from(&**final_path.path()) {
                         Ok(path) => path,
                         Err(e) => panic!("{e}"),
@@ -642,7 +637,7 @@ impl GetRawCMD {
                 .join()
                 .expect(&format!("Histogram worker thread {} panicked", i));
         }
-        log_info!("All histogram worker threads finished");
+        debug!("All histogram worker threads finished");
 
         Ok(())
     }
@@ -669,7 +664,7 @@ fn spawn_paired_readers(
     let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
-        log_info!("Starting R1 reader"; "thread" => thread_name);
+        debug!(thread = thread_name, "Starting R1 reader");
 
         for (input_r1, _) in &*input_r1 {
             let d1 = codec::bgzf::Bgzf::builder()
@@ -689,7 +684,7 @@ fn spawn_paired_readers(
             while let Ok(Some(record)) = q1.next() {
                 let _ = r1_tx.send(record);
             }
-            log_info!("R1 finished reading");
+            debug!("R1 finished reading");
         }
     });
 
@@ -698,7 +693,7 @@ fn spawn_paired_readers(
     let handle_r2 = budget.spawn::<TRead, _, _>(1, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
-        log_info!("Starting R2 reader"; "thread" => thread_name);
+        debug!(thread = thread_name, "Starting R2 reader");
 
         for (_, input_r2) in &*input_r2 {
             let d2 = codec::bgzf::Bgzf::builder()
@@ -718,7 +713,7 @@ fn spawn_paired_readers(
             while let Ok(Some(record)) = q2.next() {
                 let _ = r2_tx.send(record);
             }
-            log_info!("R2 finished reading");
+            debug!("R2 finished reading");
         }
     });
 
@@ -734,7 +729,7 @@ fn spawn_debarcode_router(
     let rt_handle = budget.spawn::<Total, _, _>(0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
-        log_info!("Starting debarcode router"; "thread" => thread_name);
+        debug!(thread = thread_name, "Starting debarcode router");
 
         loop {
             match (r1_rx.recv(), r2_rx.recv()) {
@@ -742,15 +737,15 @@ fn spawn_debarcode_router(
                     let _ = rp_tx.send((r1, r2));
                 }
                 (Err(_), Err(_)) => {
-                    log_info!("Both R1 and R2 channels closed, router finishing");
+                    debug!("Both R1 and R2 channels closed, router finishing");
                     break;
                 }
                 (Ok(_), Err(_)) => {
-                    log_warning!("R2 channel closed but R1 still has data");
+                    warn!("R2 channel closed but R1 still has data");
                     break;
                 }
                 (Err(_), Ok(_)) => {
-                    log_warning!("R1 channel closed but R2 still has data");
+                    warn!("R1 channel closed but R2 still has data");
                     break;
                 }
             }
@@ -787,7 +782,7 @@ fn spawn_debarcode_workers(
         let thread_handle = budget.spawn::<TDebarcode, _, _>(thread_idx, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
-            log_info!("Starting debarcode worker"; "thread" => thread_name);
+            debug!(thread = thread_name, "Starting debarcode worker");
 
             while let Ok((r1, r2)) = rp_rx.recv() {
                 // TODO: optimisation: barcodes are fixed-size if represented in a non string way (e.g as u64)
@@ -806,7 +801,7 @@ fn spawn_debarcode_workers(
                         thread_atomic_success_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
                     if thread_success_counter % 1_000_000 == 0 {
-                        log_info!(
+                        info!(
                             "{:.2}M/{:.2}M reads successfully debarcoded",
                             thread_success_counter as f64 / 1_000_000.0,
                             thread_total_counter as f64 / 1_000_000.0
@@ -854,11 +849,11 @@ fn spawn_collector(
     let sizeof_each_sort_alloc = ByteSize::gib(1);
     let mut countof_each_sort_alloc = 0;
 
-    log_info!("sizeof_each_sort_alloc"; "sizeof_each_sort_alloc" => %sizeof_each_sort_alloc);
+    debug!(sizeof_each_sort_alloc = %sizeof_each_sort_alloc, "sizeof_each_sort_alloc");
     let ct_handle = budget.spawn::<Total, _, _>(0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
-        log_info!("Starting collector"; "thread" => thread_name);
+        debug!(thread = thread_name, "Starting collector");
 
         let mut collection_buffer: Vec<(u32, DebarcodedRecord)> =
             Vec::with_capacity(countof_each_sort_alloc);
@@ -938,7 +933,7 @@ fn spawn_sort_workers(
         let thread_handle = budget.spawn::<TSort, _, _>(thread_idx, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
-            log_info!("Starting sort worker"; "thread" => thread_name);
+            debug!(thread = thread_name, "Starting sort worker");
 
             while let Ok(vec_bc_indices_db_records) = ct_rx.recv() {
                 // HACK: Convert barcode before sorting for correct ordering
@@ -995,7 +990,7 @@ fn spawn_chunk_writers(
         let thread_handle = budget.spawn::<TWrite, _, _>(thread_idx, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
-            log_info!("Starting chunk writer"; "thread" => thread_name);
+            debug!(thread = thread_name, "Starting chunk writer");
 
             // Reuse arena pools across all chunks in this thread
             let thread_shared_raw_arena = Arc::new(ArenaPool::new(sizeof_write_each_compress_raw_buffer, codec::bbgz::MAX_SIZEOF_BLOCK));
@@ -1014,7 +1009,8 @@ fn spawn_chunk_writers(
                 let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
                     Ok(path) => path,
                     Err(e) => {
-                        log_critical!("Failed to create output path"; "path" => ?temp_pathbuf, "error" => %e);
+                        error!(path = ?temp_pathbuf, error = %e, "Failed to create output path");
+                        panic!("Failed to create output path");
                     }
                 };
 
@@ -1023,7 +1019,8 @@ fn spawn_chunk_writers(
                         file
                     },
                     Err(e) => {
-                        log_critical!("Failed to create output file"; "path" => ?temp_pathbuf, "error" => %e);
+                        error!(path = ?temp_pathbuf, error = %e, "Failed to create output file");
+                        panic!("Failed to create output file");
                     }
                 };
 
@@ -1105,7 +1102,7 @@ fn spawn_chunk_writers(
                     Ok(path) => path,
                     Err(e) => panic!("{}", e)
                 };
-                log_info!("Wrote debarcoded cell chunk"; "path" => ?temp_pathbuf, "records written" => records_writen);
+                debug!(path = ?temp_pathbuf, records_written = records_writen, "Wrote debarcoded cell chunk");
                 thread_vec_temp_written.push(temp_input_path);
             }
             return thread_vec_temp_written;
@@ -1128,7 +1125,9 @@ fn spawn_mergesort_workers(
         paths_out: vec![path_out],
         path_include: None,
         path_temp: Some(path_temp),
-        total_threads: Some(BoundedU64::new_saturating((*budget.threads::<Total>()).get())),
+        total_threads: Some(BoundedU64::new_saturating(
+            (*budget.threads::<Total>()).get(),
+        )),
         numof_threads_write: None,
         total_mem: *budget.mem::<Total>(),
         sizeof_stream_buffer: None,
@@ -1139,7 +1138,8 @@ fn spawn_mergesort_workers(
     };
 
     if let Err(e) = shardify_cmd.try_execute() {
-        log_critical!("Shardify merge failed"; "error" => %e);
+        error!(error = %e, "Shardify merge failed");
+        panic!("Shardify merge failed");
     }
 }
 
@@ -1158,7 +1158,8 @@ fn spawn_histogram_workers(
     let countof_threads_per_worker =
         BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
 
-    let sizeof_stream_each_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
+    let sizeof_stream_each_buffer =
+        ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
     let mut thread_handles = Vec::with_capacity(countof_worker_threads as usize);
 
     for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {
@@ -1168,7 +1169,7 @@ fn spawn_histogram_workers(
         let worker_handle = budget.spawn::<Total, _, _>(thread_idx as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
-            log_info!("Starting histogram worker"; "thread" => thread_name, "Processing histogram for" => %output_path);
+            debug!(thread = thread_name, processing_histogram_for = %output_path, "Starting histogram worker");
             let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
 
             let decoder = codec::BBGZDecoder::builder()
@@ -1204,7 +1205,8 @@ fn spawn_histogram_workers(
             let hist_file = match hist_path.clone().create() {
                 Ok(file) => file,
                 Err(e) => {
-                    log_critical!("Failed to create output file"; "path" => ?hist_path, "error" => %e);
+                    error!(path = ?hist_path, error = %e, "Failed to create output file");
+                    panic!("Failed to create output file");
                 }
             };
 
@@ -1217,7 +1219,7 @@ fn spawn_histogram_workers(
             }
 
             bufwriter.flush().unwrap();
-            log_info!("Wrote histogram at {}", hist_path);
+            debug!("Wrote histogram at {}", hist_path);
         });
         thread_handles.push(worker_handle);
     }

@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 bascet-core = { path = "../bascet-core" }
 bascet-variadic = { path = "../bascet-variadic" }
