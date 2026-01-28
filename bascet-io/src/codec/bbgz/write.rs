@@ -7,8 +7,8 @@ use std::{
 };
 
 use bascet_core::{
+    ArenaPool, ArenaSlice, DEFAULT_SIZEOF_BUFFER, SendPtr,
     channel::{OrderedDenseReceiver, OrderedDenseSender},
-    ArenaPool, ArenaSlice, SendPtr, DEFAULT_SIZEOF_BUFFER,
 };
 
 use bounded_integer::BoundedU64;
@@ -17,8 +17,8 @@ use crossbeam::channel::{Receiver, Sender};
 use libz_ng_sys as zlib;
 
 use crate::{
-    codec::bbgz::{BBGZHeader, MAX_SIZEOF_BLOCKusize, MARKER_EOF, MAX_SIZEOF_BLOCK},
     BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL, ZLIB_WINDOW_SIZE,
+    codec::bbgz::{BBGZHeader, MARKER_EOF, MAX_SIZEOF_BLOCK, MAX_SIZEOF_BLOCKusize},
 };
 
 pub struct BBGZCompressionJob {

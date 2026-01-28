@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use rust_htslib::htslib::uint;
 
-use hdf5::types::VarLenUnicode;
 use hdf5::File as H5File;
+use hdf5::types::VarLenUnicode;
 
 type Cellid = Vec<u8>;
 type Featureid = Vec<u8>;

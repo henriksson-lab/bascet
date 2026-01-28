@@ -1,8 +1,10 @@
-use std::io::{BufWriter, Cursor};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use bascet::{
-    log_info,
-    runtime::{self, Commands},
+use bascet::command::{self, Commands};
+use bascet_runtime::logging::{
+    log_filter_parser, log_mode_parser, log_ordered_parser, log_strictness_parser,
+    LogConfig, LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer, error,
+    info,
 };
 use clap::Parser;
 
@@ -12,19 +14,35 @@ use clap::Parser;
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: runtime::Commands,
+    command: command::Commands,
 
-    #[arg(long, default_value = "skip")]
-    error_mode: runtime::ErrorMode,
+    #[arg(
+        long = "log-strictness",
+        default_value = "ignore",
+        value_parser = log_strictness_parser!(LogStrictness)
+    )]
+    log_strictness: LogStrictness,
 
-    #[arg(long, default_value = "trace")]
-    log_level: runtime::LogLevel,
+    #[arg(
+        long = "log-level",
+        default_value = "info",
+        value_parser = log_filter_parser!(LogLevel)
+    )]
+    log_level: LogLevel,
 
-    #[arg(long, default_value = "both")]
-    log_mode: runtime::LogMode,
+    #[arg(
+        long = "log-mode",
+        default_value = "./latest.log",
+        value_parser = log_mode_parser!(LogMode)
+    )]
+    log_mode: LogMode,
 
-    #[arg(long, default_value = "./latest.log")]
-    log_path: std::path::PathBuf,
+    #[arg(
+        long = "log-ordered",
+        default_value = "terminal",
+        value_parser = log_ordered_parser!(LogOrdered)
+    )]
+    log_ordered: LogOrdered,
 }
 
 ///////////////////////////////
@@ -33,50 +51,54 @@ fn main() -> std::process::ExitCode {
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 
-    let _config = runtime::CONFIG.set(runtime::Config {
-        error_mode: cli.error_mode,
-        log_level: cli.log_level,
-        log_mode: cli.log_mode,
-        log_path: cli.log_path.clone(),
+    LogGuard::with_config(LogConfig {
+        level: cli.log_level,
+        mode: cli.log_mode,
+        order: cli.log_ordered,
+        strictness: cli.log_strictness,
     });
 
-    let _logger = runtime::setup_global_logger(
-        runtime::CONFIG.get().unwrap().log_level.into(),
-        runtime::CONFIG.get().unwrap().log_mode,
-        runtime::CONFIG.get().unwrap().log_path.clone(),
-    );
-
-    // Ensure that a panic in a thread results in the entire program terminating
-    let panic_hook = std::panic::take_hook();
+    // Ensure that a panic in a thread sets the failure flag
     std::panic::set_hook(Box::new(move |panic_info| {
-        // nicer formatting
-        let msg = format!("\n\n{}\n", panic_info).replace('\n', "\n\t");
-        slog_scope::crit!(""; "panicked" => %msg);
+        LogStrictnessLayer::panic();
 
-        if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
-            if let Some(async_guard) = guard.take() {
-                drop(async_guard); // Waits for all logs to flush
+        // Extract panic message
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        // Extract location
+        let location = panic_info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+
+        error!("Panic at {}:", location);
+        for line in message.lines() {
+            error!("  {}", line);
+        }
+
+        // HACK Capture backtrace if enabled. Otherwise output isn't pretty :)
+        let backtrace = std::backtrace::Backtrace::capture();
+        if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+            error!("Backtrace:");
+            for line in backtrace.to_string().lines() {
+                error!("  {}", line.trim());
             }
         }
 
-        println!("Exiting, took: {:#?}", start.elapsed());
-
-        panic_hook(panic_info);
-        std::process::exit(1);
+        error!(elapsed = ?start.elapsed(), "Failure!");
+        LogGuard::flush();
     }));
 
-    log_info!("================================================");
-    log_info!("Running Bascet"; "v" => env!("CARGO_PKG_VERSION"));
-    log_info!(""; "Command" => ?cli.command, "Error Handling Mode" => %cli.error_mode);
-    log_info!(""; "Log Mode" => %cli.log_mode, "Log Level" => %cli.log_level);
-
-    match cli.log_mode {
-        runtime::LogMode::Both | runtime::LogMode::Path => {
-            log_info!(""; "Log Path" => cli.log_path.display());
-        }
-        _ => {}
-    }
-    log_info!("================================================");
+    info!("*==============================================*");
+    info!(version = env!("CARGO_PKG_VERSION"), "Running Bascet");
+    info!(command = %cli.command);
+    info!("------------------------------------------------");
 
     let result = match cli.command {
         Commands::_depreciated_GetRaw(mut cmd) => cmd.try_execute(),
@@ -99,17 +121,8 @@ fn main() -> std::process::ExitCode {
         Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
     };
 
-    if let Ok(mut guard) = runtime::ASYNC_GUARD.lock() {
-        if let Some(async_guard) = guard.take() {
-            drop(async_guard); // Waits for all logs to flush
-        }
-    }
+    info!(elapsed = ?start.elapsed(), "Success!");
+    LogGuard::flush();
 
-    if let Err(e) = result {
-        eprintln!("Error! took: {:#?}\n{e}", start.elapsed());
-        return std::process::ExitCode::FAILURE;
-    }
-
-    println!("Success! took: {:#?}", start.elapsed());
     return std::process::ExitCode::SUCCESS;
 }

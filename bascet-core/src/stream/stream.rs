@@ -7,7 +7,8 @@ use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
 use rtrb::PushError;
 
-use crate::spinpark_loop::SPINPARK_PARKS_BEFORE_WARN;
+use bascet_runtime::logging::warn;
+use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
 use crate::stream::DEFAULT_COUNTOF_BUFFERS;
 use crate::*;
 
@@ -118,10 +119,10 @@ where
                         Err(PushError::Full(i)) => {
                             item = i;
 
-                            spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                                &mut spinpark_counter,
-                                "Decoder (push): pushing buffer_status (buffer full, consumer slow)",
-                            );
+                            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut spinpark_counter) {
+                                SpinPark::Warn => warn!(source = "Stream::decode", "buffer full, consumer slow"),
+                                _ => {}
+                            }
 
                             if likely_unlikely::unlikely(stop_flag.load(Ordering::Relaxed) == true)
                             {

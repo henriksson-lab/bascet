@@ -10,9 +10,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use bgzip::{write::BGZFMultiThreadWriter, Compression};
+use bgzip::{Compression, write::BGZFMultiThreadWriter};
 
-use super::shard::StreamingReadPairReader;
 use super::CellID;
 use super::ConstructFromPath;
 use super::ReadPair;
@@ -22,13 +21,14 @@ use super::ShardCellDictionary;
 use super::ShardFileExtractor;
 use super::ShardRandomFileExtractor;
 use super::ShardStreamingFileExtractor;
+use super::shard::StreamingReadPairReader;
 
 use rust_htslib::tbx::Read;
 use rust_htslib::tbx::Reader as TabixReader;
 
-use noodles::fastq::record::Definition;
 use noodles::fastq::Record as FastqRecord;
 use noodles::fastq::Writer as FastqWriter;
+use noodles::fastq::record::Definition;
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 

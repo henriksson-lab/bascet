@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::shard::StreamingReadPairReader;
 use super::ConstructFromPath;
+use super::shard::StreamingReadPairReader;
 use crate::fileformat::shard::ReadPair;
 
 use super::CellID;
-use rust_htslib::bam::record::Record as BamRecord;
 use rust_htslib::bam::Read;
+use rust_htslib::bam::record::Record as BamRecord;
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 

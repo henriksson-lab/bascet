@@ -4,12 +4,13 @@ use std::{
     collections::VecDeque,
     mem::MaybeUninit,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
-use crate::spinpark_loop::{self, SpinPark, SPINPARK_PARKS_BEFORE_WARN};
+use bascet_runtime::logging::warn;
+use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
 
 pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedDenseReceiver<T, N>)
 {
@@ -145,65 +146,65 @@ impl<T, const N: usize> OrderedDenseReceiver<T, N> {
                 return Err(RecvError);
             }
 
-            match spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                &mut spinpark_counter,
-                "OrderedReceiver::recv",
-            ) {
+            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut spinpark_counter) {
                 SpinPark::Spun => {
                     // We assume the slot is going to be set soon and not be recieved out of order
                     continue;
                 }
-                SpinPark::Parked => {
-                    // NOTE:  inner_slowpath.ordered is indexed relative to next_expected. If
-                    //          the value there is some this is always going to be == next_expected
-                    if self
-                        .inner_slowpath
-                        .ordered
-                        .front()
-                        .map(|v| v.is_some())
-                        .unwrap_or(false)
-                    {
-                        let val = unsafe {
-                            self.inner_slowpath
-                                .ordered
-                                .pop_front()
-                                // SAFETY:  Guaranteed by above condition
-                                .unwrap_unchecked()
-                                .unwrap_unchecked()
-                        };
-                        self.inner_next += 1;
-                        self.inner_slowpath.base += 1;
-                        self.inner_fastpath
-                            .base
-                            .store(self.inner_next, Ordering::Release);
-                        return Ok(val);
-                    }
+                SpinPark::Warn => {
+                    warn!(source = "OrderedReceiver::recv", "waiting for ordered value");
+                }
+                SpinPark::Parked => {}
+            }
 
-                    loop {
-                        match self.inner_slowpath_rx.try_recv() {
-                            Ok((idx, val)) => {
-                                let offset = idx - self.inner_slowpath.base;
-                                if offset == 0 {
-                                    self.inner_next += 1;
-                                    self.inner_slowpath.base += 1;
-                                    self.inner_fastpath
-                                        .base
-                                        .store(self.inner_next, Ordering::Release);
-                                    return Ok(val);
-                                }
-                                if offset >= self.inner_slowpath.ordered.len() {
-                                    self.inner_slowpath.ordered.resize_with(offset + 1, || None);
-                                }
-                                self.inner_slowpath.ordered[offset] = Some(val);
-                            }
-                            Err(TryRecvError::Empty) => {
-                                break;
-                            }
-                            Err(TryRecvError::Disconnected) => {
-                                self.inner_slowpath_disconnected = true;
-                                break;
-                            }
+            // NOTE:  inner_slowpath.ordered is indexed relative to next_expected. If
+            //          the value there is some this is always going to be == next_expected
+            if self
+                .inner_slowpath
+                .ordered
+                .front()
+                .map(|v| v.is_some())
+                .unwrap_or(false)
+            {
+                let val = unsafe {
+                    self.inner_slowpath
+                        .ordered
+                        .pop_front()
+                        // SAFETY:  Guaranteed by above condition
+                        .unwrap_unchecked()
+                        .unwrap_unchecked()
+                };
+                self.inner_next += 1;
+                self.inner_slowpath.base += 1;
+                self.inner_fastpath
+                    .base
+                    .store(self.inner_next, Ordering::Release);
+                return Ok(val);
+            }
+
+            loop {
+                match self.inner_slowpath_rx.try_recv() {
+                    Ok((idx, val)) => {
+                        let offset = idx - self.inner_slowpath.base;
+                        if offset == 0 {
+                            self.inner_next += 1;
+                            self.inner_slowpath.base += 1;
+                            self.inner_fastpath
+                                .base
+                                .store(self.inner_next, Ordering::Release);
+                            return Ok(val);
                         }
+                        if offset >= self.inner_slowpath.ordered.len() {
+                            self.inner_slowpath.ordered.resize_with(offset + 1, || None);
+                        }
+                        self.inner_slowpath.ordered[offset] = Some(val);
+                    }
+                    Err(TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        self.inner_slowpath_disconnected = true;
+                        break;
                     }
                 }
             }

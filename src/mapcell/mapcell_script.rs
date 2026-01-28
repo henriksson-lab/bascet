@@ -36,7 +36,7 @@ impl MapCellFunctionShellScript {
         preset_script_code: &mut impl Read,
     ) -> anyhow::Result<MapCellFunctionShellScript> {
         let mut rng = rand::thread_rng();
-        let n2: u16 = rng.gen();
+        let n2: u16 = rng.r#gen();
 
         //Copy the reader content to a new temp file. This file will be deleted upon exit. Wrapping in {} to force operation to be done at the end
         let path_script = PathBuf::from(format!("./_temp_script.{}.sh", n2)); //canonicalize().expect("Failed to get full temp script path");
@@ -284,7 +284,9 @@ fn get_script_api_version(path_script: &impl AsRef<Path>) -> anyhow::Result<Stri
                 bail!("Script --bascet-api is incorrect. Are you sure this is a valid script?");
             }
         } else {
-            bail!("Failed to parse --bascet-api output of script. Are you sure this is a valid script?");
+            bail!(
+                "Failed to parse --bascet-api output of script. Are you sure this is a valid script?"
+            );
         }
     } else {
         bail!("Failed to run script {:?}", path_script.as_ref());

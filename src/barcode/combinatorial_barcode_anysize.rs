@@ -438,7 +438,10 @@ impl CombinatorialBarcodePart {
         self.quick_testpos = most_common_pos;
         self.all_test_pos.extend(first_pos..last_pos);
 
-        println!("scanning from starting positions {} to {}, first testing position {}. The barcode is of length {}",first_pos, last_pos, self.quick_testpos, self.bc_length);
+        println!(
+            "scanning from starting positions {} to {}, first testing position {}. The barcode is of length {}",
+            first_pos, last_pos, self.quick_testpos, self.bc_length
+        );
 
         //Histogram no longer needed
         self.histogram_startpos.clear();

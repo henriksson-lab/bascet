@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 bascet-derive = { path = "../bascet-derive" }
+bascet-runtime = { path = "../bascet-runtime" }
 bascet-variadic = { path = "../bascet-variadic" }
 binary-heap-plus = "0.5.0"
 bon = "3.8.1"

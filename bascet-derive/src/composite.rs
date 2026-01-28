@@ -3,8 +3,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
 use syn::{
-    parse::Parse, parse::ParseStream, parse_macro_input, Data, DeriveInput, Fields, Ident, Path,
-    Token, Type,
+    Data, DeriveInput, Fields, Ident, Path, Token, Type, parse::Parse, parse::ParseStream,
+    parse_macro_input,
 };
 
 enum AttrSpec {

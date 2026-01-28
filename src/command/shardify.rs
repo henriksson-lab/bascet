@@ -2,7 +2,7 @@ use anyhow::Result;
 use bascet_core::{
     attr::{block::*, meta::*},
     channel::PeekableReceiver,
-    spinpark_loop::{self, SpinPark, SPINPARK_PARKS_BEFORE_WARN},
+    threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN},
     *,
 };
 use bascet_derive::Budget;
@@ -12,17 +12,17 @@ use bytesize::ByteSize;
 use clap::Args;
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{self, Receiver, Sender};
-use itertools::{izip, Itertools};
+use itertools::izip;
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{bounded_parser, log_critical, log_info, log_warning};
+use crate::bounded_parser;
+use bascet_runtime::logging::{debug, error, info, warn};
 
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
@@ -100,18 +100,10 @@ pub struct ShardifyCMD {
     )]
     pub sizeof_stream_arena: ByteSize,
 
-    #[arg(
-        long = "show-filter-warning",
-        default_value_t = true,
-        hide = true
-    )]
+    #[arg(long = "show-filter-warning", default_value_t = true, hide = true)]
     pub show_filter_warning: bool,
 
-    #[arg(
-        long = "show-startup-message",
-        default_value_t = true,
-        hide = true
-    )]
+    #[arg(long = "show-startup-message", default_value_t = true, hide = true)]
     pub show_startup_message: bool,
 }
 
@@ -163,14 +155,15 @@ impl ShardifyCMD {
         let countof_streams_input = self.paths_in.len() as u64;
         let countof_writers_output = self.paths_out.len() as u64;
 
-        let sizeof_stream_each_buffer = ByteSize(budget.mem::<MBuffer>().as_u64() / countof_streams_input);
+        let sizeof_stream_each_buffer =
+            ByteSize(budget.mem::<MBuffer>().as_u64() / countof_streams_input);
 
         if !self.show_startup_message {
-            log_info!(
-                "Starting Shardify";
-                "using" => %budget,
-                "memory per stream" => %sizeof_stream_each_buffer,
-                "cells in filter" => (&*arc_filter).as_ref().map_or(0, |f| f.len())
+            info!(
+                using = %budget,
+                memory_per_stream = %sizeof_stream_each_buffer,
+                cells_in_filter = (&*arc_filter).as_ref().map_or(0, |f| f.len()),
+                "Starting Shardify"
             );
         }
 
@@ -211,7 +204,7 @@ impl ShardifyCMD {
             vec_reader_handles.push(budget.spawn::<TRead, _, _>(thread_idx as u64, move || {
                 let thread = std::thread::current();
                 let thread_name = thread.name().unwrap_or("unknown thread"); 
-                log_info!("Starting stream"; "thread" => thread_name, "path" => %thread_input);
+                debug!(thread = thread_name, path = %thread_input, "Starting stream");
 
                 let thread_file = match thread_input.clone().open() {
                     Ok(file) => file,
@@ -244,7 +237,7 @@ impl ShardifyCMD {
                         Ok(Some(block)) => block,
                         Err(e) => panic!("{e:?}"),
                         Ok(None) => {
-                            log_info!("Stream finished"; "thread" => thread_name);
+                            debug!(thread = thread_name, "Stream finished");
                             break;
                         }
                     };
@@ -256,10 +249,10 @@ impl ShardifyCMD {
 
                     if global_processed % 100_000 == 0 {
                         let keep_ratio = (global_kept as f64) / (global_processed as f64);
-                        log_info!(
-                            "Processing";
-                            "bbgz blocks processed" => global_processed,
-                            "bbgz blocks kept" => format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio)
+                        info!(
+                            bbgz_blocks_processed = global_processed,
+                            bbgz_blocks_kept = format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio),
+                            "Processing"
                         );
                     }
 
@@ -280,7 +273,7 @@ impl ShardifyCMD {
                 let _ = thread_notify_tx.send(());
                 drop(thread_notify_tx);
                 drop(thread_cell_tx);
-                log_info!("Reader thread exiting"; "thread" => thread_name);
+                debug!(thread = thread_name, "Reader thread exiting");
             }));
         }
         drop(notify_tx);
@@ -298,12 +291,13 @@ impl ShardifyCMD {
         for (thread_idx, (thread_output, thread_write_rx)) in
             izip!(self.paths_out.clone(), vec_write_rx).enumerate()
         {
-            log_info!("Starting writer thread"; "thread" => thread_idx, "output path" => %thread_output);
+            debug!(thread = thread_idx, output_path = %thread_output, "Starting writer thread");
 
             let thread_file = match thread_output.clone().create() {
                 Ok(file) => file,
                 Err(e) => {
-                    log_critical!("Failed to create output file"; "path" => ?thread_output.path(), "error" => %e);
+                    error!(path = ?thread_output.path(), error = %e, "Failed to create output file");
+                    panic!("Failed to create output file");
                 }
             };
 
@@ -314,7 +308,7 @@ impl ShardifyCMD {
             vec_writer_handles.push(budget.spawn::<TWrite, _, _>(thread_idx as u64, move || {
                 let thread = std::thread::current();
                 let thread_name = thread.name().unwrap_or("unknown thread");
-                log_info!("Starting writer"; "thread" => thread_name, "path" => %thread_output);
+                debug!(thread = thread_name, path = %thread_output, "Starting writer");
 
                 let mut merge_blocks: SmallVec<[parse::bbgz::Block; 32]> = SmallVec::new();
                 let mut merge_csize;
@@ -454,7 +448,7 @@ impl ShardifyCMD {
                         global_counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
                     let new_counter = last_counter + n;
                     if last_counter / 100_000 != new_counter / 100_000 {
-                        log_info!("Writing"; "bbgz blocks written" => new_counter);
+                        info!(bbgz_blocks_written = new_counter, "Writing");
                     }
                 }
 
@@ -462,13 +456,14 @@ impl ShardifyCMD {
                     .write_all(&codec::bbgz::MARKER_EOF)
                     .unwrap();
                 thread_buf_writer.flush().unwrap();
-                log_info!("Exiting writer {thread_idx}");
+                debug!("Exiting writer {thread_idx}");
             }));
         }
 
         let mut coordinator_vec_last_id: SmallVec<[SmallVec<[u8; 16]>; 32]> =
             smallvec![smallvec![0; 16]; countof_streams_input as usize];
-        let mut coordinator_vec_take: Vec<usize> = Vec::with_capacity(countof_streams_input as usize);
+        let mut coordinator_vec_take: Vec<usize> =
+            Vec::with_capacity(countof_streams_input as usize);
         let mut coordinator_vec_send: Vec<parse::bbgz::Block> =
             Vec::with_capacity(countof_streams_input as usize);
         let mut coordinator_spinpark_counter = 0;
@@ -476,10 +471,10 @@ impl ShardifyCMD {
 
         'notify: loop {
             if let Err(channel::TryRecvError::Empty) = notify_rx.try_recv() {
-                spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                    &mut coordinator_spinpark_counter,
-                    "Shardify (coordinator): waiting for notification",
-                );
+                match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut coordinator_spinpark_counter) {
+                    SpinPark::Warn => warn!(source = "Shardify::coordinator", "waiting for notification"),
+                    _ => {}
+                }
                 continue;
             }
             coordinator_spinpark_counter = 0;
@@ -508,23 +503,17 @@ impl ShardifyCMD {
                             let last_id = &coordinator_vec_last_id[sweep_idx];
                             match sweep_min_cell {
                                 None => {
-                                    spinpark_loop::spinpark_loop_warn::<
-                                        100,
-                                        SPINPARK_PARKS_BEFORE_WARN,
-                                    >(
-                                        &mut sweep_spinpark_counter,
-                                        "Shardify (coordinator): sweep waiting for data",
-                                    );
+                                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut sweep_spinpark_counter) {
+                                        SpinPark::Warn => warn!(source = "Shardify::coordinator", "sweep waiting for data"),
+                                        _ => {}
+                                    }
                                     break 'sweep;
                                 }
                                 Some(mc) if &**last_id <= mc => {
-                                    spinpark_loop::spinpark_loop_warn::<
-                                        100,
-                                        SPINPARK_PARKS_BEFORE_WARN,
-                                    >(
-                                        &mut sweep_spinpark_counter,
-                                        "Shardify (coordinator): sweep waiting for data",
-                                    );
+                                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut sweep_spinpark_counter) {
+                                        SpinPark::Warn => warn!(source = "Shardify::coordinator", "sweep waiting for data"),
+                                        _ => {}
+                                    }
                                     break 'sweep;
                                 }
                                 Some(_) => continue,
@@ -555,20 +544,22 @@ impl ShardifyCMD {
                     match vec_coordinator_rx[sweep_idx].try_recv() {
                         Ok(block) => coordinator_vec_send.push(block),
                         Err(e) => {
-                            log_critical!("try_recv failed!"; "stream" => sweep_idx, "error" => ?e)
+                            error!(stream = sweep_idx, error = ?e, "try_recv failed!");
+                            panic!("try_recv failed");
                         }
                     }
                 }
 
                 if !coordinator_vec_send.is_empty() {
                     let cell_id = unsafe { coordinator_vec_send.get_unchecked(0) }.as_bytes::<Id>();
-                    let shard_idx = (gxhash::gxhash64(cell_id, 0x00) % countof_writers_output) as usize;
+                    let shard_idx =
+                        (gxhash::gxhash64(cell_id, 0x00) % countof_writers_output) as usize;
                     // std::mem::take(&mut coordinator_vec_send);
                     let _ = vec_write_tx[shard_idx].send(std::mem::take(&mut coordinator_vec_send));
                 }
 
                 if likely_unlikely::unlikely(sweep_connected == 0) {
-                    log_info!("All channels disconnected, exiting coordinator");
+                    debug!("All channels disconnected, exiting coordinator");
                     break 'notify;
                 }
             }
@@ -578,23 +569,27 @@ impl ShardifyCMD {
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");
         }
-        log_info!("Write handles closed");
+        debug!("Write handles closed");
 
         for handle in vec_reader_handles {
             handle.join().expect("Reader thread panicked");
         }
-        log_info!("Reader handles closed");
+        debug!("Reader handles closed");
 
-        log_info!("Shardify complete";
-            "input files processed" => self.paths_in.len(),
-            "output files created" => self.paths_out.len()
+        info!(
+            input_files_processed = self.paths_in.len(),
+            output_files_created = self.paths_out.len(),
+            "Shardify complete"
         );
 
         Ok(())
     }
 }
 
-fn read_filter<P: AsRef<Path>>(input: P, show_warning: bool) -> Arc<Option<gxhash::HashSet<Vec<u8>>>> {
+fn read_filter<P: AsRef<Path>>(
+    input: P,
+    show_warning: bool,
+) -> Arc<Option<gxhash::HashSet<Vec<u8>>>> {
     // TODO [GOOD FIRST ISSUE] Improve this
     let file = File::open(input).unwrap();
     let reader = BufReader::new(file);
@@ -604,9 +599,7 @@ fn read_filter<P: AsRef<Path>>(input: P, show_warning: bool) -> Arc<Option<gxhas
         .collect::<gxhash::HashSet<Vec<u8>>>();
 
     if filter.is_empty() && show_warning {
-        log_warning!(
-            "Empty cell list detected! This configuration will DUPLICATE the input datasets."
-        );
+        warn!("Empty cell list detected! This configuration will DUPLICATE the input datasets.");
     }
     Arc::new(Some(filter))
 }

@@ -1,10 +1,10 @@
 use bascet_core::{ArenaSlice, Parse, ParseResult};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use crate::{
-    codec::bbgz::{MAX_SIZEOF_BLOCKusize, MIN_SIZEOF_HEADERusize, MARKER_EOF},
-    parse::bbgz::{BBGZParser, Block},
     BBGZExtra, BBGZHeader, BBGZHeaderBase, BBGZTrailer, BGZFExtra,
+    codec::bbgz::{MARKER_EOF, MAX_SIZEOF_BLOCKusize, MIN_SIZEOF_HEADERusize},
+    parse::bbgz::{BBGZParser, Block},
 };
 
 impl Parse<ArenaSlice<u8>> for BBGZParser {

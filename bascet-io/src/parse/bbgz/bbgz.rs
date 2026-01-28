@@ -1,6 +1,6 @@
 use bascet_core::{
-    attr::{block::*, meta::*},
     ArenaView, Composite,
+    attr::{block::*, meta::*},
 };
 use serde::Serialize;
 use smallvec::SmallVec;

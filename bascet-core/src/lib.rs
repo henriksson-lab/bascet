@@ -24,4 +24,4 @@ pub use serialise::*;
 pub use stream::*;
 pub use utils::*;
 
-pub use bascet_derive::{define_attr, define_backing, Composite};
+pub use bascet_derive::{Composite, define_attr, define_backing};

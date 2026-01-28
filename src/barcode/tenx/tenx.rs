@@ -90,7 +90,10 @@ impl Chemistry for TenxRNAChemistry {
         //There will always be at least one chemistry to pick
         let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
-        println!("Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}", best_chem_name, best_chem_score);
+        println!(
+            "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
+            best_chem_name, best_chem_score
+        );
         //panic!("test");
         self.barcode = map_round_bcs.get(best_chem_name.as_str()).unwrap().clone();
 

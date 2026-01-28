@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Ident, RangeLimits};
+use syn::{Ident, RangeLimits, parse_macro_input};
 
 #[proc_macro]
 pub fn variadic(input: TokenStream) -> TokenStream {

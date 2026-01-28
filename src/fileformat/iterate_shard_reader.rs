@@ -5,17 +5,17 @@ use std::sync::Mutex;
 use anyhow::bail;
 use log::info;
 
+use crate::fileformat::TirpStreamingShardReaderFactory;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::zip::ZipBascetShardReaderFactory;
-use crate::fileformat::TirpStreamingShardReaderFactory;
 
 use crate::fileformat;
-use crate::fileformat::detect_shard_format;
 use crate::fileformat::ConstructFromPath;
 use crate::fileformat::DetectedFileformat;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ShardStreamingFileExtractor;
+use crate::fileformat::detect_shard_format;
 
 ////////////////////////////////////
 /// General interface to all types of readers, enabling iteration over shard-type files
@@ -69,7 +69,9 @@ pub fn iterate_shard_reader_multithreaded(
         let list_cells = if let Some(list_cells) = list_cells {
             list_cells
         } else {
-            panic!("unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)");
+            panic!(
+                "unable to figure out a list of cells ahead of time; this has not yet been implemented (provide suitable input file format, or manually specify cells)"
+            );
             //Could revert to streaming here
         };
         let list_cells = list_cells.clone();

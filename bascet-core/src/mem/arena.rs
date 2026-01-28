@@ -8,9 +8,9 @@ use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
-use crate::spinpark_loop::SPINPARK_PARKS_BEFORE_WARN;
-use crate::utils::spinpark_loop;
-use crate::{likely_unlikely, SendPtr, DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER};
+use bascet_runtime::logging::warn;
+use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
+use crate::{DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER, SendPtr, likely_unlikely};
 
 pub struct ArenaSlice<T>
 where
@@ -370,10 +370,10 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                 }
             }
 
-            spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                &mut count_spun,
-                "ArenaPool (alloc): waiting for arena to be freed (possible deadlock if cell exceeds buffer size)",
-            );
+            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut count_spun) {
+                SpinPark::Warn => warn!(source = "ArenaPool::alloc", "waiting for arena to be freed (possible deadlock if cell exceeds buffer size)"),
+                _ => {}
+            }
         }
     }
 }
@@ -387,10 +387,10 @@ impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
                 // SAFETY: We're in drop, no other threads can access arenas
                 let arena = unsafe { &*arena_cell.get() };
                 if arena.cnt.load(Ordering::Relaxed) != 0 {
-                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                        &mut count_spun,
-                        "ArenaPool (drop): waiting for arena to be freed",
-                    );
+                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut count_spun) {
+                        SpinPark::Warn => warn!(source = "ArenaPool::drop", "waiting for arena to be freed"),
+                        _ => {}
+                    }
                     continue 'wait;
                 }
             }

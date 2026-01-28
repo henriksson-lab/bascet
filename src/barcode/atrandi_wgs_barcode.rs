@@ -1,6 +1,6 @@
-use super::trim_pairwise;
 use super::Chemistry;
 use super::CombinatorialBarcode;
+use super::trim_pairwise;
 use seq_io::fastq::Reader as FastqReader;
 use std::cmp::min;
 use std::io::Cursor;
