@@ -110,13 +110,6 @@ pub struct GetRawCMD {
         value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
     countof_threads_sort: Option<BoundedU64<1, { u64::MAX }>>,
-    #[arg(
-        long = "countof-threads-mergesort",
-        help = "Number of second-phase sorting threads",
-        value_name = "2..",
-        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
-    )]
-    countof_threads_mergesort: Option<BoundedU64<2, { u64::MAX }>>,
 
     #[arg(
         long = "countof-threads-write",
@@ -133,9 +126,7 @@ pub struct GetRawCMD {
         value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
     countof_threads_compress: Option<BoundedU64<1, { u64::MAX }>>,
-    // 1 prev 3634s
-    // 2 prev 3698s
-    // 3 prev 2666s
+
     #[arg(
         short = 'm',
         long = "memory",
@@ -247,14 +238,11 @@ struct GetrawBudget {
 
     #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_read: BoundedU64<2, { u64::MAX }>,
-
     #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.125) as u64))]
     countof_threads_debarcode: BoundedU64<1, { u64::MAX }>,
 
     #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.25) as u64))]
     countof_threads_sort: BoundedU64<1, { u64::MAX }>,
-    #[threads(TMergeSort, |_, _| bounded_integer::BoundedU64::const_new::<4>())]
-    countof_threads_mergesort: BoundedU64<2, { u64::MAX }>,
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.125) as u64))]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
@@ -290,18 +278,14 @@ impl GetRawCMD {
             .maybe_countof_threads_read(self.countof_threads_read)
             .maybe_countof_threads_debarcode(self.countof_threads_debarcode)
             .maybe_countof_threads_sort(self.countof_threads_sort)
-            .maybe_countof_threads_mergesort(self.countof_threads_mergesort)
             .maybe_countof_threads_write(self.countof_threads_write)
             .maybe_countof_threads_compress(self.countof_threads_compress)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
-            // .maybe_sizeof_sort_buffer(self.sizeof_sort_buffer)
             .maybe_sizeof_compress_buffer(self.sizeof_compress_buffer)
             .maybe_sizeof_compress_raw_buffer(self.sizeof_compress_raw_buffer)
             .build();
 
-        budget.validate();
-
-        info!(using = %budget, "Starting GetRaw");
+        budget.log();
         if self.compression_level.level() == 0 {
             warn!("Compression level is 0 (uncompressed)")
         }

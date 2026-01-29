@@ -47,7 +47,12 @@ macro_rules! terminal_layer {
         fmt::layer()
             .with_writer($writer)
             .with_target(false)
+            .with_thread_names(false)
+            .with_thread_ids(false)
+            .with_file(false)
+            .with_line_number(false)
             .with_ansi(true)
+
     };
 }
 

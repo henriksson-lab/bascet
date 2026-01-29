@@ -159,10 +159,9 @@ impl CountsketchCMD {
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
 
-        budget.validate();
+        budget.log();
 
         info!(
-            using = %budget,
             input_files = self.paths_in.len(),
             output_path = ?self.path_out,
             countsketch_size = self.countsketch_size,

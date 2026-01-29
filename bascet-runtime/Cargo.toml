@@ -22,4 +22,4 @@ strum_macros = "0.27.2"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-appender = "0.2.4"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] } 
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "smallvec", "parking_lot"] }

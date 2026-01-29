@@ -1,7 +1,6 @@
 pub const SPINPARK_PARK_DURATION: core::time::Duration = std::time::Duration::from_micros(50);
-pub const SPINPARK_COUNTOF_PARKS_BEFORE_WARN: usize = (std::time::Duration::from_secs(15).as_micros()
-    / SPINPARK_PARK_DURATION.as_micros())
-    as usize;
+pub const SPINPARK_COUNTOF_PARKS_BEFORE_WARN: usize =
+    (std::time::Duration::from_secs(15).as_micros() / SPINPARK_PARK_DURATION.as_micros()) as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpinPark {
@@ -37,7 +36,9 @@ fn spinpark_loop_slow<const MAX_SPINS: usize, const PARKS_BEFORE_WARN: usize>(
     let duration = match countof_warns {
         0 => SPINPARK_PARK_DURATION.mul_f64(1.0 + (countof_parks as f64 * 0.1)),
         1.. => {
-            let exp_multiplier = (2.0 as f64).powi(countof_warns as i32).min(PARKS_BEFORE_WARN as f64);
+            let exp_multiplier = (2.0 as f64)
+                .powi(countof_warns as i32)
+                .min(PARKS_BEFORE_WARN as f64);
             SPINPARK_PARK_DURATION.mul_f64(exp_multiplier)
         }
     };

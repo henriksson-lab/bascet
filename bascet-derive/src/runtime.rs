@@ -257,7 +257,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 let total_threads = self.#total_field.get();
                 let sum_threads: u64 = 0 #(+ self.#thread_budget_fields.get())*;
                 if sum_threads > total_threads {
-                    warn!(requested = sum_threads, provided = total_threads, "Thread budget exceeded");
+                    bascet_runtime::warn!(requested = sum_threads, provided = total_threads, "Thread budget exceeded");
                 }
             }
         });
@@ -267,7 +267,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 let total_mem = self.#total_field;
                 let sum_mem = bytesize::ByteSize(0) #(+ self.#mem_budget_fields)*;
                 if sum_mem > total_mem {
-                    warn!(requested = %sum_mem, provided = %total_mem, "Memory budget exceeded");
+                    bascet_runtime::warn!(requested = %sum_mem, provided = %total_mem, "Memory budget exceeded");
                 }
             }
         });
@@ -279,6 +279,30 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
             }
         }
     };
+
+    let thread_log_lines: Vec<_> = budget_defs
+        .iter()
+        .filter(|def| match &def.kind {
+            BudgetKind::Thread(_) => true,
+            _ => false,
+        })
+        .map(|def| {
+            let field_ident = &def.field_ident;
+            quote! { bascet_runtime::info!(#field_ident = self.#field_ident.get()); }
+        })
+        .collect();
+
+    let mem_log_lines: Vec<_> = budget_defs
+        .iter()
+        .filter(|def| match &def.kind {
+            BudgetKind::Mem(_) => true,
+            _ => false,
+        })
+        .map(|def| {
+            let field_ident = &def.field_ident;
+            quote! { bascet_runtime::info!(#field_ident = %self.#field_ident); }
+        })
+        .collect();
 
     let helper_methods = {
         let threads_method = if has_threads {
@@ -316,10 +340,48 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
             quote! {}
         };
 
+        let thread_header = if let Some(total_field) = &total_threads_field {
+            quote! {
+                let total_threads = self.#total_field.get();
+                let sum_threads: u64 = 0 #(+ self.#thread_budget_fields.get())*;
+                if sum_threads > total_threads {
+                    bascet_runtime::warn!(requested = sum_threads, provided = total_threads, "Budget (threads) exceeded");
+                } else {
+                    bascet_runtime::info!("Budget (threads)");
+                }
+            }
+        } else {
+            quote! { bascet_runtime::info!("Budget (threads)"); }
+        };
+
+        let mem_header = if let Some(total_field) = &total_mem_field {
+            quote! {
+                let total_mem = self.#total_field;
+                let sum_mem = bytesize::ByteSize(0) #(+ self.#mem_budget_fields)*;
+                if sum_mem > total_mem {
+                    bascet_runtime::warn!(requested = %sum_mem, provided = %total_mem, "Budget (memory) exceeded");
+                } else {
+                    bascet_runtime::info!("Budget (memory)");
+                }
+            }
+        } else {
+            quote! { bascet_runtime::info!("Budget (memory)"); }
+        };
+
+        let log_method = quote! {
+            pub fn log(&self) {
+                #thread_header
+                #(#thread_log_lines)*
+                #mem_header
+                #(#mem_log_lines)*
+            }
+        };
+
         quote! {
             #threads_method
             #mem_method
             #validate_method
+            #log_method
         }
     };
 
@@ -384,17 +446,23 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         }
     });
 
-    let display_fields = budget_defs.iter().enumerate().map(|(idx, def)| {
+    let max_field_len = budget_defs
+        .iter()
+        .map(|def| def.field_ident.to_string().len())
+        .max()
+        .unwrap_or(0);
+
+    let display_fields = budget_defs.iter().map(|def| {
         let field_ident = &def.field_ident;
         let field_name = field_ident.to_string();
-        let separator = if idx == 0 { "" } else { ", " };
+        let padding = max_field_len - field_name.len();
 
         match &def.kind {
             BudgetKind::Thread(_) => {
-                quote! { write!(f, "{}{}: {}", #separator, #field_name, self.#field_ident.get())?; }
+                quote! { writeln!(f, "  {}{:padding$} {}", #field_name, "", self.#field_ident.get(), padding = #padding)?; }
             }
             BudgetKind::Mem(_) => {
-                quote! { write!(f, "{}{}: {}", #separator, #field_name, self.#field_ident)?; }
+                quote! { writeln!(f, "  {}{:padding$} {}", #field_name, "", self.#field_ident, padding = #padding)?; }
             }
         }
     });

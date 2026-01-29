@@ -7,10 +7,10 @@ use bounded_integer::BoundedUsize;
 use bytesize::ByteSize;
 use rtrb::PushError;
 
-use bascet_runtime::logging::warn;
-use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
 use crate::stream::DEFAULT_COUNTOF_BUFFERS;
+use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 use crate::*;
+use bascet_runtime::logging::warn;
 
 pub(crate) enum StreamState {
     Aligned,
@@ -119,8 +119,14 @@ where
                         Err(PushError::Full(i)) => {
                             item = i;
 
-                            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut spinpark_counter) {
-                                SpinPark::Warn => warn!(source = "Stream::decode", "buffer full, consumer slow"),
+                            match spinpark_loop::spinpark_loop::<
+                                100,
+                                SPINPARK_COUNTOF_PARKS_BEFORE_WARN,
+                            >(&mut spinpark_counter)
+                            {
+                                SpinPark::Warn => {
+                                    warn!(source = "Stream::decode", "buffer full, consumer slow")
+                                }
                                 _ => {}
                             }
 

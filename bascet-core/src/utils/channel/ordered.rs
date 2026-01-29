@@ -9,8 +9,8 @@ use std::{
     },
 };
 
+use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 use bascet_runtime::logging::warn;
-use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
 
 pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedDenseReceiver<T, N>)
 {
@@ -146,13 +146,18 @@ impl<T, const N: usize> OrderedDenseReceiver<T, N> {
                 return Err(RecvError);
             }
 
-            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut spinpark_counter) {
+            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
+                &mut spinpark_counter,
+            ) {
                 SpinPark::Spun => {
                     // We assume the slot is going to be set soon and not be recieved out of order
                     continue;
                 }
                 SpinPark::Warn => {
-                    warn!(source = "OrderedReceiver::recv", "waiting for ordered value");
+                    warn!(
+                        source = "OrderedReceiver::recv",
+                        "waiting for ordered value"
+                    );
                 }
                 SpinPark::Parked => {}
             }

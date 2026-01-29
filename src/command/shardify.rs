@@ -146,7 +146,7 @@ impl ShardifyCMD {
             }))
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
-        budget.validate();
+        budget.log();
 
         let arc_filter = match &self.path_include {
             Some(path) => read_filter(&**path.path(), self.show_filter_warning),
