@@ -34,7 +34,7 @@ fn spinpark_loop_slow<const MAX_SPINS: usize, const PARKS_BEFORE_WARN: usize>(
     let countof_warns = countof_parks / PARKS_BEFORE_WARN;
 
     let duration = match countof_warns {
-        0 => SPINPARK_PARK_DURATION.mul_f64(1.0 + (countof_parks as f64 * 0.1)),
+        0 => SPINPARK_PARK_DURATION,
         1.. => {
             let exp_multiplier = (2.0 as f64)
                 .powi(countof_warns as i32)
