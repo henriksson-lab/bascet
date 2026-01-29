@@ -58,11 +58,9 @@ fn main() -> std::process::ExitCode {
         strictness: cli.log_strictness,
     });
 
-    // Ensure that a panic in a thread sets the failure flag
     std::panic::set_hook(Box::new(move |panic_info| {
         LogStrictnessLayer::panic();
 
-        // Extract panic message
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
@@ -71,7 +69,6 @@ fn main() -> std::process::ExitCode {
             "Unknown panic".to_string()
         };
 
-        // Extract location
         let location = panic_info
             .location()
             .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
@@ -95,10 +92,9 @@ fn main() -> std::process::ExitCode {
         LogGuard::flush();
     }));
 
-    info!("*==============================================*");
-    info!(version = env!("CARGO_PKG_VERSION"), "Running Bascet");
-    info!(command = %cli.command);
-    info!("------------------------------------------------");
+    info!("*=========================================================================*");
+    info!(version = env!("CARGO_PKG_VERSION"), command = %cli.command, "Running Bascet");
+    info!("---------------------------------------------------------------------------");
 
     let result = match cli.command {
         Commands::_depreciated_GetRaw(mut cmd) => cmd.try_execute(),

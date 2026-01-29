@@ -1,4 +1,5 @@
 use bytesize::ByteSize;
+use crossbeam_utils::CachePadded;
 use memmap2::{MmapMut, MmapOptions};
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
@@ -8,9 +9,9 @@ use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
-use bascet_runtime::logging::warn;
-use crate::threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN};
+use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 use crate::{DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER, SendPtr, likely_unlikely};
+use bascet_runtime::logging::warn;
 
 pub struct ArenaSlice<T>
 where
@@ -141,17 +142,16 @@ where
     }
 }
 
-#[repr(C, align(64))]
+#[repr(C)]
 pub struct Arena<T> {
     // allocator hot path (cache line 1)
     ptr: NonNull<T>,
     len: u64,
     off: u64,
     avl: AtomicBool,
-    _pad: MaybeUninit<[u8; 39]>,
 
     // consumer hot path (cache line 2)
-    cnt: AtomicU16,
+    cnt: crossbeam_utils::CachePadded<AtomicU16>,
 }
 
 impl<T: bytemuck::Pod> Arena<T> {
@@ -161,13 +161,16 @@ impl<T: bytemuck::Pod> Arena<T> {
             len: cap as u64,
             off: 0,
             avl: AtomicBool::new(true),
-            _pad: MaybeUninit::uninit(),
-            cnt: AtomicU16::new(0),
+
+            cnt: CachePadded::new(AtomicU16::new(0)),
         }
     }
 
     #[inline(always)]
     pub fn is_available(&mut self, len: usize) -> bool {
+        if self.avl.load(Ordering::Relaxed) == false {
+            return false;
+        }
         if self
             .avl
             .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
@@ -219,17 +222,11 @@ impl<T: bytemuck::Pod> Arena<T> {
 
     #[inline(always)]
     pub fn try_reset(&mut self) -> bool {
-        // SAFETY: Acquire on success synchronizes with Release in dec_ref,
-        // ensuring we see all writes to arena data before reusing it
-        match self
-            .cnt
-            .compare_exchange(0, 0, Ordering::Acquire, Ordering::Relaxed)
-        {
-            Ok(_) => {
-                self.off = 0;
-                true
-            }
-            Err(_) => false,
+        if self.cnt.load(Ordering::Acquire) == 0 {
+            self.off = 0;
+            true
+        } else {
+            false
         }
     }
 
@@ -248,14 +245,15 @@ impl<T: bytemuck::Pod> Arena<T> {
     }
 }
 
+#[repr(C)]
 pub struct ArenaPool<T: bytemuck::Pod> {
     _mmap: memmap2::MmapMut,
     inner_buf_arenas: Vec<UnsafeCell<Arena<T>>>,
     inner_cap_arenas: usize,
-    inner_idx_hint: AtomicUsize,
-
     sizeof_buffer: ByteSize,
     sizeof_arena: ByteSize,
+    
+    inner_idx_hint: crossbeam_utils::CachePadded<AtomicUsize>,
 }
 
 unsafe impl<T: bytemuck::Pod + Send> Send for ArenaPool<T> {}
@@ -319,7 +317,7 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
                 _mmap: mmap,
                 inner_cap_arenas: capof_arenas,
                 inner_buf_arenas: vec_arenas,
-                inner_idx_hint: AtomicUsize::new(0),
+                inner_idx_hint: CachePadded::new(AtomicUsize::new(0)),
 
                 sizeof_buffer: sizeof_buffer,
                 sizeof_arena: sizeof_arena,
@@ -341,17 +339,18 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
             std::hint::assert_unchecked(countof_arenas > 0);
         }
         let mut count_spun = 0;
+        let hint = self.inner_idx_hint.load(Ordering::Relaxed);
 
         loop {
             for i in 0..countof_arenas {
-                let idx = (self.inner_idx_hint.load(Ordering::Relaxed) + i) % countof_arenas;
+                let idx = (hint + i) % countof_arenas;
                 unsafe {
                     debug_assert!(idx < countof_arenas);
                     std::hint::assert_unchecked(idx < countof_arenas);
                 }
 
                 // SAFETY   The atomic lock in available() ensures exclusive access
-                let arena = unsafe { &mut *self.inner_buf_arenas[idx].get() };
+                let arena = unsafe { &mut *self.inner_buf_arenas.get_unchecked(idx).get() };
                 if arena.is_available(len) {
                     self.inner_idx_hint.store(idx, Ordering::Relaxed);
                     let ptr = arena.alloc(len);
@@ -368,10 +367,28 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
 
                     return slice;
                 }
+
+                let next_idx = (idx + 1) % countof_arenas;
+                unsafe {
+                    branches::prefetch_read_data::<Arena<T>, 0>(
+                        self.inner_buf_arenas.get_unchecked(next_idx).get() as *const Arena<T>,
+                    )
+                };
+                let next_idx = (idx + 2) % countof_arenas;
+                unsafe {
+                    branches::prefetch_read_data::<Arena<T>, 0>(
+                        self.inner_buf_arenas.get_unchecked(next_idx).get() as *const Arena<T>,
+                    )
+                };
             }
 
-            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut count_spun) {
-                SpinPark::Warn => warn!(source = "ArenaPool::alloc", "waiting for arena to be freed (possible deadlock if cell exceeds buffer size)"),
+            match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
+                &mut count_spun,
+            ) {
+                SpinPark::Warn => warn!(
+                    source = "ArenaPool::alloc",
+                    "waiting for arena to be freed (possible deadlock if cell exceeds buffer size)"
+                ),
                 _ => {}
             }
         }
@@ -387,8 +404,12 @@ impl<T: bytemuck::Pod> Drop for ArenaPool<T> {
                 // SAFETY: We're in drop, no other threads can access arenas
                 let arena = unsafe { &*arena_cell.get() };
                 if arena.cnt.load(Ordering::Relaxed) != 0 {
-                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut count_spun) {
-                        SpinPark::Warn => warn!(source = "ArenaPool::drop", "waiting for arena to be freed"),
+                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
+                        &mut count_spun,
+                    ) {
+                        SpinPark::Warn => {
+                            warn!(source = "ArenaPool::drop", "waiting for arena to be freed")
+                        }
                         _ => {}
                     }
                     continue 'wait;
