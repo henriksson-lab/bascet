@@ -4,11 +4,11 @@ pub trait Next<C>
 where
     C: Composite,
 {
-    fn next_with<Q>(&mut self, query: &Q) -> Result<Option<C>, ()>
+    fn next_with<Q>(&mut self, query: &Q) -> anyhow::Result<Option<C>>
     where
         Q: QueryApply<C::Intermediate, C>;
 
-    fn next(&mut self) -> Result<Option<C>, ()>
+    fn next(&mut self) -> anyhow::Result<Option<C>>
     where
         (): QueryApply<C::Intermediate, C>,
     {

@@ -257,7 +257,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 let total_threads = self.#total_field.get();
                 let sum_threads: u64 = 0 #(+ self.#thread_budget_fields.get())*;
                 if sum_threads > total_threads {
-                    bascet_runtime::warn!(requested = sum_threads, provided = total_threads, "Thread budget exceeded");
+                    tracing::warn!(requested = sum_threads, provided = total_threads, "Thread budget exceeded");
                 }
             }
         });
@@ -267,7 +267,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 let total_mem = self.#total_field;
                 let sum_mem = bytesize::ByteSize(0) #(+ self.#mem_budget_fields)*;
                 if sum_mem > total_mem {
-                    bascet_runtime::warn!(requested = %sum_mem, provided = %total_mem, "Memory budget exceeded");
+                    tracing::warn!(requested = %sum_mem, provided = %total_mem, "Memory budget exceeded");
                 }
             }
         });
@@ -288,7 +288,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         })
         .map(|def| {
             let field_ident = &def.field_ident;
-            quote! { bascet_runtime::info!(#field_ident = self.#field_ident.get()); }
+            quote! { tracing::info!(#field_ident = self.#field_ident.get()); }
         })
         .collect();
 
@@ -300,7 +300,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         })
         .map(|def| {
             let field_ident = &def.field_ident;
-            quote! { bascet_runtime::info!(#field_ident = %self.#field_ident); }
+            quote! { tracing::info!(#field_ident = %self.#field_ident); }
         })
         .collect();
 
@@ -345,13 +345,13 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 let total_threads = self.#total_field.get();
                 let sum_threads: u64 = 0 #(+ self.#thread_budget_fields.get())*;
                 if sum_threads > total_threads {
-                    bascet_runtime::warn!(requested = sum_threads, provided = total_threads, "Budget (threads) exceeded");
+                    tracing::warn!(requested = sum_threads, provided = total_threads, "Budget (threads) exceeded");
                 } else {
-                    bascet_runtime::info!("Budget (threads)");
+                    tracing::info!("Budget (threads)");
                 }
             }
         } else {
-            quote! { bascet_runtime::info!("Budget (threads)"); }
+            quote! { tracing::info!("Budget (threads)"); }
         };
 
         let mem_header = if let Some(total_field) = &total_mem_field {
@@ -359,13 +359,13 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                 let total_mem = self.#total_field;
                 let sum_mem = bytesize::ByteSize(0) #(+ self.#mem_budget_fields)*;
                 if sum_mem > total_mem {
-                    bascet_runtime::warn!(requested = %sum_mem, provided = %total_mem, "Budget (memory) exceeded");
+                    tracing::warn!(requested = %sum_mem, provided = %total_mem, "Budget (memory) exceeded");
                 } else {
-                    bascet_runtime::info!("Budget (memory)");
+                    tracing::info!("Budget (memory)");
                 }
             }
         } else {
-            quote! { bascet_runtime::info!("Budget (memory)"); }
+            quote! { tracing::info!("Budget (memory)"); }
         };
 
         let log_method = quote! {

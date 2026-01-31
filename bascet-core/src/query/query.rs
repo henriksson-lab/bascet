@@ -13,11 +13,11 @@ where
     C: Composite,
     Q: QueryApply<C::Intermediate, C>,
 {
-    pub fn next(&mut self) -> Result<Option<C>, ()> {
+    pub fn next(&mut self) -> anyhow::Result<Option<C>> {
         self.stream.next_with(&self.queries)
     }
 
-    pub fn next_into<T>(&mut self) -> Result<Option<T>, ()>
+    pub fn next_into<T>(&mut self) -> anyhow::Result<Option<T>>
     where
         T: Composite + Default,
         T: FromDirect<T::Attrs, C>,

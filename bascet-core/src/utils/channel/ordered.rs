@@ -1,4 +1,5 @@
 use crossbeam::channel::{Receiver, RecvError, Sender, TryRecvError};
+use tracing::warn;
 use std::{
     cell::UnsafeCell,
     collections::VecDeque,
@@ -10,7 +11,6 @@ use std::{
 };
 
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
-use bascet_runtime::logging::warn;
 
 pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedDenseReceiver<T, N>)
 {

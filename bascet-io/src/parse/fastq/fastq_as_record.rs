@@ -4,7 +4,7 @@ use bascet_core::*;
 impl Parse<ArenaSlice<u8>> for crate::Fastq {
     type Item = fastq::Record;
 
-    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item, ()> {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item> {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -38,7 +38,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
         ParseResult::Full(fastq_record)
     }
 
-    fn parse_finish(&mut self) -> ParseResult<Self::Item, ()> {
+    fn parse_finish(&mut self) -> ParseResult<Self::Item> {
         ParseResult::Finished
     }
 
@@ -47,7 +47,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
         mut alloc: FA,
-    ) -> ParseResult<Self::Item, ()>
+    ) -> ParseResult<Self::Item>
     where
         FA: FnMut(usize) -> ArenaSlice<u8>,
     {
@@ -63,22 +63,43 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
         let mut iter_tail = memchr::memchr_iter(b'\n', tail_remaining);
         let mut iter_head = memchr::memchr_iter(b'\n', slice_head);
 
+        let malformed_error = |tail: &[u8], head: &[u8], last_pos: usize| {
+            let overflow = 200;
+            let end = (last_pos + overflow).min(tail.len() + head.len());
+            let tail_end = end.min(tail.len());
+            let head_end = end.saturating_sub(tail.len()).min(head.len());
+            let tail_preview = String::from_utf8_lossy(&tail[..tail_end]);
+            let head_preview = String::from_utf8_lossy(&head[..head_end]);
+            tracing::error!(
+                cursor = self.inner_cursor,
+                tail_len = tail.len(),
+                head_len = head.len(),
+                last_pos = last_pos,
+                tail_preview = ?tail_preview,
+                head_preview = ?head_preview,
+                "malformed FASTQ record: incomplete record across span boundary"
+            );
+            ParseResult::Error(anyhow::anyhow!(
+                "malformed FASTQ record: incomplete record across span boundary"
+            ))
+        };
+
         let (pos_newline_combined, head_len) =
             match (iter_tail.next(), iter_tail.next(), iter_tail.next()) {
                 (Some(t0), Some(t1), Some(t2)) => match iter_head.next() {
                     Some(h3) => ([t0, t1, t2, tail_len + h3], h3 + 1),
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t2),
                 },
                 (Some(t0), Some(t1), None) => match (iter_head.next(), iter_head.next()) {
                     (Some(h2), Some(h3)) => ([t0, t1, tail_len + h2, tail_len + h3], h3 + 1),
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t1),
                 },
                 (Some(t0), None, None) => {
                     match (iter_head.next(), iter_head.next(), iter_head.next()) {
                         (Some(h1), Some(h2), Some(h3)) => {
                             ([t0, tail_len + h1, tail_len + h2, tail_len + h3], h3 + 1)
                         }
-                        _ => return ParseResult::Error(()),
+                        _ => return malformed_error(tail_remaining, slice_head, t0),
                     }
                 }
                 (None, None, None) => {
@@ -92,7 +113,7 @@ impl Parse<ArenaSlice<u8>> for crate::Fastq {
                             [tail_len + h0, tail_len + h1, tail_len + h2, tail_len + h3],
                             h3 + 1,
                         ),
-                        _ => return ParseResult::Error(()),
+                        _ => return malformed_error(tail_remaining, slice_head, 0),
                     }
                 }
                 _ => unreachable!(),

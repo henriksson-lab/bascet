@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bascet::command::{self, Commands};
 use bascet_runtime::logging::{
     log_filter_parser, log_mode_parser, log_ordered_parser, log_strictness_parser,
-    LogConfig, LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer, error,
-    info,
+    LogConfig, LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer
 };
 use clap::Parser;
+use tracing::{error, info};
 
 ///////////////////////////////
 /// Parser for commandline options, top level
@@ -59,7 +59,7 @@ fn main() -> std::process::ExitCode {
     });
 
     std::panic::set_hook(Box::new(move |panic_info| {
-        LogStrictnessLayer::panic();
+        LogStrictnessLayer::is_poisoned().store(true, Ordering::Release);
 
         let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()

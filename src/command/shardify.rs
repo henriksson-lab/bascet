@@ -20,9 +20,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tracing::{debug, info, warn, error};
 
 use crate::bounded_parser;
-use bascet_runtime::logging::{debug, error, info, warn};
 
 /// Commandline option: Take parsed reads and organize them as shards
 #[derive(Args)]
