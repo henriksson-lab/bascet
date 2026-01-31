@@ -35,7 +35,7 @@ use crate::barcode::{Chemistry, CombinatorialBarcode8bp, ParseBioChemistry3};
 use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
 use crate::common;
-use bascet_runtime::logging::{debug, error, info, warn};
+use tracing::{debug, info, warn, error};
 
 #[derive(Args)]
 pub struct GetRawCMD {

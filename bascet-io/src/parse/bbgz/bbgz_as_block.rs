@@ -10,7 +10,7 @@ use crate::{
 impl Parse<ArenaSlice<u8>> for BBGZParser {
     type Item = Block;
 
-    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item, ()> {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item> {
         let slice_remaining = &decoded.as_slice()[self.inner_cursor..];
         let slice_remaining_len = slice_remaining.len();
 
@@ -23,18 +23,23 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             slice_remaining.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||  // cargo fmt stop unaligning these!
             slice_remaining.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
         } {
-            panic!(
-                "Magic bytes not found (cursor {:?}), found instead: {:?} ({:?}); Buffer {:x?}, ({:?})",
-                self.inner_cursor,
-                [slice_remaining.get(0), slice_remaining.get(1)],
-                String::from_utf8_lossy(&[
-                    *slice_remaining.get(0).unwrap_or(&b'#'),
-                    *slice_remaining.get(1).unwrap_or(&b'#')
-                ]),
-                &slice_remaining[..slice_remaining_len.min(500)],
-                String::from_utf8_lossy(&slice_remaining[..slice_remaining_len.min(500)])
+            let found = unsafe {
+                (
+                    *slice_remaining.get_unchecked(0), //
+                    *slice_remaining.get_unchecked(1),
+                )
+            };
+            tracing::error!(
+                cursor = self.inner_cursor,
+                expected = %format_args!("({:#04x}, {:#04x})", BBGZHeaderBase::TEMPLATE.ID1, BBGZHeaderBase::TEMPLATE.ID2),
+                found = %format_args!("({:#04x}, {:#04x})", found.0, found.1),
+                "magic bytes not found"
             );
-            return ParseResult::Error(());
+            return ParseResult::Error(anyhow::anyhow!(
+                "magic bytes not found at cursor {}: got ({:#04x}, {:#04x})",
+                self.inner_cursor,
+                found.0, found.1
+            ));
         }
 
         // Bytes 0-9: ID1, ID2, CM, FLG, MTIME(4), XFL, OS
@@ -137,7 +142,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
         mut alloc: FA,
-    ) -> ParseResult<Self::Item, ()>
+    ) -> ParseResult<Self::Item>
     where
         FA: FnMut(usize) -> ArenaSlice<u8>,
     {
@@ -183,17 +188,40 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let slice_combined_len = slice_combined.len();
 
         if slice_combined_len < MIN_SIZEOF_HEADERusize {
-            panic!("Spanning block too small");
-            return ParseResult::Error(());
+            tracing::error!(
+                size = slice_combined_len,
+                min = MIN_SIZEOF_HEADERusize,
+                block = ?slice_combined,
+                "spanning block too small for header"
+            );
+            return ParseResult::Error(anyhow::anyhow!(
+                "spanning block too small for header: {} < {}",
+                slice_combined_len,
+                MIN_SIZEOF_HEADERusize
+            ));
         }
 
         // SAFETY: checked size in parse_spanning
         if unsafe {
-            slice_combined.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||  // cargo fmt stop unaligning these!
+            slice_combined.get_unchecked(0) != &BBGZHeaderBase::TEMPLATE.ID1 ||   // cargo fmt stop unaligning these!
             slice_combined.get_unchecked(1) != &BBGZHeaderBase::TEMPLATE.ID2
         } {
-            panic!("Magic bytes not found");
-            return ParseResult::Error(());
+            let found = unsafe {
+                (
+                    *slice_combined.get_unchecked(0), //
+                    *slice_combined.get_unchecked(1),
+                )
+            };
+            tracing::error!(
+                expected = %format_args!("({:#04x}, {:#04x})", BBGZHeaderBase::TEMPLATE.ID1, BBGZHeaderBase::TEMPLATE.ID2),
+                found = %format_args!("({:#04x}, {:#04x})", found.0, found.1),
+                "magic bytes not found"
+            );
+            return ParseResult::Error(anyhow::anyhow!(
+                "magic bytes not found: got ({:#04x}, {:#04x})",
+                found.0,
+                found.1
+            ));
         }
 
         // Bytes 0-9: ID1, ID2, CM, FLG, MTIME(4), XFL, OS
@@ -212,8 +240,17 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         let pos_end_fextra = cursor_fextra + xlen;
 
         if slice_combined_len < pos_end_fextra {
-            panic!("Spanning block too small");
-            return ParseResult::Error(());
+            tracing::error!(
+                size = slice_combined_len,
+                xlen = xlen,
+                end_fextra = pos_end_fextra,
+                "spanning block too small for extra fields"
+            );
+            return ParseResult::Error(anyhow::anyhow!(
+                "spanning block too small for extra fields: size {} but extra fields end at {}",
+                slice_combined_len,
+                pos_end_fextra
+            ));
         }
 
         let mut slice_bc: &[u8] = &[];
@@ -257,11 +294,12 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             if slice_combined.starts_with(&MARKER_EOF) {
                 return ParseResult::Partial;
             }
-            panic!(
-                "Missing BC/ID subfield in header. Header: {:?}",
-                String::from_utf8_lossy(&slice_combined.get(..cursor_fextra).unwrap_or(&[]))
+            tracing::error!(
+                has_bc = !slice_bc.is_empty(),
+                has_id = !slice_id.is_empty(),
+                "missing BC/ID subfield in header"
             );
-            return ParseResult::Error(());
+            return ParseResult::Error(anyhow::anyhow!("missing BC/ID subfield in header"));
         }
 
         // SAFETY: BC subfield is guaranteed to have at least 2 bytes (BSIZE is u16)
@@ -271,8 +309,16 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         };
 
         if slice_combined_len < bsize {
-            panic!("Combined block too small");
-            return ParseResult::Error(());
+            tracing::error!(
+                size = slice_combined_len,
+                bsize = bsize,
+                "combined block too small"
+            );
+            return ParseResult::Error(anyhow::anyhow!(
+                "combined block too small: size {} but bsize is {}",
+                slice_combined_len,
+                bsize
+            ));
         }
         // SAFETY: block_end bounds checked above
         let slice_header = unsafe {
@@ -301,7 +347,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         ParseResult::Full(block)
     }
 
-    fn parse_finish(&mut self) -> bascet_core::ParseResult<Self::Item, ()> {
+    fn parse_finish(&mut self) -> bascet_core::ParseResult<Self::Item> {
         ParseResult::Finished
     }
 }

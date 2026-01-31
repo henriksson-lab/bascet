@@ -1,10 +1,11 @@
 use std::{fs::File, io::Read, os::raw, path::Path};
 
-use bascet_core::*;
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use rust_htslib::htslib;
+use tracing::error;
 
+use bascet_core::*;
 pub struct BBGZDecoder {
     inner_hts_file_ptr: SendPtr<htslib::htsFile>,
     inner_hts_bgzf_ptr: SendPtr<htslib::BGZF>,
@@ -56,7 +57,7 @@ impl Decode for BBGZDecoder {
         self.inner_hts_sizeof_alloc
     }
 
-    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> DecodeResult<()> {
+    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> DecodeResult {
         let buf_slice = buf.as_mut();
         let bgzf_read = unsafe {
             htslib::bgzf_read(
@@ -77,9 +78,9 @@ impl Decode for BBGZDecoder {
                 DecodeResult::Decoded(bgzf_read as usize)
             }
             0 => DecodeResult::Eof,
-            err => {
-                panic!("{:?}", err);
-                DecodeResult::Error(())
+            e => {
+                error!(code = e, "htslib::bgzf_read failed");
+                DecodeResult::Error(anyhow::anyhow!("htslib::bgzf_read error {e}"))
             }
         }
     }

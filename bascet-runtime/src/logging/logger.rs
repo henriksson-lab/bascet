@@ -52,7 +52,6 @@ macro_rules! terminal_layer {
             .with_file(false)
             .with_line_number(false)
             .with_ansi(true)
-
     };
 }
 

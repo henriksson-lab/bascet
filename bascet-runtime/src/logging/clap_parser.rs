@@ -1,4 +1,3 @@
-
 #[macro_export]
 macro_rules! log_filter_parser {
     ($filter_type:ty) => {
@@ -66,7 +65,10 @@ macro_rules! log_ordered_parser {
                         "file" => result |= <$ordered_type>::FILE,
                         "none" => {}
                         other => {
-                            return Err(format!("Unknown '{}'. Expected: terminal, file, none", other))
+                            return Err(format!(
+                                "Unknown '{}'. Expected: terminal, file, none",
+                                other
+                            ));
                         }
                     }
                 }

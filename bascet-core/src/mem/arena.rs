@@ -8,10 +8,10 @@ use std::ops::Index;
 use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
+use tracing::warn;
 
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 use crate::{DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER, SendPtr, likely_unlikely};
-use bascet_runtime::logging::warn;
 
 pub struct ArenaSlice<T>
 where
@@ -252,7 +252,7 @@ pub struct ArenaPool<T: bytemuck::Pod> {
     inner_cap_arenas: usize,
     sizeof_buffer: ByteSize,
     sizeof_arena: ByteSize,
-    
+
     inner_idx_hint: crossbeam_utils::CachePadded<AtomicUsize>,
 }
 

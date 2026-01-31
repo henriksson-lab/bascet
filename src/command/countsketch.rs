@@ -1,5 +1,4 @@
 use crate::{bounded_parser, countsketch::CountSketch};
-use bascet_runtime::logging::{debug, info, warn};
 
 use bascet_core::{
     attr::{meta::*, sequence::*},
@@ -27,6 +26,7 @@ use std::{
         Arc,
     },
 };
+use tracing::{debug, info, warn};
 
 #[derive(Args)]
 pub struct CountsketchCMD {
@@ -177,7 +177,8 @@ impl CountsketchCMD {
                 .with_path(input.path().path())
                 .countof_threads(budget.numof_threads_read)
                 .build();
-            let parser = parse::Tirp::builder().build();
+            let parser = parse::Tirp::builder()
+                .build();
 
             let mut stream = Stream::builder()
                 .with_decoder(decoder)

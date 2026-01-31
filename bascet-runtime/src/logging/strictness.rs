@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use tracing::{Level, Subscriber};
+use tracing::{Level, Subscriber, error};
 use tracing_subscriber::layer::{Context, Layer};
 
 #[derive(Clone, Copy, Debug)]
@@ -13,19 +13,19 @@ pub enum LogStrictness {
 pub struct LogStrictnessLayer;
 
 impl LogStrictnessLayer {
-    fn count() -> &'static AtomicU64 {
+    pub fn count() -> &'static AtomicU64 {
         static COUNT: AtomicU64 = AtomicU64::new(0);
         &COUNT
     }
 
-    fn limit() -> &'static AtomicU64 {
+    pub fn limit() -> &'static AtomicU64 {
         static LIMIT: AtomicU64 = AtomicU64::new(u64::MAX);
         &LIMIT
     }
 
-    fn panicking() -> &'static AtomicBool {
-        static PANICKING: AtomicBool = AtomicBool::new(false);
-        &PANICKING
+    pub fn is_poisoned() -> &'static AtomicBool {
+        static POISONED: AtomicBool = AtomicBool::new(false);
+        &POISONED
     }
 
     pub fn set(strictness: LogStrictness) {
@@ -36,15 +36,11 @@ impl LogStrictnessLayer {
             LogStrictness::Lenient(n) => Self::limit().store(n, Ordering::Relaxed),
         }
     }
-
-    pub fn panic() {
-        Self::panicking().store(true, Ordering::Relaxed);
-    }
 }
 
 impl<S: Subscriber> Layer<S> for LogStrictnessLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-        if Self::panicking().load(Ordering::Relaxed) == true {
+        if Self::is_poisoned().load(Ordering::Relaxed) == true {
             return;
         }
 
@@ -53,12 +49,14 @@ impl<S: Subscriber> Layer<S> for LogStrictnessLayer {
             let limit = Self::limit().load(Ordering::Relaxed);
 
             if count >= limit {
-                panic!(
+                Self::is_poisoned().store(true, Ordering::Release);
+                
+                error!(
                     "Warning limit exceeded ({}/{}): {} in {}",
                     count + 1,
                     limit,
                     event.metadata().level(),
-                    event.metadata().target()
+                    event.metadata().target(),
                 );
             }
         }
