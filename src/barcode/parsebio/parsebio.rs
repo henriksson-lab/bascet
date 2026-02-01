@@ -1,9 +1,9 @@
 use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
-use crate::log_info;
-use bascet_core::attr::sequence;
+// use crate::log_info;
 use bascet_core::AsCollection;
+use bascet_core::attr::sequence;
 use blart::AsBytes;
 use seq_io::fastq::Reader as FastqReader;
 
@@ -116,7 +116,10 @@ impl Chemistry for ParseBioChemistry3 {
             //There will always be at least one chemistry to pick
             let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
-            println!("Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}", best_chem_name, best_chem_score);
+            println!(
+                "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
+                best_chem_name, best_chem_score
+            );
             //panic!("test");
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
@@ -174,7 +177,7 @@ impl Chemistry for ParseBioChemistry3 {
             for i in 0..vec_r2.len() {
                 //Parse bio barcode is in R2
                 let read = vec_r2[i].as_bytes::<sequence::R0>();
-                log_info!("{:?}", String::from_utf8_lossy(read));
+                // log_info!("{:?}", String::from_utf8_lossy(read));
                 for (chem_name, bcs) in &map_round_bcs {
                     let total_distance_cutoff = 4;
                     let part_distance_cutoff = 1;
@@ -214,12 +217,15 @@ impl Chemistry for ParseBioChemistry3 {
             //There will always be at least one chemistry to pick
             let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
-            println!("Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}", best_chem_name, best_chem_score);
+            println!(
+                "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
+                best_chem_name, best_chem_score
+            );
             //panic!("test");
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
         };
-        log_info!("Barcode struct:{:#?}", self.barcode);
+        // log_info!("Barcode struct:{:#?}", self.barcode);
         Ok(())
     }
 

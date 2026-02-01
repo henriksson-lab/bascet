@@ -1,3 +1,5 @@
+use clap::Subcommand;
+
 // Module declarations (alphabetical)
 pub mod _depreciated_getraw;
 pub mod align;
@@ -28,30 +30,17 @@ pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 pub use align::AlignCMD;
 
 // Count operations
+pub use _depreciated_getraw::{_depreciated_GetRaw, _depreciated_GetRawCMD};
 pub use countchrom::{CountChrom, CountChromCMD};
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
 pub use countsketch_mat::CountsketchMatCMD;
-
-// Data processing operations
-pub use _depreciated_getraw::{_depreciated_GetRaw, _depreciated_GetRawCMD};
-pub use shardify::ShardifyCMD;
-pub use transform::{TransformCMD, TransformFile};
-
-// Extract operations
 pub use extract::ExtractCMD;
 pub use extract_terminal::ExtractStreamCMD;
-
-// Feature operations
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
-
-// Hashing operations
-pub use minhash_hist::{MinhashHist, MinhashHistCMD};
-
-// Mapping operations
+pub use getraw::GetRawCMD;
 pub use mapcell::{MapCell, MapCellCMD};
-
-// Query operations
+pub use minhash_hist::{MinhashHist, MinhashHistCMD};
 pub use query_fq::{QueryFq, QueryFqCMD};
 pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
 
@@ -59,9 +48,35 @@ pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
 pub use kraken_matrix::KrakenMatrixCMD;
 
 // Thread management
+pub use shardify::ShardifyCMD;
 pub use threadcount::{
     determine_thread_counts_1, determine_thread_counts_2, determine_thread_counts_3,
 };
+pub use transform::{TransformCMD, TransformFile};
 
-// debarcoding
-pub use getraw::GetRawCMD;
+///////////////////////////////
+/// Possible subcommands to parse
+#[derive(Subcommand, strum_macros::Display)]
+#[allow(non_camel_case_types)]
+pub enum Commands {
+    #[strum(to_string = "Getraw (depreciated)")]
+    _depreciated_GetRaw(_depreciated_GetRawCMD),
+    Align(AlignCMD),
+    GetRaw(GetRawCMD),
+    Mapcell(MapCellCMD),
+    Extract(ExtractCMD),
+    Shardify(ShardifyCMD),
+    Transform(TransformCMD),
+    Featurise(FeaturiseKmcCMD),
+    MinhashHist(MinhashHistCMD),
+    QueryKmc(QueryKmcCMD),
+    QueryFq(QueryFqCMD),
+    Bam2fragments(Bam2FragmentsCMD),
+    Kraken(KrakenMatrixCMD),
+    Countchrom(CountChromCMD),
+    Countfeature(CountFeatureCMD),
+    PipeSamAddTags(PipeSamAddTagsCMD),
+    Countsketch(CountsketchCMD),
+    CountsketchMat(CountsketchMatCMD),
+    ExtractStream(ExtractStreamCMD),
+}

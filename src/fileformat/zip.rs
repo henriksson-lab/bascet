@@ -7,11 +7,11 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 use zip::read::ZipArchive;
 
+use super::ConstructFromPath;
+use super::ShardCellDictionary;
 use super::shard::CellID;
 use super::shard::ShardFileExtractor;
 use super::shard::ShardRandomFileExtractor;
-use super::ConstructFromPath;
-use super::ShardCellDictionary;
 
 ///////////////////////////////
 /// Factory of ZIP-readers, as shards
@@ -171,8 +171,8 @@ impl ShardFileExtractor for ZipBascetShardReader {
 
             if entry.is_file() {
                 debug!("extracting"); // {}",fname)
-                                      //TODO add dirs if needed
-                                      //            let _ = fs::create_dir(&path_temp_dir);
+                //TODO add dirs if needed
+                //            let _ = fs::create_dir(&path_temp_dir);
 
                 let path_outfile = out_directory.join(PathBuf::from(fname));
                 let file_out = File::create(&path_outfile).unwrap();

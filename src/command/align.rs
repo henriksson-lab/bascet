@@ -1,10 +1,9 @@
 use crate::{
-    bounded_parser, log_info,
-    log_warning,
+    bounded_parser
 };
 
 use bascet_core::{
-    attr::{meta::*, sequence::*, quality::*, meta::*},
+    attr::{meta::*, sequence::*, quality::*},
     *,
 };
 use bascet_derive::Budget;
@@ -16,8 +15,9 @@ use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    fs::File, io::{BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::Stdio
+    io::{BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::Stdio
 };
+use tracing::{info, warn};
 
 
 //   bascet pipefq input.tirp "bwa R1.fq R2.fq "  .... but this also gives a shitty BAM output. shall we convert directly and avoid samtools?
@@ -157,12 +157,12 @@ impl AlignCMD {
                 std::thread::available_parallelism()
                     .map(|p| p.get())
                     .unwrap_or_else(|e| {
-                        log_warning!("Failed to determine available parallelism, using 2 threads"; "error" => %e);
+                        warn!(error = %e, "Failed to determine available parallelism, using 2 threads");
                         2
                     })
                     .try_into()
                     .unwrap_or_else(|e| {
-                        log_warning!("Failed to convert parallelism to valid thread count, using 2 threads"; "error" => %e);
+                        warn!(error = %e, "Failed to convert parallelism to valid thread count, using 2 threads");
                         2.try_into().unwrap()
                     })
             }))
@@ -174,12 +174,12 @@ impl AlignCMD {
 
         budget.validate();
 
-        log_info!(
-            "Starting Align";
-            "using" => %budget,
-            "input path" => ?self.path_in,
-            "unsorted output path" => ?self.path_out_unsorted,
-            "sorted output path" => ?self.path_out_sorted,
+        info!(
+            using = %budget,
+            input_path = ?self.path_in,
+            unsorted_output_path = ?self.path_out_unsorted,
+            sorted_output_path = ?self.path_out_sorted,
+            "Starting Align"
         );
 
 
@@ -234,7 +234,7 @@ impl AlignCMD {
         let handle_tagbam = budget.spawn::<TWrite, _, _>(0 as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread"); 
-            log_info!("Starting tag-bam worker"; "thread" => thread_name);
+            info!(thread = thread_name, "Starting tag-bam worker");
  
             sam_add_bc_tag(
                 writer_tagbam,
@@ -254,7 +254,7 @@ impl AlignCMD {
         )?;
 
         //Wait for the output BAM to have been converted
-        log_info!("Waiting for aligner process to finish");
+        info!("Waiting for aligner process to finish");
         handle_tagbam.join().unwrap();
         //Wait for sam2bam writer as well
         proc_samtobam.wait()?;
@@ -264,7 +264,7 @@ impl AlignCMD {
         std::fs::remove_file(path_pipe_r2)?;
 
         //Sort the bam file
-        log_info!("Sorting BAM file");
+        info!("Sorting BAM file");
         sort_bam(
             self.path_out_unsorted.to_str().expect("error getting unsorted path"), 
             self.path_out_sorted.to_str().expect("error getting sorted path"), 
@@ -272,13 +272,13 @@ impl AlignCMD {
         ).expect("Failed to sort output");
 
         //Index the bam file
-        log_info!("Indexing BAM file");
+        info!("Indexing BAM file");
         index_bam(
             self.path_out_sorted.to_str().expect("error getting unsorted path"), 
         ).expect("Failed to index output");
 
-        log_info!(
-            "All alignment steps complete"; 
+        info!(
+            "All alignment steps complete"
 //            "input_file" => self.path_in.path().path()
 //            "output_file" => self.pa
         );
@@ -598,7 +598,7 @@ pub fn write_tirp_to_fq<P>(
             }
         };
     }
-    log_info!("All readpairs sent");
+    info!("All readpairs sent");
 
     //Ensure data is properly pushed out
     writer_r1.flush()?;

@@ -1,4 +1,7 @@
-use crate::{spinpark_loop::SPINPARK_PARKS_BEFORE_WARN, *};
+use tracing::warn;
+
+use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
+use crate::*;
 
 impl<P, D, C> crate::Next<C> for Stream<P, D, C, AsCell<Accumulate>>
 where
@@ -10,33 +13,29 @@ where
     C::Intermediate: Composite<Marker = AsRecord> + Default + Clone,
     C::Intermediate: TakeBacking<<C::Intermediate as Composite>::Backing>,
 {
-    fn next_with<Q>(&mut self, query: &Q) -> Result<Option<C>, ()>
+    fn next_with<Q>(&mut self, query: &Q) -> anyhow::Result<Option<C>>
     where
         Q: QueryApply<C::Intermediate, C>,
     {
         let mut spinpark_counter = 0;
 
         loop {
-            let buffer_status = match self.inner_decoder_buffer_rx.peek() {
+            let decoded = match self.inner_decoder_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
-                    spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
+                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
                         &mut spinpark_counter,
-                        "Consumer (AsCell<Accumulate>): waiting for data (buffer empty, decoder slow or finished)"
-                    );
+                    ) {
+                        SpinPark::Warn => warn!(
+                            source = "Stream::next (AsCell<Accumulate>)",
+                            "waiting for data (buffer empty, decoder slow or finished)"
+                        ),
+                        _ => {}
+                    }
                     continue;
                 }
                 Ok(status) => {
                     spinpark_counter = 0;
                     status
-                }
-            };
-
-            let decoded = match buffer_status {
-                StreamBufferState::Available(decoded) => decoded,
-                StreamBufferState::Error(e) => return Err(*e),
-                StreamBufferState::Eof => {
-                    self.inner_state = StreamState::Aligned;
-                    return Ok(self.inner_context.take());
                 }
             };
 

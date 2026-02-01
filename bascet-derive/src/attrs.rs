@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Ident, Token};
+use syn::{Ident, Token, parse_macro_input};
 
 pub fn define_attr(input: TokenStream) -> TokenStream {
     let parser = syn::punctuated::Punctuated::<Ident, Token![,]>::parse_terminated;

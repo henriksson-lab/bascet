@@ -2,8 +2,8 @@ pub mod channel;
 pub mod htsutils;
 pub mod likely_unlikely;
 pub mod send;
-pub mod spinpark_loop;
 pub mod teq;
+pub mod threading;
 
 pub use likely_unlikely::{likely, unlikely};
 pub use send::SendCell;

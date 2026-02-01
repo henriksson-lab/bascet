@@ -149,7 +149,7 @@ impl HotEncodeATCGN {
         let (min_index, min_dist) = all_dist
             .iter()
             .enumerate()
-            .min_by_key(|(_index, &this_dist)| this_dist)
+            .min_by_key(|(_index, this_dist)| **this_dist)
             .unwrap();
         //Note that there is SIMD for finding index of smallest entry. this requires memory alignment!
         //https://doc.rust-lang.org/beta/core/arch/x86/fn._mm_minpos_epu16.html
@@ -192,7 +192,7 @@ impl HotEncodeATCGN {
         let (min_index, min_dist) = all_dist
             .iter()
             .enumerate()
-            .min_by_key(|(_index, &this_dist)| this_dist)
+            .min_by_key(|(_index, this_dist)| **this_dist)
             .unwrap();
 
         (min_index, *min_dist)
@@ -206,12 +206,13 @@ impl HotEncodeATCGN {
     #[inline(always)]
     pub fn bitwise_hamming_distance_u32(a: u32, b: u32) -> u32 {
         let ret = 8 - (a & b).count_ones(); //Distance can be at most 8
-                                            /*
-                                            println!("{:b}", a);
-                                            println!("{:b}", b);
-                                            println!("{:}", ret);
-                                            panic!("ad");
-                                             */
+
+        /*
+        println!("{:b}", a);
+        println!("{:b}", b);
+        println!("{:}", ret);
+        panic!("ad");
+         */
 
         ret
     }
@@ -222,12 +223,13 @@ impl HotEncodeATCGN {
     #[inline(always)]
     pub fn bitwise_hamming_distance_u64(a: u64, b: u64) -> u32 {
         let ret = 16 - (a & b).count_ones(); //Distance can be at most 16
-                                             /*
-                                             println!("{:b}", a);
-                                             println!("{:b}", b);
-                                             println!("{:}", ret);
-                                             panic!("ad");
-                                              */
+
+        /*
+        println!("{:b}", a);
+        println!("{:b}", b);
+        println!("{:}", ret);
+        panic!("ad");
+         */
 
         ret
     }
