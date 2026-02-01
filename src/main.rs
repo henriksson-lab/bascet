@@ -80,6 +80,7 @@ fn main() -> std::process::ExitCode {
 
     let result = match cli.command {
         Commands::_depreciated_GetRaw(mut cmd) => cmd.try_execute(),
+        Commands::Align(mut cmd) => cmd.try_execute(),
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
