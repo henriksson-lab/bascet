@@ -96,7 +96,7 @@ fn main() -> std::process::ExitCode {
     info!(version = env!("CARGO_PKG_VERSION"), command = %cli.command, "Running Bascet");
     info!("---------------------------------------------------------------------------");
 
-    let result = match cli.command {
+    let _result = match cli.command {
         Commands::_depreciated_GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Align(mut cmd) => cmd.try_execute(),
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
