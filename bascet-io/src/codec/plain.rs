@@ -1,7 +1,8 @@
 use std::io::Read;
 
-use bascet_core::Decode;
+use bascet_core::{Decode, DecodeResult};
 use bytesize::ByteSize;
+use tracing::error;
 
 pub struct PlaintextDecoder<R>
 where
@@ -36,12 +37,15 @@ where
         self.sizeof_target_alloc.as_u64() as usize
     }
 
-    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> bascet_core::DecodeResult<()> {
+    fn decode_into<B: AsMut<[u8]>>(&mut self, mut buf: B) -> bascet_core::DecodeResult {
         match self.inner_reader.read(buf.as_mut()) {
             Ok(n) if n > 0 => bascet_core::DecodeResult::Decoded(n),
             Ok(0) => bascet_core::DecodeResult::Eof,
-            Err(_) => bascet_core::DecodeResult::Error(()),
-            Ok(_) => unreachable!(),
+            Err(e) => {
+                error!(error = %e, "plain read failed");
+                DecodeResult::Error(anyhow::anyhow!("plain read error {e}"))
+            }
+            _ => unreachable!(),
         }
     }
 }

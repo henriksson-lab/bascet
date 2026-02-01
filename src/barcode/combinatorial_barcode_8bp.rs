@@ -7,7 +7,7 @@ use std::io::Read;
 
 use crate::barcode::parsebio::HotEncodeATCGN;
 use crate::fileformat::shard::CellID;
-use crate::log_info;
+// use crate::log_info;
 
 ///////////////////////////////
 /// Convert string, assumed to be 8bp, to a packed barcode

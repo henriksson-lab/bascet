@@ -1,4 +1,4 @@
-use nthash_rs::{canonical, NtHash};
+use nthash_rs::{NtHash, canonical};
 
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 

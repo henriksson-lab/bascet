@@ -5,7 +5,7 @@ use crate::tirp;
 impl Parse<ArenaSlice<u8>> for crate::Tirp {
     type Item = tirp::Record;
 
-    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item, ()> {
+    fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item> {
         let cursor = self.inner_cursor;
         // SAFETY: cursor is maintained internally and always valid
         let buf_cursor = unsafe { decoded.as_slice().get_unchecked(cursor..) };
@@ -54,7 +54,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         ParseResult::Full(tirp_record)
     }
 
-    fn parse_finish(&mut self) -> ParseResult<Self::Item, ()> {
+    fn parse_finish(&mut self) -> ParseResult<Self::Item> {
         ParseResult::Finished
     }
 
@@ -64,7 +64,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         decoded_spanning_tail: &ArenaSlice<u8>,
         decoded_spanning_head: &ArenaSlice<u8>,
         mut alloc: FA,
-    ) -> ParseResult<Self::Item, ()>
+    ) -> ParseResult<Self::Item>
     where
         FA: FnMut(usize) -> ArenaSlice<u8>,
     {
@@ -77,11 +77,32 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
         let tail_remaining = unsafe { slice_tail.get_unchecked(self.inner_cursor..) };
         let tail_len = tail_remaining.len();
 
+        let malformed_error = |tail: &[u8], head: &[u8], last_pos: usize| {
+            let overflow = 200;
+            let end = (last_pos + overflow).min(tail.len() + head.len());
+            let tail_end = end.min(tail.len());
+            let head_end = end.saturating_sub(tail.len()).min(head.len());
+            let tail_preview = String::from_utf8_lossy(&tail[..tail_end]);
+            let head_preview = String::from_utf8_lossy(&head[..head_end]);
+            tracing::error!(
+                cursor = self.inner_cursor,
+                tail_len = tail.len(),
+                head_len = head.len(),
+                last_pos = last_pos,
+                tail_preview = ?tail_preview,
+                head_preview = ?head_preview,
+                "malformed TIRP record: incomplete record across span boundary"
+            );
+            ParseResult::Error(anyhow::anyhow!(
+                "malformed TIRP record: incomplete record across span boundary"
+            ))
+        };
+
         // Find newline marking end of record (only in head - if in tail, record would be complete)
         let pos_newline_head = memchr::memchr(b'\n', slice_head);
         let head_len = match pos_newline_head {
             Some(pos) => pos,
-            None => return ParseResult::Error(()),
+            None => return malformed_error(tail_remaining, slice_head, 0),
         };
 
         // Collect tabs from tail and head
@@ -104,13 +125,13 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
             (Some(t0), Some(t1), Some(t2), Some(t3), Some(t4), Some(t5), None) => {
                 match iter_head.next() {
                     Some(h6) => [t0, t1, t2, t3, t4, t5, tail_len + h6],
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t5),
                 }
             }
             (Some(t0), Some(t1), Some(t2), Some(t3), Some(t4), None, None) => {
                 match (iter_head.next(), iter_head.next()) {
                     (Some(h5), Some(h6)) => [t0, t1, t2, t3, t4, tail_len + h5, tail_len + h6],
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t4),
                 }
             }
             (Some(t0), Some(t1), Some(t2), Some(t3), None, None, None) => {
@@ -118,7 +139,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                     (Some(h4), Some(h5), Some(h6)) => {
                         [t0, t1, t2, t3, tail_len + h4, tail_len + h5, tail_len + h6]
                     }
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t3),
                 }
             }
             (Some(t0), Some(t1), Some(t2), None, None, None, None) => {
@@ -137,7 +158,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t2),
                 }
             }
             (Some(t0), Some(t1), None, None, None, None, None) => {
@@ -157,7 +178,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t1),
                 }
             }
             (Some(t0), None, None, None, None, None, None) => {
@@ -178,7 +199,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, t0),
                 }
             }
             (None, None, None, None, None, None, None) => {
@@ -200,7 +221,7 @@ impl Parse<ArenaSlice<u8>> for crate::Tirp {
                         tail_len + h5,
                         tail_len + h6,
                     ],
-                    _ => return ParseResult::Error(()),
+                    _ => return malformed_error(tail_remaining, slice_head, 0),
                 }
             }
             _ => unreachable!(),

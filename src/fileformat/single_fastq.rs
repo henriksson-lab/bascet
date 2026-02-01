@@ -1,12 +1,12 @@
-use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
+use bgzip::{BGZFError, Compression, write::BGZFMultiThreadWriter};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::fileformat::ReadPairWriter;
 use crate::fileformat::{
-    shard::{CellID, ReadPair},
     CellUMI,
+    shard::{CellID, ReadPair},
 };
 
 use super::ConstructFromPath;

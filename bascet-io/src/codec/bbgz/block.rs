@@ -3,8 +3,8 @@ use std::io::{Seek, Write};
 use bascet_core::ArenaSlice;
 
 use crate::{
-    codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
     BBGZCompressionJob, BBGZHeader, BBGZTrailer, BBGZWriter,
+    codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
 };
 
 pub struct BBGZWriteBlock<'a> {

@@ -1,11 +1,8 @@
-use crate::{
-    bounded_parser, common::U8_CHAR_NEWLINE, countsketch::CountSketch, log_critical, log_info,
-    log_warning,
-};
+use crate::{bounded_parser, countsketch::CountSketch};
 
 use bascet_core::{
     attr::{meta::*, sequence::*},
-    spinpark_loop::SPINPARK_PARKS_BEFORE_WARN,
+    threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN},
     *,
 };
 use bascet_derive::Budget;
@@ -29,6 +26,7 @@ use std::{
         Arc,
     },
 };
+use tracing::{debug, info, warn};
 
 #[derive(Args)]
 pub struct CountsketchCMD {
@@ -146,12 +144,12 @@ impl CountsketchCMD {
                 std::thread::available_parallelism()
                     .map(|p| p.get())
                     .unwrap_or_else(|e| {
-                        log_warning!("Failed to determine available parallelism, using 2 threads"; "error" => %e);
+                        warn!(error = %e, "Failed to determine available parallelism, using 2 threads");
                         2
                     })
                     .try_into()
                     .unwrap_or_else(|e| {
-                        log_warning!("Failed to convert parallelism to valid thread count, using 2 threads"; "error" => %e);
+                        warn!(error = %e, "Failed to convert parallelism to valid thread count, using 2 threads");
                         2.try_into().unwrap()
                     })
             }))
@@ -161,15 +159,14 @@ impl CountsketchCMD {
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
 
-        budget.validate();
+        budget.log();
 
-        log_info!(
-            "Starting Countsketch";
-            "using" => %budget,
-            "input files" => self.paths_in.len(),
-            "output path" => ?self.path_out,
-            "countsketch size" => self.countsketch_size,
-            "kmer size" => self.kmer_size,
+        info!(
+            input_files = self.paths_in.len(),
+            output_path = ?self.path_out,
+            countsketch_size = self.countsketch_size,
+            kmer_size = self.kmer_size,
+            "Starting Countsketch"
         );
 
         let k = self.kmer_size;
@@ -180,7 +177,8 @@ impl CountsketchCMD {
                 .with_path(input.path().path())
                 .countof_threads(budget.numof_threads_read)
                 .build();
-            let parser = parse::Tirp::builder().build();
+            let parser = parse::Tirp::builder()
+                .build();
 
             let mut stream = Stream::builder()
                 .with_decoder(decoder)
@@ -214,7 +212,7 @@ impl CountsketchCMD {
                 vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx as u64, move || {
                     let thread = std::thread::current();
                     let thread_name = thread.name().unwrap_or("unknown thread"); 
-                    log_info!("Starting worker"; "thread" => thread_name);
+                    debug!(thread = thread_name, "Starting worker");
 
                     let mut thread_spinpark_counter = 0;
                     loop {
@@ -230,10 +228,10 @@ impl CountsketchCMD {
                                     // wait for reset to be finished
                                     thread_barrier.wait();
                                 }
-                                spinpark_loop::spinpark_loop_warn::<100, SPINPARK_PARKS_BEFORE_WARN>(
-                                    &mut thread_spinpark_counter,
-                                    "Countsketch (worker): channel try_recv (channel empty, producer slow)"
-                                );
+                                match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut thread_spinpark_counter) {
+                                    SpinPark::Warn => warn!(source = "Countsketch::worker", "channel empty, producer slow"),
+                                    _ => {}
+                                }
                                 continue;
                             },
                             Err(TryRecvError::Disconnected) => {
@@ -258,7 +256,7 @@ impl CountsketchCMD {
             let output_file = match File::create(&output_path) {
                 Ok(output) => output,
                 Err(e) => {
-                    log_warning!("Failed to create output file, skipping"; "path" => ?output_path, "error" => %e);
+                    warn!(path = ?output_path, error = %e, "Failed to create output file, skipping");
                     continue;
                 }
             };
@@ -361,7 +359,7 @@ impl CountsketchCMD {
                     cells_processed += 1;
 
                     if cells_processed % 100 == 0 {
-                        log_info!("Progress"; "cells_processed" => cells_processed, "current_cell" => ?String::from_utf8_lossy(&record_id_last));
+                        info!(cells_processed = cells_processed, current_cell = ?String::from_utf8_lossy(&record_id_last), "Progress");
                     }
 
                     arc_flag_synchronize.store(false, Ordering::Relaxed);
@@ -376,7 +374,7 @@ impl CountsketchCMD {
             }
             drop(write_tx);
 
-            log_info!("File complete"; "input_file" => input_idx, "total_cells_processed" => cells_processed);
+            info!(input_file = input_idx, total_cells_processed = cells_processed, "File complete");
         }
 
         Ok(())
