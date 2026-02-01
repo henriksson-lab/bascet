@@ -1,5 +1,6 @@
 // Module declarations (alphabetical)
 pub mod _depreciated_getraw;
+pub mod align;
 pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
@@ -9,7 +10,7 @@ pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
 pub mod getraw;
-pub mod kraken;
+pub mod kraken_matrix;
 pub mod mapcell;
 pub mod minhash_hist;
 pub mod query_fq;
@@ -20,9 +21,11 @@ pub mod snpcall;
 pub mod threadcount;
 pub mod transform;
 
+
 // BAM/SAM operations
 pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
 pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
+pub use align::AlignCMD;
 
 // Count operations
 pub use countchrom::{CountChrom, CountChromCMD};
@@ -53,7 +56,7 @@ pub use query_fq::{QueryFq, QueryFqCMD};
 pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
 
 // Taxonomic classification
-pub use kraken::KrakenCMD;
+pub use kraken_matrix::KrakenMatrixCMD;
 
 // Thread management
 pub use threadcount::{

@@ -12,8 +12,8 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 
 #[derive(Args)]
-pub struct KrakenCMD {
-    // Input bascet or gascet
+pub struct KrakenMatrixCMD {
+    // Input bascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
 
@@ -25,32 +25,34 @@ pub struct KrakenCMD {
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
     pub path_out: PathBuf,
 }
-impl KrakenCMD {
+impl KrakenMatrixCMD {
     /// Run the commandline option.
     /// This one takes a KRAKEN output-file, and outputs a taxonomy count matrix
     pub fn try_execute(&mut self) -> Result<()> {
-        let params = Kraken {
+        let params = KrakenMatrix {
             path_tmp: self.path_tmp.clone(),
             path_input: self.path_in.clone(),
             path_output: self.path_out.clone(),
         };
 
-        let _ = Kraken::run(&Arc::new(params));
+        let _ = KrakenMatrix::run(&Arc::new(params));
 
         log::info!("Kraken has finished succesfully");
         Ok(())
     }
 }
 
+///
 /// KRAKEN count matrix constructor.
-pub struct Kraken {
+/// 
+pub struct KrakenMatrix {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
 }
-impl Kraken {
+impl KrakenMatrix {
     /// Run the algorithm
-    pub fn run(params: &Arc<Kraken>) -> anyhow::Result<()> {
+    pub fn run(params: &Arc<KrakenMatrix>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
         let mut mm = SparseMatrixAnnDataBuilder::new();
 

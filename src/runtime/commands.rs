@@ -10,6 +10,7 @@ use crate::command;
 #[allow(non_camel_case_types)]
 pub enum Commands {
     _depreciated_GetRaw(command::_depreciated_GetRawCMD),
+    Align(command::AlignCMD),
     GetRaw(command::GetRawCMD),
     Mapcell(command::MapCellCMD),
     Extract(command::ExtractCMD),
@@ -20,7 +21,7 @@ pub enum Commands {
     QueryKmc(command::QueryKmcCMD),
     QueryFq(command::QueryFqCMD),
     Bam2fragments(command::Bam2FragmentsCMD),
-    Kraken(command::KrakenCMD),
+    Kraken(command::KrakenMatrixCMD),
     Countchrom(command::CountChromCMD),
     Countfeature(command::CountFeatureCMD),
     PipeSamAddTags(command::PipeSamAddTagsCMD),
@@ -33,6 +34,7 @@ impl fmt::Debug for Commands {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let cmd = match self {
             Commands::_depreciated_GetRaw(_) => "Getraw (depreciated)",
+            Commands::Align(_) => "Align",
             Commands::GetRaw(_) => "Getraw",
             Commands::Mapcell(_) => "Mapcell",
             Commands::Extract(_) => "Extract",
