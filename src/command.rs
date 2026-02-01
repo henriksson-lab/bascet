@@ -12,7 +12,7 @@ pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
 pub mod getraw;
-pub mod kraken_matrix;
+pub mod kraken;
 pub mod mapcell;
 pub mod minhash_hist;
 pub mod query_fq;
@@ -34,7 +34,7 @@ pub use _depreciated_getraw::{_depreciated_GetRaw, _depreciated_GetRawCMD};
 pub use countchrom::{CountChrom, CountChromCMD};
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
-pub use countsketch_mat::CountsketchMatCMD;
+pub use countsketch_mat::CountsketchMatCMD;  
 pub use extract::ExtractCMD;
 pub use extract_terminal::ExtractStreamCMD;
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
@@ -45,7 +45,7 @@ pub use query_fq::{QueryFq, QueryFqCMD};
 pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
 
 // Taxonomic classification
-pub use kraken_matrix::KrakenMatrixCMD;
+pub use kraken::KrakenCMD;
 
 // Thread management
 pub use shardify::ShardifyCMD;
@@ -72,7 +72,7 @@ pub enum Commands {
     QueryKmc(QueryKmcCMD),
     QueryFq(QueryFqCMD),
     Bam2fragments(Bam2FragmentsCMD),
-    Kraken(KrakenMatrixCMD),
+    Kraken(KrakenCMD),
     Countchrom(CountChromCMD),
     Countfeature(CountFeatureCMD),
     PipeSamAddTags(PipeSamAddTagsCMD),

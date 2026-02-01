@@ -1,15 +1,266 @@
+use crate::{
+    bounded_parser
+};
+
+use bascet_core::{
+    *,
+};
+use bascet_derive::Budget;
+
 use anyhow::Result;
+use bounded_integer::BoundedU64;
+use bytesize::*;
 use clap::Args;
+use clio::InputPath;
+use std::{
+    path::{Path, PathBuf}
+};
+use tracing::{info, warn};
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
+
+
+#[derive(Args)]
+pub struct KrakenCMD {
+    #[arg(
+        short = 'i',
+        long = "in",
+        help = "List of input files (comma-separated). Assumed to be sorted by cell id in descending order."
+    )]
+    pub path_in: InputPath,
+
+    #[arg(
+        long = "out-raw",
+        help = "Raw KRAKEN2 output file"
+    )]
+    pub path_out_raw: PathBuf,
+
+    #[arg(
+        long = "out-matrix",
+        help = "Output count matrix" 
+    )]
+    pub path_out_matrix: PathBuf,
+    
+    #[arg(
+        long = "temp",
+        help = "Temp directory; must exist already"
+    )]
+    pub path_temp: PathBuf,
+
+    #[arg(
+        short = 'd',
+        long = "db", 
+        help = "KRAKEN2 index to use"
+    )]
+    pub path_db: PathBuf,
+
+    #[arg(
+        short = '@',
+        long = "threads",
+        help = "Total threads to use (defaults to std::threads::available parallelism)",
+        value_name = "2..",
+        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+    )]
+    total_threads: Option<BoundedU64<2, { u64::MAX }>>,
+
+    #[arg(
+        long = "numof-threads-read",
+        help = "Number of reader threads",
+        value_name = "1.. (default is 1)", // 50% of total threads
+        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
+    )]
+    numof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
+
+    #[arg(
+        short = 'm',
+        long = "memory",
+        help = "Total memory budget",
+        default_value_t = ByteSize::gib(1),
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    total_mem: ByteSize,
+
+    #[arg(
+        long = "sizeof-stream-buffer",
+        help = "Total stream buffer size.",
+        value_name = "100%",
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_buffer: Option<ByteSize>,
+
+    #[arg(
+        long = "sizeof-stream-arena",
+        help = "Stream arena buffer size [Advanced: changing this will impact performance and stability]",
+        hide_short_help = true,
+        default_value_t = DEFAULT_SIZEOF_ARENA,
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_arena: ByteSize,
+
+}
+
+#[derive(Budget, Debug)]
+struct KrakenBudget {
+    #[threads(Total)]
+    threads: BoundedU64<2, { u64::MAX }>,
+
+    #[mem(Total)]
+    memory: ByteSize,
+
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 ) as u64).unwrap())]
+    numof_threads_read: BoundedU64<1, { u64::MAX }>,
+    
+    #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
+    sizeof_stream_buffer: ByteSize,
+}
+
+impl KrakenCMD {
+    pub fn try_execute(&mut self) -> Result<()> {
+
+
+        //Validate that a KRAKEN2 db has been given
+        if self.path_db.is_dir() {
+            let file_taxo = self.path_db.join("taxo.k2d");
+            if !file_taxo.is_file() {
+                anyhow::bail!("Specified database path is not a KRAKEN2 database (directory misses files, e.g., taxo.k2d)");
+            }
+        } else {
+            anyhow::bail!("Specified database path is not a KRAKEN2 database (not a directory)");
+        }
+
+        let budget = KrakenBudget::builder()
+            .threads(self.total_threads.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|p| p.get())
+                    .unwrap_or_else(|e| {
+                        warn!(error = %e, "Failed to determine available parallelism, using 2 threads");
+                        2
+                    })
+                    .try_into()
+                    .unwrap_or_else(|e| {
+                        warn!(error = %e, "Failed to convert parallelism to valid thread count, using 2 threads");
+                        2.try_into().unwrap()
+                    })
+            }))
+            .memory(self.total_mem)
+            .maybe_numof_threads_read(self.numof_threads_read)
+            //.maybe_numof_threads_writebam(self.numof_threads_writebam)
+            .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
+            .build();
+
+        budget.validate();
+
+        info!(
+            using = %budget,
+            input_path = ?self.path_in,
+            path_out_raw = ?self.path_out_raw,
+            "Starting KRAKEN2"
+        );
+
+
+        /////////////////////////////////////////////////////////////////////////////////////   
+        // Set up named pipes
+        let path_pipe_r12 = self.path_temp.join("fifo_r12.fq");
+        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU)?; /////////////////////// TODO put all of this + cleanup in a class
+
+        ///////////////////////////////////////////////////////////////////////////////////// 
+        // Start KRAKEN2
+        let num_threads = budget.threads.get();
+        let mut proc_aligner = create_kraken_process(
+                &self.path_db, 
+                &path_pipe_r12,
+                &self.path_out_raw,
+                num_threads
+        )?;        
+
+        ///////////////////////////////////////////////////////////////////////////////////// 
+        // All threads are now set up. Send all readpairs to KRAKEN2.
+        // Note that KRAKEN2 requires interleaved reads as paired-end mode reads one file at a file, blocking the pipe!
+        super::AlignCMD::write_tirp_to_interleaved_fq(
+            self.path_in.path().path(),
+            &path_pipe_r12,
+            //&path_pipe_r2,
+            budget.numof_threads_read,
+            self.sizeof_stream_arena,
+            budget.sizeof_stream_buffer,
+        )?;
+
+        //Wait until process done
+        info!("Waiting for KRAKEN2 process to finish");
+        proc_aligner.wait().unwrap(); ////////////////////////// TODO: should watch this process for abnormal exit, possibly panic. need to do in parallel to write_tirp_to_fq
+
+        //Clean up: remove pipes
+        std::fs::remove_file(path_pipe_r12)?;
+
+        //Generate matrix
+        info!("Generating KRAKEN2 matrix");
+
+        let params = KrakenMatrix {
+            path_tmp: self.path_temp.clone(),
+            path_input: self.path_out_raw.clone(),
+            path_output: self.path_out_matrix.clone(),
+        };
+
+        KrakenMatrix::run(&Arc::new(params))?;
+
+        info!(
+            "All KRAKEN2 steps complete"
+        );
+
+        //Move temp files to their right positions
+
+        Ok(())
+    }
+}
+
+
+
+
+
+
+
+
+
+///
+/// Generate KRAKEN2 command
+/// 
+pub fn create_kraken_process<P> (
+    path_db: &P,
+    path_r12: &P, 
+    path_out_raw: &P,
+    num_threads: u64,
+) -> Result<std::process::Child> where P: AsRef<Path> {
+    let num_threads = format!("{}",num_threads);
+    let path_db = format!("{}",path_db.as_ref().as_os_str().to_str().expect("os str"));
+    let path_r12 = format!("{}",path_r12.as_ref().as_os_str().to_str().expect("os str"));
+    let path_out_raw = format!("{}",path_out_raw.as_ref().as_os_str().to_str().expect("os str"));
+
+    let args = vec![
+        "--db", &path_db,
+        "--threads", &num_threads,
+        "--output",&path_out_raw,
+        "--interleaved",
+        &path_r12, 
+    ];
+
+    let proc_cmd = std::process::Command::new("kraken2")
+        .args(args)
+        .spawn()?;
+    Ok(proc_cmd)
+}
+
+
+
+
+
 
 #[derive(Args)]
 pub struct KrakenMatrixCMD {
@@ -139,10 +390,6 @@ impl KrakenMatrix {
         mm.save_to_anndata(&params.path_output)
             .expect("Failed to save to HDF5 file");
 
-        //TODO delete temp files
-        println!("Cleaning up temp files");
-        //fs::remove_dir_all(&params.path_tmp).unwrap();
-
         Ok(())
     }
 }
@@ -186,153 +433,4 @@ Note that paired read data will contain a "|:|" token in this list to indicate t
 
 */
 
-/*
 
-
-TODO store taxid + 1, to avoid use of 0 index
-
-#############################
-
-#############################
-#############################
-#############################
-#############################
-#############################
-#############################
-#############################
-#############################
-#############################
-#############################
-#############################
-
-
-
-
-*/
-
-/*
-
-
-/// Specialized count matrix for Kraken taxid counting per cell. As taxid is numeric, there is no need to assign column names
-pub struct KrakenCountMatrix {
-
-    pub cells: Vec<String>,
-    pub entries: Vec<(u32,u32,u32)>,   //row, col, count
-    pub max_taxid: usize
-
-}
-impl KrakenCountMatrix {
-
-    pub fn new() -> Self {
-        Self {
-            cells: Vec::new(),
-            entries: Vec::new(),
-            max_taxid: 0
-        }
-    }
-
-    pub fn add_cell(&mut self, cell: &String) -> usize {
-        let id = self.cells.len();
-        self.cells.push(cell.clone());
-        id as usize
-    }
-
-    pub fn add_value(
-        &mut self,
-        cell: usize,
-        feature: usize,
-        value: u32
-    ) {
-        self.entries.push((cell as u32, feature as u32, value));
-
-        if feature > self.max_taxid {
-            self.max_taxid = feature;
-        }
-    }
-
-
-    pub fn add_taxids(
-        &mut self,
-        cell: &String,
-        taxid_counter: &mut BTreeMap<usize, u32>
-    ) {
-
-        let cell_index = self.add_cell(&cell);
-        for (taxid, cnt) in taxid_counter {
-            self.add_value(cell_index, *taxid, *cnt);
-        }
-
-    }
-
-    /// Save matrix as anndata-like hdf5-file
-    pub fn save_to_anndata(&self, p: &PathBuf) -> anyhow::Result<()> {
-
-        //Delete output file if it exists already; HDF5 library complains otherwise
-        if p.exists() {
-            std::fs::remove_file(&p).expect("Failed to delete previous output file");
-        }
-
-        let file = H5File::create(p)?; // open for writing
-
-        //Extract separate vectors
-        let csr_data: Vec<u32> = self.entries.iter().map(|(_row,_col,data)| *data).collect();
-        let csr_cols: Vec<u32> = self.entries.iter().map(|(_row,col,_data)| *col).collect();
-        let csr_rows: Vec<u32> = self.entries.iter().map(|(row,_col,_data)| *row).collect(); //must be compressed
-
-        //Figure out where rows start in this list        ////////// This assumes that we added counts, cell by cell. otherwise sort the array before!!
-        let mut ind_ptr:Vec<u32> = Vec::new();
-        ind_ptr.push(0);
-        for i in 1..(csr_rows.len()) {
-            if csr_rows[i] != csr_rows[i-1] {
-                ind_ptr.push(i as u32);
-            }
-        }
-        //For some reason, also need an entry representing the length of data
-        ind_ptr.push((csr_data.len()) as u32);
-
-
-
-        //Store the sparse matrix here
-        let group = file.create_group("X")?;
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&csr_data.as_slice()).create("data")?;    //Data
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&csr_cols.as_slice()).create("indices")?; // Columns
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&ind_ptr.as_slice()).create("indptr")?;  // Rows
-
-
-
-        //Store the matrix size
-        let n_rows = self.cells.len();
-        let n_cols = self.max_taxid+1;  //Note +1; because taxid 0 means unclassified. in R, all taxid will be shifted by 1!!
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&[n_rows,n_cols].as_slice()).create("shape")?;
-
-
-        //Store the names of the cells
-        let list_cell_names = vec_to_h5_string(self.cells.as_slice());
-        let group = file.create_group("obs")?;
-        let builder = group.new_dataset_builder();
-        let _ = builder.
-            with_data(list_cell_names.as_slice()).
-            create("_index")?;
-
-        //Names of features are not stored; taxid are numeric already
-
-        Ok(())
-
-    }
-
-
-
-}
-
-/// Helper: Take a list of strings, and generate a list of HDF5-type strings
-fn vec_to_h5_string(list: &[String]) -> Vec<hdf5::types::VarLenUnicode> {
-    list.iter().map(|f| f.parse().unwrap()).collect()
-}
-
-
-
- */

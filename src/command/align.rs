@@ -20,13 +20,6 @@ use std::{
 use tracing::{info, warn};
 
 
-//   bascet pipefq input.tirp "bwa R1.fq R2.fq "  .... but this also gives a shitty BAM output. shall we convert directly and avoid samtools?
-//   bascet pipefq input.tirp output.bam "bwa R1.fq R2.fq out.bam"   <--- these files will be replaced with names of pipes
-//   STAR might read input files twice .. can it be a named pipe at all?
-
-
-// TODO control threads for star. overallocate?
-
 #[derive(Args)]
 pub struct AlignCMD {
     #[arg(
@@ -39,9 +32,9 @@ pub struct AlignCMD {
     pub path_in: InputPath,
 
     #[arg(
-        short = 'o',
-        long = "out",
-        help = "Output file for unsored BAM"
+        short = 'u',
+        long = "unsorted",
+        help = "Output file for unsorted BAM"
     )]
     pub path_out_unsorted: PathBuf,
 
@@ -80,7 +73,7 @@ pub struct AlignCMD {
     #[arg(
         long = "numof-threads-read",
         help = "Number of reader threads",
-        value_name = "1.. (50%)",
+        value_name = "1.. (default is 1)", // 50% of total threads
         value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
     numof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
@@ -88,7 +81,7 @@ pub struct AlignCMD {
     #[arg(
         long = "numof-threads-writebam",
         help = "Number of threads threads for writing the unsorted BAM file",
-        value_name = "1.. (50%)",
+        value_name = "1.. (default is 1)",  // 50% of total threads
         value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
     numof_threads_writebam: Option<BoundedU64<1, { u64::MAX }>>,
@@ -141,7 +134,7 @@ struct AlignBudget {
     numof_threads_read: BoundedU64<1, { u64::MAX }>,
 
     #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]
-    numof_threads_write: BoundedU64<1, 1>,
+    numof_threads_writebam: BoundedU64<1, { u64::MAX }>,  // max 1
 
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
@@ -150,8 +143,6 @@ struct AlignBudget {
 impl AlignCMD {
     pub fn try_execute(&mut self) -> Result<()> {
 
-
-        //We should use 1 thread in, x threads out, the rest for the aligner. BAM is not compressed, so one thread might be enough (avoid copying)
         let budget = AlignBudget::builder()
             .threads(self.total_threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -167,8 +158,8 @@ impl AlignCMD {
                     })
             }))
             .memory(self.total_mem)
-            .maybe_numof_threads_read(BoundedU64::new(1))
-            .maybe_numof_threads_write(BoundedU64::new(1))
+            .maybe_numof_threads_read(self.numof_threads_read)
+            .maybe_numof_threads_writebam(self.numof_threads_writebam)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
 
@@ -194,12 +185,16 @@ impl AlignCMD {
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // Start the aligner
-        let num_threads = 8;
+        let num_threads = budget.threads.get();
+        let path_aln_temp = self.path_temp.join("_align_tmp");
+        std::fs::create_dir(&path_aln_temp).expect("Failed to create tempdir");
         let mut proc_aligner = if self.aligner=="STAR" {
+
             prep_star(
                 self.path_genome.path().path().to_str().expect("could not get genome path"),
                 &path_pipe_r1,
                 &path_pipe_r2,
+                &path_aln_temp,
                 num_threads
             )
         } else if self.aligner=="BWA" {
@@ -230,12 +225,10 @@ impl AlignCMD {
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // This thread takes the output SAM data, and adds proper tags to it
-//        let writer_tagbam = BufWriter::new(std::fs::File::create("/husky/henriksson/atrandi/v6_251128_jyoti_mock_bulk/foo.sam")?);  ///////temp
         let handle_tagbam = budget.spawn::<TWrite, _, _>(0 as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread"); 
-            info!(thread = thread_name, "Starting tag-bam worker");
- 
+            info!(thread = thread_name, "Starting tag-bam worker"); 
             sam_add_bc_tag(
                 writer_tagbam,
                 reader_aligner_stdout
@@ -244,7 +237,7 @@ impl AlignCMD {
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // All threads are now set up. Send all readpairs to the aligner
-        write_tirp_to_fq(
+        AlignCMD::write_tirp_to_2fq(
             self.path_in.path().path(),
             &path_pipe_r1,
             &path_pipe_r2,
@@ -266,9 +259,10 @@ impl AlignCMD {
         //Sort the bam file
         info!("Sorting BAM file");
         sort_bam(
-            self.path_out_unsorted.to_str().expect("error getting unsorted path"), 
-            self.path_out_sorted.to_str().expect("error getting sorted path"), 
-            budget.threads.get() as usize
+            &self.path_out_unsorted,
+            &self.path_out_sorted,
+            &self.path_temp,
+            budget.threads.get()
         ).expect("Failed to sort output");
 
         //Index the bam file
@@ -276,6 +270,9 @@ impl AlignCMD {
         index_bam(
             self.path_out_sorted.to_str().expect("error getting unsorted path"), 
         ).expect("Failed to index output");
+
+        //Clean up temp files
+        std::fs::remove_dir_all(&path_aln_temp).expect("Failed to remove tempdir");
 
         info!(
             "All alignment steps complete"
@@ -287,6 +284,254 @@ impl AlignCMD {
 
         Ok(())
     }
+
+
+
+
+    ///
+    /// Get a TIRP, stream to fastq
+    /// 
+    pub fn write_tirp_to_2fq<P>(
+        path_in: P,
+        path_r1: P,
+        path_r2: P,
+        num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
+        sizeof_stream_arena: ByteSize,
+        sizeof_stream_buffer: ByteSize,
+    ) -> Result<()> where P: AsRef<Path> {
+
+        ///////////////////////////////////////////////////////////////////////////////////// 
+        // Streamer from input TIRP
+        let decoder = codec::BBGZDecoder::builder()
+            .with_path(path_in)
+            .countof_threads(num_threads)
+            .build();
+        let parser = parse::Tirp::builder().build();
+
+        let mut stream = Stream::builder()
+            .with_decoder(decoder)
+            .with_parser(parser)
+            .sizeof_decode_arena(sizeof_stream_arena)
+            .sizeof_decode_buffer(sizeof_stream_buffer)
+            .build();
+
+        let mut query = stream.query::<tirp::Record>();
+
+        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
+        let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
+        println!("Sending read pairs");
+        let mut num_read:u64 = 0;
+        loop {
+            match query.next_into::<tirp::Record>() {
+                Ok(Some(record)) => {
+
+                    let record_id = *record.get_ref::<Id>();
+                    let record_r1 = *record.get_ref::<R1>();
+                    let record_r2 = *record.get_ref::<R2>();
+                    let record_q1 = *record.get_ref::<Q1>();
+                    let record_q2 = *record.get_ref::<Q2>();
+                    let record_umi = *record.get_ref::<Umi>();
+
+                    fn write_read_bascetfq<W>(
+                        writer: &mut W,
+                        record_id: &[u8], 
+                        record_read: &[u8],
+                        record_qual: &[u8],
+                        record_umi: &[u8],
+                        num_read: u64
+                    ) -> Result<()> where W: Write {
+                        writer.write_all(b"@BASCET_")?;
+                        writer.write_all(record_id)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(record_umi)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(format!("{}", num_read).as_bytes())?;
+                        
+                        writer.write_all(b"\n")?;
+                        writer.write_all(record_read)?;
+                        writer.write_all(b"\n+\n")?;
+                        writer.write_all(record_qual)?;
+                        //for _i in 0..record_read.len() {
+                        //    writer.write_all(b"F")?; //or get qual from record ///////////// TODO
+                        //}
+                        writer.write_all(b"\n")?;
+                        Ok(())
+                    }
+
+                    write_read_bascetfq(
+                        &mut writer_r1,
+                        &record_id,
+                        &record_r1,
+                        &record_q1,
+                        &record_umi,
+                        num_read
+                    )?;
+
+                    write_read_bascetfq(
+                        &mut writer_r2,
+                        &record_id,
+                        &record_r2,
+                        &record_q2,
+                        &record_umi,
+                        num_read
+                    )?;
+                    
+                    
+                    //What about Q? it might not be used at all. but could output as an option
+                    /*
+                    Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
+                    @SEQ_ID
+                    GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
+                    +
+                    !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
+                    */
+                    num_read += 1;
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    panic!("{:?}", e);
+                }
+            };
+        }
+        info!("All readpairs sent");
+
+        //Ensure data is properly pushed out
+        writer_r1.flush()?;
+        writer_r2.flush()?;
+        drop(writer_r1);
+        drop(writer_r2);
+        info!("All readpairs flushed");
+        
+        Ok(())
+    }
+
+
+
+    ///
+    /// Get a TIRP, stream to fastq
+    /// 
+    pub fn write_tirp_to_interleaved_fq<P>(
+        path_in: P,
+        path_r1: P,
+//        path_r2: P,
+        num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
+        sizeof_stream_arena: ByteSize,
+        sizeof_stream_buffer: ByteSize,
+    ) -> Result<()> where P: AsRef<Path> {
+
+        ///////////////////////////////////////////////////////////////////////////////////// 
+        // Streamer from input TIRP
+        let decoder = codec::BBGZDecoder::builder()
+            .with_path(path_in)
+            .countof_threads(num_threads)
+            .build();
+        let parser = parse::Tirp::builder().build();
+
+        let mut stream = Stream::builder()
+            .with_decoder(decoder)
+            .with_parser(parser)
+            .sizeof_decode_arena(sizeof_stream_arena)
+            .sizeof_decode_buffer(sizeof_stream_buffer)
+            .build();
+
+        let mut query = stream.query::<tirp::Record>();
+
+        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
+        //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
+        println!("Sending read pairs");
+        let mut num_read:u64 = 0;
+        loop {
+            match query.next_into::<tirp::Record>() {
+                Ok(Some(record)) => {
+
+                    let record_id = *record.get_ref::<Id>();
+                    let record_r1 = *record.get_ref::<R1>();
+                    let record_r2 = *record.get_ref::<R2>();
+                    let record_q1 = *record.get_ref::<Q1>();
+                    let record_q2 = *record.get_ref::<Q2>();
+                    let record_umi = *record.get_ref::<Umi>();
+
+                    fn write_read_bascetfq<W>(
+                        writer: &mut W,
+                        record_id: &[u8], 
+                        record_read: &[u8],
+                        record_qual: &[u8],
+                        record_umi: &[u8],
+                        num_read: u64
+                    ) -> Result<()> where W: Write {
+                        writer.write_all(b"@BASCET_")?;
+                        writer.write_all(record_id)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(record_umi)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(format!("{}", num_read).as_bytes())?;
+                        
+                        writer.write_all(b"\n")?;
+                        writer.write_all(record_read)?;
+                        writer.write_all(b"\n+\n")?;
+                        writer.write_all(record_qual)?;
+                        //for _i in 0..record_read.len() {
+                        //    writer.write_all(b"F")?; //or get qual from record ///////////// TODO
+                        //}
+                        writer.write_all(b"\n")?;
+                        Ok(())
+                    }
+
+                    write_read_bascetfq(
+                        &mut writer_r1,
+                        &record_id,
+                        &record_r1,
+                        &record_q1,
+                        &record_umi,
+                        num_read
+                    )?;
+
+                    write_read_bascetfq(
+                        &mut writer_r1,
+                        &record_id,
+                        &record_r2,
+                        &record_q2,
+                        &record_umi,
+                        num_read
+                    )?;
+                    
+                    
+                    //What about Q? it might not be used at all. but could output as an option
+                    /*
+                    Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
+                    @SEQ_ID
+                    GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
+                    +
+                    !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
+                    */
+                    num_read += 1;
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    panic!("{:?}", e);
+                }
+            };
+        }
+        info!("All readpairs sent");
+
+        //Ensure data is properly pushed out
+        writer_r1.flush()?;
+        //writer_r2.flush()?;
+        drop(writer_r1);
+        //drop(writer_r2);
+        info!("All readpairs flushed");
+        
+        Ok(())
+    }
+
+
+
+
+
 }
 
 
@@ -346,10 +591,8 @@ pub fn proc_sam_to_bam<P>(
     num_threads: usize,
     path_bam: P
 ) -> Result<std::process::Child> where P: AsRef<Path> {
-
     
     let path_bam = format!("{}",path_bam.as_ref().as_os_str().to_str().expect("os str"));
-
     let num_threads = format!("{}",num_threads);
 
     let args = vec![
@@ -377,15 +620,19 @@ pub fn proc_sam_to_bam<P>(
 /// 
 pub fn prep_star<P> (
     path_genome: &str,
-    path_r1: &P, //&str,
+    path_r1: &P, 
     path_r2: &P,
-    num_threads: usize,
-//    out_filename_prefix: String, // ./STARlog/${TASK_ID}_   STARlog dir must be made and removed as well. temp must be removed
+    path_aln_temp: &P,
+    num_threads: u64,
 ) -> Result<std::process::Child> where P: AsRef<Path> {
     let num_threads = format!("{}",num_threads);
 
+    let path_out_prefix = PathBuf::from(path_aln_temp.as_ref()).join("STAR_");
+    let path_out_prefix = format!("{}",path_out_prefix.as_os_str().to_str().expect("os str"));
+
     let path_r1 = format!("{}",path_r1.as_ref().as_os_str().to_str().expect("os str"));
     let path_r2 = format!("{}",path_r2.as_ref().as_os_str().to_str().expect("os str"));
+    let path_aln_temp = format!("{}",path_aln_temp.as_ref().as_os_str().to_str().expect("os str"));
 
     let args = vec![
         "--genomeDir", path_genome,
@@ -395,8 +642,8 @@ pub fn prep_star<P> (
         "--outSAMunmapped","Within",
         "--outSAMattributes","Standard",
         "--outStd","SAM",
-//      paste("--outTmpDir",star_temp_dir),   //   star_temp_dir <- "STARlog/_STARtmp.${TASK_ID}"
-//        "--outFileNamePrefix ./STARlog/${TASK_ID}_",
+        "--outTmpDir",&path_aln_temp,
+        "--outFileNamePrefix",&path_out_prefix,
     ];
 
     let proc_cmd = std::process::Command::new("STAR")
@@ -415,7 +662,7 @@ pub fn prep_bwa<P>(
     path_genome: &P,
     path_r1: P,
     path_r2: P,
-    num_threads: usize,
+    num_threads: u64,
 ) -> Result<std::process::Child> where P: AsRef<Path> {
     let num_threads = format!("{}",num_threads);
 
@@ -446,17 +693,22 @@ pub fn prep_bwa<P>(
 pub fn sort_bam<P>(
     path_in: P,
     path_out: P,
-    num_threads: usize,
+    path_temp: P,
+    num_threads: u64,
 ) -> Result<()> where P: AsRef<Path> {
     let num_threads = format!("{}",num_threads);
 
     let path_in = format!("{}",path_in.as_ref().as_os_str().to_str().expect("os str"));
     let path_out = format!("{}",path_out.as_ref().as_os_str().to_str().expect("os str"));
 
+    let path_temp_prefix = PathBuf::from(path_temp.as_ref()).join("sort");
+    let path_temp_prefix = format!("{}",path_temp_prefix.as_os_str().to_str().expect("os str"));
+
     let args = vec![
         "sort",
         "-@", &num_threads,
         &path_in,
+        "-T", &path_temp_prefix,
         "-o",&path_out,
     ];
 
@@ -488,126 +740,6 @@ pub fn index_bam(
     Ok(())
 }
  
-
-///
-/// Get a TIRP, stream to fastq
-/// 
-pub fn write_tirp_to_fq<P>(
-    path_in: P,
-    path_r1: P,
-    path_r2: P,
-    num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
-    sizeof_stream_arena: ByteSize,
-    sizeof_stream_buffer: ByteSize,
-) -> Result<()> where P: AsRef<Path> {
-
-    ///////////////////////////////////////////////////////////////////////////////////// 
-    // Streamer from input TIRP
-    let decoder = codec::BBGZDecoder::builder()
-        .with_path(path_in)
-        .countof_threads(num_threads)
-        .build();
-    let parser = parse::Tirp::builder().build();
-
-    let mut stream = Stream::builder()
-        .with_decoder(decoder)
-        .with_parser(parser)
-        .sizeof_decode_arena(sizeof_stream_arena)
-        .sizeof_decode_buffer(sizeof_stream_buffer)
-        .build();
-
-    let mut query = stream.query::<tirp::Record>();
-
-    //let file_r1 = std::fs::File::create(&path_r1)?;
-
-    let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
-    let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
-    println!("Sending read pairs");
-    let mut num_read:u64 = 0;
-    loop {
-        match query.next_into::<tirp::Record>() {
-            Ok(Some(record)) => {
-
-                let record_id = *record.get_ref::<Id>();
-                let record_r1 = *record.get_ref::<R1>();
-                let record_r2 = *record.get_ref::<R2>();
-                let record_q1 = *record.get_ref::<Q1>();
-                let record_q2 = *record.get_ref::<Q2>();
-                let record_umi = *record.get_ref::<Umi>();
-
-                fn write_read_bascetfq<W>(
-                    writer: &mut W,
-                    record_id: &[u8], 
-                    record_read: &[u8],
-                    record_qual: &[u8],
-                    record_umi: &[u8],
-                    num_read: u64
-                ) -> Result<()> where W: Write {
-                    writer.write_all(b"@BASCET_")?;
-                    writer.write_all(record_id)?;
-                    writer.write_all(b":")?;
-                    writer.write_all(record_umi)?;
-                    writer.write_all(b":")?;
-                    writer.write_all(format!("{}", num_read).as_bytes())?;
-                    
-                    writer.write_all(b"\n")?;
-                    writer.write_all(record_read)?;
-                    writer.write_all(b"\n+\n")?;
-                    writer.write_all(record_qual)?;
-                    //for _i in 0..record_read.len() {
-                    //    writer.write_all(b"F")?; //or get qual from record ///////////// TODO
-                    //}
-                    writer.write_all(b"\n")?;
-                    Ok(())
-                }
-
-                write_read_bascetfq(
-                    &mut writer_r1,
-                    &record_id,
-                    &record_r1,
-                    &record_q1,
-                    &record_umi,
-                    num_read
-                )?;
-
-                write_read_bascetfq(
-                    &mut writer_r2,
-                    &record_id,
-                    &record_r2,
-                    &record_q2,
-                    &record_umi,
-                    num_read
-                )?;
-                
-                
-                //What about Q? it might not be used at all. but could output as an option
-                /*
-                Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
-                @SEQ_ID
-                GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
-                +
-                !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
-                */
-                num_read += 1;
-            }
-            Ok(None) => {
-                break;
-            }
-            Err(e) => {
-                panic!("{:?}", e);
-            }
-        };
-    }
-    info!("All readpairs sent");
-
-    //Ensure data is properly pushed out
-    writer_r1.flush()?;
-    writer_r2.flush()?;
-    drop(writer_r1);
-    drop(writer_r2);
-    
-    Ok(())
- }
 
 
  //TODO: single-end reads
