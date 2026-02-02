@@ -7,7 +7,7 @@ use std::{
 };
 
 use bascet_core::{
-    ArenaPool, ArenaSlice, DEFAULT_SIZEOF_BUFFER, SendPtr,
+    ArenaPool, ArenaSlice, DEFAULT_SIZEOF_BUFFER,
     channel::{OrderedDenseReceiver, OrderedDenseSender},
 };
 

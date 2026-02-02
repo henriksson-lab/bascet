@@ -1,10 +1,7 @@
 use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
-// use crate::log_info;
-use bascet_core::AsCollection;
 use bascet_core::attr::sequence;
-use blart::AsBytes;
 use seq_io::fastq::Reader as FastqReader;
 
 use crate::fileformat::shard::CellID;
@@ -130,7 +127,7 @@ impl Chemistry for ParseBioChemistry3 {
 
     fn prepare_using_rp_vecs<C: bascet_core::Composite>(
         &mut self,
-        vec_r1: Vec<C>,
+        _vec_r1: Vec<C>,
         vec_r2: Vec<C>,
     ) -> anyhow::Result<()>
     where

@@ -65,12 +65,12 @@ impl Record {
         arena_view: ArenaView<u8>,
     ) -> Self {
         // SAFETY: Caller guarantees pos_newline indices are valid
-        let id = buf_record.get_unchecked(..pos_tab[0]);
-        let r1 = buf_record.get_unchecked(pos_tab[2] + 1..pos_tab[3]);
-        let r2 = buf_record.get_unchecked(pos_tab[3] + 1..pos_tab[4]);
-        let q1 = buf_record.get_unchecked(pos_tab[4] + 1..pos_tab[5]);
-        let q2 = buf_record.get_unchecked(pos_tab[5] + 1..pos_tab[6]);
-        let umi = buf_record.get_unchecked(pos_tab[6] + 1..);
+        let id = unsafe { buf_record.get_unchecked(..pos_tab[0]) };
+        let r1 = unsafe { buf_record.get_unchecked(pos_tab[2] + 1..pos_tab[3]) };
+        let r2 = unsafe { buf_record.get_unchecked(pos_tab[3] + 1..pos_tab[4]) };
+        let q1 = unsafe { buf_record.get_unchecked(pos_tab[4] + 1..pos_tab[5]) };
+        let q2 = unsafe { buf_record.get_unchecked(pos_tab[5] + 1..pos_tab[6]) };
+        let umi = unsafe { buf_record.get_unchecked(pos_tab[6] + 1..) };
 
         if likely_unlikely::unlikely(r1.len() != q1.len()) {
             panic!(
