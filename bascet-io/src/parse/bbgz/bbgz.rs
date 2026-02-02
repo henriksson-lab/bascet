@@ -8,7 +8,7 @@ pub struct BBGZParser {
     pub(crate) inner_absolute_cursor: u64,
 }
 
-pub fn parser() -> BBGZParser {
+pub fn bbgz_parser() -> BBGZParser {
     BBGZParser {
         inner_cursor: 0,
         inner_absolute_cursor: 0,
@@ -21,7 +21,7 @@ pub fn parser() -> BBGZParser {
     backing = ArenaBacking,
     marker = AsBlock
 )]
-pub struct Block {
+pub struct BBGZBlock {
     pub id: &'static [u8],
     pub offset: u64,
     pub header: &'static [u8],

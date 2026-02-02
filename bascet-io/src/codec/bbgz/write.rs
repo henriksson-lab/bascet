@@ -35,9 +35,11 @@ pub struct BBGZCompressionResult {
 
 pub struct BBGZWriter {
     pub(crate) inner_raw_allocator: Arc<ArenaPool<u8>>,
+    #[allow(unused)]
     pub(crate) inner_compression_allocator: Arc<ArenaPool<u8>>,
 
     pub(crate) inner_compression_key: usize,
+    #[allow(unused)]
     pub(crate) inner_compression_level: Compression,
     pub(crate) inner_compression_tx: Sender<(usize, BBGZCompressionJob)>,
     pub(crate) inner_compression_workers: Vec<JoinHandle<()>>,

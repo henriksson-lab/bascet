@@ -11,8 +11,10 @@ pub struct Bgzf {
     inner_hts_bgzf_ptr: SendPtr<htslib::BGZF>,
 
     inner_hts_tpool: SendCell<htslib::htsThreadPool>,
+    #[allow(unused)]
     inner_hts_tpool_n: u64,
 
+    #[allow(unused)]
     inner_hts_block_size: ByteSize,
     inner_hts_sizeof_alloc: usize,
 }
@@ -51,7 +53,8 @@ impl Bgzf {
         );
 
         // NOTE: alloc size in terms of alloc slots not bytes
-        let hts_sizeof_alloc = ((countof_threads.get() * sizeof_bgzf_block.as_u64())
+        // HACK unused for now because small bgzf blocks may fail the pipeline. I also suspect statically sized blocks are faster, somehow
+        let _hts_sizeof_alloc = ((countof_threads.get() * sizeof_bgzf_block.as_u64())
             / (size_of::<u8>() as u64)) as usize;
 
         let hts_sizeof_alloc = ByteSize::mib(2).as_u64() as usize;
