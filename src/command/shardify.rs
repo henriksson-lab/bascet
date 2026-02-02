@@ -13,7 +13,7 @@ use clap::Args;
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{self, Receiver, Sender};
 use itertools::izip;
-use smallvec::{smallvec, SmallVec, ToSmallVec};
+use smallvec::{smallvec, SmallVec};
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},

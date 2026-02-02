@@ -2,8 +2,6 @@ use bascet_core::{
     ArenaView, Composite,
     attr::{block::*, meta::*},
 };
-use serde::Serialize;
-use smallvec::SmallVec;
 
 pub struct BBGZParser {
     pub(crate) inner_cursor: usize,

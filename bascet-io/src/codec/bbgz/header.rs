@@ -2,7 +2,7 @@ use std::io::Write;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{BBGZTrailer, MAX_SIZEOF_BLOCKusize};
+use crate::{BBGZTrailer};
 
 // NOTE this is very much an incomplete and unsound implementation of the _general_ gzip protocol
 //      and the bgzf protocol. However, we right now generate this data as the sole source
@@ -112,7 +112,9 @@ impl BBGZHeader {
     pub unsafe fn merge_unchecked(&mut self, other: Self) -> &mut Self {
         self.BASE.MTIME = self.BASE.MTIME.max(other.BASE.MTIME);
         for fmerge in other.FEXTRA {
-            self.add_extra_unchecked(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
+            unsafe {
+                self.add_extra_unchecked(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
+            }
         }
 
         return self;

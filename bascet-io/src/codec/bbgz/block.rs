@@ -1,5 +1,3 @@
-use std::io::{Seek, Write};
-
 use bascet_core::ArenaSlice;
 
 use crate::{

@@ -1,9 +1,8 @@
 use bytesize::ByteSize;
 use crossbeam_utils::CachePadded;
-use memmap2::{MmapMut, MmapOptions};
+use memmap2::{MmapOptions};
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
-use std::mem::MaybeUninit;
 use std::ops::Index;
 use std::ptr::NonNull;
 use std::slice::SliceIndex;
@@ -11,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use tracing::warn;
 
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
-use crate::{DEFAULT_MIN_SIZEOF_ARENA, DEFAULT_MIN_SIZEOF_BUFFER, SendPtr, likely_unlikely};
+use crate::{SendPtr};
 
 pub struct ArenaSlice<T>
 where
@@ -29,7 +28,7 @@ where
     #[inline(always)]
     pub unsafe fn from_raw_parts(slice: &mut [T], arena: SendPtr<Arena<T>>) -> Self {
         Self {
-            inner: NonNull::new_unchecked(slice as *mut [T]),
+            inner: unsafe { NonNull::new_unchecked(slice as *mut [T]) },
             view: ArenaView::new(arena),
             _not_sync: PhantomData,
         }
@@ -37,9 +36,11 @@ where
 
     #[inline(always)]
     pub unsafe fn truncate(mut self, len: usize) -> Self {
-        debug_assert!(len <= self.inner.as_ref().len());
-        let ptr = self.inner.as_ptr() as *mut T;
-        self.inner = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
+        unsafe {
+            debug_assert!(len <= self.inner.as_ref().len());
+            let ptr = self.inner.as_ptr() as *mut T;
+            self.inner = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
+        }
         self
     }
 
@@ -157,7 +158,7 @@ pub struct Arena<T> {
 impl<T: bytemuck::Pod> Arena<T> {
     pub unsafe fn from_slice(ptr: *mut T, cap: usize) -> Self {
         Self {
-            ptr: NonNull::new_unchecked(ptr),
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
             len: cap as u64,
             off: 0,
             avl: AtomicBool::new(true),

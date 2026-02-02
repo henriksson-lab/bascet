@@ -1,4 +1,4 @@
-use tracing::{warn, error};
+use tracing::{warn};
 
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 use crate::*;

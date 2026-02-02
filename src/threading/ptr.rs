@@ -31,14 +31,14 @@ impl<T> UnsafePtr<T> {
     }
 
     #[inline(always)]
-    pub unsafe fn offset_from(&self, other: Self) -> isize {
+    pub unsafe fn offset_from(&self, other: Self) -> isize { unsafe {
         self.0.offset_from(*other)
-    }
+    }}
 
     #[inline(always)]
-    pub unsafe fn add(&self, count: usize) -> Self {
+    pub unsafe fn add(&self, count: usize) -> Self { unsafe {
         Self(self.0.add(count))
-    }
+    }}
 }
 
 unsafe impl<T> Send for UnsafePtr<T> {}

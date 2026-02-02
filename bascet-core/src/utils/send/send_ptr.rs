@@ -14,7 +14,9 @@ impl<T> SendPtr<T> {
 
     #[inline(always)]
     pub unsafe fn new_unchecked(ptr: *mut T) -> Self {
-        Self(NonNull::new_unchecked(ptr))
+        unsafe {
+            Self(NonNull::new_unchecked(ptr))
+        }
     }
 
     #[inline(always)]

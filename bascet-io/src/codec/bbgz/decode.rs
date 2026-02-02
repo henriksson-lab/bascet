@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, os::raw, path::Path};
+use std::{os::raw, path::Path};
 
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
