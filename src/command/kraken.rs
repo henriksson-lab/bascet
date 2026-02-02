@@ -208,7 +208,6 @@ impl KrakenCMD {
             path_input: self.path_out_raw.clone(),
             path_output: self.path_out_matrix.clone(),
         };
-
         KrakenMatrix::run(&Arc::new(params))?;
 
         info!(

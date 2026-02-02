@@ -169,10 +169,48 @@ impl CountsketchCMD {
             "Starting Countsketch"
         );
 
+
+        ////////////////////////////////////////////////////////////////////
+        // Create threads for writing output. Note that
+        // cells can be written in any order for this file format
+        let output_file = match File::create(&self.path_out) {
+            Ok(output) => output,
+            Err(e) => {
+                warn!(path = ?self.path_out, error = %e, "Failed to create output countsketch file");
+                anyhow::bail!("Failed to create output countsketch file");
+            }
+        };
+
+        let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
+        let thread_writer = budget.spawn::<TWrite, _, _>(0, move || {
+            let bufwriter = BufWriter::new(output_file);
+            let mut csvwriter = csv::WriterBuilder::new()
+                .has_headers(false)
+                .from_writer(bufwriter);
+
+            while let Ok(countsketch_row) = write_rx.recv() {
+                let id = countsketch_row.get_ref::<Id>();
+                if id.is_empty() {
+                    continue;
+                }
+                csvwriter.serialize(&countsketch_row).unwrap();
+            }
+
+            csvwriter.flush().expect("Failed to flush CSV");
+        });
+
+
+
+
+
+
         let k = self.kmer_size;
         let numof_threads_work = (*budget.threads::<TWork>()).get();
 
+        //For each input file
         for (input_idx, input) in self.paths_in.iter().enumerate() {
+
+            // Create threads for streaming from the input file
             let decoder = codec::BBGZDecoder::builder()
                 .with_path(input.path().path())
                 .countof_threads(budget.numof_threads_read)
@@ -199,6 +237,7 @@ impl CountsketchCMD {
             let mut vec_worker_handles = Vec::with_capacity(numof_threads_work as usize);
             let (work_tx, work_rx) = crossbeam::channel::unbounded::<CountsketchRecord>();
 
+            // Create threads for processing the reads
             for thread_idx in 0..numof_threads_work {
                 let thread_work_rx = work_rx.clone();
                 let mut sketch_ptr = unsafe {
@@ -208,7 +247,7 @@ impl CountsketchCMD {
                 };
                 let thread_flag_synchronize = Arc::clone(&arc_flag_synchronize);
                 let thread_barrier = Arc::clone(&arc_barrier);
-
+                
                 vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx as u64, move || {
                     let thread = std::thread::current();
                     let thread_name = thread.name().unwrap_or("unknown thread"); 
@@ -249,35 +288,6 @@ impl CountsketchCMD {
                 }));
             }
 
-            let output_path = self
-                .path_out
-                .join(format!("countsketch.{}.csv", input_idx + 1));
-
-            let output_file = match File::create(&output_path) {
-                Ok(output) => output,
-                Err(e) => {
-                    warn!(path = ?output_path, error = %e, "Failed to create output file, skipping");
-                    continue;
-                }
-            };
-
-            let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
-            budget.spawn::<TWrite, _, _>(0, move || {
-                let bufwriter = BufWriter::new(output_file);
-                let mut csvwriter = csv::WriterBuilder::new()
-                    .has_headers(false)
-                    .from_writer(bufwriter);
-
-                while let Ok(countsketch_row) = write_rx.recv() {
-                    let id = countsketch_row.get_ref::<Id>();
-                    if id.is_empty() {
-                        continue;
-                    }
-                    csvwriter.serialize(&countsketch_row).unwrap();
-                }
-
-                csvwriter.flush();
-            });
 
             let mut record_id_last: Vec<u8> = Vec::new();
             let mut cells_processed = 0u64;
@@ -323,6 +333,8 @@ impl CountsketchCMD {
                         panic!("{:?}", e);
                     }
                 };
+
+
                 let record_id = *record.get_ref::<Id>();
                 if record_id != &record_id_last {
                     arc_flag_synchronize.store(true, Ordering::Relaxed);
@@ -368,14 +380,22 @@ impl CountsketchCMD {
 
                 let _ = work_tx.send(record);
             }
+
+            //Wait for all data to be have been sent to the workers
             drop(work_tx);
+
+            //Wait for the workers to have sent all data
             for handle in vec_worker_handles {
                 handle.join().unwrap();
             }
-            drop(write_tx);
 
             info!(input_file = input_idx, total_cells_processed = cells_processed, "File complete");
         }
+
+        //Send signal to stop countsketch writers
+        drop(write_tx);
+        //Wait for writers to finish
+        thread_writer.join().unwrap();
 
         Ok(())
     }
