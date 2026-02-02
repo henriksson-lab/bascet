@@ -6,7 +6,7 @@ use bascet_core::{
     *,
 };
 use bascet_derive::Budget;
-use bascet_io::{codec, parse, tirp, BBGZHeader, BBGZWriter};
+use bascet_io::{codec, parse, tirp};
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
@@ -15,10 +15,9 @@ use clap::Args;
 use clio::InputPath;
 use crossbeam::channel::TryRecvError;
 use serde::Serialize;
-use serde_with::{formats::CommaSeparator, serde_as, StringWithSeparator};
 use std::{
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufWriter},
     path::PathBuf,
     sync::{
         self,

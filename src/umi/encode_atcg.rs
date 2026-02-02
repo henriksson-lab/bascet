@@ -94,7 +94,7 @@ impl KMER2bit {
 
         // Compress chunks of 4 nucleotides to 1-byte encoding
         for i in 0..full_chunks {
-            let chunk_ptr = ptr.add(i * chunk_size);
+            let chunk_ptr = unsafe { ptr.add(i * chunk_size) };
             let idx = unsafe {
                 reduce_base(*chunk_ptr.offset(0)) as usize
                     + (reduce_base(*chunk_ptr.offset(1)) as usize * NT4_DIMSIZE)
@@ -129,7 +129,7 @@ impl KMER2bit {
             temp >>= 2;
         }
         sequence.reverse();
-        String::from_utf8_unchecked(sequence)
+        unsafe { String::from_utf8_unchecked(sequence) }
     }
 }
 

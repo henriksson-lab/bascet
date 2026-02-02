@@ -57,10 +57,10 @@ impl Record {
         arena_view: ArenaView<u8>,
     ) -> Self {
         // SAFETY: Caller guarantees pos_newline indices are valid
-        let hdr = buf_record.get_unchecked(..pos_newline[0]);
-        let seq = buf_record.get_unchecked(pos_newline[0] + 1..pos_newline[1]);
-        let sep = buf_record.get_unchecked(pos_newline[1] + 1..pos_newline[2]);
-        let qal = buf_record.get_unchecked(pos_newline[2] + 1..pos_newline[3]);
+        let hdr = unsafe { buf_record.get_unchecked(..pos_newline[0]) };
+        let seq = unsafe { buf_record.get_unchecked(pos_newline[0] + 1..pos_newline[1]) };
+        let sep = unsafe { buf_record.get_unchecked(pos_newline[1] + 1..pos_newline[2]) };
+        let qal = unsafe { buf_record.get_unchecked(pos_newline[2] + 1..pos_newline[3]) };
 
         if likely_unlikely::unlikely(hdr.get(0) != Some(&b'@')) {
             panic!(

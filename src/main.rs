@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{Ordering};
 
 use bascet::command::{self, Commands};
 use bascet_runtime::logging::{
