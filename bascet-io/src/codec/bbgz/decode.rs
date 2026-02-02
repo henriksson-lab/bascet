@@ -11,6 +11,7 @@ pub struct BBGZDecoder {
     inner_hts_bgzf_ptr: SendPtr<htslib::BGZF>,
 
     inner_hts_tpool: SendCell<htslib::htsThreadPool>,
+    #[allow(unused)]
     inner_hts_tpool_n: u64,
 
     inner_hts_sizeof_alloc: usize,

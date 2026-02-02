@@ -4,11 +4,11 @@ use smallvec::{SmallVec, smallvec};
 use crate::{
     BBGZExtra, BBGZHeaderBase, BBGZTrailer,
     codec::bbgz::{MARKER_EOF, MAX_SIZEOF_BLOCKusize, MIN_SIZEOF_HEADERusize},
-    parse::bbgz::{BBGZParser, Block},
+    parse::{BBGZParser, BBGZBlock}
 };
 
 impl Parse<ArenaSlice<u8>> for BBGZParser {
-    type Item = Block;
+    type Item = BBGZBlock;
 
     fn parse_aligned(&mut self, decoded: &ArenaSlice<u8>) -> ParseResult<Self::Item> {
         let slice_remaining = &decoded.as_slice()[self.inner_cursor..];
@@ -125,7 +125,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         self.inner_cursor += bsize;
         self.inner_absolute_cursor += bsize as u64;
 
-        let block = Block {
+        let block = BBGZBlock {
             id: unsafe { std::mem::transmute(slice_id) },
             offset: offset,
             header: unsafe { std::mem::transmute(slice_header) },
@@ -335,7 +335,7 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
         self.inner_cursor = bsize.saturating_sub(tail_len);
         self.inner_absolute_cursor += bsize as u64;
 
-        let block = Block {
+        let block = BBGZBlock {
             id: unsafe { std::mem::transmute(slice_id) },
             offset: offset,
             header: unsafe { std::mem::transmute(slice_header) },

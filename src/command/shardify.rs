@@ -168,14 +168,14 @@ impl ShardifyCMD {
         }
 
         let pairs: Vec<(
-            Sender<parse::bbgz::Block>,
-            PeekableReceiver<parse::bbgz::Block>,
+            Sender<parse::BBGZBlock>,
+            PeekableReceiver<parse::BBGZBlock>,
         )> = (0..countof_streams_input)
-            .map(|_| bascet_core::channel::peekable::<parse::bbgz::Block>())
+            .map(|_| bascet_core::channel::peekable::<parse::BBGZBlock>())
             .collect();
         let (vec_coordinator_tx, mut vec_coordinator_rx): (
-            Vec<Sender<parse::bbgz::Block>>,
-            Vec<PeekableReceiver<parse::bbgz::Block>>,
+            Vec<Sender<parse::BBGZBlock>>,
+            Vec<PeekableReceiver<parse::BBGZBlock>>,
         ) = pairs.into_iter().unzip();
 
         // let vec_consumers_states = Arc::new(RwLock::new(Vec::with_capacity(numof_streams)));
@@ -214,7 +214,7 @@ impl ShardifyCMD {
                 let thread_decoder = codec::plain::PlaintextDecoder::builder()
                     .with_reader(thread_file)
                     .build();
-                let thread_parser = parse::bbgz::parser();
+                let thread_parser = parse::bbgz_parser();
 
                 let mut thread_stream = Stream::builder()
                     .with_decoder(thread_decoder)
@@ -224,7 +224,7 @@ impl ShardifyCMD {
                     .build();
 
                 let mut query = thread_stream
-                    .query::<parse::bbgz::Block>()
+                    .query::<parse::BBGZBlock>()
                     .assert_with_context::<Id, Id, _>(
                         |id_current: &&'static [u8], id_context: &&'static [u8]| {
                             id_current >= id_context
@@ -279,10 +279,10 @@ impl ShardifyCMD {
         drop(notify_tx);
 
         let shard_channels: Vec<(
-            Sender<Vec<parse::bbgz::Block>>,
-            Receiver<Vec<parse::bbgz::Block>>,
+            Sender<Vec<parse::BBGZBlock>>,
+            Receiver<Vec<parse::BBGZBlock>>,
         )> = (0..countof_writers_output)
-            .map(|_| crossbeam::channel::unbounded::<Vec<parse::bbgz::Block>>())
+            .map(|_| crossbeam::channel::unbounded::<Vec<parse::BBGZBlock>>())
             .collect();
         let (vec_write_tx, vec_write_rx): (Vec<_>, Vec<_>) = shard_channels.into_iter().unzip();
 
@@ -310,7 +310,7 @@ impl ShardifyCMD {
                 let thread_name = thread.name().unwrap_or("unknown thread");
                 debug!(thread = thread_name, path = %thread_output, "Starting writer");
 
-                let mut merge_blocks: SmallVec<[parse::bbgz::Block; 32]> = SmallVec::new();
+                let mut merge_blocks: SmallVec<[parse::BBGZBlock; 32]> = SmallVec::new();
                 let mut merge_csize;
                 let mut merge_hsize;
 
@@ -464,7 +464,7 @@ impl ShardifyCMD {
             smallvec![smallvec![0; 16]; countof_streams_input as usize];
         let mut coordinator_vec_take: Vec<usize> =
             Vec::with_capacity(countof_streams_input as usize);
-        let mut coordinator_vec_send: Vec<parse::bbgz::Block> =
+        let mut coordinator_vec_send: Vec<parse::BBGZBlock> =
             Vec::with_capacity(countof_streams_input as usize);
         let mut coordinator_spinpark_counter = 0;
         let mut sweep_spinpark_counter = 0;
