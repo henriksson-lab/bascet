@@ -2,7 +2,7 @@ use bascet_core::{ArenaSlice, Parse, ParseResult};
 use smallvec::{SmallVec, smallvec};
 
 use crate::{
-    BBGZExtra, BBGZHeader, BBGZHeaderBase, BBGZTrailer, BGZFExtra,
+    BBGZExtra, BBGZHeaderBase, BBGZTrailer,
     codec::bbgz::{MARKER_EOF, MAX_SIZEOF_BLOCKusize, MIN_SIZEOF_HEADERusize},
     parse::bbgz::{BBGZParser, Block},
 };

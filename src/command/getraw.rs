@@ -1,16 +1,14 @@
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Cursor, Write};
+use std::io::{BufRead, BufWriter, Cursor, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
 use bascet_io::{
-    BBGZHeaderBase, BBGZTrailer, BBGZWriteBlock, Compression, MAX_SIZEOF_BLOCKusize,
-    SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize,
+    BBGZWriteBlock, Compression,
 };
 use blart::AsBytes;
 use bounded_integer::BoundedU64;
@@ -19,9 +17,9 @@ use clap::{Args, Subcommand};
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
 use gxhash::HashMapExt;
-use itertools::{izip, Itertools};
+use itertools::{izip};
 
-use bascet_core::attr::{block::*, meta::*, quality::*, sequence::*};
+use bascet_core::attr::{meta::*, quality::*, sequence::*};
 use bascet_core::*;
 use bascet_derive::Budget;
 use bascet_io::{

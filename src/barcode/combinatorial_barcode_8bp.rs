@@ -1,6 +1,4 @@
 use gxhash::HashMapExt;
-use itertools::Itertools;
-use likely_stable::unlikely;
 use log::debug;
 use std::collections::HashMap;
 use std::io::Read;
