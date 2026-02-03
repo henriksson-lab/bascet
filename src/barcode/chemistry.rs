@@ -29,20 +29,6 @@ pub trait Chemistry {
 
     ///////////////////////////////
     /// Detect barcode, and trim if ok
-    fn _depreciated_detect_barcode_and_trim(
-        &mut self,
-        _r1_seq: &[u8],
-        _r1_qual: &[u8],
-        _r2_seq: &[u8],
-        _r2_qual: &[u8],
-    ) -> (
-        bool,
-        crate::fileformat::shard::CellID,
-        crate::fileformat::shard::ReadPair,
-    ) {
-        unimplemented!();
-    } // get back if ok, cellid, readpair
-
     fn detect_barcode_and_trim<'a>(
         &mut self,
         _r1_seq: &'a [u8],

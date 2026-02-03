@@ -2,10 +2,10 @@ use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
+use log::{debug};
 
 use crate::fileformat::ReadPairWriter;
 use crate::{
-    command::_depreciated_getraw,
     fileformat::{
         shard::{CellID, ReadPair},
         CellUMI,
@@ -155,8 +155,8 @@ impl PairedFastqStreamingReadPairReader {
         let fname_r2 = get_fq_filename_r2_from_r1(&fname).unwrap();
 
         // Open fastq files
-        let mut forward_file = _depreciated_getraw::open_fastq(&fname).unwrap(); /////////// TODO detect if fastq or fasta depending on first character
-        let mut reverse_file = _depreciated_getraw::open_fastq(&fname_r2).unwrap();
+        let mut forward_file = open_fastq(&fname).unwrap(); /////////// TODO detect if fastq or fasta depending on first character
+        let mut reverse_file = open_fastq(&fname_r2).unwrap();
 
         //Read the first read right away
         let r1 = forward_file.next();
@@ -258,4 +258,23 @@ impl ConstructFromPath<PairedFastqStreamingReadPairReader>
     fn new_from_path(&self, fname: &PathBuf) -> anyhow::Result<PairedFastqStreamingReadPairReader> {
         PairedFastqStreamingReadPairReader::new(fname)
     }
+}
+
+
+
+
+/// Open a FASTQ file
+pub fn open_fastq(file_handle: &PathBuf) -> anyhow::Result<FastqReader<Box<dyn std::io::Read>>> {
+    let opened_handle = File::open(file_handle)
+        .expect(format!("Could not open fastq file {}", &file_handle.display()).as_str());
+
+    let (reader, compression) = niffler::get_reader(Box::new(opened_handle))
+        .expect(format!("Could not open fastq file {}", &file_handle.display()).as_str());
+
+    debug!(
+        "Opened file {} with compression {:?}",
+        &file_handle.display(),
+        &compression
+    );
+    Ok(FastqReader::new(reader))
 }
