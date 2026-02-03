@@ -3,8 +3,6 @@ use super::CombinatorialBarcode;
 use seq_io::fastq::Reader as FastqReader;
 use std::io::Cursor;
 
-use crate::fileformat::shard::CellID;
-use crate::fileformat::shard::ReadPair;
 
 ///////////////////////////////
 /// Atrandi RNA-seq chemistry
@@ -40,6 +38,7 @@ impl Chemistry for AtrandiRNAseqChemistry {
         Ok(())
     }
 
+    /*
     ////////// Detect barcode, and trim if ok
     fn _depreciated_detect_barcode_and_trim(
         &mut self,
@@ -206,8 +205,12 @@ impl Chemistry for AtrandiRNAseqChemistry {
             )
         }
     }
+     */
+    
 }
 
+
+/*
 ///////////////////////////////
 /// Scan string until no more T found. Allow some mismatches.
 /// This is for polyT trimming
@@ -271,3 +274,4 @@ where
         .windows(needle.len())
         .position(|window| window == needle)
 }
+ */

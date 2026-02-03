@@ -3,9 +3,6 @@ use crate::barcode::CombinatorialBarcode16bp;
 use crate::barcode::CombinatorialBarcodePart16bp;
 use seq_io::fastq::Reader as FastqReader;
 
-use crate::fileformat::shard::CellID;
-use crate::fileformat::shard::ReadPair;
-
 use seq_io::fastq::Record as FastqRecord;
 
 use flate2::read::GzDecoder;
@@ -100,6 +97,9 @@ impl Chemistry for TenxRNAChemistry {
         Ok(())
     }
 
+    /*
+    
+    
     ///////////////////////////////
     /// Detect barcode, and trim if ok
     fn _depreciated_detect_barcode_and_trim(
@@ -160,6 +160,9 @@ impl Chemistry for TenxRNAChemistry {
             )
         }
     }
+
+     */
+    
 }
 
 impl TenxRNAChemistry {

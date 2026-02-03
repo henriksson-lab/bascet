@@ -1,7 +1,6 @@
 use clap::Subcommand;
 
 // Module declarations (alphabetical)
-pub mod _depreciated_getraw;
 pub mod align;
 pub mod bam2fragments;
 pub mod countchrom;
@@ -30,7 +29,6 @@ pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 pub use align::AlignCMD;
 
 // Count operations
-pub use _depreciated_getraw::{_depreciated_GetRaw, _depreciated_GetRawCMD};
 pub use countchrom::{CountChrom, CountChromCMD};
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
@@ -60,7 +58,6 @@ pub use transform::{TransformCMD, TransformFile};
 #[allow(non_camel_case_types)]
 pub enum Commands {
     #[strum(to_string = "Getraw (depreciated)")]
-    _depreciated_GetRaw(_depreciated_GetRawCMD),
     Align(AlignCMD),
     GetRaw(GetRawCMD),
     Mapcell(MapCellCMD),

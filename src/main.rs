@@ -97,7 +97,6 @@ fn main() -> std::process::ExitCode {
     info!("---------------------------------------------------------------------------");
 
     let _result = match cli.command {
-        Commands::_depreciated_GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Align(mut cmd) => cmd.try_execute(),
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
