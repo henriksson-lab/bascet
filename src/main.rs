@@ -90,6 +90,7 @@ fn main() -> std::process::ExitCode {
 
         error!(elapsed = ?start.elapsed(), "Failure!");
         LogGuard::flush();
+        std::process::abort();
     }));
 
     info!("*=========================================================================*");
