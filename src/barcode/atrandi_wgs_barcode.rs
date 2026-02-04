@@ -349,14 +349,16 @@ fn get_trimmed_ranges(
         }
     }
 
-    //Start of R2 is always the same. Remove first base which might always be A or T from dA-tailing
-    let r2_from=1;
-
     //End of R2 depends on length of R1 if there is overlap
     let mut r2_to = len2;
     if len1 < ov + bc_len { // r2_to < len2
         r2_to = len2 - bc_len + len1 - ov;
     }
+
+    //Start of R2 is always the same. Remove first base which might always be A or T from dA-tailing.
+    //However, if there is no content, start at 0
+    let r2_from=1.min(r2_to);
+
     Some((
         r1_from..r1_to, 
         r2_from..r2_to
