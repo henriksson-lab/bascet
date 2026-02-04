@@ -35,6 +35,8 @@ impl DebarcodeAtrandiWGSChemistry {
         result.barcode.pools[0].pos_anchor = (8 + 4) * 3;
         result.barcode.pools[0].pos_rel_anchor = vec![0, 1];
 
+        result.barcode.trim_bcread_len=8+4+8+4+8+4+8+1; //8 barcodes, 3 spacers, and 1 to account for ligation
+
         result
     }
 }
@@ -74,76 +76,35 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
             self.barcode
                 .detect_barcode(r2_seq, true, total_distance_cutoff, part_distance_cutoff);
 
-        match score {
-            0.. => {
+        if score >= 0 {
+            //Barcode score seems ok.                    
+            //Find overlap. This will be used for trimming. Note that we swap r1 and r2 for compatibility with trimmer code, which assumes barcode in r1
+            let overlap = compute_read_overlap(
+                r2_seq,
+                r1_seq,
+            );
 
-                    //Return trimmed read
-                    /* 
-                    let range_r1=0..1;
-                    let range_r2=0..1;
-                    let umi_range = self.barcode.umi_from..self.barcode.umi_to; /////////////////////////////// this also kills the stack
+            //Get subset ranges from trimming
+            let trim_ranges = get_trimmed_ranges(
+                self.barcode.trim_bcread_len,
+                r2_seq,
+                r1_seq,
+                overlap
+            );
+
+            //Check if read worth keeping still.
+            //It might be faster to trim before barcode identification (requires benchmarking).
+            //Swap back r1 and r2
+            if let Some((range_r2, range_r1))=trim_ranges {
+                //Get UMI position
+                let umi_range = self.barcode.umi_from..self.barcode.umi_to;
+
+                let tot_len = (range_r1.end - range_r1.start) + (range_r2.end - range_r2.start);
+                //println!("----{:?} {:?} {:?}", range_r1, range_r2, umi_range);
+            
+                //Return trimmed read if long enough
+                if tot_len > 30*2 {
                     return (
-                        bc,
-                        ReadPair {
-                            r1: &r1_seq,//[range_r1.clone()],
-                            r2: &r2_seq,//[range_r2.clone()],
-                            q1: &r1_qual,//[range_r1],
-                            q2: &r2_qual,//[range_r2],
-                            umi: &r2_seq[umi_range],
-                        },
-                    );   */
-    
-                    /* 
-                    return (
-                        0, ///////////////////////////////  this kills the stack
-                        ReadPair {
-                            r1: &r1_seq,
-                            r2: &r2_seq,
-                            q1: &r1_qual,
-                            q2: &r2_qual,
-                            umi: &[],
-                        },
-                    )
-                    */
-
-                    /*
-                    return ( /////////////////////////////// this saves the program
-                        u32::MAX, //=Discard
-                        ReadPair {
-                            r1: &r1_seq,
-                            r2: &r2_seq,
-                            q1: &r1_qual,
-                            q2: &r2_qual,
-                            umi: &[],
-                        },
-                    )
-                    */
-                    
-                //Find overlap. This will be used for trimming. Note that we swap r1 and r2 for compatibility with trimmer code, which assumes barcode in r1
-                let overlap = compute_read_overlap(
-                    r2_seq,
-                    r1_seq,
-                );
-
-                //Get subset ranges from trimming
-                let trim_ranges = get_trimmed_ranges(
-                    self.barcode.trim_bcread_len,
-                    r2_seq,
-                    r1_seq,
-                    overlap
-                );
-
-                //Check if read worth keeping still.
-                //It might be faster to trim before barcode identification (requires benchmarking).
-                //Swap back r1 and r2
-                if let Some((range_r2, range_r1))=trim_ranges {
-                    //Get UMI position
-                    let umi_range = self.barcode.umi_from..self.barcode.umi_to;
-
-                    //println!("----{:?} {:?} {:?}", range_r1, range_r2, umi_range);
-
-                    //Return trimmed read
-                    (
                         bc,
                         ReadPair {
                             r1: &r1_seq[range_r1.clone()],
@@ -153,34 +114,23 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
                             umi: &r2_seq[umi_range],
                         },
                     )
-                } else {
-                    //Discard readpairs which overlap too much. These tend to have broken barcodes as well
-                    (
-                        u32::MAX, //=Discard
-                        ReadPair {
-                            r1: &r1_seq,
-                            r2: &r2_seq,
-                            q1: &r1_qual,
-                            q2: &r2_qual,
-                            umi: &[],
-                        },
-                    )
                 }
-            }
-            ..0 => {
-                //Discard the read pair due to bad barcode score
-                (
-                    u32::MAX, //=Discard
-                    ReadPair {
-                        r1: &r1_seq,
-                        r2: &r2_seq,
-                        q1: &r1_qual,
-                        q2: &r2_qual,
-                        umi: &[],
-                    },
-                )
+            } else {
+                //Discard readpairs which overlap too much. These tend to have broken barcodes as well
             }
         }
+
+        return (
+            u32::MAX, //=Discard
+            ReadPair {
+                r1: &r1_seq,
+                r2: &r2_seq,
+                q1: &r1_qual,
+                q2: &r2_qual,
+                umi: &[],
+            },
+        )
+        
     }
 
     fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
@@ -359,19 +309,6 @@ fn compute_read_overlap(
         //No overlap
         return 0;
     }    
-    
-    /*
-    //Trim gDNA read, if it is long enough that it reaches the barcode region
-    let max_r1 = insert_size - barcode_size;
-    r1_to = r1_to.min(max_r1);
-
-    //Trim barcode read. This is only needed if it is larger than the insert size
-    r2_to = r2_to.min(insert_size);
-     */
-        
-
-        
-
 }
 
 
@@ -387,8 +324,6 @@ fn get_trimmed_ranges(
     r2: &[u8],
     ov: usize
 ) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
-
-    //let bc_len = 8*4 + 4+4+4+1;
 
     let len1=r1.len();
     let len2=r2.len();
@@ -414,16 +349,18 @@ fn get_trimmed_ranges(
         }
     }
 
-    //Start of R2 is always the same
-    let r2_from=0;
+    //Start of R2 is always the same. Remove first base which might always be A or T from dA-tailing
+    let r2_from=1;
 
     //End of R2 depends on length of R1 if there is overlap
     let mut r2_to = len2;
     if len1 < ov + bc_len { // r2_to < len2
-//            r2_to = len2+len1-ov;  // - bc_len
         r2_to = len2 - bc_len + len1 - ov;
     }
-    Some((r1_from..r1_to, r2_from..r2_to))
+    Some((
+        r1_from..r1_to, 
+        r2_from..r2_to
+    ))
 }
 
 
@@ -550,13 +487,6 @@ fn bithack_findmin_final(allchar: &[u8], scanfor: &[u8]) -> Option<usize> {
     return None;
 }
 
-
-/* 
-fn bithack_findmin_final_no_inline(all_inp: &[u8], scanfor: &[u8]) -> Option<usize> {
-    let allchar = onehot_encode_bytes_if(all_inp);
-    bithack_findmin_final(allchar.as_slice(), scanfor)
-}
-*/
 
 
 /// Copy a list of u8 into a u64 (almost a transmute).
