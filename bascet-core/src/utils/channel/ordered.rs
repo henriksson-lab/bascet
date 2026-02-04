@@ -18,10 +18,8 @@ pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedD
 
     let fastpath = Arc::new(OrderedDenseFastpathInner {
         base: AtomicUsize::new(0),
-        is_init: Box::new(std::array::from_fn(|_| AtomicBool::new(false))),
-        ordered: Box::new(std::array::from_fn(|_| {
-            UnsafeCell::new(MaybeUninit::uninit())
-        })),
+        is_init: (0..N).map(|_| AtomicBool::new(false)).collect(),
+        ordered: (0..N).map(|_| UnsafeCell::new(MaybeUninit::uninit())).collect(),
     });
     let slowpath = OrderedDenseSlowpathInner {
         base: 0,
@@ -45,8 +43,8 @@ pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedD
 
 pub struct OrderedDenseFastpathInner<T, const N: usize> {
     pub base: AtomicUsize,
-    pub is_init: Box<[AtomicBool; N]>,
-    pub ordered: Box<[UnsafeCell<MaybeUninit<T>>; N]>,
+    pub is_init: Vec<AtomicBool>,
+    pub ordered: Vec<UnsafeCell<MaybeUninit<T>>>,
 }
 
 pub struct OrderedDenseSlowpathInner<T> {

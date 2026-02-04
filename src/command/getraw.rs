@@ -1005,10 +1005,6 @@ fn spawn_chunk_writers(
                     }
                 };
 
-                // let bufwriter = BufWriter::with_capacity(
-                //     ByteSize::mib(1).as_u64() as usize,
-                //     temp_output_file.clone()
-                // );
                 let mut bbgzwriter = BBGZWriter::builder()
                     .countof_threads(countof_write_each_compress_threads)
                     .compression_level(compression_level)
@@ -1223,4 +1219,3 @@ pub struct DebarcodedRecord {
     #[serde(skip)]
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
-
