@@ -196,7 +196,7 @@ impl BBGZWriter {
                                     total_out
                                 };
 
-                                // Structure: [data] [sync: <unaligned byte> 0x00 0x00 0xff 0xff] [terminator: 0x03 0x00]
+                                // [data] [sync: <unaligned byte> 0x00 0x00 0xff 0xff] [terminator: 0x03 0x00]
                                 // For merging: strip terminator bytes from intermediate blocks and append
                                 // terminator to last
                                 slice_compressed[total_out] = 0x03;
