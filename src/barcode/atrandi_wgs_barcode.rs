@@ -330,7 +330,7 @@ fn get_trimmed_ranges(
 
     //Handle case of no overlap
     if ov==0 {
-        println!("no overlap");
+        //println!("no overlap");
         return Some((bc_len..len1, 0..len2))
     }
 
@@ -342,7 +342,7 @@ fn get_trimmed_ranges(
     if len2 < ov {
         if len1+len2 < bc_len+ov {  // to=len1+len2-ov < bc_len=from
             //R1 barcode region goes beyond end of R2, so fragmentation happened in the barcode
-            println!("Giving up read");
+            //println!("Giving up read as fragmentation in the barcode");
             return None;
         } else {
             r1_to = len1+len2-ov;
