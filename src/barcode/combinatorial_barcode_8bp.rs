@@ -301,7 +301,7 @@ impl CombinatorialBarcodePart8bp {
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq_encoded) {
             return (i, 0);
         } else {
-            debug!(
+            trace!(
                 "not a precise match {:?}({:?})",
                 optimistic_seq, optimistic_seq_encoded
             );
