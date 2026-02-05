@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use tracing::warn;
 
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
@@ -22,6 +24,13 @@ where
         loop {
             let decoded = match self.inner_decoder_buffer_rx.peek() {
                 Err(rtrb::PeekError::Empty) => {
+                    if likely_unlikely::unlikely(
+                        self.inner_decoder_flag_stop.load(Ordering::Relaxed) == true,
+                    ) {
+                        self.inner_state = StreamState::Aligned;
+                        return Ok(self.inner_context.take());
+                    }
+
                     match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
                         &mut spinpark_counter,
                     ) {
