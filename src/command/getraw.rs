@@ -246,12 +246,12 @@ struct GetrawBudget {
     #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.2) as u64))]
     countof_threads_compress: BoundedU64<1, { u64::MAX }>,
 
-    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.7) as u64))]
+    #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.5) as u64))]
     sizeof_stream_buffer: ByteSize,
 
-    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.15) as u64))]
+    #[mem(MCompressBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.25) as u64))]
     sizeof_compress_buffer: ByteSize,
-    #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.15) as u64))]
+    #[mem(MCompressRawBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.25) as u64))]
     sizeof_compress_raw_buffer: ByteSize,
 }
 
