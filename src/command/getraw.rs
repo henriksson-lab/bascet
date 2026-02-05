@@ -827,7 +827,7 @@ fn spawn_collector(
     budget: &GetrawBudget,
 ) -> (Receiver<Vec<(u32, DebarcodedRecord)>>, JoinHandle<()>) {
     let (ct_tx, ct_rx) = crossbeam::channel::unbounded();
-    let sizeof_each_sort_alloc = ByteSize::gib(1);
+    let sizeof_each_sort_alloc = ByteSize::mib(512);
     let mut countof_each_sort_alloc = 0;
 
     debug!(sizeof_each_sort_alloc = %sizeof_each_sort_alloc, "sizeof_each_sort_alloc");
