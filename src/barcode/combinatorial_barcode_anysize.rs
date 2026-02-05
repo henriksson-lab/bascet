@@ -1,5 +1,6 @@
 use anyhow::bail;
 use log::debug;
+use tracing::trace;
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -468,7 +469,7 @@ impl CombinatorialBarcodePart {
             let bc = self.barcode_list.get(i).expect("wtf");
             return Some((bc.name.clone(), 0));
         } else {
-            debug!("not a precise match {:?}", optimistic_seq);
+            trace!("not a precise match {:?}", optimistic_seq);
         }
 
         //Simply scan

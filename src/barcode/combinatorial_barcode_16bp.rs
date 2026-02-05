@@ -1,4 +1,5 @@
 use log::debug;
+use tracing::trace;
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -217,7 +218,7 @@ impl CombinatorialBarcodePart16bp {
         if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
             return (i, 0);
         } else {
-            debug!("not a precise match {:?}", optimistic_seq);
+            trace!("not a precise match {:?}", optimistic_seq);
         }
 
         //Find candidate hits. Scan each barcode, in all positions
