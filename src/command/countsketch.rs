@@ -21,7 +21,7 @@ use std::{
     path::PathBuf,
     sync::{
         self,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -232,6 +232,7 @@ impl CountsketchCMD {
 
             let arc_flag_synchronize = Arc::new(AtomicBool::new(false));
             let arc_barrier = Arc::new(sync::Barrier::new((numof_threads_work + 1) as usize));
+            let arc_countof_reads_skipped = Arc::new(AtomicU64::new(0));
 
             let mut vec_worker_handles = Vec::with_capacity(numof_threads_work as usize);
             let (work_tx, work_rx) = crossbeam::channel::unbounded::<CountsketchRecord>();
@@ -246,6 +247,7 @@ impl CountsketchCMD {
                 };
                 let thread_flag_synchronize = Arc::clone(&arc_flag_synchronize);
                 let thread_barrier = Arc::clone(&arc_barrier);
+                let thread_countof_reads_skipped = Arc::clone(&arc_countof_reads_skipped);
                 
                 vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx as u64, move || {
                     let thread = std::thread::current();
@@ -280,8 +282,12 @@ impl CountsketchCMD {
                         // Barriers ensure no concurrent access during sync.
                         unsafe {
                             let sketch = sketch_ptr.as_mut();
-                            let _ = sketch.add_sequence(record.get_ref::<R1>(), k);
-                            let _ = sketch.add_sequence(record.get_ref::<R2>(), k);
+                            if sketch.add_sequence(record.get_ref::<R1>(), k).is_err() {
+                                thread_countof_reads_skipped.fetch_add(1, Ordering::Relaxed);
+                            }
+                            if sketch.add_sequence(record.get_ref::<R2>(), k).is_err() {
+                                thread_countof_reads_skipped.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                 }));
@@ -388,7 +394,8 @@ impl CountsketchCMD {
                 handle.join().unwrap();
             }
 
-            info!(input_file = input_idx, total_cells_processed = cells_processed, "File complete");
+            let reads_skipped = arc_countof_reads_skipped.load(Ordering::Relaxed);
+            info!(input_file = input_idx, cells_processed = cells_processed, reads_skipped = reads_skipped, "File complete");
         }
 
         //Send signal to stop countsketch writers

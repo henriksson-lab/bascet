@@ -36,14 +36,23 @@ impl CountSketch {
     /// Add all k-mers from a DNA sequence to the sketch.
     ///
     /// Uses nthash rolling hash for efficient k-mer hashing.
-    /// Processes canonical k-mer hashes
-    pub fn add_sequence(&mut self, sequence: &[u8], k: u16) {
-        let mut hasher = NtHash::new(sequence, k, 1, 0).expect("Invalid sequence or k-mer size");
+    /// Processes canonical k-mer hashes.
+    /// Returns Err(()) if the sequence is shorter than k.
+    pub fn add_sequence(&mut self, sequence: &[u8], k: u16) -> Result<(), ()> {
+        if sequence.len() < k as usize {
+            return Err(());
+        }
+
+        let mut hasher = match NtHash::new(sequence, k, 1, 0) {
+            Ok(h) => h,
+            Err(_) => return Err(()),
+        };
 
         while hasher.roll() {
             let canonical_hash = canonical(hasher.forward_hash(), hasher.reverse_hash());
             self.add_hash(canonical_hash);
         }
+        Ok(())
     }
 
     /// Add a single hash value to the sketch.
