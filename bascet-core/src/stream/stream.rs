@@ -141,7 +141,7 @@ where
     pub unsafe fn shutdown(mut self) {
         self.inner_decoder_flag_stop.store(true, Ordering::Relaxed);
         // HACK: make sure stop flag is read
-        // std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_secs(1));
         // self.inner_shutdown_barrier.wait();
         while let Ok(buffer) = self.inner_decoder_buffer_rx.pop() {
             drop(buffer);
