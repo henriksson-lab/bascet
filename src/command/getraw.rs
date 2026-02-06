@@ -1106,8 +1106,7 @@ fn spawn_mergesort_workers(
             (*budget.threads::<Total>()).get(),
         )),
         numof_threads_write: None,
-        total_mem: ByteSize::gib(64),
-        // total_mem: *budget.mem::<Total>(),
+        total_mem: *budget.mem::<Total>(),
         sizeof_stream_buffer: None,
         sizeof_stream_arena,
 
