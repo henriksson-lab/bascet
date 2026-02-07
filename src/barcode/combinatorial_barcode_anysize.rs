@@ -1,5 +1,4 @@
 use anyhow::bail;
-use log::debug;
 use tracing::trace;
 use std::collections::HashMap;
 use std::io::Read;
