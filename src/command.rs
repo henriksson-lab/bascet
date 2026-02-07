@@ -6,7 +6,7 @@ pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
-pub mod countsketch_mat;
+pub mod countsketch_mat_depreciated;
 pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
@@ -21,6 +21,7 @@ pub mod shardify;
 pub mod snpcall;
 pub mod threadcount;
 pub mod transform;
+pub mod tofq;
 
 
 // BAM/SAM operations
@@ -32,7 +33,7 @@ pub use align::AlignCMD;
 pub use countchrom::{CountChrom, CountChromCMD};
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
-pub use countsketch_mat::CountsketchMatCMD;  
+pub use countsketch_mat_depreciated::CountsketchMatCMD;  
 pub use extract::ExtractCMD;
 pub use extract_terminal::ExtractStreamCMD;
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
@@ -52,6 +53,8 @@ pub use threadcount::{
 };
 pub use transform::{TransformCMD, TransformFile};
 
+use crate::command::tofq::ToFastqCMD;
+
 ///////////////////////////////
 /// Possible subcommands to parse
 #[derive(Subcommand, strum_macros::Display)]
@@ -59,21 +62,22 @@ pub use transform::{TransformCMD, TransformFile};
 pub enum Commands {
     #[strum(to_string = "Getraw (depreciated)")]
     Align(AlignCMD),
-    GetRaw(GetRawCMD),
-    Mapcell(MapCellCMD),
-    Extract(ExtractCMD),
-    Shardify(ShardifyCMD),
-    Transform(TransformCMD),
-    Featurise(FeaturiseKmcCMD),
-    MinhashHist(MinhashHistCMD),
-    QueryKmc(QueryKmcCMD),
-    QueryFq(QueryFqCMD),
     Bam2fragments(Bam2FragmentsCMD),
-    Kraken(KrakenCMD),
     Countchrom(CountChromCMD),
     Countfeature(CountFeatureCMD),
-    PipeSamAddTags(PipeSamAddTagsCMD),
     Countsketch(CountsketchCMD),
     CountsketchMat(CountsketchMatCMD),
+    Extract(ExtractCMD),
     ExtractStream(ExtractStreamCMD),
+    Featurise(FeaturiseKmcCMD),
+    GetRaw(GetRawCMD),
+    Kraken(KrakenCMD),
+    Mapcell(MapCellCMD),
+    MinhashHist(MinhashHistCMD),
+    PipeSamAddTags(PipeSamAddTagsCMD), //might no longer be needed
+    Shardify(ShardifyCMD),
+    ToFastq(ToFastqCMD),
+    Transform(TransformCMD),
+    QueryKmc(QueryKmcCMD),
+    QueryFq(QueryFqCMD),
 }

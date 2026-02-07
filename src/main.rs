@@ -99,23 +99,24 @@ fn main() -> std::process::ExitCode {
 
     let _result = match cli.command {
         Commands::Align(mut cmd) => cmd.try_execute(),
-        Commands::GetRaw(mut cmd) => cmd.try_execute(),
-        Commands::Mapcell(mut cmd) => cmd.try_execute(),
-        Commands::Extract(mut cmd) => cmd.try_execute(),
-        Commands::Shardify(mut cmd) => cmd.try_execute(),
-        Commands::Transform(mut cmd) => cmd.try_execute(),
-        Commands::Featurise(mut cmd) => cmd.try_execute(),
-        Commands::MinhashHist(mut cmd) => cmd.try_execute(),
-        Commands::QueryKmc(mut cmd) => cmd.try_execute(),
-        Commands::QueryFq(mut cmd) => cmd.try_execute(),
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
-        Commands::Kraken(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
         Commands::Countfeature(mut cmd) => cmd.try_execute(),
-        Commands::PipeSamAddTags(mut cmd) => cmd.try_execute(),
-        Commands::Countsketch(mut cmd) => cmd.try_execute(),
-        Commands::ExtractStream(mut cmd) => cmd.try_execute(),
         Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
+        Commands::Countsketch(mut cmd) => cmd.try_execute(),
+        Commands::Extract(mut cmd) => cmd.try_execute(),
+        Commands::ExtractStream(mut cmd) => cmd.try_execute(),
+        Commands::Featurise(mut cmd) => cmd.try_execute(),
+        Commands::GetRaw(mut cmd) => cmd.try_execute(),
+        Commands::Mapcell(mut cmd) => cmd.try_execute(),
+        Commands::MinhashHist(mut cmd) => cmd.try_execute(),
+        Commands::Kraken(mut cmd) => cmd.try_execute(),
+        Commands::PipeSamAddTags(mut cmd) => cmd.try_execute(), // no longer needed?
+        Commands::Shardify(mut cmd) => cmd.try_execute(),
+        Commands::ToFastq(mut cmd) => cmd.try_execute(),
+        Commands::Transform(mut cmd) => cmd.try_execute(),
+        Commands::QueryKmc(mut cmd) => cmd.try_execute(),
+        Commands::QueryFq(mut cmd) => cmd.try_execute(),
     };
 
     info!(elapsed = ?start.elapsed(), "Success!");

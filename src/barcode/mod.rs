@@ -1,5 +1,6 @@
 pub mod atrandi_rnaseq_barcode;
-pub mod atrandi_wgs_barcode;
+pub mod atrandi_wgs_barcode_illumina;
+pub mod atrandi_wgs_barcode_longread;
 pub mod chemistry;
 pub mod combinatorial_barcode_16bp;
 pub mod combinatorial_barcode_8bp;

@@ -3,12 +3,12 @@ use crate::{barcode::{CombinatorialBarcode8bp}, common::ReadPair};
 use blart::AsBytes;
 
 #[derive(Clone)]
-pub struct DebarcodeAtrandiWGSChemistry {
+pub struct DebarcodeAtrandiWGSChemistryIllumina {
     barcode: CombinatorialBarcode8bp,
 }
-impl DebarcodeAtrandiWGSChemistry {
+impl DebarcodeAtrandiWGSChemistryIllumina {
     pub fn new() -> Self {
-        let mut result = DebarcodeAtrandiWGSChemistry {
+        let mut result = DebarcodeAtrandiWGSChemistryIllumina {
             barcode: CombinatorialBarcode8bp::new(),
         };
 
@@ -40,7 +40,7 @@ impl DebarcodeAtrandiWGSChemistry {
         result
     }
 }
-impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistry {
+impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryIllumina {
 
     ///////////////////////////////
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position.

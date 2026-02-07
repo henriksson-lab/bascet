@@ -237,10 +237,13 @@ impl AlignCMD {
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // All threads are now set up. Send all readpairs to the aligner
+        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_pipe_r1)?);  //blocks until reader ready; so open reader first
+        let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_pipe_r2)?);
+
         AlignCMD::write_tirp_to_2fq(
             self.path_in.path().path(),
-            &path_pipe_r1,
-            &path_pipe_r2,
+            &mut writer_r1, //path_pipe_r1,
+            &mut writer_r2, //path_pipe_r2,
             budget.numof_threads_read,
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
@@ -293,8 +296,11 @@ impl AlignCMD {
     /// 
     pub fn write_tirp_to_2fq<P>(
         path_in: P,
-        path_r1: P,
-        path_r2: P,
+//        path_r1: P,
+//        path_r2: P,
+        writer_r1: &mut BufWriter<impl Write>,
+        writer_r2: &mut BufWriter<impl Write>,
+
         num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
         sizeof_stream_arena: ByteSize,
         sizeof_stream_buffer: ByteSize,
@@ -317,8 +323,8 @@ impl AlignCMD {
 
         let mut query = stream.query::<tirp::Record>();
 
-        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
-        let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
+//        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
+//        let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
         println!("Sending read pairs");
         let mut num_read:u64 = 0;
         loop {
@@ -359,7 +365,7 @@ impl AlignCMD {
                     }
 
                     write_read_bascetfq(
-                        &mut writer_r1,
+                        writer_r1,
                         &record_id,
                         &record_r1,
                         &record_q1,
@@ -368,7 +374,7 @@ impl AlignCMD {
                     )?;
 
                     write_read_bascetfq(
-                        &mut writer_r2,
+                        writer_r2,
                         &record_id,
                         &record_r2,
                         &record_q2,
@@ -400,8 +406,8 @@ impl AlignCMD {
         //Ensure data is properly pushed out
         writer_r1.flush()?;
         writer_r2.flush()?;
-        drop(writer_r1);
-        drop(writer_r2);
+        //drop(writer_r1); //don't think needed
+        //drop(writer_r2); //don't think needed
         info!("All readpairs flushed");
         
         Ok(())
@@ -415,7 +421,6 @@ impl AlignCMD {
     pub fn write_tirp_to_interleaved_fq<P>(
         path_in: P,
         path_r1: P,
-//        path_r2: P,
         num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
         sizeof_stream_arena: ByteSize,
         sizeof_stream_buffer: ByteSize,
@@ -520,9 +525,7 @@ impl AlignCMD {
 
         //Ensure data is properly pushed out
         writer_r1.flush()?;
-        //writer_r2.flush()?;
-        drop(writer_r1);
-        //drop(writer_r2);
+        //drop(writer_r1); //don't think needed
         info!("All readpairs flushed");
         
         Ok(())

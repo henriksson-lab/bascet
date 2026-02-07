@@ -28,7 +28,7 @@ use bascet_io::{
 use serde::Serialize;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::barcode::atrandi_wgs_barcode::DebarcodeAtrandiWGSChemistry;
+use crate::barcode::atrandi_wgs_barcode_illumina::DebarcodeAtrandiWGSChemistryIllumina;
 use crate::barcode::{Chemistry, ParseBioChemistry3};
 use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
@@ -221,7 +221,7 @@ pub enum GetRawChemistryCMD {
 #[derive(Clone)]
 #[enum_dispatch::enum_dispatch(Chemistry)]
 pub enum GetRawChemistry {
-    AtrandiWGS(DebarcodeAtrandiWGSChemistry),
+    AtrandiWGS(DebarcodeAtrandiWGSChemistryIllumina),
     ParseBio(ParseBioChemistry3),
 }
 
@@ -336,7 +336,7 @@ impl GetRawCMD {
 
             let mut chemistry = match &self.chemistry {
                 GetRawChemistryCMD::AtrandiWGS { .. } => {
-                    GetRawChemistry::AtrandiWGS(DebarcodeAtrandiWGSChemistry::new())
+                    GetRawChemistry::AtrandiWGS(DebarcodeAtrandiWGSChemistryIllumina::new())
                 }
                 GetRawChemistryCMD::ParseBio { subchemistry, .. } => {
                     GetRawChemistry::ParseBio(ParseBioChemistry3::new(&subchemistry))
