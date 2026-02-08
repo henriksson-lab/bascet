@@ -29,6 +29,7 @@ use serde::Serialize;
 use smallvec::{SmallVec, ToSmallVec};
 
 use crate::barcode::atrandi_wgs_barcode_illumina::DebarcodeAtrandiWGSChemistryIllumina;
+use crate::barcode::atrandi_wgs_barcode_longread::DebarcodeAtrandiWGSChemistryLongread;
 use crate::barcode::{Chemistry, ParseBioChemistry3};
 use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
@@ -205,8 +206,10 @@ pub struct GetRawCMD {
 
 #[derive(Subcommand)]
 pub enum GetRawChemistryCMD {
-    /// AtrandiWGS chemistry, uses combinatorial 8bp barcodes for debarcoding
+    /// AtrandiWGS chemistry, uses combinatorial 8bp barcodes for debarcoding -- short read for illumina, paired end
     AtrandiWGS,
+    /// AtrandiWGS chemistry, uses combinatorial 8bp barcodes for debarcoding -- long read for pacbio/nanopore, single read
+    AtrandiWGSLR,
     /// ParseBio chemistry, uses combinatorial 8bp barcodes for debarcoding
     ParseBio {
         #[arg(
@@ -222,6 +225,7 @@ pub enum GetRawChemistryCMD {
 #[enum_dispatch::enum_dispatch(Chemistry)]
 pub enum GetRawChemistry {
     AtrandiWGS(DebarcodeAtrandiWGSChemistryIllumina),
+    AtrandiWGSLR(DebarcodeAtrandiWGSChemistryLongread),
     ParseBio(ParseBioChemistry3),
 }
 
@@ -325,23 +329,44 @@ impl GetRawCMD {
                 .to_path_buf()
         };
 
+
+        //Only perform debarcoding if skipping is disabled
         if vec_input_debarcode_merge.is_empty() {
-            let vec_input: Vec<(InputPath, InputPath)> =
-                izip!(self.paths_r1.clone(), self.paths_r2.clone()).collect();
 
-            if vec_input.is_empty() {
-                error!("No valid input files found. All input files failed to open or do not exist.");
-                panic!("No valid input files found");
-            }
-
+            //Provide further settings to the chosen chemistry
             let mut chemistry = match &self.chemistry {
                 GetRawChemistryCMD::AtrandiWGS { .. } => {
                     GetRawChemistry::AtrandiWGS(DebarcodeAtrandiWGSChemistryIllumina::new())
+                }
+                GetRawChemistryCMD::AtrandiWGSLR { .. } => {
+                    GetRawChemistry::AtrandiWGSLR(DebarcodeAtrandiWGSChemistryLongread::new())
                 }
                 GetRawChemistryCMD::ParseBio { subchemistry, .. } => {
                     GetRawChemistry::ParseBio(ParseBioChemistry3::new(&subchemistry))
                 }
             };
+            
+            //Check if we have single-end or paired-end data
+            let paths_r1 = self.paths_r1.clone();
+            let paths_r2 = self.paths_r2.clone();
+
+            if paths_r2.len()==0 {
+                //No R2 files given so this must be single-end input
+                
+
+
+            }
+
+            if paths_r1.len() != paths_r2.len() {
+                panic!("Both R1 and R2 specified but lists are of different length")
+            }
+            let vec_input: Vec<(InputPath, InputPath)> =
+                izip!(paths_r1, paths_r2).collect();
+
+            if vec_input.is_empty() {
+                error!("No valid input files found. All input files failed to open or do not exist.");
+                panic!("No valid input files found");
+            }
 
             {
                 info!("Preparing chemistry...");
@@ -482,6 +507,8 @@ impl GetRawCMD {
                 vec_input_debarcode_merge.len()
             );
         }
+
+
 
         let countof_merge_streams = (*budget.threads::<Total>()).get() as usize;
 
@@ -624,6 +651,10 @@ impl GetRawCMD {
     }
 }
 
+
+/// 
+/// Given R1 and R2 input paths, spawn readers
+/// 
 fn spawn_paired_readers(
     vec_input: Vec<(InputPath, InputPath)>,
     budget: &GetrawBudget,
@@ -669,7 +700,6 @@ fn spawn_paired_readers(
         }
     });
 
-    // let r2_tx = r2_tx.clone();
     let input_r2 = Arc::clone(&arc_vec_input);
     let handle_r2 = budget.spawn::<TRead, _, _>(1, move || {
         let thread = std::thread::current();
@@ -701,6 +731,11 @@ fn spawn_paired_readers(
     return ((r1_rx, r2_rx), (handle_r1, handle_r2));
 }
 
+
+
+///
+/// Route inputs from two readers into a stream of paired end
+/// 
 fn spawn_debarcode_router(
     r1_rx: Receiver<fastq::Record>,
     r2_rx: Receiver<fastq::Record>,
@@ -736,6 +771,10 @@ fn spawn_debarcode_router(
     return (rp_rx, rt_handle);
 }
 
+
+///
+/// Spawn workers, receiving readpairs and debarcoding/trimming them all
+/// 
 fn spawn_debarcode_workers(
     rp_rx: Receiver<(fastq::Record, fastq::Record)>,
     chemistry: GetRawChemistry,
@@ -822,6 +861,11 @@ fn spawn_debarcode_workers(
     return (ct_rx, thread_handles, chemistry);
 }
 
+
+
+///
+/// Spawn collector, taking debarcoded/trimmed readers and collecting them for the next step
+/// 
 fn spawn_collector(
     db_rx: Receiver<(u32, DebarcodedRecord)>,
     budget: &GetrawBudget,
@@ -894,6 +938,9 @@ fn spawn_collector(
     return (ct_rx, ct_handle);
 }
 
+///
+/// Spawn sorters. By sorting chunks of reads while they are already in memory, the first major sort pass will already be done in the first write to disk
+/// 
 fn spawn_sort_workers(
     ct_rx: Receiver<Vec<(u32, DebarcodedRecord)>>,
     chemistry: GetRawChemistry,
@@ -1120,6 +1167,9 @@ fn spawn_mergesort_workers(
     }
 }
 
+///
+/// Spawn workers that generate histograms of cellid vs 
+/// 
 fn spawn_histogram_workers(
     output_hist_pairs: Vec<(OutputPath, OutputPath)>,
     budget: &GetrawBudget,
