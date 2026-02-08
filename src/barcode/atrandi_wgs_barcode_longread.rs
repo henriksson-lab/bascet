@@ -1,4 +1,7 @@
 use std::io::{BufRead, Cursor};
+use blart::AsBytes;
+//use tracing::{info};
+
 use crate::{barcode::{CombinatorialBarcode8bp}, common::ReadPair};
 
 #[derive(Clone)]
@@ -70,12 +73,8 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
 
 
         // /husky/henriksson/atrandi/rawdata/cleanbar_longread
-        // zcat SRR31758484.fastq.gz  | head -n 100 | grep TTCCGATCT --color 
         // Example index primer p7: UDP0005_p7	CAAGCAGAAGACGGCATACGAGAT TAATCTCGTC GTGACTGGAGTTCAGACGTGTGCTCTT
         // generic P5	AATGATACGGCGACCACCGAGATCT    ACACTCTTTCCCTAC ACGAC
-
-        //zcat SRR31758484.fastq.gz | grep AGATCGGAAGAGCACACGTCT
-        //this is the end. but the end of this BC might be truncated
 
         // Adapters confirmed in cleanbar fig https://academic.oup.com/view-large/figure/530094580/ycaf134f2.tif  
         // https://pubmed.ncbi.nlm.nih.gov/40860566/
@@ -103,7 +102,11 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
         let scan_bc_u64 = copy_u8_to_u64(scan_bc);
         let bc_len = 8+4+8+4+8+4+8+1;
 
-        'linker_scan: for (curpos,inp) in r1_seq.windows(bc_len).enumerate() { 
+        //info!("scanning a long read");
+
+        //Scanning too far can be costly, so limit search to a sensible range
+        let r1_possible_bc = &r1_seq[0..300.min(r1_seq.len())];
+        'linker_scan: for (curpos,inp) in r1_possible_bc.windows(bc_len).enumerate() { 
 
             let ad1 = &inp[(0+8 )..(4+8 )];
             let ad2 = &inp[(0+20)..(4+20)];
@@ -118,8 +121,6 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
 
             //Expected similarity: letters A-T are in the range dec 65 .. dec 74 ; 1000001 .. 1001010   so there are 4 bits that can change
             //Least similarity (ish): 4*3+8 = 20. Highest: 32
-            //A cutoff at >=29 gives decent chance of a barcode being present
-
             if adapter_score >= 29 {
 
                 //Detect barcode at this position
@@ -127,9 +128,11 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                 let part_distance_cutoff = 1;
                 let (bc, bc_score) = self.barcode.detect_barcode(inp, true, total_distance_cutoff, part_distance_cutoff);
 
+                //info!("Possible longread barcode at position {}", curpos);
+
                 //Trim the remaining read if the barcode is good enough
                 if bc_score >= 0 {
-                    //TODO detect end of the read
+                    //At this point we need to detect where the read ends.
                     //Note that the final barcode can be /very/ incomplete the way it was done previously, https://academic.oup.com/ismecommun/article/5/1/ycaf134/8220722?login=false
                     //This also makes scanning for the end slow and error prone. Instead, we simply trim the final 80 bp, which is margin beyond the expected adapter size (55bp)
 
@@ -139,7 +142,7 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                         break 'linker_scan;
                     }
 
-                    //
+                    //Stop if there is no insert left
                     let seq_from = r1_seq.len().min(curpos+bc_len);
                     let seq_to = r1_seq.len()-end_trim;
                     if seq_to < seq_from {
@@ -163,17 +166,10 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                 }
 
             }
-
-
-
         }
 
 
         //TODO discard if not enough of read left
-
-
-
-
         return (
             u32::MAX, //=Discard
             ReadPair {
@@ -182,9 +178,30 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                 q1: &r1_qual,
                 q2: &r2_qual,
                 umi: &[],
-            },
+            }, 
         )
         
+    }
+
+    fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
+        let mut result = Vec::new();
+        let bytes = index32.as_bytes();
+        result.extend_from_slice(
+            self.barcode.pools[0].barcode_name_list[bytes[3] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[1].barcode_name_list[bytes[2] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[2].barcode_name_list[bytes[1] as usize].as_bytes(),
+        );
+        result.push(b'_');
+        result.extend_from_slice(
+            self.barcode.pools[3].barcode_name_list[bytes[0] as usize].as_bytes(),
+        );
+        return result;
     }
 
 }

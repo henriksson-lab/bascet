@@ -151,7 +151,6 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryIllumina {
         result.extend_from_slice(
             self.barcode.pools[3].barcode_name_list[bytes[0] as usize].as_bytes(),
         );
-
         return result;
     }
 }
