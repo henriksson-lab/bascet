@@ -349,98 +349,51 @@ impl GetRawCMD {
             //Check if we have single-end or paired-end data
             let paths_r1 = self.paths_r1.clone();
             let paths_r2 = self.paths_r2.clone();
-
-            if paths_r2.len()==0 {
-                //No R2 files given so this must be single-end input
-                
-
-
-            }
-
-            if paths_r1.len() != paths_r2.len() {
-                panic!("Both R1 and R2 specified but lists are of different length")
-            }
-            let vec_input: Vec<(InputPath, InputPath)> =
-                izip!(paths_r1, paths_r2).collect();
-
-            if vec_input.is_empty() {
+            if paths_r1.is_empty() {
                 error!("No valid input files found. All input files failed to open or do not exist.");
                 panic!("No valid input files found");
             }
 
-            {
-                info!("Preparing chemistry...");
-                let (input_r1, input_r2) = &vec_input.first().unwrap();
-                // NOTE fine to use all threads briefly. Nothing else does work yet.
-                let countof_threads_total = (*budget.threads::<Total>()).get();
-                // prepare chemistry using r2
-                let d1 = codec::BBGZDecoder::builder()
-                    .with_path(input_r1.path().path())
-                    // SAFETY   budget.threads::<Total>() is 7..
-                    .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
-                    .build();
+            let ((r1_rx, r2_rx), (r1_handle, r2_handle)) = if paths_r2.len()==0 {
+                //No R2 files given ==> this must be single-end input
 
-                let p1 = parse::Fastq::builder().build();
-
-                let mut s1 = Stream::builder()
-                    .with_decoder(d1)
-                    .with_parser(p1)
-                    .sizeof_decode_arena(self.sizeof_stream_arena)
-                    .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
-                    .build();
-
-                let mut q1 = s1.query::<fastq::Record>();
-
-                let mut b1: Vec<fastq::OwnedRecord> = Vec::with_capacity(10000);
-                while let Ok(Some(token)) = q1.next() {
-                    b1.push(token.into());
-
-                    if b1.len() >= 10000 {
-                        break;
+                //////////// For the given chemistry, check the read content (single-end version)
+                {
+                    info!("Preparing chemistry...");
+                    let input_r1 = paths_r1.first().unwrap();
+                    let b1 = sample_reads(input_r1, &self, &budget, "R1");
+                    let mut b2 = Vec::new();
+                    for _i in 0..b1.len() {
+                        b2.push(bascet_io::parse::fastq::OwnedRecord::empty());
                     }
+                    chemistry.prepare_using_rp_vecs(b1, b2)?;
                 }
+                info!("Finished preparing chemistry...");
 
-                info!("Finished reading first 10000 reads of R1...");
-                unsafe {
-                    s1.shutdown();
+                //////////// Prepare readers to process the full file (single-end version)
+                spawn_single_readers(paths_r1, &budget, self.sizeof_stream_arena)
+
+            } else {
+                //Both R1 and R2 ==> this must be paired-end input
+                if paths_r1.len() != paths_r2.len() {
+                    panic!("Both R1 and R2 specified but lists are of different length")
                 }
+                let vec_input: Vec<(InputPath, InputPath)> = izip!(paths_r1, paths_r2).collect();
 
-                let d2 = codec::BBGZDecoder::builder()
-                    .with_path(input_r2.path().path())
-                    // SAFETY   budget.threads::<Total>() is 7..
-                    .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
-                    .build();
-                let p2 = parse::Fastq::builder().build();
-
-                let mut s2 = Stream::builder()
-                    .with_decoder(d2)
-                    .with_parser(p2)
-                    .sizeof_decode_arena(self.sizeof_stream_arena)
-                    .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
-                    .build();
-
-                let mut q2 = s2.query::<fastq::Record>();
-
-                let mut b2: Vec<fastq::OwnedRecord> = Vec::with_capacity(10000);
-                while let Ok(Some(token)) = q2.next() {
-                    b2.push(token.into());
-
-                    if b2.len() >= 10000 {
-                        break;
-                    }
+                //////////// For the given chemistry, check the read content (paired-end version)
+                {
+                    info!("Preparing chemistry...");
+                    let (input_r1, input_r2) = &vec_input.first().unwrap();
+                    let b1 = sample_reads(input_r1, &self, &budget, "R1");
+                    let b2 = sample_reads(input_r2, &self, &budget, "R2");
+                    chemistry.prepare_using_rp_vecs(b1, b2)?;
                 }
+                info!("Finished preparing chemistry...");
 
-                info!("Finished reading first 10000 reads of R2...");
-                unsafe {
-                    s2.shutdown();
-                }
+                //////////// Prepare readers to process the full file (paired-end version)
+                spawn_paired_readers(vec_input, &budget, self.sizeof_stream_arena)
+            };
 
-                let _ = chemistry.prepare_using_rp_vecs(b1, b2);
-            }
-            info!("Finished preparing chemistry...");
-
-            let ((r1_rx, r2_rx), (r1_handle, r2_handle)) =
-                spawn_paired_readers(vec_input, &budget, self.sizeof_stream_arena);
 
             let (rp_rx, rt_handle) = spawn_debarcode_router(r1_rx, r2_rx, &budget);
             let (db_rx, db_handles, chemistry) = spawn_debarcode_workers(rp_rx, chemistry, &budget);
@@ -460,6 +413,8 @@ impl GetRawCMD {
             r1_handle.join().expect("R1 reader thread panicked");
             r2_handle.join().expect("R2 reader thread panicked");
             info!("R1 and R2 reader threads finished");
+
+            ////////////////// The rest here is in common
 
             info!("Waiting for router thread to finish...");
             rt_handle.join().expect("Router thread panicked");
@@ -508,152 +463,177 @@ impl GetRawCMD {
             );
         }
 
-
-
-        let countof_merge_streams = (*budget.threads::<Total>()).get() as usize;
-
-        let mergeround_target_count = self.paths_out.len();
-        let mut mergeround_counter = 1;
-        let mut mergeround_merge_next = vec_input_debarcode_merge;
-
-        while mergeround_merge_next.len() > mergeround_target_count {
-            let current_count = mergeround_merge_next.len();
-
-            info!(
-                starting_with = current_count,
-                target = mergeround_target_count,
-                merge_streams = countof_merge_streams,
-                "Mergesort round {mergeround_counter}"
-            );
-
-            let mut vec_next_round: Vec<InputPath> = Vec::new();
-            let mut batch_idx = 0;
-
-            let countof_merged_outputs =
-                (current_count + countof_merge_streams - 1) / countof_merge_streams;
-            let countof_passthrough = if countof_merged_outputs < mergeround_target_count {
-                mergeround_target_count - countof_merged_outputs
-            } else {
-                0
-            };
-
-            let countof_to_merge = current_count - countof_passthrough;
-            let (vec_to_merge, vec_passthrough) = mergeround_merge_next.split_at(countof_to_merge);
-
-            for path in vec_passthrough {
-                vec_next_round.push(path.clone());
-            }
-
-            for batch in vec_to_merge.chunks(countof_merge_streams) {
-                if batch.len() == 1 {
-                    vec_next_round.push(batch[0].clone());
-                    continue;
-                }
-
-                let temp_fname =
-                    format!("{}_{mergeround_counter}_{batch_idx}", timestamp_temp_files);
-                let temp_pathbuf = path_temp_dir.join(temp_fname).with_extension("tirp.bbgz");
-
-                let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        error!(path = ?temp_pathbuf, error = %e, "Failed to create output path");
-                        panic!("Failed to create output path");
-                    }
-                };
-
-                let vec_batch = batch.to_vec();
-                let vec_batch_paths: Vec<_> =
-                    vec_batch.iter().map(|p| p.path().to_path_buf()).collect();
-
-                spawn_mergesort_workers(
-                    vec_batch,
-                    temp_output_path,
-                    path_temp_dir.clone(),
-                    &budget,
-                    self.sizeof_stream_arena,
-                );
-
-                for path in vec_batch_paths {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        warn!(path = ?path, error = %e, "Failed to delete merged file");
-                    }
-                }
-
-                let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
-                    Ok(path) => path,
-                    Err(e) => panic!("{e}"),
-                };
-                vec_next_round.push(temp_input_path);
-                batch_idx += 1;
-            }
-
-            debug!("Finished mergesort round {mergeround_counter}");
-
-            mergeround_merge_next = vec_next_round;
-
-            info!(
-                "Mergesort round {}: Finished with {} files",
-                mergeround_counter,
-                mergeround_merge_next.len()
-            );
-            mergeround_counter += 1;
-        }
-
-        let mut output_paths = Vec::new();
-        for (final_path, output_path) in izip!(&mergeround_merge_next, &self.paths_out) {
-            match std::fs::rename(&**final_path.path(), &**output_path.path()) {
-                Ok(_) => {
-                    debug!("Moved {final_path} -> {output_path}");
-                    output_paths.push(output_path.clone());
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed moving {final_path:?} > {output_path:?}");
-                    let output_path = match OutputPath::try_from(&**final_path.path()) {
-                        Ok(path) => path,
-                        Err(e) => panic!("{e}"),
-                    };
-                    output_paths.push(output_path);
-                }
-            }
-        }
-
-        let output_hist_pairs: Vec<(OutputPath, OutputPath)> = output_paths
-            .into_iter()
-            .enumerate()
-            .map(|(i, output_path)| {
-                let hist_path = if let Some(ref hist_paths) = self.paths_hist {
-                    hist_paths[i].clone()
-                } else {
-                    match OutputPath::try_from(&format!(
-                        "{}.hist",
-                        output_path.path().path().display()
-                    )) {
-                        Ok(path) => path,
-                        Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
-                    }
-                };
-                (output_path, hist_path)
-            })
-            .collect();
-
-        let hist_handles =
-            spawn_histogram_workers(output_hist_pairs, &budget, self.sizeof_stream_arena);
-
-        for (i, handle) in hist_handles.into_iter().enumerate() {
-            handle
-                .join()
-                .expect(&format!("Histogram worker thread {} panicked", i));
-        }
-        debug!("All histogram worker threads finished");
+        do_merging(
+            &self,
+            &budget,
+            &path_temp_dir,
+            &timestamp_temp_files,
+            &vec_input_debarcode_merge
+        )?;
 
         Ok(())
     }
 }
 
 
+
 /// 
 /// Given R1 and R2 input paths, spawn readers
+/// 
+fn do_merging(
+    s: &GetRawCMD, 
+    budget: &GetrawBudget, 
+    path_temp_dir: &PathBuf,
+    timestamp_temp_files: &String,
+    vec_input_debarcode_merge: &Vec<InputPath>
+) -> anyhow::Result<()> {
+    let countof_merge_streams = (*budget.threads::<Total>()).get() as usize;
+    let vec_input_debarcode_merge = vec_input_debarcode_merge.clone();
+
+    let mergeround_target_count = s.paths_out.len();
+    let mut mergeround_counter = 1;
+    let mut mergeround_merge_next = vec_input_debarcode_merge;
+
+    while mergeround_merge_next.len() > mergeround_target_count {
+        let current_count = mergeround_merge_next.len();
+
+        info!(
+            starting_with = current_count,
+            target = mergeround_target_count,
+            merge_streams = countof_merge_streams,
+            "Mergesort round {mergeround_counter}"
+        );
+
+        let mut vec_next_round: Vec<InputPath> = Vec::new();
+        let mut batch_idx = 0;
+
+        let countof_merged_outputs =
+            (current_count + countof_merge_streams - 1) / countof_merge_streams;
+        let countof_passthrough = if countof_merged_outputs < mergeround_target_count {
+            mergeround_target_count - countof_merged_outputs
+        } else {
+            0
+        };
+
+        let countof_to_merge = current_count - countof_passthrough;
+        let (vec_to_merge, vec_passthrough) = mergeround_merge_next.split_at(countof_to_merge);
+
+        for path in vec_passthrough {
+            vec_next_round.push(path.clone());
+        }
+
+        for batch in vec_to_merge.chunks(countof_merge_streams) {
+            if batch.len() == 1 {
+                vec_next_round.push(batch[0].clone());
+                continue;
+            }
+
+            let temp_fname =
+                format!("{}_{mergeround_counter}_{batch_idx}", timestamp_temp_files);
+            let temp_pathbuf = path_temp_dir.join(temp_fname).with_extension("tirp.bbgz");
+
+            let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
+                Ok(path) => path,
+                Err(e) => {
+                    error!(path = ?temp_pathbuf, error = %e, "Failed to create output path");
+                    panic!("Failed to create output path");
+                }
+            };
+
+            let vec_batch = batch.to_vec();
+            let vec_batch_paths: Vec<_> =
+                vec_batch.iter().map(|p| p.path().to_path_buf()).collect();
+
+            spawn_mergesort_workers(
+                vec_batch,
+                temp_output_path,
+                path_temp_dir.clone(),
+                &budget,
+                s.sizeof_stream_arena,
+            );
+
+            for path in vec_batch_paths {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    warn!(path = ?path, error = %e, "Failed to delete merged file");
+                }
+            }
+
+            let temp_input_path = match InputPath::try_from(&temp_pathbuf) {
+                Ok(path) => path,
+                Err(e) => panic!("{e}"),
+            };
+            vec_next_round.push(temp_input_path);
+            batch_idx += 1;
+        }
+
+        debug!("Finished mergesort round {mergeround_counter}");
+
+        mergeround_merge_next = vec_next_round;
+
+        info!(
+            "Mergesort round {}: Finished with {} files",
+            mergeround_counter,
+            mergeround_merge_next.len()
+        );
+        mergeround_counter += 1;
+    }
+
+    let mut output_paths = Vec::new();
+    for (final_path, output_path) in izip!(&mergeround_merge_next, &s.paths_out) {
+        match std::fs::rename(&**final_path.path(), &**output_path.path()) {
+            Ok(_) => {
+                debug!("Moved {final_path} -> {output_path}");
+                output_paths.push(output_path.clone());
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed moving {final_path:?} > {output_path:?}");
+                let output_path = match OutputPath::try_from(&**final_path.path()) {
+                    Ok(path) => path,
+                    Err(e) => panic!("{e}"),
+                };
+                output_paths.push(output_path);
+            }
+        }
+    }
+
+    let output_hist_pairs: Vec<(OutputPath, OutputPath)> = output_paths
+        .into_iter()
+        .enumerate()
+        .map(|(i, output_path)| {
+            let hist_path = if let Some(ref hist_paths) = s.paths_hist {
+                hist_paths[i].clone()
+            } else {
+                match OutputPath::try_from(&format!(
+                    "{}.hist",
+                    output_path.path().path().display()
+                )) {
+                    Ok(path) => path,
+                    Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
+                }
+            };
+            (output_path, hist_path)
+        })
+        .collect();
+
+    let hist_handles =
+        spawn_histogram_workers(output_hist_pairs, &budget, s.sizeof_stream_arena);
+
+    for (i, handle) in hist_handles.into_iter().enumerate() {
+        handle
+            .join()
+            .expect(&format!("Histogram worker thread {} panicked", i));
+    }
+    debug!("All histogram worker threads finished");
+
+    Ok(())
+
+}
+
+
+
+
+/// 
+/// Given R1 and R2 input paths, spawn paired readers
 /// 
 fn spawn_paired_readers(
     vec_input: Vec<(InputPath, InputPath)>,
@@ -733,6 +713,69 @@ fn spawn_paired_readers(
 
 
 
+/// 
+/// Given R1 input path, spawn single-end readers
+/// 
+/// TODO is this a good way?
+/// 
+fn spawn_single_readers(
+    vec_input: Vec<InputPath>,
+    budget: &GetrawBudget,
+    stream_arena: ByteSize,
+) -> (
+    (Receiver<fastq::Record>, Receiver<fastq::Record>),
+    (JoinHandle<()>, JoinHandle<()>),
+) {
+    let (r1_tx, r1_rx) = crossbeam::channel::unbounded();
+    let (r2_tx, r2_rx) = crossbeam::channel::unbounded();
+    let arc_vec_input = Arc::new(vec_input);
+    let countof_threads_read = (*budget.threads::<TRead>()).get();
+    let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
+    let sizeof_stream_each_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / 2);
+    let r1_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
+    //let r2_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
+
+    let input_r1 = Arc::clone(&arc_vec_input);
+    let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unknown thread");
+        debug!(thread = thread_name, "Starting R1 reader");
+
+        for input_r1 in &*input_r1 {
+            let d1 = codec::bgzf::Bgzf::builder()
+                .with_path(&**input_r1.path())
+                .countof_threads(stream_each_n_threads)
+                .build();
+            let p1 = parse::Fastq::builder().build();
+
+            let mut s1 = Stream::builder()
+                .with_decoder(d1)
+                .with_parser(p1)
+                .with_opt_decode_arena_pool(Arc::clone(&r1_shared_alloc))
+                .build();
+
+            let mut q1 = s1.query::<fastq::Record>();
+
+            while let Ok(Some(record)) = q1.next() {
+                let _ = r1_tx.send(record);
+                let dummy_record_r2 = bascet_io::parse::fastq::Record::empty();
+                let _ = r2_tx.send(dummy_record_r2); 
+            }
+            debug!("R1 finished reading");
+        }
+    });
+
+    let handle_r2 = budget.spawn::<TRead, _, _>(0, move || {
+    });
+
+    return ((r1_rx, r2_rx), (handle_r1, handle_r2));
+}
+
+
+
+
+
+
 ///
 /// Route inputs from two readers into a stream of paired end
 /// 
@@ -770,6 +813,56 @@ fn spawn_debarcode_router(
 
     return (rp_rx, rt_handle);
 }
+
+
+
+/// 
+/// Sample a couple of reads for the purpose of analyzing the content
+/// 
+fn sample_reads(
+    input_path: &InputPath, 
+    s: &GetRawCMD, 
+    budget: &GetrawBudget, 
+    readname: &str
+) -> Vec<fastq::OwnedRecord> {
+
+    // NOTE fine to use all threads briefly. Nothing else does work yet.
+    let countof_threads_total = (*budget.threads::<Total>()).get();
+    // prepare chemistry using r2
+    let decoder = codec::BBGZDecoder::builder()
+        .with_path(input_path.path().path())
+        // SAFETY   budget.threads::<Total>() is 7..
+        .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
+        .build();
+
+    let p1 = parse::Fastq::builder().build();
+
+    let mut streamer = Stream::builder()
+        .with_decoder(decoder)
+        .with_parser(p1)
+        .sizeof_decode_arena(s.sizeof_stream_arena)
+        .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
+        .build();
+
+    let mut q1 = streamer.query::<fastq::Record>();
+
+    let mut list_reads: Vec<fastq::OwnedRecord> = Vec::with_capacity(10000);
+    while let Ok(Some(token)) = q1.next() {
+        list_reads.push(token.into());
+
+        if list_reads.len() >= 10000 {
+            break;
+        }
+    }
+
+    info!("Finished reading first 10000 reads of {}...", readname);
+    unsafe {
+        streamer.shutdown();
+    }
+    list_reads    
+}
+
+
 
 
 ///
@@ -988,6 +1081,8 @@ fn spawn_sort_workers(
     drop(st_tx);
     return (st_rx, thread_handles);
 }
+
+
 
 fn spawn_chunk_writers(
     st_rx: Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>,

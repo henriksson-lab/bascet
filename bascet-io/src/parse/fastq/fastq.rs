@@ -38,6 +38,17 @@ pub struct OwnedRecord {
     owned_backing: (),
 }
 
+impl OwnedRecord {
+    pub fn empty() -> Self {
+        Self {
+            id: vec![],
+            r0: vec![],
+            q0: vec![],
+            owned_backing: ()
+        }
+    }
+}
+
 impl Into<OwnedRecord> for Record {
     fn into(self) -> OwnedRecord {
         OwnedRecord {
@@ -51,6 +62,10 @@ impl Into<OwnedRecord> for Record {
 }
 
 impl Record {
+
+    ///
+    /// Generate a record from a raw 
+    /// 
     pub unsafe fn from_raw(
         buf_record: &[u8],
         pos_newline: [usize; 4],
@@ -95,4 +110,22 @@ impl Record {
             arena_backing: smallvec::smallvec![arena_view],
         }
     }
+
+
+
+    ///
+    /// Generate a record from a raw 
+    /// 
+    pub fn empty (
+    ) -> Self {
+        const DUMMY_EMPTY_VEC: &[u8] = &[];
+        Self {
+            id: &DUMMY_EMPTY_VEC,
+            r0: &DUMMY_EMPTY_VEC,
+            q0: &DUMMY_EMPTY_VEC,
+            arena_backing: smallvec::SmallVec::new()
+        }
+    }
+
 }
+
