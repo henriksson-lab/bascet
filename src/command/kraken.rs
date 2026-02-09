@@ -169,7 +169,7 @@ impl KrakenCMD {
         /////////////////////////////////////////////////////////////////////////////////////   
         // Set up named pipes
         let path_pipe_r12 = self.path_temp.join("fifo_r12.fq");
-        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU)?; /////////////////////// TODO put all of this + cleanup in a class
+        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU).expect("Failed to create pipe"); /////////////////////// TODO put all of this + cleanup in a class
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // Start KRAKEN2
@@ -179,7 +179,7 @@ impl KrakenCMD {
                 &path_pipe_r12,
                 &self.path_out_raw,
                 num_threads
-        )?;        
+        ).expect("Failed to start KRAKEN");        
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // All threads are now set up. Send all readpairs to KRAKEN2.
@@ -191,7 +191,7 @@ impl KrakenCMD {
             budget.numof_threads_read,
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
-        )?;
+        ).expect("Failed to create pipe writer");
 
         //Wait until process done
         info!("Waiting for KRAKEN2 process to finish");
