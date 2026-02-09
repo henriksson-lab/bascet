@@ -12,6 +12,7 @@ pub mod extract_terminal;
 pub mod featurise_kmc;
 pub mod getraw;
 pub mod kraken;
+pub mod kmc_reads;
 pub mod mapcell;
 pub mod minhash_hist;
 pub mod query_fq;
@@ -28,6 +29,7 @@ pub mod tofq;
 pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
 pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 pub use align::AlignCMD;
+pub use kmc_reads::KmcReadsCMD;
 
 // Count operations
 pub use countchrom::{CountChrom, CountChromCMD};
@@ -71,6 +73,7 @@ pub enum Commands {
     ExtractStream(ExtractStreamCMD),
     Featurise(FeaturiseKmcCMD),
     GetRaw(GetRawCMD),
+    //KmcReads(KmcReadsCMD),
     Kraken(KrakenCMD),
     Mapcell(MapCellCMD),
     MinhashHist(MinhashHistCMD),
