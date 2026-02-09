@@ -110,7 +110,7 @@ fn main() -> std::process::ExitCode {
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),
-        Commands::KmcReads(mut cmd) => cmd.try_execute(),
+        //Commands::KmcReads(mut cmd) => cmd.try_execute(),
         Commands::Kraken(mut cmd) => cmd.try_execute(),
         Commands::PipeSamAddTags(mut cmd) => cmd.try_execute(), // no longer needed?
         Commands::Shardify(mut cmd) => cmd.try_execute(),
