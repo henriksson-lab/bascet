@@ -1,6 +1,8 @@
 use crate::fileformat::paired_fastq::PairedFastqStreamingReadPairReaderFactory;
 use crate::fileformat::read_cell_list_file;
 use anyhow::Result;
+use bascet_core::DEFAULT_SIZEOF_ARENA;
+use bytesize::ByteSize;
 use clap::Args;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -20,7 +22,6 @@ use crate::fileformat::ReadPairReader;
 use crate::fileformat::ReadPairWriter;
 use crate::fileformat::ShardCellDictionary;
 use crate::fileformat::StreamingReadPairReader;
-use crate::fileformat::TirpStreamingReadPairReaderFactory;
 use crate::fileformat::{CellID, ReadPair};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
@@ -226,6 +227,10 @@ pub fn create_random_readers(
     Ok(())
 }
 
+
+/// 
+/// Reader from any format
+/// 
 pub fn create_stream_readers(
     path_in: &Vec<std::path::PathBuf>,
     tx_data: &Sender<Option<ListReadWithBarcode>>,
@@ -243,12 +248,21 @@ pub fn create_stream_readers(
                 &tx_data,
                 &Arc::new(PairedFastqStreamingReadPairReaderFactory::new()),
             ),
-            DetectedFileformat::TIRP => create_stream_reader_thread(
+            /*
+            DetectedFileformat::TIRP => create_stream_reader_thread( ////////////////////////////////////////////////////////// Not working with new TIRP files. but we can make a special reader!
                 &p,
                 &thread_pool_read,
                 &tx_data,
                 &Arc::new(TirpStreamingReadPairReaderFactory::new()),
             ),
+            */
+            
+            DetectedFileformat::TIRP => create_stream_reader_thread_newtirp( ////////////////////////////////////////////////////////// Not working with new TIRP files. but we can make a special reader!
+                &p,
+                &thread_pool_read,
+                &tx_data,
+            ),
+
             DetectedFileformat::BAM => create_stream_reader_thread(
                 &p,
                 &thread_pool_read,
@@ -271,7 +285,12 @@ pub fn create_stream_readers(
     Ok(())
 }
 
-//////////////// Writer to any format
+
+
+
+/// 
+/// Writer to any format
+/// 
 fn create_writer_thread<W>(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -372,6 +391,9 @@ where
     Ok(())
 }
 
+
+
+
 ////////////////
 /// Reader from any format that supports streaming
 pub fn create_stream_reader_thread<R>(
@@ -417,3 +439,116 @@ where
     });
     Ok(())
 }
+
+
+
+
+
+use bascet_core::{
+    attr::{meta::*, sequence::*, quality::*},
+    *,
+};
+
+
+///
+/// Reader from new TIRP format. Needed because htslib does not cope with it anymore
+/// 
+pub fn create_stream_reader_thread_newtirp(
+    infile: &PathBuf,
+    thread_pool: &threadpool::ThreadPool,
+    tx_data: &Sender<Option<ListReadWithBarcode>>,
+) -> anyhow::Result<()> {
+    let infile = infile.clone();
+    let tx_data = tx_data.clone();
+
+    thread_pool.execute(move || {
+
+        // Streamer from input TIRP
+        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
+        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
+        let sizeof_stream_buffer:ByteSize = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
+        let decoder: bascet_io::BBGZDecoder = bascet_io::codec::BBGZDecoder::builder()
+            .with_path(&infile)
+            .countof_threads(num_threads)
+            .build();
+        let parser = bascet_io::parse::Tirp::builder().build();
+
+        let mut stream = bascet_core::Stream::builder()
+            .with_decoder(decoder)
+            .with_parser(parser)
+            .sizeof_decode_arena(sizeof_stream_arena)
+            .sizeof_decode_buffer(sizeof_stream_buffer)
+            .build();
+
+        let mut query: bascet_core::Query<'_, bascet_io::Tirp, bascet_io::BBGZDecoder, bascet_io::tirp::Record, bascet_core::AsRecord, ()> = stream.query::<bascet_io::tirp::Record>();
+        
+        //Handle all cell requests
+        let mut num_proc_cell: u64 = 0;
+        let mut last_cellid = Vec::new();
+        let mut cur_rps:Vec<ReadPair> = Vec::new();
+
+        loop {
+            match query.next_into::<bascet_io::tirp::Record>() {
+                Ok(Some(record)) => {
+                    let record_id = *record.get_ref::<Id>();
+                    let record_r1 = *record.get_ref::<R1>();
+                    let record_r2 = *record.get_ref::<R2>();
+                    let record_q1 = *record.get_ref::<Q1>();
+                    let record_q2 = *record.get_ref::<Q2>();
+                    let record_umi = *record.get_ref::<Umi>();
+
+                    let rp = ReadPair {
+                        r1: record_r1.to_vec(),
+                        r2: record_r2.to_vec(),
+                        q1: record_q1.to_vec(),
+                        q2: record_q2.to_vec(),
+                        umi: record_umi.to_vec(),
+                    };
+
+                    //Send records to process if we got them all
+                    if record_id != last_cellid.as_slice() {
+                        if cur_rps.len() > 0 {
+                            let prev_cur_rps=cur_rps;
+                            cur_rps=Vec::new();
+                            let allreads = Arc::new(prev_cur_rps);                        
+                            let cellid = String::from_utf8_lossy(last_cellid.as_slice());
+                            let list_reads = Arc::new((cellid.to_string(), allreads));
+                            tx_data.send(Some(list_reads)).unwrap();
+                        } else {
+                            num_proc_cell += 1;
+                            if num_proc_cell % 1000 == 0 {
+                                println!("Processed {} cells", num_proc_cell);
+                            }
+                        }
+                        last_cellid = record_id.to_vec();
+                    }
+                    cur_rps.push(rp);                    
+                }
+                Ok(None) => {
+                        break;
+                }
+                Err(e) => {
+                    panic!("{:?}", e);
+                }
+            }
+        }
+
+        //Send final records to process
+        if cur_rps.len() > 0 {
+            let allreads = Arc::new(cur_rps);                        
+            let cellid = String::from_utf8_lossy(last_cellid.as_slice());
+            let list_reads = Arc::new((cellid.to_string(), allreads));
+            tx_data.send(Some(list_reads)).unwrap();
+            num_proc_cell += 1;
+        } 
+
+        println!("Processed a final of {} cells", num_proc_cell);
+        println!("Shutting down streaming reader for {}", infile.display());
+    });
+    Ok(())
+}
+
+
+
+
+

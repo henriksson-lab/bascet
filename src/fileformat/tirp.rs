@@ -1,3 +1,6 @@
+// HTSlib version - does not work with our version of TIRP so taken out of the pipeline for now
+
+
 use anyhow::bail;
 use log::debug;
 use std::collections::HashSet;
@@ -109,8 +112,9 @@ impl ShardCellDictionary for TirpBascetShardReader {
     }
 }
 impl ShardRandomFileExtractor for TirpBascetShardReader {
-    ///////////////////////////////
+    /// 
     /// Set cell to work with
+    /// 
     fn set_current_cell(&mut self, cell_id: &CellID) {
         self.current_cell = cell_id.clone();
     }
@@ -123,8 +127,6 @@ impl ShardFileExtractor for TirpBascetShardReader {
 
     fn extract_as(&mut self, _file_name: &String, _path_outfile: &PathBuf) -> anyhow::Result<()> {
         panic!("extract_as not yet implemented");
-
-        //Ok(())
     }
 
     fn extract_to_outdir(
@@ -206,8 +208,9 @@ impl ShardFileExtractor for TirpBascetShardReader {
     }
 }
 
-///////////////////////////////
+/// 
 /// Write a pair of reads to TIRP file
+/// 
 pub fn write_records_pair_to_tirp(writer: &mut impl Write, cell_id: &CellID, read: &ReadPair) {
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi
@@ -354,7 +357,7 @@ impl TirpStreamingReadPairReader {
 
         //Read the first read right away
         let mut record = String::new();
-        let read_size = reader.read_line(&mut record).unwrap();
+        let read_size = reader.read_line(&mut record).unwrap(); //////////////////////////////////// Fails for new TIRP files
 
         if read_size > 0 {
             //Remove newline and everything after
