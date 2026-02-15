@@ -102,7 +102,7 @@ fn main() -> std::process::ExitCode {
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
         Commands::Countfeature(mut cmd) => cmd.try_execute(),
-        Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
+        //Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(mut cmd) => cmd.try_execute(),

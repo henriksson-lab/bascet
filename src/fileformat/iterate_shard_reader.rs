@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::bail;
-use bascet_core::DEFAULT_SIZEOF_ARENA;
 use bytesize::ByteSize;
 use log::info;
 
@@ -34,6 +33,11 @@ use bascet_core::{
 pub fn iterate_shard_reader_multithreaded(
     threads_read: usize,
     path_in: &PathBuf,
+
+    sizeof_stream_arena: ByteSize,
+    sizeof_stream_buffer: ByteSize,
+    num_threads: usize, //BoundedU64<1, { u64::MAX }>,
+
     run_func: &Arc<
         impl Fn((String, &mut Box<&mut dyn ShardFileExtractor>)) + Sync + Send + 'static,
     >,
@@ -59,6 +63,9 @@ pub fn iterate_shard_reader_multithreaded(
                 _ = create_streaming_tirp_reader( ///////////////////////////////////////////////////// Note: Use Bascet 2.x TIRP-specific streamer here
                     &path_in,
                     &thread_pool_readers,
+                    sizeof_stream_arena,
+                    sizeof_stream_buffer,
+                    num_threads,
                     &run_func,
                 );
             }
@@ -273,20 +280,20 @@ where
 fn create_streaming_tirp_reader(
     path_in: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
-    //constructor: &Arc<impl ConstructFromPath<R> + Send + 'static + Sync>,
+    sizeof_stream_arena: ByteSize,
+    sizeof_stream_buffer: ByteSize,
+    num_threads: usize, //BoundedU64<1, { u64::MAX }>,
     run_func: &Arc<
         impl Fn((String, &mut Box<&mut dyn ShardFileExtractor>)) + Sync + Send + 'static,
     >,
 ) -> anyhow::Result<()> {
     let path_in = path_in.clone();
     let run_func = Arc::clone(run_func);
+    let num_threads = bounded_integer::BoundedU64::new(num_threads as u64).unwrap();
 
     thread_pool.execute(move || {
 
         // Streamer from input TIRP
-        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
-        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
-        let sizeof_stream_buffer:ByteSize = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
         let decoder: bascet_io::BBGZDecoder = bascet_io::codec::BBGZDecoder::builder()
             .with_path(&path_in)
             .countof_threads(num_threads)
