@@ -1,4 +1,6 @@
 use anyhow::Result;
+use bascet_core::DEFAULT_SIZEOF_ARENA;
+use bytesize::ByteSize;
 use clap::Args;
 use std::fs;
 use std::fs::File;
@@ -63,6 +65,25 @@ pub struct MapCellCMD {
     num_threads_write: Option<usize>,
     #[arg(long, value_parser = clap::value_parser!(usize))]
     num_threads_mapcell: Option<usize>,
+
+
+    #[arg(
+        long = "sizeof-stream-buffer",
+        help = "Total stream buffer size.",
+        default_value_t = ByteSize::gib(4),
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_buffer: ByteSize,
+
+    #[arg(
+        long = "sizeof-stream-arena",
+        help = "Stream arena buffer size [Advanced: changing this will impact performance and stability]",
+        hide_short_help = true,
+        default_value_t = DEFAULT_SIZEOF_ARENA,
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    sizeof_stream_arena: ByteSize,
+
 }
 impl MapCellCMD {
     /// Run the map-cell commandline option
@@ -125,6 +146,9 @@ impl MapCellCMD {
             threads_write: num_threads_write,
             threads_mapcell: num_threads_mapcell,
 
+            sizeof_stream_buffer: self.sizeof_stream_buffer,
+            sizeof_stream_arena: self.sizeof_stream_arena,
+
             show_script_output: self.show_script_output,
             keep_files: self.keep_files,
         };
@@ -153,6 +177,10 @@ pub struct MapCell {
     pub threads_write: usize,
     //How many threads should the invoked script use? Passed on as a parameter. Not all commands will support this
     pub threads_mapcell: usize,
+
+
+    sizeof_stream_buffer: ByteSize,
+    sizeof_stream_arena: ByteSize,
 
     pub show_script_output: bool,
     pub keep_files: bool,
@@ -216,15 +244,22 @@ impl MapCell {
         let process_cell_fn = Arc::new(process_cell_fn);
 
 
+//        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
+//        let sizeof_stream_buffer = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
+//        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
+
 
         //Iterate over all cells, in threads, using suitable readers
         iterate_shard_reader::iterate_shard_reader_multithreaded(
             params.threads_read,
             &params.path_in,
+            params.sizeof_stream_arena,
+            params.sizeof_stream_buffer,
+            params.threads_read,
             &process_cell_fn,
         )?;           
 
-        
+
         //Terminate all writers. Then wait for all threads to finish
         println!("Waiting for writers to finish");
         for i in 0..params.threads_write {

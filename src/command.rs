@@ -6,7 +6,7 @@ pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
-pub mod countsketch_mat_depreciated;
+//pub mod countsketch_mat_depreciated;
 pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
@@ -36,7 +36,7 @@ pub use kmc_reads::KmcReadsCMD;
 pub use countchrom::{CountChrom, CountChromCMD};
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
-pub use countsketch_mat_depreciated::CountsketchMatCMD;  
+//pub use countsketch_mat_depreciated::CountsketchMatCMD;  
 pub use extract::ExtractCMD;
 pub use extract_terminal::ExtractStreamCMD;
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
@@ -69,7 +69,7 @@ pub enum Commands {
     Countchrom(CountChromCMD),
     Countfeature(CountFeatureCMD),
     Countsketch(CountsketchCMD),
-    CountsketchMat(CountsketchMatCMD),
+    //CountsketchMat(CountsketchMatCMD),
     Extract(ExtractCMD),
     ExtractStream(ExtractStreamCMD),
     Featurise(FeaturiseKmcCMD),
