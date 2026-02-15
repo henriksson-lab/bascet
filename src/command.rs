@@ -13,7 +13,7 @@ pub mod featurise_kmc;
 pub mod getraw;
 pub mod kraken;
 pub mod kmc_reads;
-pub mod kmc_new;
+//pub mod kmc_new;
 pub mod mapcell;
 pub mod minhash_hist;
 pub mod query_fq;

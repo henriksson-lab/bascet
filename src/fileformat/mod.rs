@@ -8,6 +8,7 @@ pub mod tirp;
 pub mod zip;
 // pub mod count_matrix;
 pub mod bam;
+pub mod inmem_readpairs;
 
 pub mod gff;
 
