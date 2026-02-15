@@ -12,7 +12,7 @@ use zip::ZipWriter;
 
 use crate::command::threadcount::determine_thread_counts_mapcell;
 use crate::fileformat::iterate_shard_reader;
-use crate::mapcell::mapcell_script::extract_needed_files_to_directory;
+use crate::mapcell::mapcell_script::extract_needed_files_to_directory_generalapi;
 use crate::utils;
 
 use crate::fileformat::ShardFileExtractor;
@@ -136,6 +136,9 @@ impl MapCellCMD {
     }
 }
 
+
+
+
 #[derive(Clone)]
 pub struct MapCell {
     pub path_in: std::path::PathBuf,
@@ -179,7 +182,7 @@ impl MapCell {
         let (tx_loaded_cell, rx_loaded_cell) =
             crossbeam::channel::bounded::<Option<String>>(read_queue_size);
 
-        //Create all writers. these also take care of running the mapcell function on extracted files
+        //Create all writers/workers. These also take care of running the mapcell function on extracted files
         let thread_pool_writers = threadpool::ThreadPool::new(params.threads_write);
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
         for tidx in 0..params.threads_write {
@@ -195,28 +198,38 @@ impl MapCell {
             list_out_zipfiles.push(file_zip);
         }
 
-        let clone_tx_loaded_cell = tx_loaded_cell.clone();
-        let clone_params = Arc::clone(&params);
+        
+        if true {
+            //////////////////////////////////////////////// General reader over anything but TIRP files
 
-        //Function to apply to each cell that is being read
-        let process_cell_fn =
-            move |(cell_id, shard): (String, &mut Box<&mut dyn ShardFileExtractor>)| {
-                extract_needed_files_to_directory(
-                    &clone_params.path_tmp,
-                    &Arc::clone(&clone_params.script),
-                    &clone_tx_loaded_cell,
-                    cell_id,
-                    shard,
-                );
-            };
-        let process_cell_fn = Arc::new(process_cell_fn);
+            let clone_tx_loaded_cell = tx_loaded_cell.clone();
+            let clone_params = Arc::clone(&params);
 
-        //Iterate over all cells, in threads, using suitable readers
-        iterate_shard_reader::iterate_shard_reader_multithreaded(
-            params.threads_read,
-            &params.path_in,
-            &process_cell_fn,
-        )?;
+            //Function to apply to each cell that is being read
+            let process_cell_fn =
+                move |(cell_id, shard): (String, &mut Box<&mut dyn ShardFileExtractor>)| {
+                    extract_needed_files_to_directory_generalapi(
+                        &clone_params.path_tmp,
+                        &Arc::clone(&clone_params.script),
+                        &clone_tx_loaded_cell,
+                        cell_id,
+                        shard,
+                    );
+                };
+            let process_cell_fn = Arc::new(process_cell_fn);
+
+            //Iterate over all cells, in threads, using suitable readers
+            iterate_shard_reader::iterate_shard_reader_multithreaded(
+                params.threads_read,
+                &params.path_in,
+                &process_cell_fn,
+            )?;            
+        } else {
+            //////////////////////////////////////////////// New reader over TIRP files
+
+
+        }
+
 
         //Terminate all writers. Then wait for all threads to finish
         println!("Waiting for writers to finish");
@@ -240,8 +253,12 @@ impl MapCell {
     }
 }
 
-/////////////////////////////
+
+
+
+///
 /// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
+/// 
 fn create_writer(
     params_io: &Arc<MapCell>,
     zip_file: &PathBuf,
@@ -353,7 +370,11 @@ fn create_writer(
     Ok(())
 }
 
+
+
+/// 
 /// From a path, list all files that exist beneath recursively
+/// 
 fn get_list_files_recursively(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
     let mut buf = vec![];
     let entries = fs::read_dir(path)?;
@@ -374,3 +395,7 @@ fn get_list_files_recursively(path: impl AsRef<Path>) -> std::io::Result<Vec<Pat
 
     Ok(buf)
 }
+
+
+
+

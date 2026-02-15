@@ -164,6 +164,12 @@ impl KmcReadsCMD {
             "Starting kmer counter"
         );
 
+
+
+
+
+
+
         info!("wtf2????");
 
         /////////////////////////////////////////////////////////////////////////////////////   
@@ -270,3 +276,20 @@ fn create_kmc_process<P> (
 
     Ok(proc_cmd)
 }
+
+
+/*
+ * 
+ * New strat: run KMC3 for each cell
+ * 
+ * OR: metagraph for each cell, output contigs, concatenate all contigs into one file.
+ * this appears to be safer as KMC is pretty unstable
+ * 
+ * 
+ * 
+ * 
+ * 
+ */
+
+
+
