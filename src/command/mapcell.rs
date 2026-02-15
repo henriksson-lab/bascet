@@ -199,38 +199,32 @@ impl MapCell {
         }
 
         
-        if true {
-            //////////////////////////////////////////////// General reader over anything but TIRP files
+        let clone_tx_loaded_cell = tx_loaded_cell.clone();
+        let clone_params = Arc::clone(&params);
 
-            let clone_tx_loaded_cell = tx_loaded_cell.clone();
-            let clone_params = Arc::clone(&params);
-
-            //Function to apply to each cell that is being read
-            let process_cell_fn =
-                move |(cell_id, shard): (String, &mut Box<&mut dyn ShardFileExtractor>)| {
-                    extract_needed_files_to_directory_generalapi(
-                        &clone_params.path_tmp,
-                        &Arc::clone(&clone_params.script),
-                        &clone_tx_loaded_cell,
-                        cell_id,
-                        shard,
-                    );
-                };
-            let process_cell_fn = Arc::new(process_cell_fn);
-
-            //Iterate over all cells, in threads, using suitable readers
-            iterate_shard_reader::iterate_shard_reader_multithreaded(
-                params.threads_read,
-                &params.path_in,
-                &process_cell_fn,
-            )?;            
-        } else {
-            //////////////////////////////////////////////// New reader over TIRP files
+        //Function to apply to each cell that is being read
+        let process_cell_fn =
+            move |(cell_id, shard): (String, &mut Box<&mut dyn ShardFileExtractor>)| {
+                extract_needed_files_to_directory_generalapi(
+                    &clone_params.path_tmp,
+                    &Arc::clone(&clone_params.script),
+                    &clone_tx_loaded_cell,
+                    cell_id,
+                    shard,
+                );
+            };
+        let process_cell_fn = Arc::new(process_cell_fn);
 
 
-        }
 
+        //Iterate over all cells, in threads, using suitable readers
+        iterate_shard_reader::iterate_shard_reader_multithreaded(
+            params.threads_read,
+            &params.path_in,
+            &process_cell_fn,
+        )?;           
 
+        
         //Terminate all writers. Then wait for all threads to finish
         println!("Waiting for writers to finish");
         for i in 0..params.threads_write {

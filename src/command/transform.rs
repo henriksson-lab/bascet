@@ -10,6 +10,13 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+
+use bascet_core::{
+    attr::{meta::*, sequence::*, quality::*},
+    *,
+};
+
+
 use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
 use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
 use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
@@ -443,13 +450,6 @@ where
 
 
 
-
-use bascet_core::{
-    attr::{meta::*, sequence::*, quality::*},
-    *,
-};
-
-
 ///
 /// Reader from new TIRP format. Needed because htslib does not cope with it anymore
 /// 
@@ -480,7 +480,7 @@ pub fn create_stream_reader_thread_newtirp(
             .sizeof_decode_buffer(sizeof_stream_buffer)
             .build();
 
-        let mut query: bascet_core::Query<'_, bascet_io::Tirp, bascet_io::BBGZDecoder, bascet_io::tirp::Record, bascet_core::AsRecord, ()> = stream.query::<bascet_io::tirp::Record>();
+        let mut query = stream.query::<bascet_io::tirp::Record>();
         
         //Handle all cell requests
         let mut num_proc_cell: u64 = 0;

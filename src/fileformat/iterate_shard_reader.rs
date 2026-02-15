@@ -3,9 +3,12 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::bail;
+use bascet_core::DEFAULT_SIZEOF_ARENA;
+use bytesize::ByteSize;
 use log::info;
 
-use crate::fileformat::TirpStreamingShardReaderFactory;
+use crate::fileformat::ReadPair;
+use crate::fileformat::inmem_readpairs::ShardFileExtractorInmem;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
 use crate::fileformat::zip::ZipBascetShardReaderFactory;
 
@@ -14,11 +17,20 @@ use crate::fileformat::ConstructFromPath;
 use crate::fileformat::DetectedFileformat;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
-use crate::fileformat::ShardStreamingFileExtractor;
 use crate::fileformat::detect_shard_format;
 
-////////////////////////////////////
+
+
+use bascet_core::{
+    attr::{meta::*, sequence::*, quality::*},
+    *,
+};
+
+
+
+/// 
 /// General interface to all types of readers, enabling iteration over shard-type files
+/// 
 pub fn iterate_shard_reader_multithreaded(
     threads_read: usize,
     path_in: &PathBuf,
@@ -44,10 +56,9 @@ pub fn iterate_shard_reader_multithreaded(
             println!("Detected input as TIRP");
             for _tidx in 0..threads_read {
                 /////////// option #2: keep list of files separately from list of readers
-                _ = create_streaming_shard_reader(
+                _ = create_streaming_tirp_reader( ///////////////////////////////////////////////////// Note: Use Bascet 2.x TIRP-specific streamer here
                     &path_in,
                     &thread_pool_readers,
-                    &Arc::new(TirpStreamingShardReaderFactory::new()),
                     &run_func,
                 );
             }
@@ -119,8 +130,17 @@ pub fn iterate_shard_reader_multithreaded(
     }
 }
 
-////////////////////////////////////
+
+
+
+
+
+
+
+
+/// 
 /// Reader for random I/O shard files
+/// 
 fn create_random_shard_reader<R>(
     path_in: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -182,8 +202,11 @@ where
     Ok(())
 }
 
-////////////////////////////////////
-/// Reader for streaming I/O shard files
+
+/*
+/// 
+/// Reader for streaming I/O shard files --- not used right now but could be readded if alternatives to TIRP added
+/// 
 fn create_streaming_shard_reader<R>(
     path_in: &PathBuf,
     //params_io: &Arc<MapCell>,
@@ -196,7 +219,6 @@ fn create_streaming_shard_reader<R>(
 where
     R: ShardStreamingFileExtractor + ShardFileExtractor,
 {
-    //let params_io = Arc::clone(&params_io);
     let constructor = Arc::clone(constructor);
     let run_func = Arc::clone(run_func);
     let path_in = path_in.clone();
@@ -229,5 +251,126 @@ where
             num_cells_processed
         );
     });
+    Ok(())
+}
+
+
+ */
+
+
+
+
+
+
+
+
+
+
+
+/// 
+/// Reader for streaming I/O on new Bascet 2.x TIRP files
+/// 
+fn create_streaming_tirp_reader(
+    path_in: &PathBuf,
+    thread_pool: &threadpool::ThreadPool,
+    //constructor: &Arc<impl ConstructFromPath<R> + Send + 'static + Sync>,
+    run_func: &Arc<
+        impl Fn((String, &mut Box<&mut dyn ShardFileExtractor>)) + Sync + Send + 'static,
+    >,
+) -> anyhow::Result<()> {
+    let path_in = path_in.clone();
+    let run_func = Arc::clone(run_func);
+
+    thread_pool.execute(move || {
+
+        // Streamer from input TIRP
+        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
+        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
+        let sizeof_stream_buffer:ByteSize = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
+        let decoder: bascet_io::BBGZDecoder = bascet_io::codec::BBGZDecoder::builder()
+            .with_path(&path_in)
+            .countof_threads(num_threads)
+            .build();
+        let parser = bascet_io::parse::Tirp::builder().build();
+
+        let mut stream = bascet_core::Stream::builder()
+            .with_decoder(decoder)
+            .with_parser(parser)
+            .sizeof_decode_arena(sizeof_stream_arena)
+            .sizeof_decode_buffer(sizeof_stream_buffer)
+            .build();
+
+        let mut query = stream.query::<bascet_io::tirp::Record>();
+        
+        //Handle all cell requests
+        let mut num_proc_cell: u64 = 0;
+        let mut last_cellid = Vec::new();
+        let mut cur_rps:Vec<ReadPair> = Vec::new();
+
+        loop {
+            match query.next_into::<bascet_io::tirp::Record>() {
+                Ok(Some(record)) => {
+                    let record_id = *record.get_ref::<Id>();
+                    let record_r1 = *record.get_ref::<R1>();
+                    let record_r2 = *record.get_ref::<R2>();
+                    let record_q1 = *record.get_ref::<Q1>();
+                    let record_q2 = *record.get_ref::<Q2>();
+                    let record_umi = *record.get_ref::<Umi>();
+
+                    let rp = ReadPair {
+                        r1: record_r1.to_vec(),
+                        r2: record_r2.to_vec(),
+                        q1: record_q1.to_vec(),
+                        q2: record_q2.to_vec(),
+                        umi: record_umi.to_vec(),
+                    };
+
+                    //Send records to process if we got them all
+                    if record_id != last_cellid.as_slice() {
+                        if cur_rps.len() > 0 {
+                            let prev_cur_rps=cur_rps;
+                            cur_rps=Vec::new();
+                            let cellid = String::from_utf8_lossy(last_cellid.as_slice());
+
+                            let mut dat = ShardFileExtractorInmem {
+                                cellid: cellid.to_string(),
+                                rp: prev_cur_rps,
+                            };
+                            run_func((cellid.to_string(), &mut Box::new(&mut dat)));
+                        } else {
+                            num_proc_cell += 1;
+                            if num_proc_cell % 1000 == 0 {
+                                println!("Processed {} cells", num_proc_cell);
+                            }
+                        }
+                        last_cellid = record_id.to_vec();
+                    }
+                    cur_rps.push(rp);                    
+                }
+                Ok(None) => {
+                        break;
+                }
+                Err(e) => {
+                    panic!("{:?}", e);
+                }
+            }
+        }
+
+        //Send final records to process
+        if cur_rps.len() > 0 {
+            let cellid = String::from_utf8_lossy(last_cellid.as_slice());
+            let mut dat = ShardFileExtractorInmem {
+                cellid: cellid.to_string(),
+                rp: cur_rps,
+            };
+            run_func((cellid.to_string(), &mut Box::new(&mut dat)));
+
+            num_proc_cell += 1;
+        } 
+
+        println!("Processed a final of {} cells", num_proc_cell);
+        println!("Shutting down streaming reader for {}", path_in.display());
+    });
+
     Ok(())
 }
