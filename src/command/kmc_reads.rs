@@ -13,12 +13,14 @@ use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    io::{BufRead, BufReader}, path::{Path, PathBuf}, process::Stdio
+    io::{BufRead, BufReader}, path::{Path, PathBuf}
 };
 use tracing::{info, warn};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
+
+////////////// this module does not work. kmc cannot read from pipes...
 
 #[derive(Args)]
 pub struct KmcReadsCMD {
@@ -179,7 +181,7 @@ impl KmcReadsCMD {
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // Start KMC
-        let mut proc_aligner = create_kmc_process(
+        let proc_aligner = create_kmc_process(
                 &path_pipe_r12,
                 &self.path_out,
                 &self.path_temp,
@@ -287,7 +289,7 @@ fn create_kmc_process<P> (
  * 
  * 
  * 
- * 
+ * this does not work. kmc is not compatible with pipes
  * 
  */
 
