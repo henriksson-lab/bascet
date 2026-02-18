@@ -258,7 +258,6 @@ impl CountsketchCMD {
                     loop {
                         let record = match thread_work_rx.try_recv() {
                             Ok(record) => {
-                                thread_spinpark_counter = 0;
                                 record
                             },
                             Err(TryRecvError::Empty) => {
@@ -278,6 +277,8 @@ impl CountsketchCMD {
                                 break;
                             }
                         };
+                        thread_spinpark_counter = 0;
+                        
                         // SAFETY: Each worker has exclusive access to its own sketch via raw pointer.
                         // Barriers ensure no concurrent access during sync.
                         unsafe {
