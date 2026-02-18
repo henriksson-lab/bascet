@@ -1,5 +1,6 @@
 use crate::fileformat::paired_fastq::PairedFastqStreamingReadPairReaderFactory;
 use crate::fileformat::read_cell_list_file;
+use crate::fileformat::zip::ZipStreamingReadPairReaderFactory;
 use anyhow::Result;
 use bascet_core::DEFAULT_SIZEOF_ARENA;
 use bytesize::ByteSize;
@@ -270,6 +271,12 @@ pub fn create_stream_readers(
                 &tx_data,
             ),
 
+            DetectedFileformat::ZIP => create_stream_reader_thread(
+                &p,
+                &thread_pool_read,
+                &tx_data,
+                &Arc::new(ZipStreamingReadPairReaderFactory::new()),
+            ),
             DetectedFileformat::BAM => create_stream_reader_thread(
                 &p,
                 &thread_pool_read,
