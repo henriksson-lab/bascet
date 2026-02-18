@@ -185,6 +185,12 @@ pub struct GetRawCMD {
     pub compression_level: bbgz::Compression,
 
     #[arg(
+        long = "library",
+        help = "Library name to prefix cell barcodes with. Defaults to unix timestamp"
+    )]
+    pub library: Option<String>,
+
+    #[arg(
         long = "skip-debarcode",
         num_args = 1..,
         value_delimiter = ',',
@@ -314,6 +320,8 @@ impl GetRawCMD {
 
         let timestamp_temp_files = timestamp_temp_files.to_string();
 
+        let library = self.library.clone().unwrap_or(String::from(""));
+
         let path_temp_dir = if let Some(temp_path) = self.path_temp.clone() {
             temp_path
         } else {
@@ -407,6 +415,7 @@ impl GetRawCMD {
                 path_temp_dir.clone(),
                 &budget,
                 self.compression_level,
+                &library,
             );
 
             info!("Waiting for R1 and R2 reader threads to finish...");
@@ -1090,6 +1099,7 @@ fn spawn_chunk_writers(
     path_temp_dir: PathBuf,
     budget: &GetrawBudget,
     compression_level: Compression,
+    library: &str,
 ) -> Vec<JoinHandle<Vec<InputPath>>> {
     let countof_write_threads = (*budget.threads::<TWrite>()).get();
     let countof_compress_threads = (*budget.threads::<TCompress>()).get();
@@ -1103,12 +1113,14 @@ fn spawn_chunk_writers(
     let atomic_counter = Arc::new(AtomicUsize::new(0));
 
     let arc_timestamp_temp_files = Arc::new(timestamp_temp_files);
+    let arc_library: Arc<str> = Arc::from(library);
     for thread_idx in 0..countof_write_threads {
         let st_rx = st_rx.clone();
 
         let thread_counter = Arc::clone(&atomic_counter);
         let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);
         let thread_path_temp_dir = path_temp_dir.clone();
+        let thread_library = Arc::clone(&arc_library);
         let mut thread_vec_temp_written = Vec::new();
         let thread_handle = budget.spawn::<TWrite, _, _>(thread_idx, move || {
             let thread = std::thread::current();
@@ -1159,6 +1171,10 @@ fn spawn_chunk_writers(
                 let mut last_id: SmallVec<[u8; 16]> = SmallVec::new();
                 let mut blockwriter_opt: Option<BBGZWriteBlock<'_>> = None;
 
+                let library_bytes = thread_library.as_bytes();
+                let library_sep = if thread_library.is_empty() { ""} else { "_" };
+                let library_sep_bytes = library_sep.as_bytes();
+
                 for (id, mut record) in sorted_record_list {
                     if *id != *last_id {
                         if let Some(ref mut blockwriter) = blockwriter_opt {
@@ -1166,9 +1182,14 @@ fn spawn_chunk_writers(
                         }
                         last_id = id.to_smallvec();
 
+                        let mut prefixed_id = Vec::with_capacity(library_bytes.len() + library_sep_bytes.len() + id.len());
+                        prefixed_id.extend_from_slice(library_bytes);
+                        prefixed_id.extend_from_slice(library_sep_bytes);
+                        prefixed_id.extend_from_slice(&id);
+
                         let mut bbgzheader = BBGZHeader::new();
-                        unsafe { 
-                            bbgzheader.add_extra_unchecked(b"ID", id.clone());
+                        unsafe {
+                            bbgzheader.add_extra_unchecked(b"ID", prefixed_id);
                         }
                         blockwriter_opt = Some(bbgzwriter.begin(bbgzheader));
                     }
@@ -1185,14 +1206,18 @@ fn spawn_chunk_writers(
 
                         // Reserve space for entire record to prevent splitting across blocks
                         let record_size = 11 + // 8x '\t' + '1' + '1' + '\n'
+                            library_bytes.len() +
+                            library_sep_bytes.len() + 
                             id_bytes.len() +
                             r1_bytes.len() +
                             r2_bytes.len() +
                             q1_bytes.len() +
                             q2_bytes.len() +
-                            umi_bytes.len(); 
+                            umi_bytes.len();
                         blockwriter.reserve(record_size);
 
+                        let _ = blockwriter.write_all(library_bytes);
+                        let _ = blockwriter.write_all(library_sep_bytes);
                         let _ = blockwriter.write_all(id_bytes);
                         let _ = blockwriter.write_all(b"\t");
                         let _ = blockwriter.write_all(b"1");
