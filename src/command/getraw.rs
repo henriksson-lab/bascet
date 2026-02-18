@@ -185,6 +185,12 @@ pub struct GetRawCMD {
     pub compression_level: bbgz::Compression,
 
     #[arg(
+        long = "library",
+        help = "Library name to prefix cell barcodes with. Defaults to unix timestamp"
+    )]
+    pub library: Option<String>,
+
+    #[arg(
         long = "skip-debarcode",
         num_args = 1..,
         value_delimiter = ',',
@@ -314,6 +320,8 @@ impl GetRawCMD {
 
         let timestamp_temp_files = timestamp_temp_files.to_string();
 
+        let library = self.library.clone().unwrap_or(String::from(""));
+
         let path_temp_dir = if let Some(temp_path) = self.path_temp.clone() {
             temp_path
         } else {
@@ -407,6 +415,7 @@ impl GetRawCMD {
                 path_temp_dir.clone(),
                 &budget,
                 self.compression_level,
+                &library,
             );
 
             info!("Waiting for R1 and R2 reader threads to finish...");
@@ -1090,6 +1099,7 @@ fn spawn_chunk_writers(
     path_temp_dir: PathBuf,
     budget: &GetrawBudget,
     compression_level: Compression,
+    library: &str,
 ) -> Vec<JoinHandle<Vec<InputPath>>> {
     let countof_write_threads = (*budget.threads::<TWrite>()).get();
     let countof_compress_threads = (*budget.threads::<TCompress>()).get();
@@ -1103,12 +1113,14 @@ fn spawn_chunk_writers(
     let atomic_counter = Arc::new(AtomicUsize::new(0));
 
     let arc_timestamp_temp_files = Arc::new(timestamp_temp_files);
+    let arc_library: Arc<str> = Arc::from(library);
     for thread_idx in 0..countof_write_threads {
         let st_rx = st_rx.clone();
 
         let thread_counter = Arc::clone(&atomic_counter);
         let thread_timestamp_temp_files = Arc::clone(&arc_timestamp_temp_files);
         let thread_path_temp_dir = path_temp_dir.clone();
+        let thread_library = Arc::clone(&arc_library);
         let mut thread_vec_temp_written = Vec::new();
         let thread_handle = budget.spawn::<TWrite, _, _>(thread_idx, move || {
             let thread = std::thread::current();
@@ -1159,6 +1171,10 @@ fn spawn_chunk_writers(
                 let mut last_id: SmallVec<[u8; 16]> = SmallVec::new();
                 let mut blockwriter_opt: Option<BBGZWriteBlock<'_>> = None;
 
+                let library_bytes = thread_library.as_bytes();
+                let library_sep = if thread_library.is_empty() { ""} else { "_" };
+                let library_sep_bytes = library_sep.as_bytes();
+
                 for (id, mut record) in sorted_record_list {
                     if *id != *last_id {
                         if let Some(ref mut blockwriter) = blockwriter_opt {
@@ -1166,9 +1182,14 @@ fn spawn_chunk_writers(
                         }
                         last_id = id.to_smallvec();
 
+                        let mut prefixed_id = Vec::with_capacity(library_bytes.len() + library_sep_bytes.len() + id.len());
+                        prefixed_id.extend_from_slice(library_bytes);
+                        prefixed_id.extend_from_slice(library_sep_bytes);
+                        prefixed_id.extend_from_slice(&id);
+
                         let mut bbgzheader = BBGZHeader::new();
-                        unsafe { 
-                            bbgzheader.add_extra_unchecked(b"ID", id.clone());
+                        unsafe {
+                            bbgzheader.add_extra_unchecked(b"ID", prefixed_id);
                         }
                         blockwriter_opt = Some(bbgzwriter.begin(bbgzheader));
                     }
@@ -1185,14 +1206,18 @@ fn spawn_chunk_writers(
 
                         // Reserve space for entire record to prevent splitting across blocks
                         let record_size = 11 + // 8x '\t' + '1' + '1' + '\n'
+                            library_bytes.len() +
+                            library_sep_bytes.len() + 
                             id_bytes.len() +
                             r1_bytes.len() +
                             r2_bytes.len() +
                             q1_bytes.len() +
                             q2_bytes.len() +
-                            umi_bytes.len(); 
+                            umi_bytes.len();
                         blockwriter.reserve(record_size);
 
+                        let _ = blockwriter.write_all(library_bytes);
+                        let _ = blockwriter.write_all(library_sep_bytes);
                         let _ = blockwriter.write_all(id_bytes);
                         let _ = blockwriter.write_all(b"\t");
                         let _ = blockwriter.write_all(b"1");
@@ -1277,8 +1302,8 @@ fn spawn_histogram_workers(
 
     let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
     let countof_worker_threads = (countof_histograms as u64).min(countof_threads_total);
-    let countof_threads_per_worker =
-        BoundedU64::new_saturating(countof_threads_total / countof_worker_threads);
+    let countof_threads_per_worker_base = countof_threads_total / countof_worker_threads;
+    let countof_threads_remainder = countof_threads_total % countof_worker_threads;
 
     let sizeof_stream_each_buffer =
         ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
@@ -1286,13 +1311,13 @@ fn spawn_histogram_workers(
 
     for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {
         let thread_shared_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
-        let thread_countof_threads = countof_threads_per_worker;
+        let extra = if (thread_idx as u64) < countof_threads_remainder { 1 } else { 0 };
+        let thread_countof_threads = BoundedU64::new_saturating(countof_threads_per_worker_base + extra);
 
         let worker_handle = budget.spawn::<Total, _, _>(thread_idx as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
             debug!(thread = thread_name, processing_histogram_for = %output_path, "Starting histogram worker");
-            let mut hist_hashmap: gxhash::HashMap<Vec<u8>, u64> = gxhash::HashMap::new();
 
             let decoder = codec::BBGZDecoder::builder()
                 .with_path(&**output_path.path())
@@ -1315,15 +1340,6 @@ fn spawn_histogram_workers(
                     "id_current < id_context",
                 );
 
-            while let Ok(Some(record)) = query.next() {
-                let id = record.get_ref::<Id>();
-                if let Some(count) = hist_hashmap.get_mut(*id) {
-                    *count += 1;
-                } else {
-                    hist_hashmap.insert(id.to_vec(), 1);
-                }
-            }
-
             let hist_file = match hist_path.clone().create() {
                 Ok(file) => file,
                 Err(e) => {
@@ -1331,12 +1347,30 @@ fn spawn_histogram_workers(
                     panic!("Failed to create output file");
                 }
             };
-
             let mut bufwriter = BufWriter::new(hist_file);
-            for (id, count) in hist_hashmap.iter() {
-                bufwriter.write_all(&id).unwrap();
+
+            let mut current_id: SmallVec<[u8; 16]> = SmallVec::new();
+            let mut current_count: u64 = 0;
+
+            while let Ok(Some(record)) = query.next() {
+                let id = record.get_ref::<Id>();
+                if *id == current_id.as_slice() {
+                    current_count += 1;
+                } else {
+                    if !current_id.is_empty() {
+                        bufwriter.write_all(&current_id).unwrap();
+                        bufwriter.write_all(b"\t").unwrap();
+                        bufwriter.write_all(current_count.to_string().as_bytes()).unwrap();
+                        bufwriter.write_all(b"\n").unwrap();
+                    }
+                    current_id = id.to_smallvec();
+                    current_count = 1;
+                }
+            }
+            if !current_id.is_empty() {
+                bufwriter.write_all(&current_id).unwrap();
                 bufwriter.write_all(b"\t").unwrap();
-                bufwriter.write_all(count.to_string().as_bytes()).unwrap();
+                bufwriter.write_all(current_count.to_string().as_bytes()).unwrap();
                 bufwriter.write_all(b"\n").unwrap();
             }
 
