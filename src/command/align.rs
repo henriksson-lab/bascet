@@ -15,7 +15,7 @@ use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    io::{BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::Stdio
+    fs::File, io::{BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::Stdio
 };
 use tracing::{info, warn};
 
@@ -59,7 +59,7 @@ pub struct AlignCMD {
         //value_delimiter = ',',
         help = "Genome to use"
     )]
-    pub path_genome: InputPath,
+    pub path_genome: PathBuf, //File might not exist, so use regular PathBuf
 
     #[arg(
         short = '@',
@@ -178,8 +178,8 @@ impl AlignCMD {
         // Set up named pipes
         let path_pipe_r1 = self.path_temp.join("fifo_r1.fq");
         let path_pipe_r2 = self.path_temp.join("fifo_r2.fq");
-        nix::unistd::mkfifo(&path_pipe_r1, nix::sys::stat::Mode::S_IRWXU)?;
-        nix::unistd::mkfifo(&path_pipe_r2, nix::sys::stat::Mode::S_IRWXU)?;
+        nix::unistd::mkfifo(&path_pipe_r1, nix::sys::stat::Mode::S_IRWXU).expect("Previous pipe file exists in temp dir; stopping");
+        nix::unistd::mkfifo(&path_pipe_r2, nix::sys::stat::Mode::S_IRWXU).expect("Previous pipe file exists in temp dir; stopping");
         
         
 
@@ -191,7 +191,7 @@ impl AlignCMD {
         let mut proc_aligner = if self.aligner=="STAR" {
 
             prep_star(
-                self.path_genome.path().path().to_str().expect("could not get genome path"),
+                &self.path_genome,
                 &path_pipe_r1,
                 &path_pipe_r2,
                 &path_aln_temp,
@@ -199,7 +199,14 @@ impl AlignCMD {
             )
         } else if self.aligner=="BWA" {
             prep_bwa(
-                &self.path_genome.path().path(), //.to_str().expect("could not get genome path"),
+                &self.path_genome,
+                &path_pipe_r1,
+                &path_pipe_r2,
+                num_threads
+            )
+        } else if self.aligner=="bowtie2" {
+            prep_bowtie2(
+                &self.path_genome,
                 &path_pipe_r1,
                 &path_pipe_r2,
                 num_threads
@@ -209,6 +216,9 @@ impl AlignCMD {
         }?;
         let aligner_stdout = proc_aligner.stdout.take().expect("Failed to get stdout");
         let reader_aligner_stdout = BufReader::new(aligner_stdout);
+
+
+
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // Convert SAM => BAM and store unsorted to disk
@@ -223,17 +233,22 @@ impl AlignCMD {
         )?;
         let writer_tagbam = BufWriter::new(proc_samtobam.stdin.take().expect("could not open samtobam"));
 
+        
         ///////////////////////////////////////////////////////////////////////////////////// 
         // This thread takes the output SAM data, and adds proper tags to it
         let handle_tagbam = budget.spawn::<TWrite, _, _>(0 as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread"); 
             info!(thread = thread_name, "Starting tag-bam worker"); 
+            
             sam_add_bc_tag(
                 writer_tagbam,
                 reader_aligner_stdout
-            ).expect("Failed to run BAM tagger");            
+            ).expect("Failed to run BAM tagger"); 
+
+//            pipe_to_screen(&mut reader_aligner_stdout).unwrap();         
         });
+
 
         ///////////////////////////////////////////////////////////////////////////////////// 
         // All threads are now set up. Send all readpairs to the aligner
@@ -242,8 +257,8 @@ impl AlignCMD {
 
         AlignCMD::write_tirp_to_2fq(
             self.path_in.path().path(),
-            &mut writer_r1, //path_pipe_r1,
-            &mut writer_r2, //path_pipe_r2,
+            &mut writer_r1, 
+            &mut writer_r2, 
             budget.numof_threads_read,
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
@@ -296,12 +311,9 @@ impl AlignCMD {
     /// 
     pub fn write_tirp_to_2fq<P>(
         path_in: P,
-//        path_r1: P,
-//        path_r2: P,
         writer_r1: &mut BufWriter<impl Write>,
         writer_r2: &mut BufWriter<impl Write>,
-
-        num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
+        num_threads: BoundedU64<1, { u64::MAX }>, 
         sizeof_stream_arena: ByteSize,
         sizeof_stream_buffer: ByteSize,
     ) -> Result<()> where P: AsRef<Path> {
@@ -323,13 +335,12 @@ impl AlignCMD {
 
         let mut query = stream.query::<tirp::Record>();
 
-//        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
-//        let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
         println!("Sending read pairs");
         let mut num_read:u64 = 0;
         loop {
             match query.next_into::<tirp::Record>() {
                 Ok(Some(record)) => {
+                    //println!("one read pair");
 
                     let record_id = *record.get_ref::<Id>();
                     let record_r1 = *record.get_ref::<R1>();
@@ -357,9 +368,6 @@ impl AlignCMD {
                         writer.write_all(record_read)?;
                         writer.write_all(b"\n+\n")?;
                         writer.write_all(record_qual)?;
-                        //for _i in 0..record_read.len() {
-                        //    writer.write_all(b"F")?; //or get qual from record ///////////// TODO
-                        //}
                         writer.write_all(b"\n")?;
                         Ok(())
                     }
@@ -392,6 +400,8 @@ impl AlignCMD {
                     !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
                     */
                     num_read += 1;
+                    println!("read pairs {}", num_read);
+
                 }
                 Ok(None) => {
                     break;
@@ -406,132 +416,10 @@ impl AlignCMD {
         //Ensure data is properly pushed out
         writer_r1.flush()?;
         writer_r2.flush()?;
-        //drop(writer_r1); //don't think needed
-        //drop(writer_r2); //don't think needed
         info!("All readpairs flushed");
         
         Ok(())
     }
-
-
-
-    ///
-    /// Get a TIRP, stream to fastq
-    /// 
-    pub fn write_tirp_to_interleaved_fq<P>(
-        path_in: P,
-        path_r1: P,
-        num_threads: BoundedU64<1, { u64::MAX }>, // budget.numof_threads_read
-        sizeof_stream_arena: ByteSize,
-        sizeof_stream_buffer: ByteSize,
-    ) -> Result<()> where P: AsRef<Path> {
-
-        ///////////////////////////////////////////////////////////////////////////////////// 
-        // Streamer from input TIRP
-        let decoder = codec::BBGZDecoder::builder()
-            .with_path(path_in)
-            .countof_threads(num_threads)
-            .build();
-        let parser = parse::Tirp::builder().build();
-
-        let mut stream = Stream::builder()
-            .with_decoder(decoder)
-            .with_parser(parser)
-            .sizeof_decode_arena(sizeof_stream_arena)
-            .sizeof_decode_buffer(sizeof_stream_buffer)
-            .build();
-
-        let mut query = stream.query::<tirp::Record>();
-
-        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
-        //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
-        println!("Sending read pairs");
-        let mut num_read:u64 = 0;
-        loop {
-            match query.next_into::<tirp::Record>() {
-                Ok(Some(record)) => {
-
-                    let record_id = *record.get_ref::<Id>();
-                    let record_r1 = *record.get_ref::<R1>();
-                    let record_r2 = *record.get_ref::<R2>();
-                    let record_q1 = *record.get_ref::<Q1>();
-                    let record_q2 = *record.get_ref::<Q2>();
-                    let record_umi = *record.get_ref::<Umi>();
-
-                    fn write_read_bascetfq<W>(
-                        writer: &mut W,
-                        record_id: &[u8], 
-                        record_read: &[u8],
-                        record_qual: &[u8],
-                        record_umi: &[u8],
-                        num_read: u64
-                    ) -> Result<()> where W: Write {
-                        writer.write_all(b"@BASCET_")?;
-                        writer.write_all(record_id)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(record_umi)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(format!("{}", num_read).as_bytes())?;
-                        
-                        writer.write_all(b"\n")?;
-                        writer.write_all(record_read)?;
-                        writer.write_all(b"\n+\n")?;
-                        writer.write_all(record_qual)?;
-                        //for _i in 0..record_read.len() {
-                        //    writer.write_all(b"F")?; //or get qual from record ///////////// TODO
-                        //}
-                        writer.write_all(b"\n")?;
-                        Ok(())
-                    }
-
-                    write_read_bascetfq(
-                        &mut writer_r1,
-                        &record_id,
-                        &record_r1,
-                        &record_q1,
-                        &record_umi,
-                        num_read
-                    )?;
-
-                    write_read_bascetfq(
-                        &mut writer_r1,
-                        &record_id,
-                        &record_r2,
-                        &record_q2,
-                        &record_umi,
-                        num_read
-                    )?;
-                    
-                    
-                    //What about Q? it might not be used at all. but could output as an option
-                    /*
-                    Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
-                    @SEQ_ID
-                    GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
-                    +
-                    !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
-                    */
-                    num_read += 1;
-                }
-                Ok(None) => {
-                    break;
-                }
-                Err(e) => {
-                    panic!("{:?}", e);
-                }
-            };
-        }
-        info!("All readpairs sent");
-
-        //Ensure data is properly pushed out
-        writer_r1.flush()?;
-        //drop(writer_r1); //don't think needed
-        info!("All readpairs flushed");
-        
-        Ok(())
-    }
-
-
 
 
 
@@ -549,13 +437,9 @@ pub fn sam_add_bc_tag<W,R>(
     reader: R
 ) -> Result<()> 
 where W:Sized + std::io::Write, R:std::io::BufRead {
-
     let mut writer = BufWriter::new(writer);
-
     for line in reader.lines() {
         let line = line.unwrap();
-
-        //println!("{}", line);
 
         if line.starts_with("@") {
             //This is a header line
@@ -580,6 +464,30 @@ where W:Sized + std::io::Write, R:std::io::BufRead {
             //Thus add this:
             //CB:Z:ACGACTTAGTATTGTG-1
             //UB:Z:TAGGCAGAAGCT
+        }
+    }
+    Ok(())
+}
+
+
+
+
+
+
+/// 
+/// Pipe to screen, for debugging
+/// 
+pub fn pipe_to_screen<R>(
+    reader: &mut R
+) -> Result<()> 
+where R:std::io::BufRead {
+    let mut buf = vec![0; 1024];
+    loop {
+        let len = reader.read(&mut buf).expect("could not read");
+        let s = String::from_utf8(buf[0..len].to_vec()).unwrap();
+        info!(line = s, "input");
+        if len==0 {
+            break;
         }
     }
     Ok(())
@@ -622,7 +530,7 @@ pub fn proc_sam_to_bam<P>(
 /// Generate STAR command. Output will be on stdout
 /// 
 pub fn prep_star<P> (
-    path_genome: &str,
+    path_genome: &P,
     path_r1: &P, 
     path_r2: &P,
     path_aln_temp: &P,
@@ -633,12 +541,13 @@ pub fn prep_star<P> (
     let path_out_prefix = PathBuf::from(path_aln_temp.as_ref()).join("STAR_");
     let path_out_prefix = format!("{}",path_out_prefix.as_os_str().to_str().expect("os str"));
 
+    let path_genome = format!("{}",path_genome.as_ref().as_os_str().to_str().expect("os str"));
     let path_r1 = format!("{}",path_r1.as_ref().as_os_str().to_str().expect("os str"));
     let path_r2 = format!("{}",path_r2.as_ref().as_os_str().to_str().expect("os str"));
     let path_aln_temp = format!("{}",path_aln_temp.as_ref().as_os_str().to_str().expect("os str"));
 
     let args = vec![
-        "--genomeDir", path_genome,
+        "--genomeDir", &path_genome,
         "--readFilesIn",  &path_r1, &path_r2,
         "--runThreadN", &num_threads,
         "--outSAMtype", "SAM", //  this implies unsorted
@@ -662,7 +571,7 @@ pub fn prep_star<P> (
 /// Generate BWA command. Output will be on stdout
 /// 
 pub fn prep_bwa<P>(
-    path_genome: &P,
+    path_genome: P,
     path_r1: P,
     path_r2: P,
     num_threads: u64,
@@ -688,6 +597,48 @@ pub fn prep_bwa<P>(
     Ok(proc_cmd)
 }
 
+
+
+///
+/// Generate Bowtie2 command. Output will be on stdout
+/// 
+pub fn prep_bowtie2<P>(
+    path_genome: P,
+    path_r1: P,
+    path_r2: P,
+    num_threads: u64,
+) -> Result<std::process::Child> where P: AsRef<Path> {
+
+    let log_name = format!("./temp_bt.log");
+    let log = File::create(log_name).expect("failed to open log");
+
+//    let out_name = format!("./temp_bt.out");
+//    let out = File::create(out_name).expect("failed to open log");
+
+    let num_threads = format!("{}",num_threads);
+    let path_genome = format!("{}",path_genome.as_ref().as_os_str().to_str().expect("os str"));
+    let path_r1 = format!("{}",path_r1.as_ref().as_os_str().to_str().expect("os str"));
+    let path_r2 = format!("{}",path_r2.as_ref().as_os_str().to_str().expect("os str"));
+
+    let args = vec![
+        "-x", &path_genome,
+        "--threads", &num_threads,
+        "--reorder", //Guarantees that output SAM records are printed in an order corresponding to the order of the reads in the original input file, even when -p is set greater than 1
+        "--very-sensitive-local", //recommended setting for mapping out human reads; https://www.cell.com/cell-reports-methods/fulltext/S2667-2375(25)00254-1
+        "-1", &path_r1, 
+        "-2", &path_r2,
+        "-S", "/home/mahogny/github/bascet/temp/wtf.sam"
+    ];
+
+    let proc_cmd = std::process::Command::new("bowtie2")   
+        .args(args)
+        .stderr(log)
+//        .stdout(out)
+        .stdout(Stdio::piped())  
+        .spawn()?;
+
+    Ok(proc_cmd)
+}
 
 
 ///

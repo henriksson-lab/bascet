@@ -2,9 +2,6 @@ use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
 use bascet_core::attr::sequence;
-use seq_io::fastq::Reader as FastqReader;
-
-use seq_io::fastq::Record as FastqRecord;
 
 use flate2::read::GzDecoder;
 
@@ -19,6 +16,8 @@ pub struct ParseBioChemistry3 {
     subchemistry: String,
 }
 impl Chemistry for ParseBioChemistry3 {
+
+    /*
     ///////////////////////////////
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
     fn prepare_using_rp_files(
@@ -42,9 +41,12 @@ impl Chemistry for ParseBioChemistry3 {
         //TODO enable user to select one specifically
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
-        println!("Searching for best barcode match");
+        if self.subchemistry == "" {
+            panic!("Subchemistry detection is disabled for now. specify manually. it is too dangerous to rely on automatic detection currently");
+        }
 
         self.barcode = if self.subchemistry != "" {
+            println!("Loading specified subchemistry");
             if map_round_bcs.contains_key(&self.subchemistry) {
                 map_round_bcs
                     .get(self.subchemistry.as_str())
@@ -57,6 +59,9 @@ impl Chemistry for ParseBioChemistry3 {
                 );
             }
         } else {
+            println!("Searching for best barcode match");
+            //panic!("...this is disabled for now. specify manually. it is too dangerous to rely on automatic detection currently");
+
             //TODO: should likely not allow this! great chance of confusing chemistries. the current
             //algorithm tends to pick the megakit but this messes up well assignments
 
@@ -121,6 +126,8 @@ impl Chemistry for ParseBioChemistry3 {
 
         Ok(())
     }
+     */
+    
 
     fn prepare_using_rp_vecs<C: bascet_core::Composite>(
         &mut self,
@@ -147,9 +154,12 @@ impl Chemistry for ParseBioChemistry3 {
         //TODO enable user to select one specifically
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
-        println!("Searching for best barcode match");
+        if self.subchemistry == "" {
+            panic!("Subchemistry detection is disabled for now. specify manually. it is too dangerous to rely on automatic detection currently");
+        }
 
         self.barcode = if self.subchemistry != "" {
+            println!("Loading specified subchemistry");
             if map_round_bcs.contains_key(&self.subchemistry) {
                 map_round_bcs
                     .get(self.subchemistry.as_str())
@@ -162,6 +172,7 @@ impl Chemistry for ParseBioChemistry3 {
                 );
             }
         } else {
+            println!("Searching for best barcode match");
             //TODO: should likely not allow this! great chance of confusing chemistries. the current
             //algorithm tends to pick the megakit but this messes up well assignments
 
@@ -215,7 +226,6 @@ impl Chemistry for ParseBioChemistry3 {
                 "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
                 best_chem_name, best_chem_score
             );
-            //panic!("test");
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
         };
@@ -245,16 +255,24 @@ impl Chemistry for ParseBioChemistry3 {
 
         if score > -1 {
             let r1_from = 0;
-            let r1_to = r1_seq.len();
+            let r1_to = r1_seq.len(); ////////////////////////////////////////////////// TODO: possibly perform polyT trimming also on R1?
 
-            //R2 need to have the first part with barcodes removed. Figure out total size!
-            //TODO search for the truseq adapter that may appear toward the end
-            let r2_from = self.barcode.trim_bcread_len;
-            let r2_to = r2_seq.len();
+            //PolyT trimming of R1, as it may end in AAAA.
+            //Study some cases before implementing! it might end up reading into the barcode if this ever happens. Thus, may need to scan for AAAAA and trim even in the middle
 
             //Get UMI position
             let umi_from = self.barcode.umi_from;
             let umi_to = self.barcode.umi_to;
+
+
+            //PolyT trimming of R2, as it starts from TTTTT. Remove until first non-T base
+            let first_non_t = r2_seq.iter().position(|&i| i != b'T');
+            let r2_from = if let Some(pos) = first_non_t {
+                pos
+            } else {
+                r2_seq.len()
+            }; 
+            let r2_to = r2_seq.len();
 
             (
                 bc,

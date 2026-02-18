@@ -193,7 +193,7 @@ impl KmcReadsCMD {
         ///////////////////////////////////////////////////////////////////////////////////// 
         // All threads are now set up. Send all readpairs to KRAKEN2.
         // Note that KRAKEN2 requires interleaved reads as paired-end mode reads one file at a file, blocking the pipe!
-        super::AlignCMD::write_tirp_to_interleaved_fq(
+        super::KrakenCMD::write_tirp_to_interleaved_fq(
             self.path_in.path().path(),
             &path_pipe_r12,
             budget.numof_threads_read,

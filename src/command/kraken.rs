@@ -3,17 +3,19 @@ use crate::{
 };
 
 use bascet_core::{
+    attr::{meta::*, sequence::*, quality::*},
     *,
 };
 use bascet_derive::Budget;
 
 use anyhow::Result;
+use bascet_io::{codec, parse, tirp};
 use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    path::{Path, PathBuf}
+    io::{BufWriter, Write}, path::{Path, PathBuf}
 };
 use tracing::{info, warn};
 
@@ -184,7 +186,7 @@ impl KrakenCMD {
         ///////////////////////////////////////////////////////////////////////////////////// 
         // All threads are now set up. Send all readpairs to KRAKEN2.
         // Note that KRAKEN2 requires interleaved reads as paired-end mode reads one file at a file, blocking the pipe!
-        super::AlignCMD::write_tirp_to_interleaved_fq(
+        Self::write_tirp_to_interleaved_fq(
             self.path_in.path().path(),
             &path_pipe_r12,
             //&path_pipe_r2,
@@ -218,6 +220,124 @@ impl KrakenCMD {
 
         Ok(())
     }
+
+
+
+
+    ///
+    /// Get a TIRP, stream to fastq. Not primarily used by aligners, but KRAKEN
+    /// 
+    pub fn write_tirp_to_interleaved_fq<P>(
+        path_in: P,
+        path_r1: P,
+        num_threads: BoundedU64<1, { u64::MAX }>, 
+        sizeof_stream_arena: ByteSize,
+        sizeof_stream_buffer: ByteSize,
+    ) -> Result<()> where P: AsRef<Path> {
+
+        ///////////////////////////////////////////////////////////////////////////////////// 
+        // Streamer from input TIRP
+        let decoder = codec::BBGZDecoder::builder()
+            .with_path(path_in)
+            .countof_threads(num_threads)
+            .build();
+        let parser = parse::Tirp::builder().build();
+
+        let mut stream = Stream::builder()
+            .with_decoder(decoder)
+            .with_parser(parser)
+            .sizeof_decode_arena(sizeof_stream_arena)
+            .sizeof_decode_buffer(sizeof_stream_buffer)
+            .build();
+
+        let mut query = stream.query::<tirp::Record>();
+
+        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
+        //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
+        println!("Sending read pairs");
+        let mut num_read:u64 = 0;
+        loop {
+            match query.next_into::<tirp::Record>() {
+                Ok(Some(record)) => {
+
+                    let record_id = *record.get_ref::<Id>();
+                    let record_r1 = *record.get_ref::<R1>();
+                    let record_r2 = *record.get_ref::<R2>();
+                    let record_q1 = *record.get_ref::<Q1>();
+                    let record_q2 = *record.get_ref::<Q2>();
+                    let record_umi = *record.get_ref::<Umi>();
+
+                    fn write_read_bascetfq<W>(
+                        writer: &mut W,
+                        record_id: &[u8], 
+                        record_read: &[u8],
+                        record_qual: &[u8],
+                        record_umi: &[u8],
+                        num_read: u64
+                    ) -> Result<()> where W: Write {
+                        writer.write_all(b"@BASCET_")?;
+                        writer.write_all(record_id)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(record_umi)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(format!("{}", num_read).as_bytes())?;
+                        
+                        writer.write_all(b"\n")?;
+                        writer.write_all(record_read)?;
+                        writer.write_all(b"\n+\n")?;
+                        writer.write_all(record_qual)?;
+                        writer.write_all(b"\n")?;
+                        Ok(())
+                    }
+
+                    write_read_bascetfq(
+                        &mut writer_r1,
+                        &record_id,
+                        &record_r1,
+                        &record_q1,
+                        &record_umi,
+                        num_read
+                    )?;
+
+                    write_read_bascetfq(
+                        &mut writer_r1,
+                        &record_id,
+                        &record_r2,
+                        &record_q2,
+                        &record_umi,
+                        num_read
+                    )?;
+                    
+                    
+                    //What about Q? it might not be used at all. but could output as an option
+                    /*
+                    Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
+                    @SEQ_ID
+                    GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
+                    +
+                    !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
+                    */
+                    num_read += 1;
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    panic!("{:?}", e);
+                }
+            };
+        }
+        info!("All readpairs sent");
+
+        //Ensure data is properly pushed out
+        writer_r1.flush()?;
+        //drop(writer_r1); //don't think needed
+        info!("All readpairs flushed");
+        
+        Ok(())
+    }
+
+
 }
 
 
