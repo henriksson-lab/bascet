@@ -263,6 +263,8 @@ impl AlignCMD {
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
         )?;
+        drop(writer_r1);
+        drop(writer_r2);
 
         //Wait for the output BAM to have been converted
         info!("Waiting for aligner process to finish");
@@ -400,8 +402,9 @@ impl AlignCMD {
                     !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
                     */
                     num_read += 1;
-                    println!("read pairs {}", num_read);
-
+                    if num_read % 100000 == 0 {
+                        println!("read pairs {}", num_read);
+                    }
                 }
                 Ok(None) => {
                     break;
