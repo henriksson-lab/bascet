@@ -51,6 +51,15 @@ fn main() -> std::process::ExitCode {
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 
+    //Output from these commands need to get out without any log text
+    if let Commands::Sysinfo(mut cmd) = cli.command {
+        _ = cmd.try_execute();
+        return std::process::ExitCode::SUCCESS;
+    } else if let Commands::Sysinfo(mut cmd) = cli.command {
+        _ = cmd.try_execute();
+        return std::process::ExitCode::SUCCESS;
+    };
+
     LogGuard::with_config(LogConfig {
         level: cli.log_level,
         mode: cli.log_mode,
@@ -102,7 +111,6 @@ fn main() -> std::process::ExitCode {
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
         Commands::Countfeature(mut cmd) => cmd.try_execute(),
-        //Commands::CountsketchMat(mut cmd) => cmd.try_execute(),
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(mut cmd) => cmd.try_execute(),
@@ -112,8 +120,9 @@ fn main() -> std::process::ExitCode {
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),
         //Commands::KmcReads(mut cmd) => cmd.try_execute(),
         Commands::Kraken(mut cmd) => cmd.try_execute(),
-        Commands::PipeSamAddTags(mut cmd) => cmd.try_execute(), // no longer needed?
+        Commands::PipeSamAddTags(_cmd) => panic!("Captured in the wrong place"),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
+        Commands::Sysinfo(_cmd) => panic!("Captured in the wrong place"),
         Commands::ToFastq(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
         Commands::QueryKmc(mut cmd) => cmd.try_execute(),

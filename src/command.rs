@@ -6,7 +6,7 @@ pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
-//pub mod countsketch_mat_depreciated;
+pub mod sysinfo;
 pub mod extract;
 pub mod extract_terminal;
 pub mod featurise_kmc;
@@ -36,7 +36,6 @@ pub use kmc_reads::KmcReadsCMD;
 pub use countchrom::{CountChrom, CountChromCMD};
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
-//pub use countsketch_mat_depreciated::CountsketchMatCMD;  
 pub use extract::ExtractCMD;
 pub use extract_terminal::ExtractStreamCMD;
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
@@ -56,14 +55,13 @@ pub use threadcount::{
 };
 pub use transform::{TransformCMD, TransformFile};
 
-use crate::command::tofq::ToFastqCMD;
+use crate::command::{sysinfo::SysinfoCMD, tofq::ToFastqCMD};
 
 ///////////////////////////////
 /// Possible subcommands to parse
 #[derive(Subcommand, strum_macros::Display)]
 #[allow(non_camel_case_types)]
 pub enum Commands {
-    #[strum(to_string = "Getraw (depreciated)")]
     Align(AlignCMD),
     Bam2fragments(Bam2FragmentsCMD),
     Countchrom(CountChromCMD),
@@ -78,8 +76,9 @@ pub enum Commands {
     Kraken(KrakenCMD),
     Mapcell(MapCellCMD),
     MinhashHist(MinhashHistCMD),
-    PipeSamAddTags(PipeSamAddTagsCMD), //might no longer be needed
+    PipeSamAddTags(PipeSamAddTagsCMD), //Not needed for bascet anymore, but useful if anyone needs to use a non-standard aligner
     Shardify(ShardifyCMD),
+    Sysinfo(SysinfoCMD),
     ToFastq(ToFastqCMD),
     Transform(TransformCMD),
     QueryKmc(QueryKmcCMD),
