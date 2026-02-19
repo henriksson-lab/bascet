@@ -15,7 +15,6 @@ use bytesize::ByteSize;
 use clap::{Args, Subcommand};
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
-use gxhash::HashMapExt;
 use itertools::{izip};
 
 use bascet_core::attr::{meta::*, quality::*, sequence::*};
