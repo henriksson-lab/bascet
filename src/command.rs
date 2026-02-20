@@ -15,6 +15,7 @@ pub mod kraken;
 pub mod kmc_reads;
 //pub mod kmc_new;
 pub mod mapcell;
+pub mod qc;
 pub mod minhash_hist;
 pub mod query_fq;
 pub mod query_kmc;
@@ -43,6 +44,7 @@ pub use getraw::GetRawCMD;
 pub use mapcell::{MapCell, MapCellCMD};
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
 pub use query_fq::{QueryFq, QueryFqCMD};
+pub use qc::QcCMD;
 pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
 
 // Taxonomic classification
@@ -81,6 +83,7 @@ pub enum Commands {
     Sysinfo(SysinfoCMD),
     ToFastq(ToFastqCMD),
     Transform(TransformCMD),
+    Qc(QcCMD),
     QueryKmc(QueryKmcCMD),
     QueryFq(QueryFqCMD),
 }
