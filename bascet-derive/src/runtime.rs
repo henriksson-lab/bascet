@@ -440,7 +440,7 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
             }
             BudgetKind::Thread(BudgetType::Regular(None)) | BudgetKind::Mem(BudgetType::Regular(None)) => {
                 quote! {
-                    #field_ident: #field_ident.expect(&format!("{} is required", stringify!(#field_ident)))
+                    #field_ident: #field_ident
                 }
             }
         }
