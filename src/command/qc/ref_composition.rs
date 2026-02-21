@@ -1,24 +1,15 @@
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
-use std::sync::{
-    self,
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
 use clap::Args;
 use clio::{InputPath, OutputPath};
-use crossbeam::channel::TryRecvError;
 use rust_htslib::bam::{Read, Reader};
 use rust_htslib::bam::record::Record as BamRecord;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-use bascet_core::{
-    threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN},
-    SendPtr,
-};
 use bascet_derive::Budget;
 
 use crate::bounded_parser;
@@ -106,10 +97,7 @@ impl QcRefCompositionCMD {
 
         budget.log();
 
-        info!(
-            input_files = self.paths_in.len(),
-            "Starting ref-composition"
-        );
+        info!(input_files = self.paths_in.len(), "Starting ref-composition");
 
         ////////////////////////////////////////////////////////////////////
         // Create thread for writing output
@@ -134,176 +122,124 @@ impl QcRefCompositionCMD {
             bufwriter.flush().unwrap();
         });
 
+        ////////////////////////////////////////////////////////////////////
+        // Distribute input files across worker threads via a queue
+        let (file_tx, file_rx) = crossbeam::channel::unbounded::<PathBuf>();
+        for input in &self.paths_in {
+            let _ = file_tx.send(input.path().to_path_buf());
+        }
+        drop(file_tx);
+
         let numof_threads_work = (*budget.threads::<TWork>()).get();
+        let mut vec_worker_handles = Vec::with_capacity(numof_threads_work as usize);
 
-        for (input_idx, input) in self.paths_in.iter().enumerate() {
-            info!(path = %input, "Processing BAM");
+        for thread_idx in 0..numof_threads_work {
+            let thread_file_rx = file_rx.clone();
+            let thread_write_tx = write_tx.clone();
 
-            let mut reader = Reader::from_path(&**input.path())?;
-            let header = reader.header().clone();
-
-            let ref_names: Vec<String> = header
-                .target_names()
-                .iter()
-                .map(|name| String::from_utf8_lossy(name).into_owned())
-                .collect();
-
-            let mut worker_counts: Vec<HashMap<usize, u64>> = (0..numof_threads_work)
-                .map(|_| HashMap::new())
-                .collect();
-
-            let arc_flag_synchronize = Arc::new(AtomicBool::new(false));
-            let arc_barrier = Arc::new(sync::Barrier::new((numof_threads_work + 1) as usize));
-
-            let mut vec_worker_handles = Vec::with_capacity(numof_threads_work as usize);
-            let (work_tx, work_rx) = crossbeam::channel::unbounded::<usize>();
-
-            for thread_idx in 0..numof_threads_work {
-                let thread_work_rx = work_rx.clone();
-                let mut counts_ptr = unsafe {
-                    SendPtr::new_unchecked(
-                        &mut worker_counts[thread_idx as usize] as *mut HashMap<usize, u64>,
-                    )
-                };
-                let thread_flag_synchronize = Arc::clone(&arc_flag_synchronize);
-                let thread_barrier = Arc::clone(&arc_barrier);
-
-                vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx as u64, move || {
-                    let thread = std::thread::current();
-                    let thread_name = thread.name().unwrap_or("unknown thread");
-                    debug!(thread = thread_name, "Starting worker");
-
-                    let mut thread_spinpark_counter = 0;
-                    loop {
-                        let tid = match thread_work_rx.try_recv() {
-                            Ok(tid) => tid,
-                            Err(TryRecvError::Empty) => {
-                                if thread_flag_synchronize.load(Ordering::Relaxed) {
-                                    thread_barrier.wait();
-                                    thread_barrier.wait();
-                                }
-                                match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut thread_spinpark_counter) {
-                                    SpinPark::Warn => warn!(source = "RefComposition::worker", "channel empty, producer slow"),
-                                    _ => {}
-                                }
-                                continue;
-                            }
-                            Err(TryRecvError::Disconnected) => break,
-                        };
-                        thread_spinpark_counter = 0;
-
-                        // SAFETY: Each worker has exclusive access to its own counts via raw pointer.
-                        // Barriers ensure no concurrent access during sync.
-                        unsafe {
-                            *counts_ptr.as_mut().entry(tid).or_insert(0) += 1;
-                        }
+            vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx, move || {
+                while let Ok(path) = thread_file_rx.recv() {
+                    info!(path = ?path, "Processing BAM");
+                    if let Err(e) = process_file(&path, &thread_write_tx) {
+                        warn!(path = ?path, error = %e, "Failed to process BAM");
                     }
-                }));
-            }
-
-            let mut record_id_last: Vec<u8> = Vec::new();
-            let mut countof_cells_processed = 0u64;
-            let mut record = BamRecord::new();
-
-            while let Some(Ok(_)) = reader.read(&mut record) {
-                if record.is_unmapped() {
-                    continue;
                 }
-
-                let record_qname = record.qname();
-                let record_id = match memchr::memmem::find(record_qname, b"::") {
-                    Some(pos) => &record_qname[..pos],
-                    None => record_qname,
-                };
-
-                if record_id != record_id_last.as_slice() {
-                    if !record_id_last.is_empty() {
-                        flush_cell(
-                            &record_id_last,
-                            &mut worker_counts,
-                            &ref_names,
-                            &arc_flag_synchronize,
-                            &arc_barrier,
-                            &write_tx,
-                        );
-
-                        countof_cells_processed += 1;
-                        if countof_cells_processed % 100 == 0 {
-                            info!(countof_cells_processed = countof_cells_processed, current_cell = ?String::from_utf8_lossy(&record_id_last), "Progress");
-                        }
-                    }
-
-                    assert!(
-                        record_id_last.is_empty() || record_id > record_id_last.as_slice(),
-                        "BAM not sorted by cell: {:?} after {:?}",
-                        String::from_utf8_lossy(record_id),
-                        String::from_utf8_lossy(&record_id_last),
-                    );
-
-                    record_id_last = record_id.to_vec();
-                }
-
-                let _ = work_tx.send(record.tid() as usize);
-            }
-
-            if !record_id_last.is_empty() {
-                flush_cell(
-                    &record_id_last,
-                    &mut worker_counts,
-                    &ref_names,
-                    &arc_flag_synchronize,
-                    &arc_barrier,
-                    &write_tx,
-                );
-                countof_cells_processed += 1;
-            }
-
-            drop(work_tx);
-            for handle in vec_worker_handles {
-                handle.join().unwrap();
-            }
-
-            info!(countof_cells_processed = countof_cells_processed, input_idx = input_idx, path = %input, "Finished BAM");
+            }));
         }
 
         drop(write_tx);
+        for handle in vec_worker_handles {
+            handle.join().unwrap();
+        }
         thread_writer.join().unwrap();
 
         Ok(())
     }
 }
 
-fn flush_cell(
-    id: &[u8],
-    worker_counts: &mut Vec<HashMap<usize, u64>>,
-    ref_names: &[String],
-    arc_flag_synchronize: &Arc<AtomicBool>,
-    arc_barrier: &Arc<sync::Barrier>,
+fn process_file(
+    path: &std::path::Path,
     write_tx: &crossbeam::channel::Sender<CellRow>,
-) {
-    arc_flag_synchronize.store(true, Ordering::Relaxed);
-    arc_barrier.wait();
+) -> Result<()> {
+    let mut reader = Reader::from_path(path)?;
+    let header = reader.header().clone();
 
-    // SAFETY: Workers are blocked at barrier, coordinator has exclusive access
-    let mut merged: HashMap<usize, u64> = HashMap::new();
-    for counts in worker_counts.iter_mut() {
-        for (&tid, &count) in counts.iter() {
-            *merged.entry(tid).or_insert(0) += count;
+    let ref_names: Vec<String> = header
+        .target_names()
+        .iter()
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect();
+
+    let mut cell_counts: HashMap<usize, u64> = HashMap::new();
+    let mut record_id_last: Vec<u8> = Vec::new();
+    let mut countof_cells_processed = 0u64;
+
+    let mut record = BamRecord::new();
+    while let Some(Ok(_)) = reader.read(&mut record) {
+        if record.is_unmapped() {
+            continue;
         }
-        counts.clear();
+
+        let record_qname = record.qname();
+        let record_id = match memchr::memmem::find(record_qname, b"::") {
+            Some(pos) => &record_qname[..pos],
+            None => record_qname,
+        };
+
+        if record_id != record_id_last.as_slice() {
+            if !record_id_last.is_empty() {
+                flush_cell(&record_id_last, &ref_names, &cell_counts, write_tx);
+                countof_cells_processed += 1;
+                if countof_cells_processed % 100 == 0 {
+                    info!(
+                        countof_cells_processed = countof_cells_processed,
+                        current_cell = ?String::from_utf8_lossy(&record_id_last),
+                        "Progress"
+                    );
+                }
+                cell_counts.clear();
+            }
+
+            assert!(
+                record_id_last.is_empty() || record_id > record_id_last.as_slice(),
+                "BAM not sorted by cell: {:?} after {:?}",
+                String::from_utf8_lossy(record_id),
+                String::from_utf8_lossy(&record_id_last),
+            );
+
+            record_id_last = record_id.to_vec();
+        }
+
+        let tid = record.tid() as usize;
+        *cell_counts.entry(tid).or_insert(0) += 1;
     }
 
-    let mut entries: Vec<(usize, u64)> = merged.into_iter().collect();
+    if !record_id_last.is_empty() {
+        flush_cell(&record_id_last, &ref_names, &cell_counts, write_tx);
+        countof_cells_processed += 1;
+    }
+
+    info!(countof_cells_processed = countof_cells_processed, path = ?path, "Finished BAM");
+    Ok(())
+}
+
+fn flush_cell(
+    id: &[u8],
+    reference_names: &[String],
+    cell_counts: &HashMap<usize, u64>,
+    write_tx: &crossbeam::channel::Sender<CellRow>,
+) {
+    let mut entries: Vec<(usize, u64)> = cell_counts
+        .iter()
+        .map(|(&tid, &count)| (tid, count))
+        .collect();
     entries.sort_unstable_by_key(|&(tid, _)| tid);
 
     let _ = write_tx.send(CellRow {
         id: id.to_vec(),
         entries: entries
             .into_iter()
-            .map(|(tid, count)| (ref_names[tid].clone(), count))
+            .map(|(tid, count)| (reference_names[tid].clone(), count))
             .collect(),
     });
-
-    arc_flag_synchronize.store(false, Ordering::Relaxed);
-    arc_barrier.wait();
 }
