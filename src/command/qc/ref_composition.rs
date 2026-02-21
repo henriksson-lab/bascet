@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
@@ -130,17 +131,20 @@ impl QcRefCompositionCMD {
         }
         drop(file_tx);
 
+        let arc_countof_cells_processed = Arc::new(AtomicU64::new(0));
+
         let numof_threads_work = (*budget.threads::<TWork>()).get();
         let mut vec_worker_handles = Vec::with_capacity(numof_threads_work as usize);
 
         for thread_idx in 0..numof_threads_work {
             let thread_file_rx = file_rx.clone();
             let thread_write_tx = write_tx.clone();
+            let thread_countof_cells_processed = Arc::clone(&arc_countof_cells_processed);
 
             vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx, move || {
                 while let Ok(path) = thread_file_rx.recv() {
                     info!(path = ?path, "Processing BAM");
-                    if let Err(e) = process_file(&path, &thread_write_tx) {
+                    if let Err(e) = process_file(&path, &thread_write_tx, &thread_countof_cells_processed) {
                         warn!(path = ?path, error = %e, "Failed to process BAM");
                     }
                 }
@@ -160,6 +164,7 @@ impl QcRefCompositionCMD {
 fn process_file(
     path: &std::path::Path,
     write_tx: &crossbeam::channel::Sender<CellRow>,
+    arc_countof_cells_processed: &Arc<AtomicU64>,
 ) -> Result<()> {
     let mut reader = Reader::from_path(path)?;
     let header = reader.header().clone();
@@ -172,7 +177,6 @@ fn process_file(
 
     let mut cell_counts: HashMap<usize, u64> = HashMap::new();
     let mut record_id_last: Vec<u8> = Vec::new();
-    let mut countof_cells_processed = 0u64;
 
     let mut record = BamRecord::new();
     while let Some(Ok(_)) = reader.read(&mut record) {
@@ -189,10 +193,10 @@ fn process_file(
         if record_id != record_id_last.as_slice() {
             if !record_id_last.is_empty() {
                 flush_cell(&record_id_last, &ref_names, &cell_counts, write_tx);
-                countof_cells_processed += 1;
-                if countof_cells_processed % 100 == 0 {
+                let n = arc_countof_cells_processed.fetch_add(1, Ordering::Relaxed) + 1;
+                if n % 100 == 0 {
                     info!(
-                        countof_cells_processed = countof_cells_processed,
+                        countof_cells_processed = n,
                         current_cell = ?String::from_utf8_lossy(&record_id_last),
                         "Progress"
                     );
@@ -216,10 +220,10 @@ fn process_file(
 
     if !record_id_last.is_empty() {
         flush_cell(&record_id_last, &ref_names, &cell_counts, write_tx);
-        countof_cells_processed += 1;
+        arc_countof_cells_processed.fetch_add(1, Ordering::Relaxed);
     }
 
-    info!(countof_cells_processed = countof_cells_processed, path = ?path, "Finished BAM");
+    info!(path = ?path, "Finished BAM");
     Ok(())
 }
 
