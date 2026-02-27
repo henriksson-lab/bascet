@@ -1,6 +1,8 @@
 use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode16bp;
 use crate::barcode::CombinatorialBarcodePart16bp;
+use bascet_core::sequence::R0;
+use bascet_io::fastq::Record;
 use seq_io::fastq::Reader as FastqReader;
 
 use seq_io::fastq::Record as FastqRecord;
@@ -32,6 +34,7 @@ impl Chemistry for TenxRNAChemistry {
         println!("{}", score);
         panic!("asdasd");
          */
+
 
         println!("Loading 10x barcodes");
 
@@ -96,6 +99,80 @@ impl Chemistry for TenxRNAChemistry {
 
         Ok(())
     }
+
+    fn prepare_using_rp_vecs<C: bascet_core::Composite>(
+        &mut self,
+        vec_r1: Vec<C>,
+        _vec_r2: Vec<C>,
+    ) -> anyhow::Result<()>
+    where
+        C: bascet_core::Get<bascet_core::attr::sequence::R0>,
+        <C as bascet_core::Get<bascet_core::attr::sequence::R0>>::Value: AsRef<[u8]>,
+    {
+
+        println!("Loading 10x barcodes");
+
+        //Load the possible barcode systems. Possible to multithread
+        let mut map_round_bcs = TenxRNAChemistry::read_chemistries(Cursor::new(include_bytes!(
+            "10x_chemistry_def.csv"
+        )));
+
+        //TODO enable user to select a chemistry specifically
+        //map_round_bcs.retain(|k,_v| k=="WT v2");
+
+        println!("Searching for best barcode match");
+
+
+        //For each barcode system, try to match it to reads. then decide which barcode system to use.
+        //This code is a bit complicated because we wish to compare the same reads for all chemistry options
+        let mut map_chem_match_cnt = HashMap::new();
+        let n_reads = 100;
+        
+        // 10x barcodes are in r1. 
+        for seq in vec_r1.iter().take(n_reads).map(|record| record.as_bytes::<R0>()) {
+
+            for (chem_name, bcs) in &map_round_bcs {
+                let (isok, _bcm, _score) = bcs.detect_barcode(seq, true, 1, 1);
+
+                //Count reads. Ensure entry for this chemistry is created
+                let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
+                if isok {
+                    *e += 1;
+                }
+            }
+        }
+
+        //Using fraction library to simplify code. Seriously overkill in practice
+        type F = fraction::Fraction;
+
+        //See how well each barcode system matched
+        let mut map_chem_match_frac = HashMap::new();
+        for (chem_name, _bcs) in &mut map_round_bcs {
+            let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
+            let this_frac = F::from(cnt) / F::from(n_reads);
+            println!(
+                "Chemistry: {}\tNormalized score: {:.4}",
+                chem_name, this_frac
+            );
+            map_chem_match_frac.insert(chem_name.clone(), this_frac);
+        }
+
+        //Pick the best chemistry
+        let best_chem_name = map_chem_match_frac.iter().max_by(|a, b| a.1.cmp(&b.1)); ///////// TODO: in case of a tie, should prioritize the smaller chemistry
+
+        //There will always be at least one chemistry to pick
+        let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
+
+        println!(
+            "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
+            best_chem_name, best_chem_score
+        );
+
+        self.barcode = map_round_bcs.get(best_chem_name.as_str()).unwrap().clone();
+
+        Ok(())
+    }
+    
 
     /*
     

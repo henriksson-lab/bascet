@@ -204,6 +204,9 @@ impl CombinatorialBarcodePart16bp {
         self.barcode_name_list.push(bcname.to_string());
     }
 
+    // TODO modify this to use the new accelerated method: /Arthur
+    /// Matches the barcode against the set of barcodes.
+    /// Returns index of the found barcode and the hamming distance to it.
     pub fn detect_barcode(&self, read_seq: &[u8]) -> (usize, u32) {
         //barcode index, score
 

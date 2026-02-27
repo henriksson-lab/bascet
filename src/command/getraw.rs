@@ -29,7 +29,7 @@ use smallvec::{SmallVec, ToSmallVec};
 
 use crate::barcode::atrandi_wgs_barcode_illumina::DebarcodeAtrandiWGSChemistryIllumina;
 use crate::barcode::atrandi_wgs_barcode_longread::DebarcodeAtrandiWGSChemistryLongread;
-use crate::barcode::{Chemistry, ParseBioChemistry3};
+use crate::barcode::{Chemistry, ParseBioChemistry3, TenxRNAChemistry};
 use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
 use tracing::{debug, info, warn, error};
@@ -224,6 +224,10 @@ pub enum GetRawChemistryCMD {
         )]
         subchemistry: String,
     },
+    /// Work in progress support for 10x chemistry, uses combinatorial 16bp barcodes for debarcoding.
+    Tenx {
+        
+    }
 }
 
 #[derive(Clone)]
@@ -232,6 +236,7 @@ pub enum GetRawChemistry {
     AtrandiWGS(DebarcodeAtrandiWGSChemistryIllumina),
     AtrandiWGSLR(DebarcodeAtrandiWGSChemistryLongread),
     ParseBio(ParseBioChemistry3),
+    Tenx(TenxRNAChemistry),
 }
 
 #[derive(Budget, Debug)]
@@ -350,6 +355,9 @@ impl GetRawCMD {
                 }
                 GetRawChemistryCMD::ParseBio { subchemistry, .. } => {
                     GetRawChemistry::ParseBio(ParseBioChemistry3::new(&subchemistry))
+                }
+                GetRawChemistryCMD::Tenx { .. } => {
+                    GetRawChemistry::Tenx(TenxRNAChemistry::new())
                 }
             };
             
