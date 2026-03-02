@@ -248,7 +248,7 @@ impl CombinatorialBarcode16bpFast {
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if abort_early && score > part_distance_cutoff {
-                //println!("Early BC abort for local score {}", score);
+                println!("Early BC abort for local score {}", score);
                 return (false, self.bcidvec_to_string(&full_bc_index), total_score);
             }
         }
@@ -386,8 +386,10 @@ impl CombinatorialBarcodePart16bpFast {
             }
         }
 
+        assert!(barcode.len() >= 16);
+
         let mut bits: u32 = 0;
-        for (i, mut base) in barcode.iter().copied().enumerate() {
+        for (i, mut base) in barcode.iter().take(16).copied().enumerate() {
             if base == ASCII_N {
                 base = ASCII_A;
             }
@@ -399,7 +401,7 @@ impl CombinatorialBarcodePart16bpFast {
     }
 
     fn get_first_half(full: u32) -> u16 {
-        (full & 0xffff0000 >> 16) as u16
+        (full & 0xffff) as u16
     }
 
     fn hamming_half(a: u16, b: u16) -> u32 {
@@ -451,8 +453,10 @@ impl CombinatorialBarcodePart16bpFast {
         self.all_barcodes.push(compact);
         self.barcode_name_list.push(bcname.to_owned());
         assert_eq!(self.all_barcodes.len(), self.barcode_name_list.len());
-        let first_half = ((compact & 0xffff0000) >> 16) as u16;
+        
+        let first_half = Self::get_first_half(compact);
         let index = self.unique_first_halves.get(&first_half);
+        
         if let Some(&index) = index {
             self.full_barcodes[index].push(compact);
             self.full_barcodes_indices[index].push(all_index);

@@ -1,6 +1,8 @@
 use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode16bp;
 use crate::barcode::CombinatorialBarcodePart16bp;
+use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcode16bpFast;
+use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcodePart16bpFast;
 use bascet_core::sequence::R0;
 use seq_io::fastq::Reader as FastqReader;
 
@@ -15,7 +17,7 @@ use std::io::{BufRead, BufReader};
 
 #[derive(Clone)]
 pub struct TenxRNAChemistry {
-    barcode: CombinatorialBarcode16bp,
+    barcode: CombinatorialBarcode16bpFast,
 }
 
 impl Chemistry for TenxRNAChemistry {
@@ -123,7 +125,8 @@ impl Chemistry for TenxRNAChemistry {
         for seq in vec_r1.iter().take(n_reads).map(|record| record.as_bytes::<R0>()) {
 
             for (chem_name, bcs) in &map_round_bcs {
-                let (isok, _bcm, _score) = bcs.detect_barcode(seq, true, 1, 1);
+                let (isok, _bcm, score) = bcs.detect_barcode(seq, true, 4, 1);
+                println!("Score: {}, isok: {}", score, isok);
 
                 //Count reads. Ensure entry for this chemistry is created
                 let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
@@ -187,13 +190,13 @@ impl TenxRNAChemistry {
     /// Create chemistry. Detect barcodes later
     pub fn new() -> TenxRNAChemistry {
         TenxRNAChemistry {
-            barcode: CombinatorialBarcode16bp::new(),
+            barcode: CombinatorialBarcode16bpFast::new(),
         }
     }
 
     ///////////////////////////////
     /// Load separate barcode positions. These must be aggregated into full chemistries later
-    pub fn load_all_separate_bcs() -> HashMap<String, CombinatorialBarcodePart16bp> {
+    pub fn load_all_separate_bcs() -> HashMap<String, CombinatorialBarcodePart16bpFast> {
         let mut map_round_bcs = HashMap::new();
 
         map_round_bcs.insert(
@@ -236,8 +239,8 @@ impl TenxRNAChemistry {
 
     ///////////////////////////////
     /// Read all barcodes for one round
-    pub fn read_barcodes(src: impl Read) -> CombinatorialBarcodePart16bp {
-        let mut cb = CombinatorialBarcodePart16bp::new();
+    pub fn read_barcodes(src: impl Read) -> CombinatorialBarcodePart16bpFast {
+        let mut cb = CombinatorialBarcodePart16bpFast::new();
         let reader = BufReader::new(src);
 
         let mut cnt = 0;
@@ -256,7 +259,7 @@ impl TenxRNAChemistry {
     ///////////////////////////////
     /// Read all 10x RNA chemistries
     ///
-    pub fn read_chemistries(src: impl Read) -> HashMap<String, CombinatorialBarcode16bp> {
+    pub fn read_chemistries(src: impl Read) -> HashMap<String, CombinatorialBarcode16bpFast> {
         //Get barcodes for each position
         let map_round_bcs = TenxRNAChemistry::load_all_separate_bcs();
 
@@ -267,16 +270,16 @@ impl TenxRNAChemistry {
         for result in reader.deserialize() {
             let record: ChemistryDefCsvFileRow = result.unwrap();
 
-            let chemname = record.kit; //format!("{}",record.kit, record.chem);
+            let chemname = record.kit; 
 
-            let mut bc_setup = CombinatorialBarcode16bp::new();
+            let mut bc_setup = CombinatorialBarcode16bpFast::new();
 
             let mut bc1 = map_round_bcs
                 .get(&record.bc_file)
                 .expect("Could not find barcode file for a chemistry")
                 .clone();
-            bc1.quick_testpos = 0;
-            bc1.all_test_pos.push(0);
+            // bc1.quick_testpos = 0;
+            // bc1.all_test_pos.push(0);
             bc_setup.add_pool("bc1", bc1);
 
             //Below is in a bit of the wrong position, since information used in this class!
