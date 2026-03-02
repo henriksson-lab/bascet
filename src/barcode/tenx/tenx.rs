@@ -2,7 +2,6 @@ use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode16bp;
 use crate::barcode::CombinatorialBarcodePart16bp;
 use bascet_core::sequence::R0;
-use bascet_io::fastq::Record;
 use seq_io::fastq::Reader as FastqReader;
 
 use seq_io::fastq::Record as FastqRecord;
@@ -27,14 +26,6 @@ impl Chemistry for TenxRNAChemistry {
         fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         _fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
     ) -> anyhow::Result<()> {
-        /*
-        let a=str_to_barcode_16bp("ATCGGGGG");
-        let b=str_to_barcode_16bp("TTCGGGNN");
-        let score=HotEncodeATCGN::bitwise_hamming_distance_u32(a,b);
-        println!("{}", score);
-        panic!("asdasd");
-         */
-
 
         println!("Loading 10x barcodes");
 
@@ -172,7 +163,10 @@ impl Chemistry for TenxRNAChemistry {
 
         Ok(())
     }
-    
+
+    fn detect_barcode_and_trim<'a>(&mut self,_r1_seq: &'a[u8],_r1_qual: &'a[u8],_r2_seq: &'a[u8],_r2_qual: &'a[u8],) -> (u32,crate::common::ReadPair<'a>) {
+        todo!()
+    }
 
     /*
     

@@ -170,6 +170,194 @@ impl CombinatorialBarcode16bp {
     }
 }
 
+pub struct CombinatorialBarcodePart16bpFast {
+    unique_first_halves: HashMap<u16, usize>,
+    first_halves: Vec<u16>,
+    full_barcodes: Vec<Vec<u32>>,
+    all_barcodes: Vec<u32>
+}
+
+impl CombinatorialBarcodePart16bpFast {
+
+    fn to_compact(barcode: &[u8]) -> u32 {
+        const COMPACT_BASE_A: u8 = 0b00;
+        const COMPACT_BASE_C: u8 = 0b01;
+        const COMPACT_BASE_G: u8 = 0b10;
+        const COMPACT_BASE_T: u8 = 0b11;
+
+        const ASCII_A: u8 = 'A' as u8;
+        const ASCII_C: u8 = 'C' as u8;
+        const ASCII_G: u8 = 'G' as u8;
+        const ASCII_T: u8 = 'T' as u8;
+        const ASCII_N: u8 = 'N' as u8;
+
+        
+        const fn ascii_to_compact(a: u8) -> u8 {
+            match a {
+                ASCII_A => COMPACT_BASE_A,
+                ASCII_C => COMPACT_BASE_C,
+                ASCII_G => COMPACT_BASE_G,
+                ASCII_T => COMPACT_BASE_T,
+                _ => panic!("Not possible"),
+            }
+        }
+
+        fn compact_to_char(a: u8) -> char {
+            match a & 0b11 {
+                COMPACT_BASE_A => 'A',
+                COMPACT_BASE_C => 'C',
+                COMPACT_BASE_G => 'G',
+                COMPACT_BASE_T => 'T',
+                _ => panic!("Invalid"),
+            }
+        }
+
+        let mut bits: u32 = 0;
+        for (i, mut base) in barcode.iter().copied().enumerate() {
+            if base == ASCII_N {
+                base = ASCII_A;
+            }
+            bits |= (ascii_to_compact(base) as u32) << (i * 2);
+        }
+
+        bits
+        
+    }
+
+    fn hamming_half(a: u16, b: u16) -> u32 {
+        let matching = a ^ b;
+
+        let odd_mask: u16 = 0x5555;
+        let even_mask: u16 = 0xaaaa;
+
+        let odd = matching & odd_mask;
+        let even = (matching & even_mask) >> 1;
+
+        let matched_symbols = odd | even;
+
+        let number_mismatched = matched_symbols.count_ones();
+        number_mismatched
+    }
+
+    fn hamming_full(a: u32, b: u32) -> u32 {
+        let matching = a ^ b;
+
+        let odd_mask = 0x55555555;
+        let even_mask = 0xaaaaaaaa;
+
+        let odd = matching & odd_mask;
+        let even = (matching & even_mask) >> 1;
+
+        let matched_symbols = odd | even;
+
+        let number_mismatched = matched_symbols.count_ones();
+        number_mismatched
+    }
+
+    pub fn new() -> Self {
+        Self {
+            full_barcodes: Vec::new(),
+            unique_first_halves: HashMap::new(),
+            first_halves: Vec::new(),
+            all_barcodes: Vec::new()
+        }
+    }
+
+    pub fn add_bc(&mut self, bcname: &str, sequence: &str) {
+
+        let compact = Self::to_compact(sequence.as_bytes());
+        let first_half = ((compact & 0xffff0000) >> 16) as u16;
+        let index = self.unique_first_halves.get(&first_half);
+        if let Some(index) = index {
+            self.full_barcodes[index].push(compact);
+        } else {
+            self.unique_first_halves.insert(first_half, self.full_barcodes.len());
+            self.full_barcodes.push(vec![compact]);
+            self.first_halves.push(first_half);
+        }
+        
+    }
+
+
+    pub fn detect_barcode(&self, read_seq: &[u8]) -> (usize, u32) {
+
+        struct Hit {
+            primary_index: usize,
+            secondary_index: usize,
+            score: u32
+        }
+        
+        let compact = Self::to_compact(read_seq);
+        let first = HalfBarcode::from_first_half(barcode);
+        let best_hit = Hit {
+            primary_index: usize::MAX,
+            secondary_index: usize::MAX,
+            score: u32::MAX
+        };
+        for (i, half) in self.first_halves.iter().copied().enumerate() {
+            if Self::hamming_half(half, first) < best_hit.1 {
+                if let Some((j, score)) = self.full[i]
+                    .iter().map(|full| Self::hamming_full(*full, compact)).enumerate()
+                    .find(|score| score < best_hit.1) {
+                    best_hit = Hit {
+                        primary_index: i,
+                        secondary_index: j,
+                        score: full
+                    };
+                }
+            }
+        }
+
+        
+
+        //barcode index, score
+
+        let bc_length = 16;
+
+        //perform optimistic search first!
+        //Extract the barcode
+        let optimistic_seq = &read_seq[self.quick_testpos..(self.quick_testpos + bc_length)];
+        let optimistic_seq = HotEncodeATCGN::encode_16bp(&optimistic_seq);
+
+        if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
+            return (i, 0);
+        } else {
+            trace!("not a precise match {:?}", optimistic_seq);
+        }
+
+        //Find candidate hits. Scan each barcode, in all positions
+        let mut all_hits: Vec<(usize, u32)> = Vec::new(); //encoded barcode index, score
+        for current_pos in self.all_test_pos.iter() {
+            //Extract the barcode for one position
+            let optimistic_seq = &read_seq[self.quick_testpos..(current_pos + bc_length)];
+            let current_seq = HotEncodeATCGN::encode_16bp(&optimistic_seq);
+
+            //Find best matching barcode
+            let (bc_index, bc_distance) = HotEncodeATCGN::closest_by_hamming_u64(
+                current_seq,
+                self.barcode_seq_list.as_slice(),
+            );
+
+            if bc_distance == 0 {
+                //If we find a perfect hit then return early, with this barcode. Not clear if this speeds up anymore, or just adds work
+                return (bc_index, bc_distance);
+            } else {
+                //Keep for later comparison
+                all_hits.push((bc_index, bc_distance));
+            }
+        }
+
+        //Return the first hit that is the best one
+        let min_entry = all_hits.iter().min_by_key(|&&x| x.1).copied().expect(
+            "No hit found for a barcode round; ensure that there are test positions defined",
+        );
+
+        return min_entry;
+    }
+    
+    
+}
+
 ///////////////////////////////
 /// One barcode position, in a combinatorial barcode
 #[derive(Clone, Debug)]
@@ -195,6 +383,7 @@ impl CombinatorialBarcodePart16bp {
     ///////////////////////////////
     /// Add a barcode to this round
     pub fn add_bc(&mut self, bcname: &str, sequence: &str) {
+        
         let packed_bc = str_to_barcode_16bp(sequence);
         let bc_id = self.barcode_seq_list.len();
 
