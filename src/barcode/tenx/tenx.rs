@@ -164,76 +164,22 @@ impl Chemistry for TenxRNAChemistry {
         Ok(())
     }
 
-    fn detect_barcode_and_trim<'a>(&mut self,_r1_seq: &'a[u8],_r1_qual: &'a[u8],_r2_seq: &'a[u8],_r2_qual: &'a[u8],) -> (u32,crate::common::ReadPair<'a>) {
+    fn detect_barcode_and_trim<'a>(&mut self, r1_seq: &'a[u8], r1_qual: &'a[u8], r2_seq: &'a[u8], r2_qual: &'a[u8])
+        -> (u32, crate::common::ReadPair<'a>)
+    {
+        let total_cutoff = 4;
+        let part_cutoff = 1;
+
+        let (bc, cellid, score) = self.barcode.detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
+
+        if score >= 0 {
+
+        }
+        
         todo!()
     }
 
-    /*
-    
-    
-    ///////////////////////////////
-    /// Detect barcode, and trim if ok
-    fn _depreciated_detect_barcode_and_trim(
-        &mut self,
-        r1_seq: &[u8],
-        r1_qual: &[u8],
-        r2_seq: &[u8],
-        r2_qual: &[u8],
-    ) -> (bool, CellID, ReadPair) {
-        //Detect barcode, which for parse is in R1
-        let total_distance_cutoff = 4;
-        let part_distance_cutoff = 1;
-        let (isok, bc, _match_score) =
-            self.barcode
-                .detect_barcode(r1_seq, false, total_distance_cutoff, part_distance_cutoff);
-
-        //println!("Total score {}", match_score);
-        //if match_score>0 {
-        //    println!("{}\t{}", match_score, String::from_utf8_lossy(r2_seq));
-        //}
-
-        if isok {
-            //R1 need to have the first part with barcodes removed. Figure out total size!
-            let r1_from = self.barcode.trim_bcread_len;
-            let r1_to = r1_seq.len();
-
-            //R2 can be used as-is
-            let r2_from = 0;
-            let r2_to = r2_seq.len();
-
-            //Get UMI position
-            let umi_from = self.barcode.umi_from;
-            let umi_to = self.barcode.umi_to;
-
-            (
-                true,
-                bc,
-                ReadPair {
-                    r1: r1_seq[r1_from..r1_to].to_vec(),
-                    r2: r2_seq[r2_from..r2_to].to_vec(),
-                    q1: r1_qual[r1_from..r1_to].to_vec(),
-                    q2: r2_qual[r2_from..r2_to].to_vec(),
-                    umi: r1_seq[umi_from..umi_to].to_vec(),
-                },
-            )
-        } else {
-            //Just return the sequence as-is
-            (
-                false,
-                "".to_string(),
-                ReadPair {
-                    r1: r1_seq.to_vec(),
-                    r2: r2_seq.to_vec(),
-                    q1: r1_qual.to_vec(),
-                    q2: r2_qual.to_vec(),
-                    umi: vec![].to_vec(),
-                },
-            )
-        }
-    }
-
-     */
-    
+   
 }
 
 impl TenxRNAChemistry {

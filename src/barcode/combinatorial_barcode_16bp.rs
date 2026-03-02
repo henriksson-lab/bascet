@@ -170,11 +170,185 @@ impl CombinatorialBarcode16bp {
     }
 }
 
+
+
+///////////////////////////////
+/// A set of barcode positions and sequences, making up a total combinatorial barcode
+#[derive(Clone, Debug)]
+pub struct CombinatorialBarcode16bpFast {
+    //Maps name of pool to index in array (used during building only)
+    map_poolname_to_index: HashMap<String, usize>,
+
+    //Each barcode set in the combination
+    pools: Vec<CombinatorialBarcodePart16bpFast>,
+
+    //How much to trim from this read
+    pub trim_bcread_len: usize,
+
+    //Location of the UMI
+    pub umi_from: usize,
+    pub umi_to: usize,
+}
+impl CombinatorialBarcode16bpFast {
+    pub fn new() -> Self {
+        CombinatorialBarcode16bpFast {
+            map_poolname_to_index: HashMap::new(),
+            pools: vec![],
+            trim_bcread_len: 0,
+            umi_from: 0,
+            umi_to: 0,
+        }
+    }
+
+    pub fn num_pools(&self) -> usize {
+        self.pools.len()
+    }
+
+    pub fn add_pool(&mut self, poolname: &str, pool: CombinatorialBarcodePart16bpFast) {
+        let pool_index = self.pools.len();
+        self.map_poolname_to_index
+            .insert(poolname.to_string(), pool_index);
+        self.pools.push(pool);
+    }
+
+    pub fn add_bc(&mut self, name: &str, poolname: &str, sequence: &str) {
+        //Create new pool if needed
+        if !(self.map_poolname_to_index.contains_key(poolname)) {
+            self.add_pool(poolname, CombinatorialBarcodePart16bpFast::new());
+        }
+
+        let pool_index = self
+            .map_poolname_to_index
+            .get(poolname)
+            .expect("bc index fail");
+        let pool: &mut CombinatorialBarcodePart16bpFast =
+            self.pools.get_mut(*pool_index).expect("get pool fail");
+        pool.add_bc(name, sequence);
+    }
+
+    ///////////////////////////////
+    /// Detect barcode only
+    #[inline(always)]
+    pub fn detect_barcode(
+        &self,
+        read_seq: &[u8],
+        abort_early: bool,
+        total_distance_cutoff: u32,
+        part_distance_cutoff: u32,
+    ) -> (bool, CellID, u32) {
+        let mut full_bc_index: Vec<usize> = Vec::with_capacity(self.num_pools());
+        let mut total_score = 0;
+
+        //Loop across each barcode round
+        for p in &self.pools {
+            //Detect this round BC
+            let (this_bc, score) = p.detect_barcode(read_seq);
+            full_bc_index.push(this_bc);
+            total_score = total_score + score;
+
+            //If we cannot decode a barcode, abort early. This saves a good % of time
+            if abort_early && score > part_distance_cutoff {
+                //println!("Early BC abort for local score {}", score);
+                return (false, self.bcidvec_to_string(&full_bc_index), total_score);
+            }
+        }
+
+        let cellid = self.bcidvec_to_string(&full_bc_index);
+
+        //All barcodes collected. Check if total mismatch is ok
+        if total_score > total_distance_cutoff {
+            //println!("Late BC abort for total score {}", total_score);
+            return (false, cellid, total_score);
+        } else {
+            return (true, cellid, total_score);
+        }
+    }
+
+    ///////////////////////////////
+    /// Detect barcode only.
+    ///
+    /// This version only searches for exact matches, ensuring high speed. To be used to see what chemistry is present
+    ///
+    #[inline(always)]
+    pub fn detect_exact_barcode(&self, read_seq: &[u8]) -> (bool, CellID) {
+        let mut full_bc_index: Vec<usize> = Vec::with_capacity(self.num_pools());
+
+        //Loop across each barcode round
+        for p in &self.pools {
+            //Detect this round BC
+            let (this_bc, score) = p.detect_barcode(read_seq);
+            full_bc_index.push(this_bc);
+
+            //If we cannot decode a barcode, abort early. This saves a good % of time
+            if score > 0 {
+                return (false, self.bcidvec_to_string(&full_bc_index));
+            }
+        }
+
+        let cellid = self.bcidvec_to_string(&full_bc_index);
+        return (true, cellid);
+    }
+
+    ///////////////////////////////
+    /// Convert list of barcode names to cellID
+    fn bcidvec_to_string(&self, cell_id: &Vec<usize>) -> CellID {
+        //println!("{:?}", cell_id);
+
+        //Get name of barcode from each pool
+        let parts_cellid: Vec<String> = cell_id
+            .iter()
+            .enumerate()
+            .map(|(pooli, bc_id)| &self.pools[pooli].barcode_name_list[*bc_id])
+            .cloned()
+            .collect();
+
+        //Note: : and - are not allowed in cell IDs. this because of the possible use of tabix
+        //should support some type of uuencodeing
+        parts_cellid.join("_")
+    }
+
+    ///////////////////////////////
+    /// Read list of barcodes from a TSV file
+    pub fn read_barcodes(src: impl Read) -> CombinatorialBarcode16bpFast {
+        let mut cb = CombinatorialBarcode16bpFast::new();
+
+        let mut reader = csv::ReaderBuilder::new().delimiter(b'\t').from_reader(src);
+        for result in reader.deserialize() {
+            let record: BarcodeCsvFileRow = result.unwrap();
+
+            cb.add_bc(
+                record.well.as_str(),
+                record.pos.as_str(),
+                record.seq.as_str(),
+            );
+        }
+
+        if cb.num_pools() == 0 {
+            println!("Warning: empty barcodes file");
+        }
+        cb
+    }
+}
+
+
+#[derive(Clone, Debug)]
 pub struct CombinatorialBarcodePart16bpFast {
+    /// First u16 of each barcode, mapped to an index into full_barcodes and first_halves.
     unique_first_halves: HashMap<u16, usize>,
+
+    /// Flat array of all unique first u16's of each barcode.
     first_halves: Vec<u16>,
+
+    /// Array of arrays of full barcodes corresponding to each unique first half.
     full_barcodes: Vec<Vec<u32>>,
-    all_barcodes: Vec<u32>
+
+    /// Maps a primary and secondary index to an index into all_barcodes
+    full_barcodes_indices: Vec<Vec<usize>>,
+
+    /// Flat array of all unique full barcodes in arbitrairy order.
+    all_barcodes: Vec<u32>,
+
+    pub barcode_name_list: Vec<String>,
 }
 
 impl CombinatorialBarcodePart16bpFast {
@@ -224,6 +398,10 @@ impl CombinatorialBarcodePart16bpFast {
         
     }
 
+    fn get_first_half(full: u32) -> u16 {
+        (full & 0xffff0000 >> 16) as u16
+    }
+
     fn hamming_half(a: u16, b: u16) -> u32 {
         let matching = a ^ b;
 
@@ -259,22 +437,33 @@ impl CombinatorialBarcodePart16bpFast {
             full_barcodes: Vec::new(),
             unique_first_halves: HashMap::new(),
             first_halves: Vec::new(),
-            all_barcodes: Vec::new()
+            full_barcodes_indices: Vec::new(),
+            all_barcodes: Vec::new(),
+            barcode_name_list: Vec::new()
         }
     }
 
     pub fn add_bc(&mut self, bcname: &str, sequence: &str) {
 
+
         let compact = Self::to_compact(sequence.as_bytes());
+        let all_index = self.all_barcodes.len();
+        self.all_barcodes.push(compact);
+        self.barcode_name_list.push(bcname.to_owned());
+        assert_eq!(self.all_barcodes.len(), self.barcode_name_list.len());
         let first_half = ((compact & 0xffff0000) >> 16) as u16;
         let index = self.unique_first_halves.get(&first_half);
-        if let Some(index) = index {
+        if let Some(&index) = index {
             self.full_barcodes[index].push(compact);
+            self.full_barcodes_indices[index].push(all_index);
         } else {
             self.unique_first_halves.insert(first_half, self.full_barcodes.len());
             self.full_barcodes.push(vec![compact]);
             self.first_halves.push(first_half);
+            self.full_barcodes_indices.push(vec![all_index]);
         }
+        assert_eq!(self.full_barcodes.len(), self.first_halves.len());
+        assert_eq!(self.first_halves.len(), self.full_barcodes_indices.len());
         
     }
 
@@ -288,74 +477,34 @@ impl CombinatorialBarcodePart16bpFast {
         }
         
         let compact = Self::to_compact(read_seq);
-        let first = HalfBarcode::from_first_half(barcode);
-        let best_hit = Hit {
+        let first = Self::get_first_half(compact);
+        let mut best_hit = Hit {
             primary_index: usize::MAX,
             secondary_index: usize::MAX,
             score: u32::MAX
         };
+
         for (i, half) in self.first_halves.iter().copied().enumerate() {
-            if Self::hamming_half(half, first) < best_hit.1 {
-                if let Some((j, score)) = self.full[i]
+            if Self::hamming_half(half, first) < best_hit.score {
+                if let Some((j, score)) = self.full_barcodes[i]
                     .iter().map(|full| Self::hamming_full(*full, compact)).enumerate()
-                    .find(|score| score < best_hit.1) {
+                    .find(|(_, score)| *score < best_hit.score) {
                     best_hit = Hit {
                         primary_index: i,
                         secondary_index: j,
-                        score: full
+                        score
                     };
                 }
             }
         }
 
+        if best_hit.score == u32::MAX {
+            panic!("No hit found for a barcode round; ensure that there are test positions defined");
+        }
         
-
-        //barcode index, score
-
-        let bc_length = 16;
-
-        //perform optimistic search first!
-        //Extract the barcode
-        let optimistic_seq = &read_seq[self.quick_testpos..(self.quick_testpos + bc_length)];
-        let optimistic_seq = HotEncodeATCGN::encode_16bp(&optimistic_seq);
-
-        if let Some(&i) = self.seq2barcode.get(&optimistic_seq) {
-            return (i, 0);
-        } else {
-            trace!("not a precise match {:?}", optimistic_seq);
-        }
-
-        //Find candidate hits. Scan each barcode, in all positions
-        let mut all_hits: Vec<(usize, u32)> = Vec::new(); //encoded barcode index, score
-        for current_pos in self.all_test_pos.iter() {
-            //Extract the barcode for one position
-            let optimistic_seq = &read_seq[self.quick_testpos..(current_pos + bc_length)];
-            let current_seq = HotEncodeATCGN::encode_16bp(&optimistic_seq);
-
-            //Find best matching barcode
-            let (bc_index, bc_distance) = HotEncodeATCGN::closest_by_hamming_u64(
-                current_seq,
-                self.barcode_seq_list.as_slice(),
-            );
-
-            if bc_distance == 0 {
-                //If we find a perfect hit then return early, with this barcode. Not clear if this speeds up anymore, or just adds work
-                return (bc_index, bc_distance);
-            } else {
-                //Keep for later comparison
-                all_hits.push((bc_index, bc_distance));
-            }
-        }
-
-        //Return the first hit that is the best one
-        let min_entry = all_hits.iter().min_by_key(|&&x| x.1).copied().expect(
-            "No hit found for a barcode round; ensure that there are test positions defined",
-        );
-
-        return min_entry;
+        (self.full_barcodes_indices[best_hit.primary_index][best_hit.secondary_index], best_hit.score)
     }
-    
-    
+
 }
 
 ///////////////////////////////
@@ -393,7 +542,6 @@ impl CombinatorialBarcodePart16bp {
         self.barcode_name_list.push(bcname.to_string());
     }
 
-    // TODO modify this to use the new accelerated method: /Arthur
     /// Matches the barcode against the set of barcodes.
     /// Returns index of the found barcode and the hamming distance to it.
     pub fn detect_barcode(&self, read_seq: &[u8]) -> (usize, u32) {
