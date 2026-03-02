@@ -88,7 +88,6 @@ impl CombinatorialBarcode16bp {
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if abort_early && score > part_distance_cutoff {
-                //println!("Early BC abort for local score {}", score);
                 return (false, self.bcidvec_to_string(&full_bc_index), total_score);
             }
         }
@@ -248,7 +247,6 @@ impl CombinatorialBarcode16bpFast {
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if abort_early && score > part_distance_cutoff {
-                println!("Early BC abort for local score {}", score);
                 return (false, self.bcidvec_to_string(&full_bc_index), total_score);
             }
         }

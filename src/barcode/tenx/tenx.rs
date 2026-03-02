@@ -3,6 +3,7 @@ use crate::barcode::CombinatorialBarcode16bp;
 use crate::barcode::CombinatorialBarcodePart16bp;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcode16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcodePart16bpFast;
+use crate::common::ReadPair;
 use bascet_core::sequence::R0;
 use seq_io::fastq::Reader as FastqReader;
 
@@ -29,7 +30,7 @@ impl Chemistry for TenxRNAChemistry {
         _fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
     ) -> anyhow::Result<()> {
 
-        println!("Loading 10x barcodes");
+        log::info!("Loading 10x barcodes");
 
         //Load the possible barcode systems. Possible to multithread
         let mut map_round_bcs = TenxRNAChemistry::read_chemistries(Cursor::new(include_bytes!(
@@ -39,7 +40,7 @@ impl Chemistry for TenxRNAChemistry {
         //TODO enable user to select a chemistry specifically
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
-        println!("Searching for best barcode match");
+        log::info!("Searching for best barcode match");
 
         //For each barcode system, try to match it to reads. then decide which barcode system to use.
         //This code is a bit complicated because we wish to compare the same reads for all chemistry options
@@ -70,7 +71,7 @@ impl Chemistry for TenxRNAChemistry {
         for (chem_name, _bcs) in &mut map_round_bcs {
             let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
             let this_frac = F::from(cnt) / F::from(n_reads);
-            println!(
+            log::info!(
                 "Chemistry: {}\tNormalized score: {:.4}",
                 chem_name, this_frac
             );
@@ -83,7 +84,7 @@ impl Chemistry for TenxRNAChemistry {
         //There will always be at least one chemistry to pick
         let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
-        println!(
+        log::info!(
             "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
             best_chem_name, best_chem_score
         );
@@ -103,7 +104,7 @@ impl Chemistry for TenxRNAChemistry {
         <C as bascet_core::Get<bascet_core::attr::sequence::R0>>::Value: AsRef<[u8]>,
     {
 
-        println!("Loading 10x barcodes");
+        log::info!("Loading 10x barcodes");
 
         //Load the possible barcode systems. Possible to multithread
         let mut map_round_bcs = TenxRNAChemistry::read_chemistries(Cursor::new(include_bytes!(
@@ -113,7 +114,7 @@ impl Chemistry for TenxRNAChemistry {
         //TODO enable user to select a chemistry specifically
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
-        println!("Searching for best barcode match");
+        log::info!("Searching for best barcode match");
 
 
         //For each barcode system, try to match it to reads. then decide which barcode system to use.
@@ -126,7 +127,6 @@ impl Chemistry for TenxRNAChemistry {
 
             for (chem_name, bcs) in &map_round_bcs {
                 let (isok, _bcm, score) = bcs.detect_barcode(seq, true, 4, 1);
-                println!("Score: {}, isok: {}", score, isok);
 
                 //Count reads. Ensure entry for this chemistry is created
                 let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
@@ -144,7 +144,7 @@ impl Chemistry for TenxRNAChemistry {
         for (chem_name, _bcs) in &mut map_round_bcs {
             let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
             let this_frac = F::from(cnt) / F::from(n_reads);
-            println!(
+            log::info!(
                 "Chemistry: {}\tNormalized score: {:.4}",
                 chem_name, this_frac
             );
@@ -157,7 +157,7 @@ impl Chemistry for TenxRNAChemistry {
         //There will always be at least one chemistry to pick
         let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
-        println!(
+        log::info!(
             "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
             best_chem_name, best_chem_score
         );
@@ -175,13 +175,20 @@ impl Chemistry for TenxRNAChemistry {
 
         let (bc, cellid, score) = self.barcode.detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
 
-        if score >= 0 {
-
-        }
+        // TODO what is the u32 supposed to be?
+        (0, ReadPair {
+            r1: r1_seq,
+            r2: r2_seq,
+            q1: r1_qual,
+            q2: r2_qual,
+            umi: &[]
+        })
         
-        todo!()
     }
 
+    fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
+        todo!()
+    }
    
 }
 
