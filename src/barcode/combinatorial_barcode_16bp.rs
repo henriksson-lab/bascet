@@ -347,6 +347,9 @@ pub struct CombinatorialBarcodePart16bpFast {
     all_barcodes: Vec<u32>,
 
     pub barcode_name_list: Vec<String>,
+
+    pub quick_testpos: u32,
+    pub all_test_pos: Vec<u32>
 }
 
 impl CombinatorialBarcodePart16bpFast {
@@ -439,7 +442,9 @@ impl CombinatorialBarcodePart16bpFast {
             first_halves: Vec::new(),
             full_barcodes_indices: Vec::new(),
             all_barcodes: Vec::new(),
-            barcode_name_list: Vec::new()
+            barcode_name_list: Vec::new(),
+            quick_testpos: 0,
+            all_test_pos: Vec::new()
         }
     }
 

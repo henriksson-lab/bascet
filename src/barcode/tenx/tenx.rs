@@ -5,9 +5,7 @@ use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcode16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcodePart16bpFast;
 use crate::common::ReadPair;
 use bascet_core::sequence::R0;
-use seq_io::fastq::Reader as FastqReader;
 
-use seq_io::fastq::Record as FastqRecord;
 
 use flate2::read::GzDecoder;
 
@@ -16,82 +14,18 @@ use std::io::Cursor;
 use std::io::Read;
 use std::io::{BufRead, BufReader};
 
+type CombinatorialBarcode = CombinatorialBarcode16bpFast;
+type CombinatorialBarcodePart = CombinatorialBarcodePart16bpFast;
+
 #[derive(Clone)]
 pub struct TenxRNAChemistry {
-    barcode: CombinatorialBarcode16bpFast,
+    barcode: CombinatorialBarcode,
 }
 
 impl Chemistry for TenxRNAChemistry {
-    ///////////////////////////////
-    /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
-    fn prepare_using_rp_files(
-        &mut self,
-        fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
-        _fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
-    ) -> anyhow::Result<()> {
 
-        log::info!("Loading 10x barcodes");
-
-        //Load the possible barcode systems. Possible to multithread
-        let mut map_round_bcs = TenxRNAChemistry::read_chemistries(Cursor::new(include_bytes!(
-            "10x_chemistry_def.csv"
-        )));
-
-        //TODO enable user to select a chemistry specifically
-        //map_round_bcs.retain(|k,_v| k=="WT v2");
-
-        log::info!("Searching for best barcode match");
-
-        //For each barcode system, try to match it to reads. then decide which barcode system to use.
-        //This code is a bit complicated because we wish to compare the same reads for all chemistry options
-        let mut map_chem_match_cnt = HashMap::new();
-        let n_reads = 100;
-        for _cur_read_i in 0..n_reads {
-            //Parse bio barcode is in R2
-            let record = fastq_file_r1.next().unwrap();
-            let record = record
-                .expect("Error reading record for checking barcode position; input file too short");
-
-            for (chem_name, bcs) in &map_round_bcs {
-                let (isok, _bcm, _score) = bcs.detect_barcode(record.seq(), true, 1, 1);
-
-                //Count reads. Ensure entry for this chemistry is created
-                let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
-                if isok {
-                    *e += 1;
-                }
-            }
-        }
-
-        //Using fraction library to simplify code. Seriously overkill in practice
-        type F = fraction::Fraction;
-
-        //See how well each barcode system matched
-        let mut map_chem_match_frac = HashMap::new();
-        for (chem_name, _bcs) in &mut map_round_bcs {
-            let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
-            let this_frac = F::from(cnt) / F::from(n_reads);
-            log::info!(
-                "Chemistry: {}\tNormalized score: {:.4}",
-                chem_name, this_frac
-            );
-            map_chem_match_frac.insert(chem_name.clone(), this_frac);
-        }
-
-        //Pick the best chemistry
-        let best_chem_name = map_chem_match_frac.iter().max_by(|a, b| a.1.cmp(&b.1)); ///////// TODO: in case of a tie, should prioritize the smaller chemistry
-
-        //There will always be at least one chemistry to pick
-        let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
-
-        log::info!(
-            "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
-            best_chem_name, best_chem_score
-        );
-        //panic!("test");
-        self.barcode = map_round_bcs.get(best_chem_name.as_str()).unwrap().clone();
-
-        Ok(())
+    fn prepare_using_rp_files(&mut self,_fastq_file_r1: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,_fastq_file_r2: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,) -> anyhow::Result<()> {
+        unimplemented!()
     }
 
     fn prepare_using_rp_vecs<C: bascet_core::Composite>(
@@ -197,13 +131,13 @@ impl TenxRNAChemistry {
     /// Create chemistry. Detect barcodes later
     pub fn new() -> TenxRNAChemistry {
         TenxRNAChemistry {
-            barcode: CombinatorialBarcode16bpFast::new(),
+            barcode: CombinatorialBarcode::new(),
         }
     }
 
     ///////////////////////////////
     /// Load separate barcode positions. These must be aggregated into full chemistries later
-    pub fn load_all_separate_bcs() -> HashMap<String, CombinatorialBarcodePart16bpFast> {
+    pub fn load_all_separate_bcs() -> HashMap<String, CombinatorialBarcodePart> {
         let mut map_round_bcs = HashMap::new();
 
         map_round_bcs.insert(
@@ -246,8 +180,8 @@ impl TenxRNAChemistry {
 
     ///////////////////////////////
     /// Read all barcodes for one round
-    pub fn read_barcodes(src: impl Read) -> CombinatorialBarcodePart16bpFast {
-        let mut cb = CombinatorialBarcodePart16bpFast::new();
+    pub fn read_barcodes(src: impl Read) -> CombinatorialBarcodePart {
+        let mut cb = CombinatorialBarcodePart::new();
         let reader = BufReader::new(src);
 
         let mut cnt = 0;
@@ -266,7 +200,7 @@ impl TenxRNAChemistry {
     ///////////////////////////////
     /// Read all 10x RNA chemistries
     ///
-    pub fn read_chemistries(src: impl Read) -> HashMap<String, CombinatorialBarcode16bpFast> {
+    pub fn read_chemistries(src: impl Read) -> HashMap<String, CombinatorialBarcode> {
         //Get barcodes for each position
         let map_round_bcs = TenxRNAChemistry::load_all_separate_bcs();
 
@@ -279,14 +213,14 @@ impl TenxRNAChemistry {
 
             let chemname = record.kit; 
 
-            let mut bc_setup = CombinatorialBarcode16bpFast::new();
+            let mut bc_setup = CombinatorialBarcode::new();
 
             let mut bc1 = map_round_bcs
                 .get(&record.bc_file)
                 .expect("Could not find barcode file for a chemistry")
                 .clone();
-            // bc1.quick_testpos = 0;
-            // bc1.all_test_pos.push(0);
+            bc1.quick_testpos = 0;
+            bc1.all_test_pos.push(0);
             bc_setup.add_pool("bc1", bc1);
 
             //Below is in a bit of the wrong position, since information used in this class!
