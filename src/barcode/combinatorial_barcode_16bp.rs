@@ -5,6 +5,14 @@ use std::io::Read;
 use crate::barcode::parsebio::HotEncodeATCGN;
 use crate::fileformat::shard::CellID;
 
+
+
+type HalfVector = wide::u16x32;
+type FullVector = wide::u32x16;
+const SIMD_LENGTH: usize = HalfVector::LANES as usize;
+const SIMD_FULL_LENGTH: usize = FullVector::LANES as usize;
+
+
 ///////////////////////////////
 /// Convert string, assumed to be 16bp, to a packed barcode
 pub fn str_to_barcode_16bp(sequence: &str) -> u64 {
@@ -328,6 +336,16 @@ impl CombinatorialBarcode16bpFast {
     }
 }
 
+/// A search hit.
+struct Hit {
+    /// Index into first half/vec of vecs.
+    primary_index: usize,
+    /// Index into the full barcodes within the inner vecs
+    secondary_index: usize,
+    /// Hamming distance
+    score: u32
+}
+
 
 #[derive(Clone, Debug)]
 pub struct CombinatorialBarcodePart16bpFast {
@@ -435,6 +453,126 @@ impl CombinatorialBarcodePart16bpFast {
         number_mismatched
     }
 
+
+    fn simd_count_mismatches16(a: HalfVector, b: HalfVector) -> HalfVector {
+        let matching = a ^ b;
+
+        let odd_mask = HalfVector::splat(0x5555u16);
+        let even_mask = HalfVector::splat(0xaaaau16);
+
+        let odd = matching & odd_mask;
+        let even = (matching & even_mask) >> 1;
+
+        let matched_symbols: HalfVector = odd | even;
+
+        let mut counts: HalfVector = HalfVector::splat(0);
+        for (u, c) in matched_symbols
+            .as_array()
+            .iter()
+            .zip(counts.as_mut_array().iter_mut())
+        {
+            *c = u.count_ones().try_into().unwrap();
+        }
+
+        counts
+    }
+
+    fn simd_count_mismatches32(a: FullVector, b: FullVector) -> FullVector {
+        let matching = a ^ b;
+
+        let odd_mask = FullVector::splat(0x55555555u32);
+        let even_mask = FullVector::splat(0xaaaaaaaau32);
+
+        let odd = matching & odd_mask;
+        let even = (matching & even_mask) >> 1;
+
+        let matched_symbols: FullVector = odd | even;
+
+        let mut counts: FullVector = FullVector::splat(0);
+        for (u, c) in matched_symbols
+            .as_array()
+            .iter()
+            .zip(counts.as_mut_array().iter_mut())
+        {
+            *c = u.count_ones().try_into().unwrap();
+        }
+
+        counts
+    }
+
+    
+    // Assumes 32 wide 16-bit vectors
+    // Performs a (hopefully) branchless and faster reduction.
+    fn simd_any16(vector: HalfVector) -> bool {
+        let mut upper: [u16; 16] = [0; 16];
+        let mut lower: [u16; 16] = [0; 16];
+        upper.copy_from_slice(&vector.as_array()[0..16]);
+        lower.copy_from_slice(&vector.as_array()[16..32]);
+        let sum = wide::u16x16::from(upper) | wide::u16x16::from(lower);
+
+        let mut upper: [u16; 8] = [0; 8];
+        let mut lower: [u16; 8] = [0; 8];
+        upper.copy_from_slice(&sum.as_array()[0..8]);
+        lower.copy_from_slice(&sum.as_array()[8..16]);
+        let sum = wide::u16x8::from(upper) | wide::u16x8::from(lower);
+
+        sum.to_array().iter().copied().any(|v| v != 0)        
+    }
+
+
+    // Assumes 16 wide 32-bit vectors
+    // Performs a (hopefully) branchless and faster reduction.
+    fn simd_any32(vector: FullVector) -> bool {
+        let mut upper: [u32; 8] = [0; 8];
+        let mut lower: [u32; 8] = [0; 8];
+        upper.copy_from_slice(&vector.as_array()[0..8]);
+        lower.copy_from_slice(&vector.as_array()[8..16]);
+        let sum = wide::u32x8::from(upper) | wide::u32x8::from(lower);
+
+        // let mut upper: [u32; 4] = [0; 4];
+        // let mut lower: [u32; 4] = [0; 4];
+        // upper.copy_from_slice(&sum.as_array()[0..4]);
+        // lower.copy_from_slice(&sum.as_array()[4..8]);
+        // let sum = wide::u32x4::from(upper) | wide::u32x4::from(lower);
+
+        sum.any()
+    }
+    
+
+    // #[inline(never)]
+    // #[cold]
+    /// Returns an index and score if a match is found
+    #[inline(always)]
+    fn scan_for_match(needle: u32, haystack: &[u32], threshold: u32) -> Option<(usize, u32)> {
+        let barcode_vector = FullVector::splat(needle);
+        for (si, slice) in haystack.chunks_exact(SIMD_FULL_LENGTH).enumerate() {
+            let vector = Self::copy_to_vector32(
+                slice
+            );
+
+            let counts = Self::simd_count_mismatches32(vector, barcode_vector);
+            let any_below = counts.simd_lt(FullVector::splat(threshold + 1)).any();
+            
+            if any_below {
+                for (i, count) in counts.as_array().iter().copied().enumerate() {
+                    return Some((i+si*SIMD_FULL_LENGTH, count));
+                }
+            }
+        }
+
+        let skippable = SIMD_FULL_LENGTH*(haystack.len()/SIMD_FULL_LENGTH);
+
+        // Handle tail
+        for (i, bc) in haystack.iter().copied().enumerate().skip(skippable) {
+            let distance = Self::hamming_full(bc, needle);
+            if distance <= threshold {
+                return Some((i, distance));
+            }
+        }
+
+        None
+    }
+
     pub fn new() -> Self {
         Self {
             full_barcodes: Vec::new(),
@@ -474,14 +612,59 @@ impl CombinatorialBarcodePart16bpFast {
         
     }
 
+    #[inline(never)]
+    fn match_single_error(&self, barcode: u32) -> Hit {
+        let threshold: u32 = 1;
+        let first = Self::get_first_half(barcode);
+        let first_vector = HalfVector::splat(first);
+
+        let best_hit = Hit {
+            primary_index: usize::MAX,
+            secondary_index: usize::MAX,
+            score: u32::MAX
+        };
+
+        for (ci, (slice, full_slice)) in self.first_halves.chunks_exact(SIMD_LENGTH).zip(self.full.chunks_exact(SIMD_LENGTH)).enumerate() {
+            let vector = Self::copy_to_vector16(
+                slice
+            );
+            let counts = Self::simd_count_mismatches16(vector, first_vector);
+            if !Self::simd_any16(counts.simd_lt(HalfVector::splat(2))) {
+                continue;
+            }
+            for (i, (result, potential_matches)) in counts.as_array().iter().copied().zip(full_slice.iter()).enumerate() {
+                if result <= threshold as u16 {
+                    let found = Self::scan_for_match(barcode, potential_matches, threshold);
+                    if let Some((secondary_index, score)) = found {
+                        best_hit = Hit {
+                            primary_index: ci*SIMD_LENGTH + i,
+                            secondary_index,
+                            score
+                        };
+                    }
+                }
+            }
+        }
+
+        let non_remainder = SIMD_LENGTH*(self.first_halves.len()/SIMD_LENGTH);
+
+        for (i, (half, potential)) in self.first_halves.iter().enumerate().skip(non_remainder).copied().zip(self.full.iter().skip(non_remainder)) {
+            if first.count_mismatches(half) <= threshold {
+                if let Some((secondary_index, score)) = Self::scan_for_match(barcode, potential, threshold) {
+                    best_hit = Hit {
+                        primary_index: i,
+                        secondary_index,
+                        score
+                    };
+                }
+            }
+        }
+
+        best_hit
+    }
 
     pub fn detect_barcode(&self, read_seq: &[u8]) -> (usize, u32) {
 
-        struct Hit {
-            primary_index: usize,
-            secondary_index: usize,
-            score: u32
-        }
         
         let compact = Self::to_compact(read_seq);
         let first = Self::get_first_half(compact);
@@ -491,25 +674,14 @@ impl CombinatorialBarcodePart16bpFast {
             score: u32::MAX
         };
 
-        for (i, half) in self.first_halves.iter().copied().enumerate() {
-            if Self::hamming_half(half, first) < best_hit.score {
-                if let Some((j, score)) = self.full_barcodes[i]
-                    .iter().map(|full| Self::hamming_full(*full, compact)).enumerate()
-                    .find(|(_, score)| *score < best_hit.score) {
-                    best_hit = Hit {
-                        primary_index: i,
-                        secondary_index: j,
-                        score
-                    };
-                }
-            }
-        }
-
-        if best_hit.score == u32::MAX {
+        let hit = self.match_single_error(compact);
+    
+        if hit.score == u32::MAX {
             panic!("No hit found for a barcode round; ensure that there are test positions defined");
         }
+
+        (0, hit.score)
         
-        (self.full_barcodes_indices[best_hit.primary_index][best_hit.secondary_index], best_hit.score)
     }
 
 }

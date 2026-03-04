@@ -250,3 +250,4 @@ struct ChemistryDefCsvFileRow {
     trim1: u64,
     notes: String,
 }
+
