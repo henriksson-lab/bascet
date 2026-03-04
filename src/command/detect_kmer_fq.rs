@@ -42,7 +42,7 @@ pub struct DetectKmerFqCMD {
 impl DetectKmerFqCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-        let params = QueryFq {
+        let params = DetectKmerFq {
             path_tmp: self.path_tmp.clone(),
             path_input: self.path_in.clone(),
             path_output: self.path_out.clone(),
@@ -50,7 +50,7 @@ impl DetectKmerFqCMD {
             path_features: self.path_features.clone(),
         };
 
-        let _ = QueryFq::run(&Arc::new(params));
+        let _ = DetectKmerFq::run(&Arc::new(params));
 
         log::info!("Query has finished succesfully");
         Ok(())
@@ -58,16 +58,16 @@ impl DetectKmerFqCMD {
 }
 
 /// Algorithm: Check FASTQ for occurences of given list of KMERs
-pub struct QueryFq {
+pub struct DetectKmerFq {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
     pub path_features: std::path::PathBuf,
     pub max_reads: usize,
 }
-impl QueryFq {
+impl DetectKmerFq {
     /// Run the algorithm
-    pub fn run(params: &Arc<QueryFq>) -> anyhow::Result<()> {
+    pub fn run(params: &Arc<DetectKmerFq>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
         let mut mm = SparseMatrixAnnDataBuilder::new();
 

@@ -15,6 +15,7 @@ pub mod kraken;
 pub mod kmc_reads;
 //pub mod kmc_new;
 pub mod mapcell;
+pub mod qc;
 pub mod minhash_hist;
 pub mod detect_kmer_fq;
 pub mod detect_kmer_kmc;
@@ -42,8 +43,9 @@ pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
 pub use getraw::GetRawCMD;
 pub use mapcell::{MapCell, MapCellCMD};
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
-pub use detect_kmer_fq::{QueryFq, DetectKmerFqCMD};
+pub use detect_kmer_fq::{DetectKmerFq, DetectKmerFqCMD};
 pub use detect_kmer_kmc::{QueryKmc, DetectKmerKmcCMD, QueryKmcParams};
+pub use qc::QcCMD;
 
 // Taxonomic classification
 pub use kraken::KrakenCMD;
@@ -67,7 +69,6 @@ pub enum Commands {
     Countchrom(CountChromCMD),
     Countfeature(CountFeatureCMD),
     Countsketch(CountsketchCMD),
-    //CountsketchMat(CountsketchMatCMD),
     DetectKmerKmc(DetectKmerKmcCMD),
     DetectKmerFq(DetectKmerFqCMD),
     Extract(ExtractCMD),
@@ -83,4 +84,5 @@ pub enum Commands {
     Sysinfo(SysinfoCMD),
     ToFastq(ToFastqCMD),
     Transform(TransformCMD),
+    Qc(QcCMD),
 }

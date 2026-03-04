@@ -120,7 +120,8 @@ fn main() -> std::process::ExitCode {
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),
         //Commands::KmcReads(mut cmd) => cmd.try_execute(),
         Commands::Kraken(mut cmd) => cmd.try_execute(),
-        Commands::PipeSamAddTags(_cmd) => panic!("Captured in the wrong place"),
+        Commands::PipeSamAddTags(mut _cmd) => _cmd.try_execute(), // no longer needed?
+        Commands::Qc(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
         Commands::Sysinfo(_cmd) => panic!("Captured in the wrong place"),
         Commands::ToFastq(mut cmd) => cmd.try_execute(),

@@ -25,27 +25,27 @@ pub fn hts_open<P: AsRef<std::path::Path>>(path: P) -> *mut htsFile {
         let path_str = match path.to_str() {
             Some(s) => s,
             None => {
-                todo!()
+                panic!();
             }
         };
 
         let c_path = match std::ffi::CString::new(path_str.as_bytes()) {
             Ok(p) => p,
             Err(_) => {
-                todo!()
+                panic!();
             }
         };
 
         let mode = match std::ffi::CString::new("r") {
             Ok(m) => m,
             Err(_) => {
-                todo!()
+                panic!();
             }
         };
 
         let inner_hts_file_ptr = htslib::hts_open(c_path.as_ptr(), mode.as_ptr());
         if inner_hts_file_ptr.is_null() {
-            todo!()
+            panic!();
         }
 
         inner_hts_file_ptr
