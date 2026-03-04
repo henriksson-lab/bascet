@@ -24,7 +24,7 @@ pub const DEFAULT_THREADS_WRITE: usize = 10;
 pub const DEFAULT_THREADS_WORK: usize = 1;
 
 #[derive(Args)]
-pub struct QueryKmcCMD {
+pub struct DetectKmerKmcCMD {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
@@ -48,7 +48,7 @@ pub struct QueryKmcCMD {
     #[arg(long, value_parser = clap::value_parser!(usize), default_value_t = DEFAULT_THREADS_WORK)]
     threads_work: usize,
 }
-impl QueryKmcCMD {
+impl DetectKmerKmcCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         let params = QueryKmcParams {
             path_tmp: self.path_tmp.clone(),

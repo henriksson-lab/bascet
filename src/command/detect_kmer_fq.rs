@@ -18,7 +18,7 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 /// Commandline option: Check FASTQ for occurences of given list of KMERs
 #[derive(Args)]
-pub struct QueryFqCMD {
+pub struct DetectKmerFqCMD {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
@@ -39,7 +39,7 @@ pub struct QueryFqCMD {
     #[arg(short = 'm', value_parser = clap::value_parser!(usize), default_value = "1000000")]
     pub max_reads: usize,
 }
-impl QueryFqCMD {
+impl DetectKmerFqCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         let params = QueryFq {

@@ -19,7 +19,7 @@ pub struct TenxRNAChemistry {
 
 impl Chemistry for TenxRNAChemistry {
     ///////////////////////////////
-    /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
+    /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position  ////////////////////// TODO transition to prepare_using_rp_vecs !!! (check atrandi_wgs_barcode_illumina)
     fn prepare_using_rp_files(
         &mut self,
         fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
@@ -88,7 +88,7 @@ impl Chemistry for TenxRNAChemistry {
         let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
         println!(
-            "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
+            "Best fitting 10x biosciences chemistry is {}, with a normalized match score of {:.4}",
             best_chem_name, best_chem_score
         );
         //panic!("test");

@@ -125,8 +125,8 @@ fn main() -> std::process::ExitCode {
         Commands::Sysinfo(_cmd) => panic!("Captured in the wrong place"),
         Commands::ToFastq(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
-        Commands::QueryKmc(mut cmd) => cmd.try_execute(),
-        Commands::QueryFq(mut cmd) => cmd.try_execute(),
+        Commands::DetectKmerKmc(mut cmd) => cmd.try_execute(),
+        Commands::DetectKmerFq(mut cmd) => cmd.try_execute(),
     };
 
     info!(elapsed = ?start.elapsed(), "Success!");
