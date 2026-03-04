@@ -164,8 +164,10 @@ impl MinhashHist {
                                 .next()
                                 .expect("Could not parse KMER sequence from minhash.txt in Bascet");
 
+                                println!("-- {}",kmer_string);
                             all_kmer.push(kmer_string.to_string());
                         }
+                            println!("-- end");
 
                         //Delete file when done with it
                         std::fs::remove_file(&path_f1)?;

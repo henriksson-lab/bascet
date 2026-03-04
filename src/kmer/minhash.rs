@@ -113,7 +113,7 @@ impl MinhashCodec {
 
 
     #[inline(always)]
-    pub fn h_hash_for_packed_kmer(kmer: u64) -> u64 { //&[u8]
+    pub fn hash_packed_kmer(kmer: u64) -> u64 { //&[u8]
         gxhash::gxhash64(&kmer.to_le_bytes(), 0x00)
     }
 
@@ -144,7 +144,7 @@ impl MinhashCodec {
 /// might be faster to SIMD, and just bitwise the result
 /// 
 /// 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MinhashKMER {
     pub kmer: u64, 
     pub hash: u64,
@@ -154,18 +154,15 @@ impl MinhashKMER {
     pub fn new(
         kmer: &[u8]
     ) -> MinhashKMER {
-        let kmer_8 = kmer[0..8].try_into().unwrap();
-        let pack_kmer = MinhashCodec::pack_kmer(kmer_8);
+        let pack_kmer = MinhashCodec::pack_kmer(kmer);
         Self {
            kmer: pack_kmer,
-           hash: MinhashCodec::h_hash_for_packed_kmer(pack_kmer),
+           hash: MinhashCodec::hash_packed_kmer(pack_kmer),
        }
     }
 
     pub fn decode(&self, codec: &MinhashCodec) -> Vec<u8>{
         codec.unpack_kmer(self.kmer)
-        //KMERCodec::unpack_kmer(&self, bits)
-        //codec.kmer_size
     }
 
 }
@@ -196,7 +193,9 @@ pub struct MinHash {}
 impl MinHash {
     
 
-
+    ///
+    /// Extract minhash from FASTQ files
+    /// 
     pub fn get_minhash_fq(
         path_read_r1: std::path::PathBuf,
         path_read_r2: std::path::PathBuf,
@@ -218,7 +217,7 @@ impl MinHash {
         Ok(min_heap)
     }
 
-    pub fn get_minhash_fq_one(
+    fn get_minhash_fq_one(
         path_read: std::path::PathBuf,
         min_heap: &mut BoundedMinHeap<MinhashKMER>,
         codec: &MinhashCodec,
@@ -236,11 +235,11 @@ impl MinHash {
                 let _line3= readit.next().unwrap()?;
                 let _line4= readit.next().unwrap()?;
 
-                let seq_bytes: Vec<u8> = seq.as_bytes().iter().map(|&b| MinhashCodec::ENCODE[b as usize]).collect();
-                 for encoded in seq_bytes.windows(codec.kmer_size) {
-                    let _ = min_heap.push(
-                        MinhashKMER::new(encoded)
-                    );
+//                let seq_bytes: Vec<u8> = seq.as_bytes().iter().map(|&b| MinhashCodec::ENCODE[b as usize]).collect();
+                for encoded in seq.as_bytes().windows(codec.kmer_size) { ///////////////////////////////////////////// Note: this is horrible! overlapping conversions
+//                for encoded in seq_bytes.windows(codec.kmer_size) {
+                    let k = MinhashKMER::new(encoded);
+                    let _ = min_heap.push(k);
                 }
 
             } else {
@@ -253,7 +252,9 @@ impl MinHash {
     }    
 
 
-
+    ///
+    /// Store set of minhashes to a file
+    /// 
     pub fn store_minhash_seq(
         kmer_size: usize,
         minhash: &mut BoundedMinHeap<MinhashKMER>,//&[u8]>,
