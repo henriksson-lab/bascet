@@ -179,8 +179,7 @@ impl CombinatorialBarcode16bp {
 
 
 pub struct DetectedBarcode {
-    pub index: u32,
-    pub cellid: String,
+    pub barcode: u32,
     pub within_threshold: bool,
     pub score: u32
 }
@@ -249,7 +248,7 @@ impl CombinatorialBarcode16bpFast {
         total_distance_cutoff: u32,
         part_distance_cutoff: u32,
     ) -> DetectedBarcode {
-        let mut full_bc_index: Vec<usize> = Vec::with_capacity(self.num_pools());
+        let mut barcodes: Vec<u32> = Vec::with_capacity(self.num_pools());
         let mut scores: Vec<u32> = Vec::with_capacity(self.num_pools());
         let mut total_score = 0;
 
@@ -258,26 +257,25 @@ impl CombinatorialBarcode16bpFast {
             //Detect this round BC
             let (this_bc, score) = p.detect_barcode(read_seq);
             // We cast this a lot so this is just to be sure.
-            assert!(this_bc < (u32::MAX-1) as usize);
-            full_bc_index.push(this_bc);
+            barcodes.push(this_bc);
             scores.push(score);
             total_score = total_score + score;
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if abort_early && score > part_distance_cutoff {
-                return DetectedBarcode { index: this_bc as u32, cellid: self.bcidvec_to_string(&full_bc_index), within_threshold: false, score };
+                return DetectedBarcode {barcode: this_bc, within_threshold: false, score };
             }
         }
 
-        let cellid = self.bcidvec_to_string(&full_bc_index);
+        // TODO select closes matching
 
         //All barcodes collected. Check if total mismatch is ok
         if total_score > total_distance_cutoff {
             //println!("Late BC abort for total score {}", total_score);
             // TODO validate that we select the correct full_bc_index here.
-            return DetectedBarcode { index: full_bc_index[0] as u32, cellid, within_threshold: false, score: scores[0] };
+            return DetectedBarcode { barcode: barcodes[0], within_threshold: false, score: scores[0] };
         } else {
-            return DetectedBarcode { index: full_bc_index[0] as u32, cellid, within_threshold: true, score: scores[0] };
+            return DetectedBarcode { barcode: barcodes[0], within_threshold: true, score: scores[0] };
         }
         
     }
@@ -295,7 +293,7 @@ impl CombinatorialBarcode16bpFast {
         for p in &self.pools {
             //Detect this round BC
             let (this_bc, score) = p.detect_barcode(read_seq);
-            full_bc_index.push(this_bc);
+            full_bc_index.push(this_bc as usize);
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if score > 0 {
@@ -706,7 +704,8 @@ impl CombinatorialBarcodePart16bpFast {
     }
 
 
-    pub fn detect_barcode(&self, read_seq: &[u8]) -> (usize, u32) {
+    /// Returns a tuple of barcode (in compact form) and hamming distance from our sequence.
+    pub fn detect_barcode(&self, read_seq: &[u8]) -> (u32, u32) {
         let compact = Self::to_compact(read_seq);
         let hit = self.match_single_error(compact);
     
@@ -714,9 +713,9 @@ impl CombinatorialBarcodePart16bpFast {
             panic!("No hit found for a barcode round; ensure that there are test positions defined");
         }
 
-        let real_index = self.full_barcodes_indices[hit.primary_index][hit.secondary_index];
+        let barcode = self.full_barcodes[hit.primary_index][hit.secondary_index];
 
-        (real_index, hit.score)
+        (barcode, hit.score)
     }
 
 }

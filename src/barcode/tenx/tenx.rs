@@ -14,13 +14,84 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::{BufRead, BufReader};
+use std::sync::OnceLock;
 
 type CombinatorialBarcode = CombinatorialBarcode16bpFast;
 type CombinatorialBarcodePart = CombinatorialBarcodePart16bpFast;
 
+static TENX_NAMES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+static TENX_IDS_TO_NAMES: OnceLock<HashMap<String, u32>> = OnceLock::new();
+
+fn to_compact(barcode: &[u8]) -> u32 {
+
+    const ASCII_A: u8 = 'A' as u8;
+    const ASCII_C: u8 = 'C' as u8;
+    const ASCII_G: u8 = 'G' as u8;
+    const ASCII_T: u8 = 'T' as u8;
+    const ASCII_N: u8 = 'N' as u8;
+
+    const COMPACT_BASE_A: u8 = 0b00;
+    const COMPACT_BASE_C: u8 = 0b01;
+    const COMPACT_BASE_G: u8 = 0b10;
+    const COMPACT_BASE_T: u8 = 0b11;
+
+    
+    const fn ascii_to_compact(a: u8) -> u8 {
+        match a {
+            ASCII_A => COMPACT_BASE_A,
+            ASCII_C => COMPACT_BASE_C,
+            ASCII_G => COMPACT_BASE_G,
+            ASCII_T => COMPACT_BASE_T,
+            _ => panic!("Not possible"),
+        }
+    }
+
+
+    assert!(barcode.len() >= 16);
+
+    let mut bits: u32 = 0;
+    for (i, mut base) in barcode.iter().take(16).copied().enumerate() {
+        if base == ASCII_N {
+            base = ASCII_A;
+        }
+        bits |= (ascii_to_compact(base) as u32) << (i * 2);
+    }
+
+    bits
+    
+}
+
+fn from_compact(bc: u32) -> Vec<u8> {
+    const COMPACT_BASE_A: u8 = 0b00;
+    const COMPACT_BASE_C: u8 = 0b01;
+    const COMPACT_BASE_G: u8 = 0b10;
+    const COMPACT_BASE_T: u8 = 0b11;
+    fn compact_to_char(a: u8) -> char {
+        match a & 0b11 {
+            COMPACT_BASE_A => 'A',
+            COMPACT_BASE_C => 'C',
+            COMPACT_BASE_G => 'G',
+            COMPACT_BASE_T => 'T',
+            _ => panic!("Invalid"),
+        }
+    }
+
+    let mut out = Vec::with_capacity(16);
+    
+    for i in 0..16 {
+        let low = bc >> (i * 2);
+        let c = compact_to_char(low as u8);
+        out.push(c as u8);
+    }
+
+    out
+}
+
 #[derive(Clone)]
 pub struct TenxRNAChemistry {
     barcode: CombinatorialBarcode,
+    name_to_index_map: HashMap<String, u32>,
+    name_table: Vec<Vec<u8>>
 }
 
 impl Chemistry for TenxRNAChemistry {
@@ -110,8 +181,7 @@ impl Chemistry for TenxRNAChemistry {
 
         let detected = self.barcode.detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
 
-        // TODO what is the u32 supposed to be?
-        (detected.index, ReadPair {
+        (detected.barcode, ReadPair {
             r1: r1_seq,
             r2: r2_seq,
             q1: r1_qual,
@@ -122,10 +192,11 @@ impl Chemistry for TenxRNAChemistry {
     }
 
     fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
-        Vec::new()
+        from_compact(*index32)
     }
    
 }
+
 
 impl TenxRNAChemistry {
     ///////////////////////////////
@@ -133,6 +204,8 @@ impl TenxRNAChemistry {
     pub fn new() -> TenxRNAChemistry {
         TenxRNAChemistry {
             barcode: CombinatorialBarcode::new(),
+            name_table: Vec::new(),
+            name_to_index_map: HashMap::new()
         }
     }
 
