@@ -3,6 +3,7 @@ use crate::barcode::CombinatorialBarcode16bp;
 use crate::barcode::CombinatorialBarcodePart16bp;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcode16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcodePart16bpFast;
+use crate::barcode::combinatorial_barcode_16bp::DetectedBarcode;
 use crate::common::ReadPair;
 use bascet_core::sequence::R0;
 
@@ -60,7 +61,7 @@ impl Chemistry for TenxRNAChemistry {
         for seq in vec_r1.iter().take(n_reads).map(|record| record.as_bytes::<R0>()) {
 
             for (chem_name, bcs) in &map_round_bcs {
-                let (isok, _bcm, score) = bcs.detect_barcode(seq, true, 4, 1);
+                let DetectedBarcode {within_threshold: isok, ..} = bcs.detect_barcode(seq, true, 4, 1);
 
                 //Count reads. Ensure entry for this chemistry is created
                 let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
@@ -107,10 +108,10 @@ impl Chemistry for TenxRNAChemistry {
         let total_cutoff = 4;
         let part_cutoff = 1;
 
-        let (bc, cellid, score) = self.barcode.detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
+        let detected = self.barcode.detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
 
         // TODO what is the u32 supposed to be?
-        (0, ReadPair {
+        (detected.index, ReadPair {
             r1: r1_seq,
             r2: r2_seq,
             q1: r1_qual,
@@ -121,7 +122,7 @@ impl Chemistry for TenxRNAChemistry {
     }
 
     fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
-        todo!()
+        Vec::new()
     }
    
 }
