@@ -215,6 +215,8 @@ pub fn write_records_pair_to_tirp(writer: &mut impl Write, cell_id: &CellID, rea
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi
 
+    //println!("writing to tirp {:?}", read);
+
     let tab = "\t".as_bytes();
     let one = "1".as_bytes();
     let newline = "\n".as_bytes();
