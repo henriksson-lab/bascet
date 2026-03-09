@@ -7,6 +7,7 @@ use crate::barcode::combinatorial_barcode_16bp::DetectedBarcode;
 use crate::common::ReadPair;
 use bascet_core::sequence::R0;
 
+use seq_io::fastq::Record as FastqRecord;
 
 use flate2::read::GzDecoder;
 

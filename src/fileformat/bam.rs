@@ -116,10 +116,12 @@ fn read_to_readpair(record: &BamRecord) -> (Vec<u8>, ReadPair) {
     let rp = ReadPair {
         r1: record.seq().as_bytes(),
         r2: Vec::new(),
-        q1: record.qual().to_vec(),
+        q1: record.qual().iter().map(|x| x+33).collect(), //add offset here; otherwise getting plenty (
         q2: Vec::new(),
         umi: umi.to_vec(),
     };
+
+    //println!("got rp: {:?}", rp);
 
     (cell_id.to_vec(), rp) //this copying hurts a bit...
 }

@@ -224,7 +224,7 @@ pub enum GetRawChemistryCMD {
         )]
         subchemistry: String,
     },
-    /// Work in progress support for 10x chemistry, uses combinatorial 16bp barcodes for debarcoding.
+    /// 10x chemistry, uses combinatorial 16bp barcodes for debarcoding.
     Tenx {
         
     }

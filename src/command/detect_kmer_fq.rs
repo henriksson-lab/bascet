@@ -18,7 +18,7 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 /// Commandline option: Check FASTQ for occurences of given list of KMERs
 #[derive(Args)]
-pub struct QueryFqCMD {
+pub struct DetectKmerFqCMD {
     // Input bascet or gascet
     #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf))]
     pub path_in: PathBuf,
@@ -39,10 +39,10 @@ pub struct QueryFqCMD {
     #[arg(short = 'm', value_parser = clap::value_parser!(usize), default_value = "1000000")]
     pub max_reads: usize,
 }
-impl QueryFqCMD {
+impl DetectKmerFqCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-        let params = QueryFq {
+        let params = DetectKmerFq {
             path_tmp: self.path_tmp.clone(),
             path_input: self.path_in.clone(),
             path_output: self.path_out.clone(),
@@ -50,7 +50,7 @@ impl QueryFqCMD {
             path_features: self.path_features.clone(),
         };
 
-        let _ = QueryFq::run(&Arc::new(params));
+        let _ = DetectKmerFq::run(&Arc::new(params));
 
         log::info!("Query has finished succesfully");
         Ok(())
@@ -58,16 +58,16 @@ impl QueryFqCMD {
 }
 
 /// Algorithm: Check FASTQ for occurences of given list of KMERs
-pub struct QueryFq {
+pub struct DetectKmerFq {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
     pub path_output: std::path::PathBuf,
     pub path_features: std::path::PathBuf,
     pub max_reads: usize,
 }
-impl QueryFq {
+impl DetectKmerFq {
     /// Run the algorithm
-    pub fn run(params: &Arc<QueryFq>) -> anyhow::Result<()> {
+    pub fn run(params: &Arc<DetectKmerFq>) -> anyhow::Result<()> {
         //Prepare matrix that we will store into
         let mut mm = SparseMatrixAnnDataBuilder::new();
 

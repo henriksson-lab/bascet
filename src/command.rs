@@ -17,8 +17,8 @@ pub mod kmc_reads;
 pub mod mapcell;
 pub mod qc;
 pub mod minhash_hist;
-pub mod query_fq;
-pub mod query_kmc;
+pub mod detect_kmer_fq;
+pub mod detect_kmer_kmc;
 pub mod sam_add_barcode_tag_cmd;
 pub mod shardify;
 pub mod snpcall;
@@ -43,9 +43,9 @@ pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
 pub use getraw::GetRawCMD;
 pub use mapcell::{MapCell, MapCellCMD};
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
-pub use query_fq::{QueryFq, QueryFqCMD};
+pub use detect_kmer_fq::{DetectKmerFq, DetectKmerFqCMD};
+pub use detect_kmer_kmc::{QueryKmc, DetectKmerKmcCMD, QueryKmcParams};
 pub use qc::QcCMD;
-pub use query_kmc::{QueryKmc, QueryKmcCMD, QueryKmcParams};
 
 // Taxonomic classification
 pub use kraken::KrakenCMD;
@@ -69,7 +69,8 @@ pub enum Commands {
     Countchrom(CountChromCMD),
     Countfeature(CountFeatureCMD),
     Countsketch(CountsketchCMD),
-    //CountsketchMat(CountsketchMatCMD),
+    DetectKmerKmc(DetectKmerKmcCMD),
+    DetectKmerFq(DetectKmerFqCMD),
     Extract(ExtractCMD),
     ExtractStream(ExtractStreamCMD),
     Featurise(FeaturiseKmcCMD),
@@ -84,6 +85,4 @@ pub enum Commands {
     ToFastq(ToFastqCMD),
     Transform(TransformCMD),
     Qc(QcCMD),
-    QueryKmc(QueryKmcCMD),
-    QueryFq(QueryFqCMD),
 }
