@@ -1,4 +1,5 @@
 use tracing::trace;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -267,15 +268,15 @@ impl CombinatorialBarcode16bpFast {
             }
         }
 
-        // TODO select closes matching
+        // Should have at least one if we get here.
+        // Maybe?
+        let best_index = scores.iter().enumerate().min_by(|a, b| a.1.cmp(b.1)).unwrap().0;
 
         //All barcodes collected. Check if total mismatch is ok
         if total_score > total_distance_cutoff {
-            //println!("Late BC abort for total score {}", total_score);
-            // TODO validate that we select the correct full_bc_index here.
-            return DetectedBarcode { barcode: barcodes[0], within_threshold: false, score: scores[0] };
+            return DetectedBarcode { barcode: barcodes[best_index], within_threshold: false, score: scores[best_index] };
         } else {
-            return DetectedBarcode { barcode: barcodes[0], within_threshold: true, score: scores[0] };
+            return DetectedBarcode { barcode: barcodes[best_index], within_threshold: true, score: scores[best_index] };
         }
         
     }
@@ -549,25 +550,22 @@ impl CombinatorialBarcodePart16bpFast {
     }
 
     fn simd_reduce_min16(vector: HalfVector) -> u16 {
-        // let mut upper: [u16; 16] = [0; 16];
-        // let mut lower: [u16; 16] = [0; 16];
-        // upper.copy_from_slice(&vector.as_array()[0..16]);
-        // lower.copy_from_slice(&vector.as_array()[16..32]);
-        // let sum = wide::u16x16::from(upper).min(wide::u16x16::from(lower));
+        let mut upper: [u16; 16] = [0; 16];
+        let mut lower: [u16; 16] = [0; 16];
+        upper.copy_from_slice(&vector.as_array()[0..16]);
+        lower.copy_from_slice(&vector.as_array()[16..32]);
+        let sum = wide::u16x16::from(upper).min(wide::u16x16::from(lower));
 
-        // let mut upper: [u16; 8] = [0; 8];
-        // let mut lower: [u16; 8] = [0; 8];
-        // upper.copy_from_slice(&sum.as_array()[0..8]);
-        // lower.copy_from_slice(&sum.as_array()[8..16]);
-        // let sum = wide::u16x8::from(upper).min(wide::u16x8::from(lower));
+        let mut upper: [u16; 8] = [0; 8];
+        let mut lower: [u16; 8] = [0; 8];
+        upper.copy_from_slice(&sum.as_array()[0..8]);
+        lower.copy_from_slice(&sum.as_array()[8..16]);
+        let sum = wide::u16x8::from(upper).min(wide::u16x8::from(lower));
 
-        // // Unwrap should never trigger since it is from an array some value is always lowest.
-        // sum.to_array().iter().copied().min().unwrap()
-        vector.as_array().iter().copied().min().unwrap()
+        // Unwrap should never trigger since it is from an array some value is always lowest.
+        sum.to_array().iter().copied().min().unwrap()
     }
 
-    // #[inline(never)]
-    // #[cold]
     /// Returns an index and score if a match is found
     #[inline(always)]
     fn scan_for_match(needle: u32, haystack: &[u32], threshold: u32) -> (usize, u32) {
