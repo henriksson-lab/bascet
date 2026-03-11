@@ -1,0 +1,64 @@
+[package]
+name = "bascet-cli"
+description = "Bascet is a tool to preprocess single-cell data, handling barcode detection, trimming, QC, and managing the execution of custom tools for each cell"
+readme = "../../README.md"
+include = ["/src", "Cargo.toml", "README.md"]
+
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bascet-core.workspace = true
+bascet-derive.workspace = true
+bascet-io.workspace = true
+bascet-runtime.workspace = true
+bgzip.workspace = true
+bio.workspace = true
+blart.workspace = true
+bon.workspace = true
+bounded-integer.workspace = true
+bytesize.workspace = true
+clap.workspace = true
+clio.workspace = true
+crossbeam.workspace = true
+csv.workspace = true
+delegate.workspace = true
+enum_dispatch.workspace = true
+flate2.workspace = true
+fraction.workspace = true
+glidesort.workspace = true
+gxhash.workspace = true
+hdf5.workspace = true
+itertools.workspace = true
+lazy_static.workspace = true
+memchr.workspace = true
+memory-stats.workspace = true
+min-max-heap.workspace = true
+niffler.workspace = true
+nix.workspace = true
+noodles.workspace = true
+nthash-rs.workspace = true
+paste.workspace = true
+path-clean.workspace = true
+rand.workspace = true
+rust-htslib.workspace = true
+semver.workspace = true
+seq_io.workspace = true
+serde.workspace = true
+shellexpand.workspace = true
+smallvec.workspace = true
+sprs.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+sysinfo.workspace = true
+threadpool.workspace = true
+tracing.workspace = true
+wide.workspace = true
+zip.workspace = true

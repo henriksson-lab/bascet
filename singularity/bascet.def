@@ -15,6 +15,9 @@ From: deps.sif
     ../bascet-runtime   /src/bascet/bascet-runtime
     ../.cargo           /src/bascet/.cargo
     ../Cargo.toml       /src/bascet/Cargo.toml
+    git_branch.txt /git_branch.txt
+    git_hash.txt /git_hash.txt
+
 
 %post
     SINGULARITY_SHELL=/bin/bash

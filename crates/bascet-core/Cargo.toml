@@ -1,0 +1,30 @@
+[package]
+name = "bascet-core"
+description = "Core abstractions used for bascet commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bascet-derive.workspace = true
+bascet-variadic.workspace = true
+bon.workspace = true
+bounded-integer.workspace = true
+branches.workspace = true
+bytemuck.workspace = true
+bytesize.workspace = true
+crossbeam.workspace = true
+crossbeam-utils.workspace = true
+memmap2.workspace = true
+rtrb.workspace = true
+rust-htslib.workspace = true
+serde.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
