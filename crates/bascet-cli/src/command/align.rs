@@ -17,7 +17,7 @@ use clio::InputPath;
 use std::{
     fs::File, io::{BufReader, BufWriter, Write}, path::{Path, PathBuf}, process::Stdio
 };
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 
 #[derive(Args)]
@@ -337,7 +337,7 @@ impl AlignCMD {
 
         let mut query = stream.query::<tirp::Record>();
 
-        trace!("Sending read pairs");
+        debug!("Sending read pairs");
         let mut num_read:u64 = 0;
         loop {
             match query.next_into::<tirp::Record>() {
@@ -402,8 +402,8 @@ impl AlignCMD {
                     !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
                     */
                     num_read += 1;
-                    if num_read % 1000000 == 0 {
-                        info!("{} Read pairs written", num_read);
+                    if num_read % 1_000_000 == 0 {
+                        info!("{}M Read pairs written", num_read / 1_000_000);
                     }
                 }
                 Ok(None) => {
@@ -414,12 +414,12 @@ impl AlignCMD {
                 }
             };
         }
-        info!("All readpairs sent");
+        debug!("All readpairs sent");
 
         //Ensure data is properly pushed out
         writer_r1.flush()?;
         writer_r2.flush()?;
-        info!("All readpairs flushed");
+        debug!("All readpairs flushed");
         
         Ok(())
     }
