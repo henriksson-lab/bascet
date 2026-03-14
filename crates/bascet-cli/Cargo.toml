@@ -10,6 +10,10 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "bascet"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 
