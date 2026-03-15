@@ -28,6 +28,10 @@ pub struct DetectKmerFqCMD {
     #[arg(short = 't', value_parser= clap::value_parser!(PathBuf), default_value = DEFAULT_PATH_TEMP)]
     pub path_tmp: PathBuf,
 
+    // Threads
+    #[arg(short = '@', long = "threads", value_parser= clap::value_parser!(usize), default_value = "10")]
+    pub num_threads_total: usize,
+
     // Output bascet
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
     pub path_out: PathBuf,
@@ -49,6 +53,7 @@ impl DetectKmerFqCMD {
             path_output: self.path_out.clone(),
             max_reads: self.max_reads,
             path_features: self.path_features.clone(),
+            num_threads_total: self.num_threads_total,
         };
 
         let _ = DetectKmerFq::run(&Arc::new(params));
@@ -65,6 +70,7 @@ pub struct DetectKmerFq {
     pub path_output: std::path::PathBuf,
     pub path_features: std::path::PathBuf,
     pub max_reads: usize,
+    pub num_threads_total: usize,
 }
 impl DetectKmerFq {
     /// Run the algorithm
@@ -120,7 +126,7 @@ impl DetectKmerFq {
         }
 
         // Set up channel for sending data, reader => counters
-        let n_output = 10;
+        let n_output = params.num_threads_total; //10;
         let thread_pool_write = threadpool::ThreadPool::new(n_output);
         let (tx_data, rx_data) =
             crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(n_output * 2);

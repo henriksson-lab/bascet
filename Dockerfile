@@ -3,15 +3,11 @@ ENV LC_ALL=C
 RUN SINGULARITY_SHELL=/bin/bash
 
 RUN apt-get update
-# required for bascet compilation
-RUN apt install -y build-essential
 
-RUN apt-get install -y libz-dev wget make curl fastp bc
-RUN apt-get install -y fastqc kraken2 bamtools mash fastani ariba kmc skesa rna-star spades
-#snippy not yet in ubuntu
+#Required for bascet compilation
+RUN apt install -y build-essential git cmake libhdf5-serial-dev libclang-dev
 
-# also required for bascet compilation
-RUN  apt-get install -y git cmake libhdf5-serial-dev libclang-dev
+RUN apt-get install -y libz-dev wget make curl fastp bc fastqc kraken2 bamtools mash fastani ariba kmc skesa rna-star spades bowtie2
 
 
 RUN mkdir -p /opt/software
@@ -27,7 +23,7 @@ RUN /opt/software/conda/bin/conda tos accept --override-channels --channel bioco
 RUN /opt/software/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
 RUN /opt/software/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
-RUN /opt/software/conda/bin/conda create -p /opt/software/conda_env -y abricate bakta checkm-genome cellsnp-lite diamond gecco genomad gtdbtk mlst \
+RUN /opt/software/conda/bin/conda create -p /opt/software/conda_env -y abricate bakta checkm-genome cellsnp-lite diamond gecco genomad mlst \
                                                                        mmseqs2 ncbi-amrfinderplus prokka quast skani tabix trust4 vireosnp snippy
 
 
@@ -42,18 +38,12 @@ RUN rustup toolchain install nightly
 
 ######## install bascet
 
-COPY src /src/bascet/src
 COPY assets /src/bascet/assets
-COPY bascet-core /src/bascet/bascet-core
-COPY bascet-derive /src/bascet/bascet-derive
-
-COPY bascet-core /src/bascet/bascet-core
-COPY bascet-derive /src/bascet/bascet-derive
-COPY bascet-io /src/bascet/bascet-io
-COPY bascet-variadic /src/bascet/bascet-variadic
-COPY bascet-runtime /src/bascet/bascet-runtime
+COPY crates /src/bascet/crates
 COPY .cargo /src/bascet/.cargo
 COPY Cargo.toml /src/bascet/Cargo.toml
+#    git_branch.txt /git_branch.txt
+#    git_hash.txt /git_hash.txt				TODO
 
 WORKDIR /src/bascet
 #RUN cd /src/bascet
