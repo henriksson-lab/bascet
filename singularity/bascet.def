@@ -6,13 +6,8 @@ From: deps.sif
     . "$HOME/.cargo/env"
 
 %files
-    ../src              /src/bascet/src
     ../assets           /src/bascet/assets
-    ../bascet-core      /src/bascet/bascet-core
-    ../bascet-derive    /src/bascet/bascet-derive
-    ../bascet-io        /src/bascet/bascet-io
-    ../bascet-variadic  /src/bascet/bascet-variadic
-    ../bascet-runtime   /src/bascet/bascet-runtime
+    ../crates           /src/bascet/crates
     ../.cargo           /src/bascet/.cargo
     ../Cargo.toml       /src/bascet/Cargo.toml
     git_branch.txt /git_branch.txt

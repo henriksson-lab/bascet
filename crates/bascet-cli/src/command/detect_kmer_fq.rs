@@ -75,7 +75,7 @@ impl DetectKmerFq {
         //Need to create temp dir
         if params.path_tmp.exists() {
             //todo delete temp dir after run
-            anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
+            //anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
             println!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
