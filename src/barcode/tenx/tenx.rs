@@ -16,8 +16,14 @@ use std::io::Cursor;
 use std::io::Read;
 use std::io::{BufRead, BufReader};
 use std::sync::OnceLock;
+#[cfg(feature = "slow")]
+type CombinatorialBarcode = CombinatorialBarcode16bp;
+#[cfg(feature = "slow")]
+type CombinatorialBarcodePart = CombinatorialBarcodePart16bp;
 
+#[cfg(not(feature = "slow"))]
 type CombinatorialBarcode = CombinatorialBarcode16bpFast;
+#[cfg(not(feature = "slow"))]
 type CombinatorialBarcodePart = CombinatorialBarcodePart16bpFast;
 
 static TENX_NAMES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();

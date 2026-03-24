@@ -19,6 +19,9 @@ license = "MIT"
 repository = "https://github.com/henriksson-lab/bascet"
 homepage = "https://henriksson-lab.github.io/zorn/"
 
+[features]
+slow = []
+
 # [profile.release]
 # lto = "fat"
 

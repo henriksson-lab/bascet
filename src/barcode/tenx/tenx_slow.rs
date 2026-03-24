@@ -20,6 +20,10 @@ use std::sync::OnceLock;
 static TENX_NAMES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 static TENX_IDS_TO_NAMES: OnceLock<HashMap<String, u32>> = OnceLock::new();
 
+
+type CombinatorialBarcode = CombinatorialBarcode16bpFast;
+type CombinatorialBarcodePart = CombinatorialBarcodePart16bpFast;
+
 fn to_compact(barcode: &[u8]) -> u32 {
 
     const ASCII_A: u8 = 'A' as u8;
@@ -323,3 +327,10 @@ struct ChemistryDefCsvFileRow {
     notes: String,
 }
 
+struct Barcode16bp {
+    
+}
+
+struct BarcodePart16bp {
+    
+}

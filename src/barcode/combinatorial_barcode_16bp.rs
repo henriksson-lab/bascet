@@ -84,7 +84,7 @@ impl CombinatorialBarcode16bp {
         abort_early: bool,
         total_distance_cutoff: u32,
         part_distance_cutoff: u32,
-    ) -> (bool, CellID, u32) {
+    ) -> DetectedBarcode {
         let mut full_bc_index: Vec<usize> = Vec::with_capacity(self.num_pools());
         let mut total_score = 0;
 
@@ -97,7 +97,7 @@ impl CombinatorialBarcode16bp {
 
             //If we cannot decode a barcode, abort early. This saves a good % of time
             if abort_early && score > part_distance_cutoff {
-                return (false, self.bcidvec_to_string(&full_bc_index), total_score);
+                return DetectedBarcode { barcode: full_bc_index[0] as u32, within_threshold: false, score: total_score }
             }
         }
 
@@ -106,9 +106,9 @@ impl CombinatorialBarcode16bp {
         //All barcodes collected. Check if total mismatch is ok
         if total_score > total_distance_cutoff {
             //println!("Late BC abort for total score {}", total_score);
-            return (false, cellid, total_score);
+            return DetectedBarcode { barcode: full_bc_index[0] as u32, within_threshold: false, score: total_score }
         } else {
-            return (true, cellid, total_score);
+            return DetectedBarcode { barcode: full_bc_index[0] as u32, within_threshold: true, score: total_score }
         }
     }
 
