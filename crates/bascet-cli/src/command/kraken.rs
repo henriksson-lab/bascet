@@ -363,10 +363,11 @@ pub fn create_kraken_process<P> (
     let path_out_raw = format!("{}",path_out_raw.as_ref().as_os_str().to_str().expect("os str"));
 
     let args = vec![
+        "build", ////////////////////////////// new! worked without before
         "--db", &path_db,
         "--threads", &num_threads,
         "--output",&path_out_raw,
-        "--interleaved",
+        "--interleaved", ////////////////// has been unknown command
         &path_r12, 
     ];
 
