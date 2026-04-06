@@ -25,6 +25,8 @@ loc:
 
 docker:
 	#docker build .
+	git rev-parse --abbrev-ref HEAD > git_branch.txt
+	git rev-parse --short HEAD > git_hash.txt
 	docker build -t henriksson-lab/bascet .
 
 docker_upload: docker

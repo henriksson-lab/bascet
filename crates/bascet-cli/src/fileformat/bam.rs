@@ -95,10 +95,6 @@ pub fn readname_to_cell_umi(read_name: &[u8]) -> (&[u8], &[u8]) {
         .expect("Could not parse cellID from read name");
     let umi = splitter.next().expect("Could not parse UMI from read name");
 
-    if cell_id.starts_with(b"BASCET_") {
-        cell_id = &cell_id["BASCET_".len()..];
-    }
-
     (cell_id, umi)
 }
 

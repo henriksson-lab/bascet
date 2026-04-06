@@ -11,9 +11,11 @@ RUN apt-get install -y libz-dev wget make curl fastp bc fastqc kraken2 bamtools 
 
 
 RUN mkdir -p /opt/software
+
 RUN cd /opt/software
 RUN curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 RUN sh ./Miniconda3-latest-Linux-x86_64.sh -p /opt/software/conda -b
+
 RUN /opt/software/conda/bin/conda config --add channels defaults
 RUN /opt/software/conda/bin/conda config --add channels conda-forge
 RUN /opt/software/conda/bin/conda config --add channels bioconda
@@ -42,8 +44,8 @@ COPY assets /src/bascet/assets
 COPY crates /src/bascet/crates
 COPY .cargo /src/bascet/.cargo
 COPY Cargo.toml /src/bascet/Cargo.toml
-#    git_branch.txt /git_branch.txt
-#    git_hash.txt /git_hash.txt				TODO
+COPY git_branch.txt /git_branch.txt
+COPY git_hash.txt /git_hash.txt
 
 WORKDIR /src/bascet
 #RUN cd /src/bascet

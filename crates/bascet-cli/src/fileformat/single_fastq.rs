@@ -101,7 +101,7 @@ fn make_fastq_readname(
 ) -> Vec<u8> {
     // typical readname from a random illumina library from miseq, @M03699:250:000000000-DT36J:1:1102:5914:5953 1:N:0:GACGAGATTA+ACATTATCCT
     let name = format!(
-        "BASCET_{}:{}:{} {}",
+        "{}:{}:{} {}",
         cell_id,
         String::from_utf8(cell_umi.clone()).unwrap(),
         read_num,

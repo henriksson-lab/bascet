@@ -275,7 +275,7 @@ impl KrakenCMD {
                         record_umi: &[u8],
                         num_read: u64
                     ) -> Result<()> where W: Write {
-                        writer.write_all(b"@BASCET_")?;
+                        writer.write_all(b"@")?;
                         writer.write_all(record_id)?;
                         writer.write_all(b":")?;
                         writer.write_all(record_umi)?;
@@ -499,7 +499,7 @@ impl KrakenMatrix {
             mm.add_unclassified(cell_index, unclassified_counter);
         }
 
-        //        C       BASCET_D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
+        //        C       D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
 
         //Compress KRAKEN taxonomy to generate normal column names etc; this makes the output more compatible
         //with regular count matrices
@@ -525,15 +525,15 @@ impl KrakenMatrix {
 
 Example data
 
-C       BASCET_D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
-C       BASCET_D2_F5_H7_C10::902        28384   257     0:56 1:11 0:14 28384:9 0:4 A:129
-C       BASCET_D2_F5_H7_C10::902        1783272 257     0:11 2:3 1:26 2:10 1783272:6 0:16 9606:3 0:19 A:129
-C       BASCET_D2_F5_H7_C10::903        2026187 257     0:29 2026187:8 86661:30 2026187:23 86661:4 A:129
-C       BASCET_D2_F5_H7_C10::903        2026187 257     86661:33 2026187:4 86661:5 2026187:23 86661:29 A:129
-C       BASCET_D2_F5_H7_C10::904        86661   257     86661:94 A:129
-C       BASCET_D2_F5_H7_C10::904        86661   257     86661:94 A:129
-C       BASCET_D2_F5_H7_C10::905        1386    257     1386:75 0:19 A:129
-C       BASCET_D2_F5_H7_C10::905        1386    257     0:3 1386:76 0:15 A:129
+C       D2_F5_H7_C10::901        86661   257     0:1 1386:53 86661:6 1386:7 86661:17 1386:10 A:129
+C       D2_F5_H7_C10::902        28384   257     0:56 1:11 0:14 28384:9 0:4 A:129
+C       D2_F5_H7_C10::902        1783272 257     0:11 2:3 1:26 2:10 1783272:6 0:16 9606:3 0:19 A:129
+C       D2_F5_H7_C10::903        2026187 257     0:29 2026187:8 86661:30 2026187:23 86661:4 A:129
+C       D2_F5_H7_C10::903        2026187 257     86661:33 2026187:4 86661:5 2026187:23 86661:29 A:129
+C       D2_F5_H7_C10::904        86661   257     86661:94 A:129
+C       D2_F5_H7_C10::904        86661   257     86661:94 A:129
+C       D2_F5_H7_C10::905        1386    257     1386:75 0:19 A:129
+C       D2_F5_H7_C10::905        1386    257     0:3 1386:76 0:15 A:129
 
 https://software.cqls.oregonstate.edu/updates/docs/kraken2/MANUAL.html#standard-kraken-output-format
 

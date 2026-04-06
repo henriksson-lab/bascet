@@ -359,7 +359,7 @@ impl AlignCMD {
                         record_umi: &[u8],
                         num_read: u64
                     ) -> Result<()> where W: Write {
-                        writer.write_all(b"@BASCET_")?;
+                        writer.write_all(b"@")?;
                         writer.write_all(record_id)?;
                         writer.write_all(b":")?;
                         writer.write_all(record_umi)?;
