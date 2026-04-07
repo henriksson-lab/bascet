@@ -16,7 +16,7 @@ use crate::fileformat::ZipBascetShardReader;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct ExtractStreamCMD {
     #[arg(short = 'i', value_parser)]
     /// can take a file. note that we use a string to ensure comparability with later paths
@@ -25,7 +25,7 @@ pub struct ExtractStreamCMD {
 impl ExtractStreamCMD {
     /// Run the commandline option.
     /// This is an interactive terminal to navigate Bascet-ZIP content; could generalize to any container later
-    pub fn try_execute(&mut self) -> Result<()> {
+    pub fn try_execute(&self) -> Result<()> {
         //Tell version info etc. Final line is "ready" or "error"
         println!("terminal_version:1.0");
 

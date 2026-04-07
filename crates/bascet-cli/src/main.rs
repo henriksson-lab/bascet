@@ -43,6 +43,7 @@ struct Cli {
         value_parser = log_ordered_parser!(LogOrdered)
     )]
     log_ordered: LogOrdered,
+    
 }
 
 ///////////////////////////////
@@ -52,13 +53,18 @@ fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
 
     //Output from these commands need to get out without any log text
-    if let Commands::Sysinfo(mut cmd) = cli.command {
-        _ = cmd.try_execute();
-        return std::process::ExitCode::SUCCESS;
-    } else if let Commands::Sysinfo(mut cmd) = cli.command {
-        _ = cmd.try_execute();
-        return std::process::ExitCode::SUCCESS;
+    match &cli.command {
+        Commands::Sysinfo(cmd) => { 
+            _ = cmd.try_execute(); 
+            return std::process::ExitCode::SUCCESS; 
+        },
+        Commands::ExtractStream(cmd) => { 
+            _ = cmd.try_execute(); 
+            return std::process::ExitCode::SUCCESS; 
+        }
+        _ => ()
     };
+
 
     LogGuard::with_config(LogConfig {
         level: cli.log_level,
@@ -113,7 +119,7 @@ fn main() -> std::process::ExitCode {
         Commands::Countfeature(mut cmd) => cmd.try_execute(),
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
-        Commands::ExtractStream(mut cmd) => cmd.try_execute(),
+        Commands::ExtractStream(_cmd) => panic!("Command handled in the wrong place"),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
@@ -123,7 +129,7 @@ fn main() -> std::process::ExitCode {
         Commands::PipeSamAddTags(mut _cmd) => _cmd.try_execute(), // no longer needed?
         Commands::Qc(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
-        Commands::Sysinfo(_cmd) => panic!("Captured in the wrong place"),
+        Commands::Sysinfo(_cmd) => panic!("Command handled in the wrong place"),
         Commands::ToFastq(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
         Commands::DetectKmerKmc(mut cmd) => cmd.try_execute(),

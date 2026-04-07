@@ -10,7 +10,7 @@ pub struct SysinfoCMD {
     pub info: String,
 }
 impl SysinfoCMD {
-    pub fn try_execute(&mut self) -> Result<()> {
+    pub fn try_execute(&self) -> Result<()> {
 
 
         if self.info=="cpu" {
