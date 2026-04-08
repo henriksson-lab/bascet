@@ -87,10 +87,14 @@ echo "INPUT_DIR   = ${INPUT_DIR}"
 echo "OUTPUT_DIR  = ${OUTPUT_DIR}"
 echo "USE_THREADS  = ${USE_THREADS}"
 
+#This assumes that we use the Rust version of gecco at https://github.com/henriksson-lab/gecco-rs
+#use only one thread as there is threading on the higher level
+
 #Can assume to be running in the output directory
 gecco run -j ${USE_THREADS} \
     --genome ${INPUT_DIR}/contigs.fa \
     -o ./gecco_out \
+    -j 1 \
     --merge-gbk --mask
 
 ### The last line must be "MAPCELL-OK".

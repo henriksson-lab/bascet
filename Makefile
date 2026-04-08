@@ -24,21 +24,28 @@ loc:
 
 
 docker:
-	#docker build .
 	git rev-parse --abbrev-ref HEAD > git_branch.txt
 	git rev-parse --short HEAD > git_hash.txt
-	docker build -t henriksson-lab/bascet .
+	#docker build -t henriksson-lab/bascet .
+	#docker save henriksson-lab/bascet | pigz --to-stdout > docker_image/bascet.tar.gz
+	podman build -t henriksson-lab/bascet .
+	podman save henriksson-lab/bascet | pigz --to-stdout > docker_image/bascet.tar.gz
+	md5sum docker_image/bascet.tar.gz > docker_image/bascet.tar.gz.md5
 
-docker_upload: docker
+	#make singularity image. Careful! this command takes from eithe docker or podman, whichever is running. stick to one!
+	singularity pull --force singularity/bascet.sif  docker-daemon:henriksson-lab/bascet:latest
+	md5sum singularity/bascet.sif > singularity/bascet.sif.md5
+
+	#try if faster: singularity pull singularity/bascet.sif  docker-archive:bascet.tar.gz  #can do both tar and tar.gz
+
+docker_upload: #docker
 	#docker save -o docker_image/bascet.tar henriksson-lab/bascet
 	#pigz -k docker_image/bascet.tar
-	docker save henriksson-lab/bascet | pigz --to-stdout > docker_image/bascet.tar.gz
 
-	md5sum docker_image/bascet.tar.gz > docker_image/bascet.tar.gz.md5
 	#md5sum docker_image/bascet.tar > docker_image/bascet.tar.md5
 	#scp docker_image/bascet.tar docker_image/bascet.tar.md5  /corgi/public_http/public/bascet/
-	scp docker_image/bascet.tar.gz docker_image/bascet.tar.gz.md5  /corgi/public_http/public/bascet/
-
+	cp docker_image/bascet.tar.gz  docker_image/bascet.tar.gz.md5	/corgi/public_http/public/bascet/
+	cp singularity/bascet.sif  singularity/bascet.sif.md5		/corgi/public_http/public/bascet/
 
 	# scp docker_image/bascet.tar beagle:/corgi/public_http/public/bascet/  #it landed without og+r permission using scp!
 	# scp docker_image/bascet.tar hpc2n:~/mystore/
@@ -46,6 +53,8 @@ docker_upload: docker
 
 	# http://beagle.henlab.org/public/bascet/bascet.tar
 
+docker_hpc2n:
+	scp singularity/bascet.sif hpc2n:~/mystore/
 
 docker_load:
 	#just as an example

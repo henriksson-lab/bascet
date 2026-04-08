@@ -101,7 +101,7 @@ wide = "1.1.1"
 #TODO: im going to be brave and try latest
 # still not sure if using latest breaks anything else but for countsketch latest works.
 # crucial to disable default features though due to dependency conflicts
-zip = { version = "4.3.0", default-features = false, features = ["zstd"] }
+zip = { version = ">=4.3.0, <4.4.0", default-features = false, features = ["zstd","deflate-flate2"] }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
