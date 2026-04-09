@@ -83,7 +83,7 @@ impl DetectKmerFq {
             //todo delete temp dir after run
             //anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            println!("Using tempdir {}", params.path_tmp.display());
+            info!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
             };
@@ -118,7 +118,7 @@ impl DetectKmerFq {
         if kmer_size == 0 {
             anyhow::bail!("Feature file has no features");
         } else {
-            println!(
+            info!(
                 "Read {} features. Detected kmer-length of {}",
                 features_reference.len(),
                 kmer_size
@@ -158,7 +158,7 @@ impl DetectKmerFq {
         thread_pool_write.join();
 
         //Save the final count matrix
-        println!("Storing count table to {}", params.path_output.display());
+        info!("Storing count table to {}", params.path_output.display());
         let mut mm = mm.lock().unwrap();
         mm.save_to_anndata(&params.path_output)
             .expect("Failed to save to HDF5 file");
@@ -181,7 +181,7 @@ fn start_matrix_counter_threads(
     let rx_data = rx_data.clone();
 
     thread_pool.execute(move || {
-        println!("Starting KMER counter process");
+        info!("Starting KMER counter process");
 
         while let Ok(Some(dat)) = rx_data.recv() {
             let cell_id = &dat.0;
@@ -218,12 +218,12 @@ fn start_matrix_counter_threads(
             }
 
             if cell_index % 10 == 0 {
-                println!("Counted KMERs from cells: {}", cell_index);
+                info!("Counted KMERs from cells: {}", cell_index);
             }
 
             //TODO: could add metadata about the total number of reads, even if not all are processed
         }
-        println!("Shutting down KMER counter");
+        info!("Shutting down KMER counter");
     });
 
     Ok(())

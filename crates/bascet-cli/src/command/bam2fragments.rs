@@ -37,7 +37,7 @@ impl Bam2FragmentsCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
-        println!("Using threads {}", num_threads_total);
+        info!("Using threads {}", num_threads_total);
 
         //TODO Can check that input file is sorted via header
 
@@ -134,7 +134,7 @@ impl Bam2Fragments {
         writer.close()?;
 
         //Tabix-index the output file to prepare it for loading
-        println!("Indexing final output file");
+        info!("Indexing final output file");
         index_fragments(&params.path_output).expect("Failed to tabix index output file");
 
         Ok(())

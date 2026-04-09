@@ -2,7 +2,7 @@
 
 
 use anyhow::bail;
-use tracing::debug;
+use tracing::{debug, info};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufRead;
@@ -121,7 +121,7 @@ impl ShardRandomFileExtractor for TirpBascetShardReader {
 }
 impl ShardFileExtractor for TirpBascetShardReader {
     fn get_files_for_cell(&mut self) -> anyhow::Result<Vec<String>> {
-        println!("request files for cell in TIRP, but this is not implemented");
+        info!("request files for cell in TIRP, but this is not implemented");
         Ok(Vec::new())
     }
 
@@ -373,7 +373,7 @@ impl TirpStreamingReadPairReader {
             })
         } else {
             //The BAM file is empty!
-            println!("Warning: empty input BAM");
+            info!("Warning: empty input BAM");
 
             Ok(TirpStreamingReadPairReader {
                 reader: reader,
@@ -428,7 +428,7 @@ impl StreamingReadPairReader for TirpStreamingReadPairReader {
             Ok(Some(Arc::new(cellid_reads)))
         } else {
             //There is nothing more to read
-            println!("Reached end of input TIRP file");
+            info!("Reached end of input TIRP file");
             Ok(None)
         }
     }
@@ -475,7 +475,7 @@ impl ShardStreamingFileExtractor for TirpStreamingShardExtractor {
 
         //Check if we still have cells
         let cellid = if let Some(d) = &dat {
-            println!("TIRP got reads for cell {}, count {}", &d.0, &d.1.len());
+            info!("TIRP got reads for cell {}, count {}", &d.0, &d.1.len());
             Ok(Some(d.0.clone()))
         } else {
             Ok(None)
@@ -596,7 +596,7 @@ pub struct BascetTIRPWriter {
 }
 impl BascetTIRPWriter {
     fn new(path: &PathBuf) -> anyhow::Result<BascetTIRPWriter> {
-        println!("starting writer for TIRP {}", path.display());
+        info!("starting writer for TIRP {}", path.display());
 
         let f = File::create(path).unwrap();
         let bw = BufWriter::new(f); //TODO  put in a buffered writer in loop. no need to do twice
@@ -617,7 +617,7 @@ impl ReadPairWriter for BascetTIRPWriter {
 
     fn writing_done(&mut self) -> anyhow::Result<()> {
         //// Index the final file with tabix
-        println!("Indexing final output file");
+        info!("Indexing final output file");
         index_tirp(&self.path).expect("Failed to index file");
 
         Ok(())

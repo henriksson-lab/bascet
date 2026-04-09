@@ -136,13 +136,14 @@ impl KMER2bit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::info;
 
     #[test]
     fn test_encode_4() {
         let t = [b'A', b'A', b'A', b'A'];
         let e = unsafe { KMER2bit::encode_u32(&t) };
 
-        println!("{}", e);
+        info!("{}", e);
 
         assert_eq!(e, 0);
     }
@@ -155,7 +156,7 @@ mod tests {
         ];
         let e = unsafe { KMER2bit::encode_u32(&t) };
 
-        println!("{}", e);
+        info!("{}", e);
 
         assert_eq!(e, 0);
     }

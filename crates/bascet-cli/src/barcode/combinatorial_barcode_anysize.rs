@@ -1,5 +1,5 @@
 use anyhow::bail;
-use tracing::trace;
+use tracing::{info, trace};
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -167,7 +167,7 @@ impl CombinatorialBarcode {
             }
         }
         self.trim_bcread_len = trim_bcread_len;
-        println!(
+        info!(
             "Detected amount to trim from barcode read: {}",
             trim_bcread_len
         );
@@ -322,7 +322,7 @@ impl CombinatorialBarcode {
         }
 
         if cb.num_pools() == 0 {
-            println!("Warning: empty barcodes file");
+            info!("Warning: empty barcodes file");
         }
         cb
     }
@@ -398,7 +398,7 @@ impl CombinatorialBarcodePart {
     ///////////////////////////////
     /// Get how many matches were found
     pub fn count_detect_barcode_matches(&mut self) -> usize {
-        println!("mathces bottom {}", self.histogram_startpos.len());
+        info!("mathces bottom {}", self.histogram_startpos.len());
         self.histogram_startpos.len()
     }
 
@@ -438,7 +438,7 @@ impl CombinatorialBarcodePart {
         self.quick_testpos = most_common_pos;
         self.all_test_pos.extend(first_pos..last_pos);
 
-        println!(
+        info!(
             "scanning from starting positions {} to {}, first testing position {}. The barcode is of length {}",
             first_pos, last_pos, self.quick_testpos, self.bc_length
         );

@@ -2,6 +2,7 @@ use bgzip::{BGZFError, Compression, write::BGZFMultiThreadWriter};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::info;
 
 use crate::fileformat::ReadPairWriter;
 use crate::fileformat::{
@@ -36,7 +37,7 @@ impl BascetSingleFastqWriter {
     ///////////////////////////////
     /// Create a new writer of a single FASTQ file
     fn new(path: &PathBuf) -> anyhow::Result<BascetSingleFastqWriter> {
-        println!("starting writer for single FASTQ {:?}", path);
+        info!("starting writer for single FASTQ {:?}", path);
 
         let out_buffer = File::create(&path).expect("Failed to create fastq.gz output file");
         let writer = BGZFMultiThreadWriter::new(out_buffer, Compression::default());

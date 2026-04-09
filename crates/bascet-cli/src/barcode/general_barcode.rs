@@ -4,6 +4,7 @@ use seq_io::fastq::Reader as FastqReader;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
+use tracing::info;
 
 
 #[derive(Clone)]
@@ -27,8 +28,8 @@ impl Chemistry for GeneralCombinatorialBarcode {
         _fastq_file_r1: &mut FastqReader<Box<dyn std::io::Read>>,
         fastq_file_r2: &mut FastqReader<Box<dyn std::io::Read>>,
     ) -> anyhow::Result<()> {
-        println!("Preparing to debarcode data assuming a general barcode");
-        println!("TODO could scan for adapter position to set trimming");
+        info!("Preparing to debarcode data assuming a general barcode");
+        info!("TODO could scan for adapter position to set trimming");
 
         //Atrandi barcode is in R2
         self.barcode

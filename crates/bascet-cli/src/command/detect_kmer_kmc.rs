@@ -89,7 +89,7 @@ impl QueryKmc {
             //todo delete temp dir after run
             anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            println!("Using tempdir {}", params.path_tmp.display());
+            info!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
             };
@@ -112,14 +112,14 @@ impl QueryKmc {
                 //Detect kmer size. should be the same for all entries, not checked
                 kmer_size = feature.len();
             } else {
-                println!("one feature line nope");
+                info!("one feature line nope");
             }
         }
 
         if kmer_size == 0 {
             anyhow::bail!("Feature file has no features");
         } else {
-            println!(
+            info!(
                 "Read {} features. Detected kmer-length of {}",
                 features_reference.len(),
                 kmer_size
@@ -138,7 +138,7 @@ impl QueryKmc {
 
         // Unzip all cell-specific kmer databases (dump.txt format).   NOTE: this can end up a lot of files! so best to stream!!
         for cell_id in list_cells {
-            println!("doing cell {}", cell_id);
+            info!("doing cell {}", cell_id);
 
             file_input.set_current_cell(&cell_id);
 
@@ -167,17 +167,17 @@ impl QueryKmc {
                 let mut reader = BufReader::new(&file_features_ref);
                 count_from_dump(cell_index, &features_reference, &mut mm, &mut reader);
             } else {
-                println!("No kmc_dump.txt present; File list: {:?}", list_files);
+                info!("No kmc_dump.txt present; File list: {:?}", list_files);
             }
         }
 
         //Save the final count matrix
-        println!("Storing count table to {}", params.path_output.display());
+        info!("Storing count table to {}", params.path_output.display());
         mm.save_to_anndata(&params.path_output)
             .expect("Failed to save to HDF5 file");
 
         //TODO delete temp files
-        println!("Cleaning up temp files");
+        info!("Cleaning up temp files");
         //fs::remove_dir_all(&params.path_tmp).unwrap();
 
         Ok(())
@@ -210,7 +210,7 @@ pub fn count_from_dump(
                 mm.add_value_at_index(cell_index, *feature_index, cnt);
             }
         } else {
-            println!("line failed");
+            info!("line failed");
         }
     }
 }

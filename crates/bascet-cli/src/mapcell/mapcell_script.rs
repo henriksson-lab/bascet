@@ -188,7 +188,7 @@ impl MapCellFunction for MapCellFunctionShellScript {
             if run_output_string == "MAPCELL-CHECK" {
                 true
             } else {
-                println!("{}", run_output_string);
+                info!("{}", run_output_string);
                 false
             }
         } else {
@@ -348,7 +348,7 @@ pub fn extract_needed_files_to_directory_generalapi(
             );
         }
         if missing_file_mode == MissingFileMode::Ignore {
-            println!(
+            info!(
                 "Did not find all expected files for '{}', ignoring. Files present: {:?}",
                 cell_id,
                 shard.get_files_for_cell()

@@ -1,3 +1,5 @@
+use tracing::info;
+
 pub fn determine_thread_counts_1(total: Option<usize>) -> anyhow::Result<usize> {
     if let Some(total) = total {
         anyhow::Ok(total)
@@ -6,7 +8,7 @@ pub fn determine_thread_counts_1(total: Option<usize>) -> anyhow::Result<usize> 
         if let Ok(total) = total {
             anyhow::Ok(total.get())
         } else {
-            println!("Could not autodetect the number of threads available. Setting to 1, but it is better if you specify");
+            info!("Could not autodetect the number of threads available. Setting to 1, but it is better if you specify");
             anyhow::Ok(1)
         }
     }
@@ -80,7 +82,7 @@ pub fn some_min1(t: Option<usize>) -> anyhow::Result<usize> {
 
 pub fn min1(t: usize) -> usize {
     if t < 1 {
-        println!("Thread count cannot be negative, so setting to 1");
+        info!("Thread count cannot be negative, so setting to 1");
         1
     } else {
         t

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Args;
+use tracing::info;
 use std::fs;
 use std::fs::File;
 use std::io::BufRead;
@@ -43,9 +44,9 @@ pub struct CountsketchMatCMD {
 impl CountsketchMatCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
-        println!("Running Countsketch MAT");
+        info!("Running Countsketch MAT");
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
-        println!("Using threads {}", num_threads_total);
+        info!("Using threads {}", num_threads_total);
 
         //Read optional list of cells
         let include_cells = if let Some(p) = &self.include_cells {
@@ -88,7 +89,7 @@ impl CountsketchMat {
             //todo delete temp dir after run
             anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            println!("Using tempdir {}", params.path_tmp.display());
+            info!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
             };
@@ -115,7 +116,7 @@ impl CountsketchMat {
                     .expect("Could not get list of files for cell"); //////////// TODO may fail if we scan all files in each input file
                 let f1 = "countsketch.txt".to_string();
 
-                println!("{:?}", list_files);
+                info!("{:?}", list_files);
 
                 if list_files.contains(&f1) {
                     let path_f1 = clone_params

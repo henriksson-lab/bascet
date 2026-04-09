@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
+use tracing::info;
 
 use noodles::gtf;
 
@@ -103,7 +104,7 @@ impl FeatureCollection {
                 gff.add_feature(gene_meta);
                 //}
             } else {
-                println!("GFF: Requested feature has no ID");
+                info!("GFF: Requested feature has no ID");
             }
         }
     }
@@ -196,33 +197,33 @@ impl FeatureCollection {
         let spath = path_gff.to_string_lossy();
 
         let gff = if spath.ends_with("gff.gz") {
-            println!("Reading gzipped GFF: {:?}", path_gff);
+            info!("Reading gzipped GFF: {:?}", path_gff);
             let mut reader = File::open(&path_gff)
                 .map(GzDecoder::new)
                 .map(BufReader::new)
                 .map(gff::io::Reader::new)?;
             Self::read_gff_from_reader(&mut reader, params)
         } else if spath.ends_with("gff") {
-            println!("Reading flat GFF: {:?}", path_gff);
+            info!("Reading flat GFF: {:?}", path_gff);
             let mut reader = File::open(&path_gff)
                 .map(BufReader::new)
                 .map(gff::io::Reader::new)?;
             Self::read_gff_from_reader(&mut reader, params)
         } else if spath.ends_with("gtf.gz") {
-            println!("Reading gzipped GTF: {:?}", path_gff);
+            info!("Reading gzipped GTF: {:?}", path_gff);
             let mut reader = File::open(&path_gff)
                 .map(GzDecoder::new)
                 .map(BufReader::new)
                 .map(gtf::io::Reader::new)?;
             Self::read_gtf_from_reader(&mut reader, params)
         } else if spath.ends_with("gtf") {
-            println!("Reading gzipped GTF: {:?}", path_gff);
+            info!("Reading gzipped GTF: {:?}", path_gff);
             let mut reader = File::open(&path_gff)
                 .map(BufReader::new)
                 .map(gtf::io::Reader::new)?;
             Self::read_gtf_from_reader(&mut reader, params)
         } else if spath.ends_with("bed") {
-            println!("Reading BED: {:?}", path_gff);
+            info!("Reading BED: {:?}", path_gff);
             Self::read_bed(&path_gff, params)
         } else {
             anyhow::bail!("Could not tell file format for GFF/GTF file {:?}", path_gff);
@@ -230,8 +231,8 @@ impl FeatureCollection {
 
         //See if it worked
         let num_features = gff.list_feature.len();
-        println!("Done reading GFF; number of features: {}", num_features);
-        println!(
+        info!("Done reading GFF; number of features: {}", num_features);
+        info!(
             "Number of features for which name field was missing: {}  (not all files have a name field - feature ID will be reported instead)",
             gff.failed_to_get_name
         );

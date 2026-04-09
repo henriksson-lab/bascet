@@ -1,6 +1,7 @@
 use anyhow::bail;
 use std::fs::File;
 use std::path::PathBuf;
+use tracing::info;
 
 use super::ShardRandomFileExtractor;
 use super::TirpBascetShardReader;
@@ -45,7 +46,7 @@ pub fn detect_shard_format(p: &PathBuf) -> DetectedFileformat {
     {
         DetectedFileformat::SingleFASTQ
     } else {
-        println!("Warning: Unknown file format for {}", p.display());
+        info!("Warning: Unknown file format for {}", p.display());
         DetectedFileformat::Other
     }
 }

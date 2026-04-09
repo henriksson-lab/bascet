@@ -2,6 +2,7 @@ use super::Chemistry;
 use super::CombinatorialBarcode;
 use seq_io::fastq::Reader as FastqReader;
 use std::io::Cursor;
+use tracing::info;
 
 
 ///////////////////////////////
@@ -29,7 +30,7 @@ impl Chemistry for AtrandiRNAseqChemistry {
     ) -> anyhow::Result<()> {
         //This could optionally be pre-set !!
 
-        println!("Preparing to debarcode Atrandi RNA-seq data");
+        info!("Preparing to debarcode Atrandi RNA-seq data");
 
         //Atrandi barcode is in R2
         self.barcode

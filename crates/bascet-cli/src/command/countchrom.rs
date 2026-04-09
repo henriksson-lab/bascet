@@ -51,7 +51,7 @@ impl CountChromCMD {
     /// Run the commandline option
     pub fn try_execute(&mut self) -> Result<()> {
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
-        println!("Using threads {}", num_threads_total);
+        info!("Using threads {}", num_threads_total);
 
         //TODO Can check that input file is sorted via header
 
@@ -212,7 +212,7 @@ impl CountChrom {
             //Keep track of where we are
             num_reads += 1;
             if num_reads % 1000000 == 0 {
-                println!("Processed {} reads", num_reads);
+                info!("Processed {} reads", num_reads);
             }
         }
 

@@ -1,4 +1,4 @@
-use tracing::trace;
+use tracing::{info, trace};
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -171,7 +171,7 @@ impl CombinatorialBarcode16bp {
         }
 
         if cb.num_pools() == 0 {
-            println!("Warning: empty barcodes file");
+            info!("Warning: empty barcodes file");
         }
         cb
     }
@@ -340,7 +340,7 @@ impl CombinatorialBarcode16bpFast {
         }
 
         if cb.num_pools() == 0 {
-            println!("Warning: empty barcodes file");
+            info!("Warning: empty barcodes file");
         }
         cb
     }

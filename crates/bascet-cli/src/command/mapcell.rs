@@ -91,7 +91,7 @@ impl MapCellCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         if self.show_presets {
             let names = crate::mapcell_scripts::get_preset_script_names();
-            println!("Available preset scripts: {:?}", names);
+            info!("Available preset scripts: {:?}", names);
             return Ok(());
         }
 
@@ -102,7 +102,7 @@ impl MapCellCMD {
             .to_str()
             .expect("argument conversion error");
         let script: Arc<Box<dyn MapCellFunction>> = if preset_name.starts_with("_") {
-            println!("Using preset script: {:?}", self.path_script);
+            info!("Using preset script: {:?}", self.path_script);
             let preset_name = &preset_name[1..]; //Remove the initial _  ; or capital letter?
 //            let script = ;
 //                .expect("Unable to load preset script")
@@ -113,13 +113,13 @@ impl MapCellCMD {
                 anyhow::bail!("Unable to load built-in script");
             }
         } else {
-            println!("Using user provided script: {:?}", self.path_script);
+            info!("Using user provided script: {:?}", self.path_script);
             let s = MapCellFunctionShellScript::new_from_file(&self.path_script)
                 .expect("Failed to load user defined script");
             Arc::new(Box::new(s))
         };
 
-        println!("Script info: {:?}", script);
+        info!("Script info: {:?}", script);
 
         //Note: we always have two extra writer threads, because reading is expected to be the slow part. not an ideal implementation!
         let (num_threads_read, num_threads_write, num_threads_mapcell) =
@@ -130,7 +130,7 @@ impl MapCellCMD {
                 self.num_threads_mapcell,
                 script.get_recommend_threads(),
             )?;
-        println!(
+        info!(
             "Using threads, readers: {}, writers: {}, mapcell: {}",
             num_threads_read, num_threads_write, num_threads_mapcell
         );
@@ -200,7 +200,7 @@ impl MapCell {
             //todo delete temp dir after run
             // bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            println!("Using tempdir {}", params.path_tmp.display());
+            info!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
             };
@@ -211,7 +211,7 @@ impl MapCell {
         //Limit cells in queue to how many we can process at the final stage  ------------- would be nice with a general getter to not replicate code!
         let read_queue_size = params.threads_write * 2;
 
-        println!("Queue of cells is of size: {}", read_queue_size);
+        info!("Queue of cells is of size: {}", read_queue_size);
 
         //Queue of cells that have been extracted
         let (tx_loaded_cell, rx_loaded_cell) =
@@ -222,7 +222,7 @@ impl MapCell {
         let mut list_out_zipfiles: Vec<PathBuf> = Vec::new();
         for tidx in 0..params.threads_write {
             let file_zip = params.path_tmp.join(format!("out-{}.zip", tidx));
-            println!("Temporary zip file {}", file_zip.display());
+            info!("Temporary zip file {}", file_zip.display());
             _ = create_writer(
                 &params,
                 &file_zip,
@@ -268,16 +268,16 @@ impl MapCell {
 
 
         //Terminate all writers. Then wait for all threads to finish
-        println!("Waiting for writers to finish");
+        info!("Waiting for writers to finish");
         for i in 0..params.threads_write {
-            println!("Sending termination signal to writer {i}");
+            info!("Sending termination signal to writer {i}");
             _ = tx_loaded_cell.send(None).unwrap();
         }
         thread_pool_writers.join();
-        println!("Writers have finished");
+        info!("Writers have finished");
 
         // Merge temp zip archives into one new zip archive
-        println!("Merging zip from writers");
+        info!("Merging zip from writers");
         utils::merge_archives_and_delete(&params.path_out, &list_out_zipfiles).unwrap();
 
         //Finally remove the temp directory
@@ -309,7 +309,7 @@ fn create_writer(
     thread_pool.execute(move || {
 
         //Open zip file for writing
-        println!("Writer started");
+        info!("Writer started");
         let zip_file = File::create(zip_file).unwrap();  //////// called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
         let buf_writer = BufWriter::new(zip_file);
         let mut zip_writer = ZipWriter::new(buf_writer);
@@ -326,13 +326,13 @@ fn create_writer(
             let path_output_dir = params_io.path_tmp.join(format!("output-{}", cell_id));
             let _ = fs::create_dir(&path_output_dir);
 
-            println!("Writer for '{}', running script", cell_id);
+            info!("Writer for '{}', running script", cell_id);
             let (success, script_output) = mapcell_script.invoke(
                 &path_input_dir,
                 &path_output_dir,
             params_io.threads_mapcell
             ).expect("Failed to invoke script"); 
-            println!("Writer for '{}', done running script", cell_id);
+            info!("Writer for '{}', done running script", cell_id);
 
             if !success {
                 if mapcell_script.get_missing_file_mode()==MissingFileMode::Fail {
@@ -342,11 +342,11 @@ fn create_writer(
 
             //Show script output in terminal if requested
             if params_io.show_script_output {
-                println!("{}",&script_output);
+                info!("{}",&script_output);
             }
 
             //Store script output as log file
-            println!("Writer for '{}', adding log file to zip", cell_id);
+            info!("Writer for '{}', adding log file to zip", cell_id);
             {
                 let path_logfile = path_output_dir.join("_mapcell.log");
                 let log_file = File::create(&path_logfile).unwrap();
@@ -363,12 +363,12 @@ fn create_writer(
             let fname_as_string: Vec<String> = list_output_files.iter().map(|f| f.display().to_string() ).collect();
             let names_in_zip: Vec<&str> = fname_as_string.iter().map(|f| &f[basepath_len..] ).collect();
 
-            println!("Writer for '{}', got files {:?}", cell_id, list_output_files);
-            println!("Writer for '{}', got names {:?}", cell_id, names_in_zip);
+            info!("Writer for '{}', got files {:?}", cell_id, list_output_files);
+            info!("Writer for '{}', got names {:?}", cell_id, names_in_zip);
 
             //Add each file to the zip
             for (file_path, &file_name) in list_output_files.iter().zip(names_in_zip.iter()) {
-                println!("Writer for '{}', adding to zip: {}",cell_id, file_path.display());
+                info!("Writer for '{}', adding to zip: {}",cell_id, file_path.display());
 
                 //Open file for reading
                 let mut file_input = File::open(&file_path).unwrap();
@@ -395,10 +395,10 @@ fn create_writer(
             //println!("Writer done mapcell for extracted {}",cell_id);
 
         }
-        println!("Writer got stop signal, now finishing zip");
+        info!("Writer got stop signal, now finishing zip");
 
         let _ = zip_writer.finish();
-        println!("Writer exiting");
+        info!("Writer exiting");
         // note from julian: included finishing the writers here before, chance that removing this fucked things up
         //      but unfortunately borrow checker didnt like that at all
     });

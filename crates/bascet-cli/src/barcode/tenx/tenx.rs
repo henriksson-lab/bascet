@@ -263,7 +263,7 @@ impl TenxRNAChemistry {
             cnt += 1;
         }
         if cnt % 100000 == 0 {
-            println!("Read barcode system with count: {}", cnt)
+            info!("Read barcode system with count: {}", cnt)
         }
 
         cb

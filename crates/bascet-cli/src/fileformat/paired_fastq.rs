@@ -2,7 +2,7 @@ use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::fileformat::ReadPairWriter;
 use crate::{
@@ -45,7 +45,7 @@ pub struct BascetPairedFastqWriter {
 }
 impl BascetPairedFastqWriter {
     fn new(path: &PathBuf) -> anyhow::Result<BascetPairedFastqWriter> {
-        println!("starting writer for paired FASTQ {:?}", path);
+        info!("starting writer for paired FASTQ {:?}", path);
 
         //See if this is R1 of a pair of FASTQ
         let spath = path.to_string_lossy();
@@ -179,7 +179,7 @@ impl PairedFastqStreamingReadPairReader {
             ))
         } else {
             //The FASTQ file is empty!
-            println!("Warning: empty input BAM");
+            info!("Warning: empty input BAM");
             None
         };
 
@@ -206,8 +206,8 @@ impl StreamingReadPairReader for PairedFastqStreamingReadPairReader {
                 let some_r2 = self.reverse_file.next();
 
                 if some_r2.is_none() {
-                    println!("R1 id: {}", String::from_utf8_lossy(r1.head()));
-                    println!("R1 seq: {}", String::from_utf8_lossy(r1.seq()));
+                    info!("R1 id: {}", String::from_utf8_lossy(r1.head()));
+                    info!("R1 seq: {}", String::from_utf8_lossy(r1.seq()));
                     anyhow::bail!("No R2 for R1");
                 }
 

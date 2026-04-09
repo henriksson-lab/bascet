@@ -64,7 +64,7 @@ pub struct CountFeatureCMD {
 impl CountFeatureCMD {
     pub fn try_execute(&mut self) -> anyhow::Result<()> {
         let num_threads_total = determine_thread_counts_1(self.num_threads_total)?;
-        println!("Using threads {}", num_threads_total);
+        info!("Using threads {}", num_threads_total);
 
         //TODO Can check that input file is sorted via header
 
@@ -216,7 +216,7 @@ impl CountFeature {
         }
 
         //Parse GFF-like file
-        println!("Reading feature file");
+        info!("Reading feature file");
         let gff = FeatureCollection::read_file(&path_gff, &gff_settings)?;
 
         //Common data for threads
@@ -289,7 +289,7 @@ impl CountFeature {
 
                     //Don't print too frequently as this need to lock screen I/O. Should possibly do this one main thread only
                     if state.processed_features % 1000 == 0 {
-                        println!(
+                        info!(
                             "Processed #features: {} / {}\t#reads: {}",
                             state.processed_features, state.num_features, state.processed_reads
                         );
@@ -305,13 +305,13 @@ impl CountFeature {
         }
 
         // Send termination signals to workers, then wait for them to complete
-        println!("Shutting down counters");
+        info!("Shutting down counters");
         for _ in 0..num_threads {
             let _ = tx.send(None);
         }
         thread_pool_work.join();
 
-        println!("Writing count matrix");
+        info!("Writing count matrix");
         //        let current_state = current_state.lock().unwrap();
         Self::write_matrix(&current_state, &gff, &path_out)?;
 
@@ -380,7 +380,7 @@ impl CountFeature {
         if num_reads > 20000000 {
             let chrom = String::from_utf8_lossy(meta.gene_chr.as_slice());
             let gene_id = String::from_utf8_lossy(meta.gene_id.as_slice());
-            println!(
+            info!(
                 "Very common feature with {} reads: {}    {}:{}-{}",
                 num_reads, gene_id, chrom, meta.gene_start, meta.gene_end
             );
@@ -412,7 +412,7 @@ impl CountFeature {
         //Sort by genes such that count table from shards always match up
         {
             //Keep mutable borrow here
-            println!("- Sorting genes");
+            info!("- Sorting genes");
             let finished_genes = &mut state.finished_genes;
             finished_genes.sort_by(|(a, _), (b, _)| a.gene_id.cmp(&b.gene_id));
         }
@@ -420,7 +420,7 @@ impl CountFeature {
 
         //Proceed to fill in matrix in triplet format.
         //matrix is indexed as [gene,cell]
-        println!("- Generate triplets");
+        info!("- Generate triplets");
 
         let num_features = gff.list_feature.len();
         let num_cells = state.current_cellintmapping.list_cell.len();
@@ -432,12 +432,12 @@ impl CountFeature {
             }
         }
 
-        println!("- To CSR format");
+        info!("- To CSR format");
         // This matrix type does not allow computations, and must to
         // converted to a compatible sparse type, using for example
         let compressed_mat: CsMat<u32> = trimat.to_csr();
 
-        println!("- Store as anndata");
+        info!("- Store as anndata");
 
         let mut file = SparseMatrixAnnDataWriter::create_anndata(path_out)?;
 
@@ -511,7 +511,7 @@ impl CellCounter {
 pub fn print_mem_usage() {
     if let Some(usage) = memory_stats::memory_stats() {
         //    println!("Current physical memory usage: {}", usage.physical_mem);
-        println!(
+        info!(
             "...........Current virtual memory usage: {}",
             usage.virtual_mem
         );

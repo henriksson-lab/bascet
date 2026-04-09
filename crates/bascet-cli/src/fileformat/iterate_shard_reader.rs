@@ -45,19 +45,19 @@ pub fn iterate_shard_reader_multithreaded(
     //Figure out how to read the data
     let input_shard_type = detect_shard_format(&path_in);
 
-    println!("Input file: {:?}", path_in);
+    info!("Input file: {:?}", path_in);
 
     let perform_streaming = input_shard_type == DetectedFileformat::TIRP;
 
     if perform_streaming {
         ////////////////////////////////// Streaming reading of input
-        println!("Reading will be streamed");
+        info!("Reading will be streamed");
 
         //Create all streaming readers. Detect what we need from the file extension.
         //The readers will start immediately
         let thread_pool_readers = threadpool::ThreadPool::new(threads_read);
         if input_shard_type == DetectedFileformat::TIRP {
-            println!("Detected input as TIRP");
+            info!("Detected input as TIRP");
             for _tidx in 0..threads_read {
                 /////////// option #2: keep list of files separately from list of readers
                 _ = create_streaming_tirp_reader( ///////////////////////////////////////////////////// Note: Use Bascet 2.x TIRP-specific streamer here
@@ -75,11 +75,11 @@ pub fn iterate_shard_reader_multithreaded(
 
         //Wait for all reader threads to complete
         thread_pool_readers.join();
-        println!("Streaming readers have finished");
+        info!("Streaming readers have finished");
         anyhow::Ok(())
     } else {
         ////////////////////////////////// Random reading of input
-        println!("Reading will be random (this can be slow depending on file format)");
+        info!("Reading will be random (this can be slow depending on file format)");
 
         //Figure out what cells there are to process - get all of them by default
         let list_cells = fileformat::try_get_cells_in_file(&path_in)
@@ -103,7 +103,7 @@ pub fn iterate_shard_reader_multithreaded(
         //let reader_thread_group = ThreadGroup::new(params.threads_read);
         let input_shard_type = detect_shard_format(&path_in);
         if input_shard_type == DetectedFileformat::TIRP {
-            println!("Detected input as TIRP");
+            info!("Detected input as TIRP");
             for _tidx in 0..threads_read {
                 /////////// option #2: keep list of files separately from list of readers
                 _ = create_random_shard_reader(
@@ -115,7 +115,7 @@ pub fn iterate_shard_reader_multithreaded(
                 );
             }
         } else if input_shard_type == DetectedFileformat::ZIP {
-            println!("Detected input as ZIP");
+            info!("Detected input as ZIP");
             // note from julian: readers alter the ZIP file? at least make separate readers. start with just 1
             for _tidx in 0..threads_read {
                 _ = create_random_shard_reader(
@@ -132,7 +132,7 @@ pub fn iterate_shard_reader_multithreaded(
 
         //Wait for all reader threads to complete
         thread_pool_readers.join();
-        println!("Random I/O readers have finished");
+        info!("Random I/O readers have finished");
         anyhow::Ok(())
     }
 }
@@ -166,7 +166,7 @@ where
     let list_cells = list_cells.clone();
 
     thread_pool.execute(move || {
-        println!("Reader started");
+        info!("Reader started");
 
         let mut shard = constructor
             .new_from_path(&path_in)
@@ -187,7 +187,7 @@ where
                 shard.set_current_cell(&cell_id);
 
                 if num_cells_processed % 10 == 0 {
-                    println!(
+                    info!(
                         "processed {} cells, now at {}",
                         num_cells_processed, cell_id
                     );
@@ -201,7 +201,7 @@ where
                 break;
             }
         }
-        println!(
+        info!(
             "Reader ended; read a total of {} cells",
             num_cells_processed
         );
@@ -347,7 +347,7 @@ fn create_streaming_tirp_reader(
                         } else {
                             num_proc_cell += 1;
                             if num_proc_cell % 1000 == 0 {
-                                println!("Processed {} cells", num_proc_cell);
+                                info!("Processed {} cells", num_proc_cell);
                             }
                         }
                         last_cellid = record_id.to_vec();
@@ -375,8 +375,8 @@ fn create_streaming_tirp_reader(
             num_proc_cell += 1;
         } 
 
-        println!("Processed a final of {} cells", num_proc_cell);
-        println!("Shutting down streaming reader for {}", path_in.display());
+        info!("Processed a final of {} cells", num_proc_cell);
+        info!("Shutting down streaming reader for {}", path_in.display());
     });
 
     Ok(())

@@ -1,5 +1,6 @@
 use anyhow::bail;
 use tracing::debug;
+use tracing::info;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufRead;
@@ -131,7 +132,7 @@ impl ShardFileExtractor for ZipBascetShardReader {
             let mut bufreader_found = BufReader::new(&mut entry);
             std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
 
-            println!("Copied! {}", path_outfile.display());
+            info!("Copied! {}", path_outfile.display());
         } else {
             panic!("Unable to extract {} as unclear what it is", file_name);
         }

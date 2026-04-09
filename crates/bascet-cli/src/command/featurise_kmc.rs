@@ -100,7 +100,7 @@ impl FeaturiseKMC {
             //todo delete temp dir after run
             anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            println!("Using tempdir {}", params.path_tmp.display());
+            info!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
             };
@@ -131,7 +131,7 @@ impl FeaturiseKMC {
             let f1 = "kmc.kmc_suf".to_string();
             let f2 = "kmc.kmc_pre".to_string();
             if list_files.contains(&f1) && list_files.contains(&f2) {
-                println!("Extracting cell {}", cell_id);
+                info!("Extracting cell {}", cell_id);
 
                 let db_file_path = params
                     .path_tmp
@@ -155,14 +155,14 @@ impl FeaturiseKMC {
         }
 
         // Generate the union script
-        println!("Making KMC union script");
+        info!("Making KMC union script");
         let path_kmc_union_script = params.path_tmp.join("kmc_union.op");
         //let path_kmc_union_db = params.path_tmp.join("kmc_union");
         let path_kmc_union_db = &params.path_output; //.join("kmc_union");
         write_union_script(&path_kmc_union_script, &path_kmc_union_db, dbs_to_merge).unwrap();
 
         // Run KMC tools on union script --- output is the KMC database
-        println!("Running KMC union script");
+        info!("Running KMC union script");
         run_kmc_tools(&path_kmc_union_script, params.threads_work).unwrap();
 
         /*

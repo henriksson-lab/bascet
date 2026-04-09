@@ -52,10 +52,11 @@ fn main() -> std::process::ExitCode {
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 
-    //Output from these commands need to get out without any log text
+    //Output from these commands need to get out without any log text. The commands are responsible for some type of error handing
+    //as Zorn must be able to parse the output
     match &cli.command {
         Commands::Sysinfo(cmd) => { 
-            _ = cmd.try_execute(); 
+            _ = cmd.try_execute();            
             return std::process::ExitCode::SUCCESS; 
         },
         Commands::ExtractStream(cmd) => { 
@@ -112,7 +113,7 @@ fn main() -> std::process::ExitCode {
     info!(version = env!("CARGO_PKG_VERSION"), command = %cli.command, "Running Bascet");
     info!("---------------------------------------------------------------------------");
 
-    let _result = match cli.command {
+    let result = match cli.command {
         Commands::Align(mut cmd) => cmd.try_execute(),
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
@@ -136,7 +137,12 @@ fn main() -> std::process::ExitCode {
         Commands::DetectKmerFq(mut cmd) => cmd.try_execute(),
     };
 
-    info!(elapsed = ?start.elapsed(), "Success!");
+    if let Err(e) = result {
+        error!("Error occurred: {}", e);
+    } else {
+        info!(elapsed = ?start.elapsed(), "Success!");
+    }
+
     LogGuard::flush();
 
     return std::process::ExitCode::SUCCESS;

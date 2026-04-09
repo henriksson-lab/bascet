@@ -208,7 +208,7 @@ impl SparseMatrixAnnDataBuilder {
                 }
             }
         }
-        println!(
+        info!(
             "Size of count matrix: {}x{}  (cells x features)",
             n_rows, n_cols
         );

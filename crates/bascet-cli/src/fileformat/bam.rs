@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::info;
 
 use super::ConstructFromPath;
 use super::shard::StreamingReadPairReader;
@@ -42,7 +43,7 @@ impl BAMStreamingReadPairReader {
             })
         } else {
             //The BAM file is empty!
-            println!("Warning: empty input BAM");
+            info!("Warning: empty input BAM");
 
             Ok(BAMStreamingReadPairReader {
                 reader: reader,

@@ -219,10 +219,10 @@ pub fn create_random_readers(
         tx_readcell.send(Some(cell_id)).unwrap();
         num_proc_cell += 1;
         if num_proc_cell % 1000 == 0 {
-            println!("Processed {} / {} cells", num_proc_cell, num_total_cell);
+            info!("Processed {} / {} cells", num_proc_cell, num_total_cell);
         }
     }
-    println!("Processed a final of {} cells", num_total_cell);
+    info!("Processed a final of {} cells", num_total_cell);
 
     //Tell all readers to shut down
     for _ in 0..n_input {
@@ -321,7 +321,7 @@ where
     thread_pool.execute(move || {
         // Open output file
 
-        println!("Starting writer for {}", outfile.display());
+        info!("Starting writer for {}", outfile.display());
         let mut writer = constructor
             .new_from_path(&outfile)
             .expect(format!("Failed to create output file {}", outfile.display()).as_str());
@@ -334,7 +334,7 @@ where
         }
         writer.writing_done().unwrap();
 
-        println!("Shutting down writer for {}", outfile.display());
+        info!("Shutting down writer for {}", outfile.display());
     });
     Ok(())
 }
@@ -379,7 +379,7 @@ where
 
     thread_pool.execute(move || {
         // Open input file
-        println!("Starting random reader for {}", infile.display());
+        info!("Starting random reader for {}", infile.display());
         let mut reader = constructor
             .new_from_path(&infile)
             .expect(format!("Failed to open input file {}", infile.display()).as_str());
@@ -400,7 +400,7 @@ where
                 tx_data.send(Some(Arc::new(tosend))).unwrap();
             }
         }
-        println!("Shutting down random reader for {}", infile.display());
+        info!("Shutting down random reader for {}", infile.display());
     });
     Ok(())
 }
@@ -424,7 +424,7 @@ where
     let constructor = Arc::clone(&constructor);
     thread_pool.execute(move || {
         // Open input file
-        println!("Starting streaming reader for {}", infile.display());
+        info!("Starting streaming reader for {}", infile.display());
         let mut reader = constructor
             .new_from_path(&infile)
             .expect(format!("Failed to open input file {}", infile.display()).as_str());
@@ -438,7 +438,7 @@ where
 
             num_proc_cell += 1;
             if num_proc_cell % 1000 == 0 {
-                println!("Processed {} cells", num_proc_cell);
+                info!("Processed {} cells", num_proc_cell);
             }
 
             if list_reads.is_none() {
@@ -448,8 +448,8 @@ where
                 tx_data.send(list_reads).unwrap();
             }
         }
-        println!("Processed a final of {} cells", num_proc_cell);
-        println!("Shutting down streaming reader for {}", infile.display());
+        info!("Processed a final of {} cells", num_proc_cell);
+        info!("Shutting down streaming reader for {}", infile.display());
     });
     Ok(())
 }
@@ -524,7 +524,7 @@ pub fn create_stream_reader_thread_newtirp(
                         } else {
                             num_proc_cell += 1;
                             if num_proc_cell % 1000 == 0 {
-                                println!("Processed {} cells", num_proc_cell);
+                                info!("Processed {} cells", num_proc_cell);
                             }
                         }
                         last_cellid = record_id.to_vec();
@@ -549,8 +549,8 @@ pub fn create_stream_reader_thread_newtirp(
             num_proc_cell += 1;
         } 
 
-        println!("Processed a final of {} cells", num_proc_cell);
-        println!("Shutting down streaming reader for {}", infile.display());
+        info!("Processed a final of {} cells", num_proc_cell);
+        info!("Shutting down streaming reader for {}", infile.display());
     });
     Ok(())
 }

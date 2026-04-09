@@ -2,6 +2,7 @@ use crate::barcode::Chemistry;
 use crate::barcode::CombinatorialBarcode8bp;
 use crate::barcode::CombinatorialBarcodePart8bp;
 use bascet_core::attr::sequence;
+use tracing::info;
 
 use flate2::read::GzDecoder;
 
@@ -145,7 +146,7 @@ impl Chemistry for ParseBioChemistry3 {
         println!("{}", score);
         panic!("asdasd");
          */
-        println!("Loading parse barcodes");
+        info!("Loading parse barcodes");
 
         //Load the possible barcode systems
         let mut map_round_bcs =
@@ -159,7 +160,7 @@ impl Chemistry for ParseBioChemistry3 {
         }
 
         self.barcode = if self.subchemistry != "" {
-            println!("Loading specified subchemistry");
+            info!("Loading specified subchemistry");
             if map_round_bcs.contains_key(&self.subchemistry) {
                 map_round_bcs
                     .get(self.subchemistry.as_str())
@@ -172,7 +173,7 @@ impl Chemistry for ParseBioChemistry3 {
                 );
             }
         } else {
-            println!("Searching for best barcode match");
+            info!("Searching for best barcode match");
             //TODO: should likely not allow this! great chance of confusing chemistries. the current
             //algorithm tends to pick the megakit but this messes up well assignments
 
@@ -209,7 +210,7 @@ impl Chemistry for ParseBioChemistry3 {
             for (chem_name, _bcs) in &mut map_round_bcs {
                 let cnt = *map_chem_match_cnt.get(chem_name).unwrap();
                 let this_frac = F::from(cnt) / F::from(vec_r2.len());
-                println!(
+                info!(
                     "Chemistry: {}\tNormalized score: {:.4}",
                     chem_name, this_frac
                 );
@@ -222,7 +223,7 @@ impl Chemistry for ParseBioChemistry3 {
             //There will always be at least one chemistry to pick
             let (best_chem_name, best_chem_score) = best_chem_name.unwrap();
 
-            println!(
+            info!(
                 "Best fitting Parse biosciences chemistry is {}, with a normalized match score of {:.4}",
                 best_chem_name, best_chem_score
             );

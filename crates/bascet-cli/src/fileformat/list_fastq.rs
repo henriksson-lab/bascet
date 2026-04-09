@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::ConstructFromPath;
 //use super::ShardFileExtractor;
@@ -44,7 +44,7 @@ impl ListFastqReader {
         }
 
         if cb.records.is_empty() {
-            println!("Warning: empty list-of-fastq file");
+            info!("Warning: empty list-of-fastq file");
         }
         Ok(cb)
     }
@@ -113,7 +113,7 @@ impl ReadPairReader for ListFastqReader {
                 self.num_read += 1;
 
                 if self.num_read % 100000 == 0 {
-                    println!("read: {:?}", self.num_read);
+                    info!("read: {:?}", self.num_read);
                 }
             } else {
                 break;

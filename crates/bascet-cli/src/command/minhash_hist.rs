@@ -80,7 +80,7 @@ impl MinhashHist {
             //todo delete temp dir after run
             //anyhow::bail!("Temporary directory '{}' exists already. For safety reasons, this is not allowed. Specify as a subdirectory of an existing directory", params.path_tmp.display());
         } else {
-            println!("Using tempdir {}", params.path_tmp.display());
+            info!("Using tempdir {}", params.path_tmp.display());
             if fs::create_dir_all(&params.path_tmp).is_err() {
                 panic!("Failed to create temporary directory");
             };
@@ -101,7 +101,7 @@ impl MinhashHist {
             }
             list_cells
         };
-        println!("Preparing to process {} cells", list_cells.len());
+        info!("Preparing to process {} cells", list_cells.len());
 
         //Allocate a big array for all kmers; some guess at capacity
         let mut all_kmer: Vec<String> = Vec::with_capacity(list_cells.len() * 500);
@@ -130,7 +130,7 @@ impl MinhashHist {
             // Unzip all cell-specific min-hash specific databases
             for cell_id in cells_for_file {
                 if cur_file_id % 1000 == 0 {
-                    println!(
+                    info!(
                         "Processing file {}, cell {}",
                         path_input.display(),
                         cur_file_id
@@ -175,14 +175,14 @@ impl MinhashHist {
                 }
             }
         }
-        println!("Obtained minhashes from {} cells", cur_file_id);
+        info!("Obtained minhashes from {} cells", cur_file_id);
 
         //Sort the KMERs; we assume that they are few enough that we can do it in memory for speed
-        println!("Counting minhashes");
+        info!("Counting minhashes");
         let hist = make_histogram(all_kmer);
 
         //Write out histogram
-        println!("Storing histogram");
+        info!("Storing histogram");
         let f = File::create(&params.path_output)
             .expect("Could not open KMER histogram file for writing");
         let mut bw = BufWriter::new(f);

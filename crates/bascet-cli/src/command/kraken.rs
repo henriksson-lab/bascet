@@ -254,7 +254,7 @@ impl KrakenCMD {
 
         let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
         //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
-        println!("Sending read pairs");
+        info!("Sending read pairs");
         let mut num_read:u64 = 0;
         loop {
             match query.next_into::<tirp::Record>() {
@@ -506,7 +506,7 @@ impl KrakenMatrix {
         mm.compress_feature_column("taxid_")?;
 
         //Save the final count matrix
-        println!("Storing count table to {}", params.path_output.display());
+        info!("Storing count table to {}", params.path_output.display());
         mm.save_to_anndata(&params.path_output)
             .expect("Failed to save to HDF5 file");
 

@@ -1,5 +1,5 @@
 use gxhash::HashMapExt;
-use tracing::trace;
+use tracing::{info, trace};
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -186,7 +186,7 @@ impl CombinatorialBarcode8bp {
         }
 
         if cb.num_pools() == 0 {
-            println!("Warning: empty barcodes file");
+            info!("Warning: empty barcodes file");
         }
         cb
     }

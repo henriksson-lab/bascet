@@ -5,6 +5,7 @@ use std::{
 };
 
 use std::ffi::OsString;
+use tracing::info;
 use zip::{ZipArchive, ZipWriter};
 
 ///////////////////////////////
@@ -48,13 +49,13 @@ where
 
     let mut num_out = 0;
     for source in sources {
-        println!("{}", source.as_ref().display());
+        info!("{}", source.as_ref().display());
         let file_source = File::open(&source).unwrap();
         let mut archive_source = ZipArchive::new(&file_source).unwrap();
 
         for i in 0..archive_source.len() {
             if num_out % 100 == 0 {
-                println!(
+                info!(
                     "{} {} / {} ",
                     source.as_ref().display(),
                     i,
@@ -69,7 +70,7 @@ where
 
         fs::remove_file(source).unwrap();
     }
-    println!("Finishing merged zip");
+    info!("Finishing merged zip");
     zipwriter_destination.finish().unwrap();
 
     //Move file from temp-file to real file, signifying that the file is now complete
