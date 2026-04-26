@@ -18,7 +18,8 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["skesa"]
+default = ["bwa-mem2-rs-align", "skesa"]
+bwa-mem2-rs-align = ["dep:bwa-mem2-rs"]
 skesa = ["dep:skesa-rs"]
 
 [dependencies]
@@ -32,6 +33,7 @@ bio.workspace = true
 blart.workspace = true
 bon.workspace = true
 bounded-integer.workspace = true
+bwa-mem2-rs = { path = "/data/henriksson/github/claude/bwa-mem2-rs", optional = true }
 bytesize.workspace = true
 clap.workspace = true
 clio.workspace = true

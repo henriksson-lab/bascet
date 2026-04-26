@@ -2,6 +2,8 @@ use clap::Subcommand;
 
 // Module declarations (alphabetical)
 pub mod align;
+#[cfg(feature = "bwa-mem2-rs-align")]
+pub mod align_bwa;
 pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;

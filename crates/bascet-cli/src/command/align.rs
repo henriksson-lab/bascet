@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Args)]
 pub struct AlignCMD {
@@ -157,6 +157,27 @@ impl AlignCMD {
             sorted_output_path = ?self.path_out_sorted,
             "Starting Align"
         );
+
+        #[cfg(feature = "bwa-mem2-rs-align")]
+        if self.aligner == "BWA" {
+            let numof_threads_writebam = if let Some(t) = self.numof_threads_writebam {
+                t.get()
+            } else {
+                1
+            };
+            return super::align_bwa::try_execute_bwa_mem2(
+                self.path_in.path().path(),
+                &self.path_genome,
+                &self.path_out_unsorted,
+                &self.path_out_sorted,
+                &self.path_temp,
+                numof_threads_writebam as usize,
+                budget.threads.get(),
+                budget.numof_threads_read,
+                self.sizeof_stream_arena,
+                budget.sizeof_stream_buffer,
+            );
+        }
 
         /////////////////////////////////////////////////////////////////////////////////////    /////// TODO delete these pipes!
         // Set up named pipes
