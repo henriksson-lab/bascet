@@ -8,7 +8,9 @@ pub fn determine_thread_counts_1(total: Option<usize>) -> anyhow::Result<usize> 
         if let Ok(total) = total {
             anyhow::Ok(total.get())
         } else {
-            info!("Could not autodetect the number of threads available. Setting to 1, but it is better if you specify");
+            info!(
+                "Could not autodetect the number of threads available. Setting to 1, but it is better if you specify"
+            );
             anyhow::Ok(1)
         }
     }

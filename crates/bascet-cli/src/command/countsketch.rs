@@ -17,7 +17,7 @@ use crossbeam::channel::TryRecvError;
 use serde::Serialize;
 use std::{
     fs::File,
-    io::{BufWriter},
+    io::BufWriter,
     path::PathBuf,
     sync::{
         self,
@@ -168,7 +168,6 @@ impl CountsketchCMD {
             "Starting Countsketch"
         );
 
-
         ////////////////////////////////////////////////////////////////////
         // Create threads for writing output. Note that
         // cells can be written in any order for this file format
@@ -198,24 +197,17 @@ impl CountsketchCMD {
             csvwriter.flush().expect("Failed to flush CSV");
         });
 
-
-
-
-
-
         let k = self.kmer_size;
         let numof_threads_work = (*budget.threads::<TWork>()).get();
 
         //For each input file
         for (input_idx, input) in self.paths_in.iter().enumerate() {
-
             // Create threads for streaming from the input file
             let decoder = codec::BBGZDecoder::builder()
                 .with_path(input.path().path())
                 .countof_threads(budget.numof_threads_read)
                 .build();
-            let parser = parse::Tirp::builder()
-                .build();
+            let parser = parse::Tirp::builder().build();
 
             let mut stream = Stream::builder()
                 .with_decoder(decoder)
@@ -248,52 +240,60 @@ impl CountsketchCMD {
                 let thread_flag_synchronize = Arc::clone(&arc_flag_synchronize);
                 let thread_barrier = Arc::clone(&arc_barrier);
                 let thread_countof_reads_skipped = Arc::clone(&arc_countof_reads_skipped);
-                
-                vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx as u64, move || {
-                    let thread = std::thread::current();
-                    let thread_name = thread.name().unwrap_or("unknown thread"); 
-                    debug!(thread = thread_name, "Starting worker");
 
-                    let mut thread_spinpark_counter = 0;
-                    loop {
-                        let record = match thread_work_rx.try_recv() {
-                            Ok(record) => {
-                                record
-                            },
-                            Err(TryRecvError::Empty) => {
-                                if thread_flag_synchronize.load(Ordering::Relaxed) == true {
-                                    // wait for snapshot to be created
-                                    thread_barrier.wait();
-                                    // wait for reset to be finished
-                                    thread_barrier.wait();
+                vec_worker_handles.push(budget.spawn::<TWork, _, _>(
+                    thread_idx as u64,
+                    move || {
+                        let thread = std::thread::current();
+                        let thread_name = thread.name().unwrap_or("unknown thread");
+                        debug!(thread = thread_name, "Starting worker");
+
+                        let mut thread_spinpark_counter = 0;
+                        loop {
+                            let record = match thread_work_rx.try_recv() {
+                                Ok(record) => record,
+                                Err(TryRecvError::Empty) => {
+                                    if thread_flag_synchronize.load(Ordering::Relaxed) == true {
+                                        // wait for snapshot to be created
+                                        thread_barrier.wait();
+                                        // wait for reset to be finished
+                                        thread_barrier.wait();
+                                    }
+                                    match spinpark_loop::spinpark_loop::<
+                                        100,
+                                        SPINPARK_COUNTOF_PARKS_BEFORE_WARN,
+                                    >(
+                                        &mut thread_spinpark_counter
+                                    ) {
+                                        SpinPark::Warn => warn!(
+                                            source = "Countsketch::worker",
+                                            "channel empty, producer slow"
+                                        ),
+                                        _ => {}
+                                    }
+                                    continue;
                                 }
-                                match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut thread_spinpark_counter) {
-                                    SpinPark::Warn => warn!(source = "Countsketch::worker", "channel empty, producer slow"),
-                                    _ => {}
+                                Err(TryRecvError::Disconnected) => {
+                                    break;
                                 }
-                                continue;
-                            },
-                            Err(TryRecvError::Disconnected) => {
-                                break;
-                            }
-                        };
-                        thread_spinpark_counter = 0;
-                        
-                        // SAFETY: Each worker has exclusive access to its own sketch via raw pointer.
-                        // Barriers ensure no concurrent access during sync.
-                        unsafe {
-                            let sketch = sketch_ptr.as_mut();
-                            if sketch.add_sequence(record.get_ref::<R1>(), k).is_err() {
-                                thread_countof_reads_skipped.fetch_add(1, Ordering::Relaxed);
-                            }
-                            if sketch.add_sequence(record.get_ref::<R2>(), k).is_err() {
-                                thread_countof_reads_skipped.fetch_add(1, Ordering::Relaxed);
+                            };
+                            thread_spinpark_counter = 0;
+
+                            // SAFETY: Each worker has exclusive access to its own sketch via raw pointer.
+                            // Barriers ensure no concurrent access during sync.
+                            unsafe {
+                                let sketch = sketch_ptr.as_mut();
+                                if sketch.add_sequence(record.get_ref::<R1>(), k).is_err() {
+                                    thread_countof_reads_skipped.fetch_add(1, Ordering::Relaxed);
+                                }
+                                if sketch.add_sequence(record.get_ref::<R2>(), k).is_err() {
+                                    thread_countof_reads_skipped.fetch_add(1, Ordering::Relaxed);
+                                }
                             }
                         }
-                    }
-                }));
+                    },
+                ));
             }
-
 
             let mut record_id_last: Vec<u8> = Vec::new();
             let mut cells_processed = 0u64;
@@ -339,7 +339,6 @@ impl CountsketchCMD {
                         panic!("{:?}", e);
                     }
                 };
-
 
                 let record_id = *record.get_ref::<Id>();
                 if record_id != &record_id_last {
@@ -396,7 +395,12 @@ impl CountsketchCMD {
             }
 
             let reads_skipped = arc_countof_reads_skipped.load(Ordering::Relaxed);
-            info!(input_file = input_idx, cells_processed = cells_processed, reads_skipped = reads_skipped, "File complete");
+            info!(
+                input_file = input_idx,
+                cells_processed = cells_processed,
+                reads_skipped = reads_skipped,
+                "File complete"
+            );
         }
 
         //Send signal to stop countsketch writers

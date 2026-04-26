@@ -6,7 +6,6 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use tracing::info;
 
-
 #[derive(Clone)]
 pub struct GeneralCombinatorialBarcode {
     barcode: CombinatorialBarcode,
@@ -37,7 +36,7 @@ impl Chemistry for GeneralCombinatorialBarcode {
             .expect("Failed to detect barcode setup from reads");
         Ok(())
     }
-/*
+    /*
     ////////// Detect barcode, and trim if ok
     fn _depreciated_detect_barcode_and_trim(
         &mut self,
@@ -54,5 +53,4 @@ impl Chemistry for GeneralCombinatorialBarcode {
         //TODO support barcodes on one side, or two? for ss3, need to support both!!
     }
      */
-
 }

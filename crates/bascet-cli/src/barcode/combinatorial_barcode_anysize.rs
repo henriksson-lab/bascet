@@ -1,7 +1,7 @@
 use anyhow::bail;
-use tracing::{info, trace};
 use std::collections::HashMap;
 use std::io::Read;
+use tracing::{info, trace};
 
 use bio::alignment::Alignment;
 use bio::pattern_matching::myers::Myers;

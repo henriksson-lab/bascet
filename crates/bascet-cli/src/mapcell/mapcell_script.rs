@@ -309,11 +309,9 @@ pub fn to_absolute_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
     Ok(absolute_path)
 }
 
-
-
 ///
 /// Put all files needed in a directory - for the Bascet 1.x general API
-/// 
+///
 pub fn extract_needed_files_to_directory_generalapi(
     path_tmp: &PathBuf,
     mapcell_script: &Arc<Box<dyn MapCellFunction>>,
@@ -356,9 +354,3 @@ pub fn extract_needed_files_to_directory_generalapi(
         }
     }
 }
-
-
-
-
-
-

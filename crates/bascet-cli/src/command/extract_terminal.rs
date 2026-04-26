@@ -101,7 +101,9 @@ impl ExtractStream {
             if cmd == "help" {
                 /////////////////////////////// help
                 println!("Available commands: exit ls showtext extract_to");
-                println!("Note that this system is optimized for streaming data to Zorn, and not for being user friendly to terminal users!");
+                println!(
+                    "Note that this system is optimized for streaming data to Zorn, and not for being user friendly to terminal users!"
+                );
             } else if cmd == "listcellsanyfile" {
                 /////////////////////////////// listcellsanyfile /////////////////////////////// --- list cells in a tabix file, zip file, or any. by design, takes an argument
 

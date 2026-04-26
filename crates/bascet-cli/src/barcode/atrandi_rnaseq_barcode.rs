@@ -4,7 +4,6 @@ use seq_io::fastq::Reader as FastqReader;
 use std::io::Cursor;
 use tracing::info;
 
-
 ///////////////////////////////
 /// Atrandi RNA-seq chemistry
 #[derive(Clone)]
@@ -207,9 +206,7 @@ impl Chemistry for AtrandiRNAseqChemistry {
         }
     }
      */
-    
 }
-
 
 /*
 ///////////////////////////////

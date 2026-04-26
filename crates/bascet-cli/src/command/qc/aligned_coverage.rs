@@ -3,8 +3,8 @@ use std::io::{BufWriter, Write};
 use anyhow::Result;
 use clap::Args;
 use clio::{InputPath, OutputPath};
-use rust_htslib::bam::{Read, Reader};
 use rust_htslib::bam::record::Record as BamRecord;
+use rust_htslib::bam::{Read, Reader};
 use tracing::info;
 
 #[derive(Args)]
@@ -18,11 +18,7 @@ pub struct QcAlignedCoverageCMD {
     )]
     pub paths_in: Vec<InputPath>,
 
-    #[arg(
-        short = 'o',
-        long = "out",
-        help = "Output file path"
-    )]
+    #[arg(short = 'o', long = "out", help = "Output file path")]
     pub path_out: OutputPath,
 }
 
@@ -124,7 +120,8 @@ impl QcAlignedCoverageCMD {
                 .map(|tid| header.target_len(tid as u32).unwrap_or(0) as usize)
                 .collect();
 
-            let mut cell_pileups: Vec<Option<RefPileup>> = (0..countof_refs).map(|_| None).collect();
+            let mut cell_pileups: Vec<Option<RefPileup>> =
+                (0..countof_refs).map(|_| None).collect();
             let mut record_id_last: Vec<u8> = Vec::new();
             let mut countof_cells_processed = 0u64;
 
@@ -142,7 +139,13 @@ impl QcAlignedCoverageCMD {
 
                 if record_id != record_id_last.as_slice() {
                     if !record_id_last.is_empty() {
-                        write_cell(&record_id_last, &ref_names, &ref_lengths, &cell_pileups, &mut bufwriter)?;
+                        write_cell(
+                            &record_id_last,
+                            &ref_names,
+                            &ref_lengths,
+                            &cell_pileups,
+                            &mut bufwriter,
+                        )?;
                         countof_cells_processed += 1;
                         if countof_cells_processed % 100 == 0 {
                             info!(countof_cells_processed = countof_cells_processed, current_cell = ?String::from_utf8_lossy(&record_id_last), "Progress");
@@ -171,11 +174,20 @@ impl QcAlignedCoverageCMD {
                 if cell_pileups[tid].is_none() {
                     cell_pileups[tid] = Some(RefPileup::new(ref_lengths[tid]));
                 }
-                cell_pileups[tid].as_mut().unwrap().add_alignment(pos_start, pos_end, sizeof_seq);
+                cell_pileups[tid]
+                    .as_mut()
+                    .unwrap()
+                    .add_alignment(pos_start, pos_end, sizeof_seq);
             }
 
             if !record_id_last.is_empty() {
-                write_cell(&record_id_last, &ref_names, &ref_lengths, &cell_pileups, &mut bufwriter)?;
+                write_cell(
+                    &record_id_last,
+                    &ref_names,
+                    &ref_lengths,
+                    &cell_pileups,
+                    &mut bufwriter,
+                )?;
                 countof_cells_processed += 1;
             }
 

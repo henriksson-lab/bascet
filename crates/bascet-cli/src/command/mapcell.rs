@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam::channel::Receiver;
-use zip::ZipWriter;
 use tracing::info;
+use zip::ZipWriter;
 
 use crate::command::threadcount::determine_thread_counts_mapcell;
 use crate::fileformat::iterate_shard_reader;
@@ -67,7 +67,6 @@ pub struct MapCellCMD {
     #[arg(long, value_parser = clap::value_parser!(usize))]
     num_threads_mapcell: Option<usize>,
 
-
     #[arg(
         long = "sizeof-stream-buffer",
         help = "Total stream buffer size.",
@@ -84,7 +83,6 @@ pub struct MapCellCMD {
         value_parser = clap::value_parser!(ByteSize),
     )]
     sizeof_stream_arena: ByteSize,
-
 }
 impl MapCellCMD {
     /// Run the map-cell commandline option
@@ -104,8 +102,8 @@ impl MapCellCMD {
         let script: Arc<Box<dyn MapCellFunction>> = if preset_name.starts_with("_") {
             info!("Using preset script: {:?}", self.path_script);
             let preset_name = &preset_name[1..]; //Remove the initial _  ; or capital letter?
-//            let script = ;
-//                .expect("Unable to load preset script")
+                                                 //            let script = ;
+                                                 //                .expect("Unable to load preset script")
             if let Some(script) = crate::mapcell_scripts::get_preset_script(preset_name) {
                 script
             } else {
@@ -167,9 +165,6 @@ impl MapCellCMD {
     }
 }
 
-
-
-
 #[derive(Clone)]
 pub struct MapCell {
     pub path_in: std::path::PathBuf,
@@ -184,7 +179,6 @@ pub struct MapCell {
     pub threads_write: usize,
     //How many threads should the invoked script use? Passed on as a parameter. Not all commands will support this
     pub threads_mapcell: usize,
-
 
     sizeof_stream_buffer: ByteSize,
     sizeof_stream_arena: ByteSize,
@@ -233,7 +227,6 @@ impl MapCell {
             list_out_zipfiles.push(file_zip);
         }
 
-        
         let clone_tx_loaded_cell = tx_loaded_cell.clone();
         let clone_params = Arc::clone(&params);
 
@@ -250,11 +243,9 @@ impl MapCell {
             };
         let process_cell_fn = Arc::new(process_cell_fn);
 
-
-//        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
-//        let sizeof_stream_buffer = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
-//        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
-
+        //        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
+        //        let sizeof_stream_buffer = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
+        //        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
 
         //Iterate over all cells, in threads, using suitable readers
         iterate_shard_reader::iterate_shard_reader_multithreaded(
@@ -264,8 +255,7 @@ impl MapCell {
             params.sizeof_stream_buffer,
             params.threads_read,
             &process_cell_fn,
-        )?;           
-
+        )?;
 
         //Terminate all writers. Then wait for all threads to finish
         info!("Waiting for writers to finish");
@@ -289,12 +279,9 @@ impl MapCell {
     }
 }
 
-
-
-
 ///
 /// Worker thread that integrates the writing. in the future, could have a Writer trait instead of hardcoding ZIP files
-/// 
+///
 fn create_writer(
     params_io: &Arc<MapCell>,
     zip_file: &PathBuf,
@@ -406,11 +393,9 @@ fn create_writer(
     Ok(())
 }
 
-
-
-/// 
+///
 /// From a path, list all files that exist beneath recursively
-/// 
+///
 fn get_list_files_recursively(path: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
     let mut buf = vec![];
     let entries = fs::read_dir(path)?;
@@ -431,7 +416,3 @@ fn get_list_files_recursively(path: impl AsRef<Path>) -> std::io::Result<Vec<Pat
 
     Ok(buf)
 }
-
-
-
-

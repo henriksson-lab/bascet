@@ -1,9 +1,7 @@
-use crate::{
-    bounded_parser
-};
+use crate::bounded_parser;
 
 use bascet_core::{
-    attr::{meta::*, sequence::*, quality::*},
+    attr::{meta::*, quality::*, sequence::*},
     *,
 };
 use bascet_derive::Budget;
@@ -15,7 +13,8 @@ use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    io::{BufWriter, Write}, path::{Path, PathBuf}
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
 };
 use tracing::{info, warn};
 
@@ -29,7 +28,6 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 
-
 #[derive(Args)]
 pub struct KrakenCMD {
     #[arg(
@@ -39,29 +37,16 @@ pub struct KrakenCMD {
     )]
     pub path_in: InputPath,
 
-    #[arg(
-        long = "out-raw",
-        help = "Raw KRAKEN2 output file"
-    )]
+    #[arg(long = "out-raw", help = "Raw KRAKEN2 output file")]
     pub path_out_raw: PathBuf,
 
-    #[arg(
-        long = "out-matrix",
-        help = "Output count matrix" 
-    )]
+    #[arg(long = "out-matrix", help = "Output count matrix")]
     pub path_out_matrix: PathBuf,
-    
-    #[arg(
-        long = "temp",
-        help = "Temp directory; must exist already"
-    )]
+
+    #[arg(long = "temp", help = "Temp directory; must exist already")]
     pub path_temp: PathBuf,
 
-    #[arg(
-        short = 'd',
-        long = "db", 
-        help = "KRAKEN2 index to use"
-    )]
+    #[arg(short = 'd', long = "db", help = "KRAKEN2 index to use")]
     pub path_db: PathBuf,
 
     #[arg(
@@ -106,7 +91,6 @@ pub struct KrakenCMD {
         value_parser = clap::value_parser!(ByteSize),
     )]
     sizeof_stream_arena: ByteSize,
-
 }
 
 #[derive(Budget, Debug)]
@@ -119,20 +103,20 @@ struct KrakenBudget {
 
     #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 ) as u64).unwrap())]
     numof_threads_read: BoundedU64<1, { u64::MAX }>,
-    
+
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
 }
 
 impl KrakenCMD {
     pub fn try_execute(&mut self) -> Result<()> {
-
-
         //Validate that a KRAKEN2 db has been given
         if self.path_db.is_dir() {
             let file_taxo = self.path_db.join("taxo.k2d");
             if !file_taxo.is_file() {
-                anyhow::bail!("Specified database path is not a KRAKEN2 database (directory misses files, e.g., taxo.k2d)");
+                anyhow::bail!(
+                    "Specified database path is not a KRAKEN2 database (directory misses files, e.g., taxo.k2d)"
+                );
             }
         } else {
             anyhow::bail!("Specified database path is not a KRAKEN2 database (not a directory)");
@@ -167,23 +151,24 @@ impl KrakenCMD {
             "Starting KRAKEN2"
         );
 
-
-        /////////////////////////////////////////////////////////////////////////////////////   
+        /////////////////////////////////////////////////////////////////////////////////////
         // Set up named pipes
         let path_pipe_r12 = self.path_temp.join("fifo_r12.fq");
-        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU).expect("Failed to create pipe"); /////////////////////// TODO put all of this + cleanup in a class
+        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU)
+            .expect("Failed to create pipe"); /////////////////////// TODO put all of this + cleanup in a class
 
-        ///////////////////////////////////////////////////////////////////////////////////// 
+        /////////////////////////////////////////////////////////////////////////////////////
         // Start KRAKEN2
         let num_threads = budget.threads.get();
         let mut proc_aligner = create_kraken_process(
-                &self.path_db, 
-                &path_pipe_r12,
-                &self.path_out_raw,
-                num_threads
-        ).expect("Failed to start KRAKEN");        
+            &self.path_db,
+            &path_pipe_r12,
+            &self.path_out_raw,
+            num_threads,
+        )
+        .expect("Failed to start KRAKEN");
 
-        ///////////////////////////////////////////////////////////////////////////////////// 
+        /////////////////////////////////////////////////////////////////////////////////////
         // All threads are now set up. Send all readpairs to KRAKEN2.
         // Note that KRAKEN2 requires interleaved reads as paired-end mode reads one file at a file, blocking the pipe!
         Self::write_tirp_to_interleaved_fq(
@@ -193,7 +178,8 @@ impl KrakenCMD {
             budget.numof_threads_read,
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
-        ).expect("Failed to create pipe writer");
+        )
+        .expect("Failed to create pipe writer");
 
         //Wait until process done
         info!("Waiting for KRAKEN2 process to finish");
@@ -212,30 +198,27 @@ impl KrakenCMD {
         };
         KrakenMatrix::run(&Arc::new(params))?;
 
-        info!(
-            "All KRAKEN2 steps complete"
-        );
+        info!("All KRAKEN2 steps complete");
 
         //Move temp files to their right positions
 
         Ok(())
     }
 
-
-
-
     ///
     /// Get a TIRP, stream to fastq. Not primarily used by aligners, but KRAKEN
-    /// 
+    ///
     pub fn write_tirp_to_interleaved_fq<P>(
         path_in: P,
         path_r1: P,
-        num_threads: BoundedU64<1, { u64::MAX }>, 
+        num_threads: BoundedU64<1, { u64::MAX }>,
         sizeof_stream_arena: ByteSize,
         sizeof_stream_buffer: ByteSize,
-    ) -> Result<()> where P: AsRef<Path> {
-
-        ///////////////////////////////////////////////////////////////////////////////////// 
+    ) -> Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        /////////////////////////////////////////////////////////////////////////////////////
         // Streamer from input TIRP
         let decoder = codec::BBGZDecoder::builder()
             .with_path(path_in)
@@ -252,14 +235,13 @@ impl KrakenCMD {
 
         let mut query = stream.query::<tirp::Record>();
 
-        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?);  //blocks until reader ready; so open reader first
-        //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
+        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?); //blocks until reader ready; so open reader first
+                                                                              //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
         info!("Sending read pairs");
-        let mut num_read:u64 = 0;
+        let mut num_read: u64 = 0;
         loop {
             match query.next_into::<tirp::Record>() {
                 Ok(Some(record)) => {
-
                     let record_id = *record.get_ref::<Id>();
                     let record_r1 = *record.get_ref::<R1>();
                     let record_r2 = *record.get_ref::<R2>();
@@ -269,19 +251,22 @@ impl KrakenCMD {
 
                     fn write_read_bascetfq<W>(
                         writer: &mut W,
-                        record_id: &[u8], 
+                        record_id: &[u8],
                         record_read: &[u8],
                         record_qual: &[u8],
                         record_umi: &[u8],
-                        num_read: u64
-                    ) -> Result<()> where W: Write {
+                        num_read: u64,
+                    ) -> Result<()>
+                    where
+                        W: Write,
+                    {
                         writer.write_all(b"@")?;
                         writer.write_all(record_id)?;
                         writer.write_all(b":")?;
                         writer.write_all(record_umi)?;
                         writer.write_all(b":")?;
                         writer.write_all(format!("{}", num_read).as_bytes())?;
-                        
+
                         writer.write_all(b"\n")?;
                         writer.write_all(record_read)?;
                         writer.write_all(b"\n+\n")?;
@@ -296,7 +281,7 @@ impl KrakenCMD {
                         &record_r1,
                         &record_q1,
                         &record_umi,
-                        num_read
+                        num_read,
                     )?;
 
                     write_read_bascetfq(
@@ -305,10 +290,9 @@ impl KrakenCMD {
                         &record_r2,
                         &record_q2,
                         &record_umi,
-                        num_read
+                        num_read,
                     )?;
-                    
-                    
+
                     //What about Q? it might not be used at all. but could output as an option
                     /*
                     Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
@@ -333,54 +317,49 @@ impl KrakenCMD {
         writer_r1.flush()?;
         //drop(writer_r1); //don't think needed
         info!("All readpairs flushed");
-        
+
         Ok(())
     }
-
-
 }
-
-
-
-
-
-
-
-
 
 ///
 /// Generate KRAKEN2 command
-/// 
-pub fn create_kraken_process<P> (
+///
+pub fn create_kraken_process<P>(
     path_db: &P,
-    path_r12: &P, 
+    path_r12: &P,
     path_out_raw: &P,
     num_threads: u64,
-) -> Result<std::process::Child> where P: AsRef<Path> {
-    let num_threads = format!("{}",num_threads);
-    let path_db = format!("{}",path_db.as_ref().as_os_str().to_str().expect("os str"));
-    let path_r12 = format!("{}",path_r12.as_ref().as_os_str().to_str().expect("os str"));
-    let path_out_raw = format!("{}",path_out_raw.as_ref().as_os_str().to_str().expect("os str"));
+) -> Result<std::process::Child>
+where
+    P: AsRef<Path>,
+{
+    let num_threads = format!("{}", num_threads);
+    let path_db = format!("{}", path_db.as_ref().as_os_str().to_str().expect("os str"));
+    let path_r12 = format!(
+        "{}",
+        path_r12.as_ref().as_os_str().to_str().expect("os str")
+    );
+    let path_out_raw = format!(
+        "{}",
+        path_out_raw.as_ref().as_os_str().to_str().expect("os str")
+    );
 
     let args = vec![
         "build", ////////////////////////////// new! worked without before
-        "--db", &path_db,
-        "--threads", &num_threads,
-        "--output",&path_out_raw,
+        "--db",
+        &path_db,
+        "--threads",
+        &num_threads,
+        "--output",
+        &path_out_raw,
         "--interleaved", ////////////////// has been unknown command
-        &path_r12, 
+        &path_r12,
     ];
 
-    let proc_cmd = std::process::Command::new("kraken2")
-        .args(args)
-        .spawn()?;
+    let proc_cmd = std::process::Command::new("kraken2").args(args).spawn()?;
     Ok(proc_cmd)
 }
-
-
-
-
-
 
 #[derive(Args)]
 pub struct KrakenMatrixCMD {
@@ -415,7 +394,7 @@ impl KrakenMatrixCMD {
 
 ///
 /// KRAKEN count matrix constructor.
-/// 
+///
 pub struct KrakenMatrix {
     pub path_input: std::path::PathBuf,
     pub path_tmp: std::path::PathBuf,
@@ -552,5 +531,3 @@ the last 3 k-mers mapped to taxonomy ID #562
 Note that paired read data will contain a "|:|" token in this list to indicate the end of one read and the beginning of another.
 
 */
-
-

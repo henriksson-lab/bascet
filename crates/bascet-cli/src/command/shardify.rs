@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::bounded_parser;
 
@@ -167,10 +167,8 @@ impl ShardifyCMD {
             );
         }
 
-        let pairs: Vec<(
-            Sender<parse::BBGZBlock>,
-            PeekableReceiver<parse::BBGZBlock>,
-        )> = (0..countof_streams_input)
+        let pairs: Vec<(Sender<parse::BBGZBlock>, PeekableReceiver<parse::BBGZBlock>)> = (0
+            ..countof_streams_input)
             .map(|_| bascet_core::channel::peekable::<parse::BBGZBlock>())
             .collect();
         let (vec_coordinator_tx, mut vec_coordinator_rx): (
@@ -203,12 +201,12 @@ impl ShardifyCMD {
 
             vec_reader_handles.push(budget.spawn::<TRead, _, _>(thread_idx as u64, move || {
                 let thread = std::thread::current();
-                let thread_name = thread.name().unwrap_or("unknown thread"); 
+                let thread_name = thread.name().unwrap_or("unknown thread");
                 debug!(thread = thread_name, path = %thread_input, "Starting stream");
 
                 let thread_file = match thread_input.clone().open() {
                     Ok(file) => file,
-                    Err(e) => panic!("{e}")
+                    Err(e) => panic!("{e}"),
                 };
 
                 let thread_decoder = codec::plain::PlaintextDecoder::builder()
@@ -243,15 +241,17 @@ impl ShardifyCMD {
                     };
 
                     let global_processed = global_processed_counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    let global_kept = global_kept_counter
-                        .load(std::sync::atomic::Ordering::Relaxed) + 1;
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
+                    let global_kept =
+                        global_kept_counter.load(std::sync::atomic::Ordering::Relaxed) + 1;
 
                     if global_processed % 100_000 == 0 {
                         let keep_ratio = (global_kept as f64) / (global_processed as f64);
                         info!(
                             bbgz_blocks_processed = global_processed,
-                            bbgz_blocks_kept = format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio),
+                            bbgz_blocks_kept =
+                                format!("{} ({:.2}%)", global_kept, 100.0 * keep_ratio),
                             "Processing"
                         );
                     }
@@ -471,8 +471,12 @@ impl ShardifyCMD {
 
         'notify: loop {
             if let Err(channel::TryRecvError::Empty) = notify_rx.try_recv() {
-                match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut coordinator_spinpark_counter) {
-                    SpinPark::Warn => warn!(source = "Shardify::coordinator", "waiting for notification"),
+                match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
+                    &mut coordinator_spinpark_counter,
+                ) {
+                    SpinPark::Warn => {
+                        warn!(source = "Shardify::coordinator", "waiting for notification")
+                    }
                     _ => {}
                 }
                 continue;
@@ -503,15 +507,31 @@ impl ShardifyCMD {
                             let last_id = &coordinator_vec_last_id[sweep_idx];
                             match sweep_min_cell {
                                 None => {
-                                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut sweep_spinpark_counter) {
-                                        SpinPark::Warn => warn!(source = "Shardify::coordinator", "sweep waiting for data"),
+                                    match spinpark_loop::spinpark_loop::<
+                                        100,
+                                        SPINPARK_COUNTOF_PARKS_BEFORE_WARN,
+                                    >(
+                                        &mut sweep_spinpark_counter
+                                    ) {
+                                        SpinPark::Warn => warn!(
+                                            source = "Shardify::coordinator",
+                                            "sweep waiting for data"
+                                        ),
                                         _ => {}
                                     }
                                     break 'sweep;
                                 }
                                 Some(mc) if &**last_id <= mc => {
-                                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut sweep_spinpark_counter) {
-                                        SpinPark::Warn => warn!(source = "Shardify::coordinator", "sweep waiting for data"),
+                                    match spinpark_loop::spinpark_loop::<
+                                        100,
+                                        SPINPARK_COUNTOF_PARKS_BEFORE_WARN,
+                                    >(
+                                        &mut sweep_spinpark_counter
+                                    ) {
+                                        SpinPark::Warn => warn!(
+                                            source = "Shardify::coordinator",
+                                            "sweep waiting for data"
+                                        ),
                                         _ => {}
                                     }
                                     break 'sweep;

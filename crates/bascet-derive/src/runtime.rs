@@ -105,17 +105,17 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                         .unwrap_or(false)
             });
 
-            field
-                .attrs
-                .iter()
-                .filter_map(move |attr| parse_budget_attr(attr, field_ident, field_type, skip_validation))
+            field.attrs.iter().filter_map(move |attr| {
+                parse_budget_attr(attr, field_ident, field_type, skip_validation)
+            })
         })
         .collect();
 
     let markers: HashSet<_> = budget_defs
         .iter()
         .filter(|def| match &def.kind {
-            BudgetKind::Thread(BudgetType::Regular(_)) | BudgetKind::Mem(BudgetType::Regular(_)) => true,
+            BudgetKind::Thread(BudgetType::Regular(_))
+            | BudgetKind::Mem(BudgetType::Regular(_)) => true,
             _ => false,
         })
         .map(|def| &def.marker_ident)
@@ -198,17 +198,15 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                     }
                 })
             }
-            BudgetKind::Mem(BudgetType::Total(_)) => {
-                Some(quote! {
-                    impl bascet_runtime::budget::Memory<Total> for #name {
-                        type Value = #field_type;
+            BudgetKind::Mem(BudgetType::Total(_)) => Some(quote! {
+                impl bascet_runtime::budget::Memory<Total> for #name {
+                    type Value = #field_type;
 
-                        fn mem(&self) -> &Self::Value {
-                            &self.#field_ident
-                        }
+                    fn mem(&self) -> &Self::Value {
+                        &self.#field_ident
                     }
-                })
-            }
+                }
+            }),
             BudgetKind::Thread(_) => None,
         }
     });
@@ -390,16 +388,18 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         let field_type = &def.field_type;
 
         match &def.kind {
-            BudgetKind::Thread(BudgetType::Total(None)) | BudgetKind::Mem(BudgetType::Total(None)) => {
+            BudgetKind::Thread(BudgetType::Total(None))
+            | BudgetKind::Mem(BudgetType::Total(None)) => {
                 Some(quote! { #field_ident: #field_type })
             }
-            BudgetKind::Thread(BudgetType::Total(Some(_))) | BudgetKind::Mem(BudgetType::Total(Some(_))) => {
-                None
-            }
-            BudgetKind::Thread(BudgetType::Regular(None)) | BudgetKind::Mem(BudgetType::Regular(None)) => {
+            BudgetKind::Thread(BudgetType::Total(Some(_)))
+            | BudgetKind::Mem(BudgetType::Total(Some(_))) => None,
+            BudgetKind::Thread(BudgetType::Regular(None))
+            | BudgetKind::Mem(BudgetType::Regular(None)) => {
                 Some(quote! { #field_ident: #field_type })
             }
-            BudgetKind::Thread(BudgetType::Regular(Some(_))) | BudgetKind::Mem(BudgetType::Regular(Some(_))) => {
+            BudgetKind::Thread(BudgetType::Regular(Some(_)))
+            | BudgetKind::Mem(BudgetType::Regular(Some(_))) => {
                 Some(quote! { #field_ident: Option<#field_type> })
             }
         }
@@ -409,7 +409,8 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
         let field_ident = &def.field_ident;
 
         match &def.kind {
-            BudgetKind::Thread(BudgetType::Total(None)) | BudgetKind::Mem(BudgetType::Total(None)) => {
+            BudgetKind::Thread(BudgetType::Total(None))
+            | BudgetKind::Mem(BudgetType::Total(None)) => {
                 quote! { #field_ident }
             }
             BudgetKind::Thread(BudgetType::Total(Some(closure)))
@@ -438,7 +439,8 @@ pub fn derive_budget(item: TokenStream) -> TokenStream {
                     })
                 }
             }
-            BudgetKind::Thread(BudgetType::Regular(None)) | BudgetKind::Mem(BudgetType::Regular(None)) => {
+            BudgetKind::Thread(BudgetType::Regular(None))
+            | BudgetKind::Mem(BudgetType::Regular(None)) => {
                 quote! {
                     #field_ident: #field_ident
                 }

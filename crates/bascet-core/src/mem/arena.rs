@@ -1,6 +1,6 @@
 use bytesize::ByteSize;
 use crossbeam_utils::CachePadded;
-use memmap2::{MmapOptions};
+use memmap2::MmapOptions;
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::ops::Index;
@@ -9,8 +9,8 @@ use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use tracing::warn;
 
+use crate::SendPtr;
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
-use crate::{SendPtr};
 
 pub struct ArenaSlice<T>
 where
@@ -39,7 +39,8 @@ where
         unsafe {
             debug_assert!(len <= self.inner.as_ref().len());
             let ptr = self.inner.as_ptr() as *mut T;
-            self.inner = NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
+            self.inner =
+                NonNull::new_unchecked(std::slice::from_raw_parts_mut(ptr, len) as *mut [T]);
         }
         self
     }

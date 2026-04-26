@@ -1,7 +1,7 @@
 use gxhash::HashMapExt;
-use tracing::{info, trace};
 use std::collections::HashMap;
 use std::io::Read;
+use tracing::{info, trace};
 
 use crate::barcode::parsebio::HotEncodeATCGN;
 use crate::fileformat::shard::CellID;

@@ -3,7 +3,6 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use anyhow::Result;
 use clap::Args;
 
-
 #[derive(Args)]
 pub struct SysinfoCMD {
     #[arg(long = "info")]
@@ -11,9 +10,7 @@ pub struct SysinfoCMD {
 }
 impl SysinfoCMD {
     pub fn try_execute(&self) -> Result<()> {
-
-
-        if self.info=="cpu" {
+        if self.info == "cpu" {
             let s = System::new_with_specifics(
                 RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
             );
@@ -21,8 +18,7 @@ impl SysinfoCMD {
                 print!("{}", cpu.brand());
                 break;
             }
-        } else if self.info=="totalmem" {
-
+        } else if self.info == "totalmem" {
             let s = System::new_with_specifics(
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
             );

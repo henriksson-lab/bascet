@@ -1,8 +1,8 @@
-use std::io::{BufRead, Cursor};
 use blart::AsBytes;
+use std::io::{BufRead, Cursor};
 //use tracing::{info};
 
-use crate::{barcode::{CombinatorialBarcode8bp}, common::ReadPair};
+use crate::{barcode::CombinatorialBarcode8bp, common::ReadPair};
 
 #[derive(Clone)]
 pub struct DebarcodeAtrandiWGSChemistryLongread {
@@ -43,7 +43,6 @@ impl DebarcodeAtrandiWGSChemistryLongread {
     }
 }
 impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
-
     ///////////////////////////////
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position.
     /// This is not needed for this chemistry (noop)
@@ -59,8 +58,6 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
         Ok(())
     }
 
-
-
     ///////////////////////////////
     /// Detect barcode, and trim if ok
     fn detect_barcode_and_trim<'a>(
@@ -70,13 +67,11 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
         r2_seq: &'a [u8],
         r2_qual: &'a [u8],
     ) -> (u32, crate::common::ReadPair<'a>) {
-
-
         // /husky/henriksson/atrandi/rawdata/cleanbar_longread
         // Example index primer p7: UDP0005_p7	CAAGCAGAAGACGGCATACGAGAT TAATCTCGTC GTGACTGGAGTTCAGACGTGTGCTCTT
         // generic P5	AATGATACGGCGACCACCGAGATCT    ACACTCTTTCCCTAC ACGAC
 
-        // Adapters confirmed in cleanbar fig https://academic.oup.com/view-large/figure/530094580/ycaf134f2.tif  
+        // Adapters confirmed in cleanbar fig https://academic.oup.com/view-large/figure/530094580/ycaf134f2.tif
         // https://pubmed.ncbi.nlm.nih.gov/40860566/
         // zcat SRR31758484.fastq.gz | grep CTTCCGATCT........AGGA........ACTC........AAGG........T
         // zcat SRR31758484.fastq.gz | grep ........AGGA........ACTC........AAGG........T
@@ -96,37 +91,39 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
         // Prob of random hit: 13bp (1/4)**13 = 1.490116e-08
         // This is highly unlikely and to ensure we do not miss reads, we need to do some fuzzy searching. Already scanning for AGGA...ACTC would be sufficient (p=1.5-e5; 0.15 such matches in 10kb)
 
-        
         // Scan for the position of barcode
         let scan_bc = b"\0\0\0\0AGGAACTCAAGG"; //4x u32
         let scan_bc_u64 = copy_u8_to_u64(scan_bc);
-        let bc_len = 8+4+8+4+8+4+8+1;
+        let bc_len = 8 + 4 + 8 + 4 + 8 + 4 + 8 + 1;
 
         //info!("scanning a long read");
 
         //Scanning too far can be costly, so limit search to a sensible range
         let r1_possible_bc = &r1_seq[0..300.min(r1_seq.len())];
-        'linker_scan: for (curpos,inp) in r1_possible_bc.windows(bc_len).enumerate() { 
-
-            let ad1 = &inp[(0+8 )..(4+8 )];
-            let ad2 = &inp[(0+20)..(4+20)];
-            let ad3 = &inp[(0+32)..(4+32)];
+        'linker_scan: for (curpos, inp) in r1_possible_bc.windows(bc_len).enumerate() {
+            let ad1 = &inp[(0 + 8)..(4 + 8)];
+            let ad2 = &inp[(0 + 20)..(4 + 20)];
+            let ad3 = &inp[(0 + 32)..(4 + 32)];
 
             let ad1 = copy_u8_to_u32(ad1) as u64;
             let ad2 = copy_u8_to_u32(ad2) as u64;
             let ad3 = copy_u8_to_u32(ad3) as u64;
 
-            let all_ad = ad1<<16 | ad2<<8 | ad3;
+            let all_ad = ad1 << 16 | ad2 << 8 | ad3;
             let adapter_score = hamming_u64(all_ad, scan_bc_u64);
 
             //Expected similarity: letters A-T are in the range dec 65 .. dec 74 ; 1000001 .. 1001010   so there are 4 bits that can change
             //Least similarity (ish): 4*3+8 = 20. Highest: 32
             if adapter_score >= 29 {
-
                 //Detect barcode at this position
                 let total_distance_cutoff = 4;
                 let part_distance_cutoff = 1;
-                let (bc, bc_score) = self.barcode.detect_barcode(inp, true, total_distance_cutoff, part_distance_cutoff);
+                let (bc, bc_score) = self.barcode.detect_barcode(
+                    inp,
+                    true,
+                    total_distance_cutoff,
+                    part_distance_cutoff,
+                );
 
                 //info!("Possible longread barcode at position {}", curpos);
 
@@ -143,14 +140,14 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                     }
 
                     //Stop if there is no insert left
-                    let seq_from = r1_seq.len().min(curpos+bc_len);
-                    let seq_to = r1_seq.len()-end_trim;
+                    let seq_from = r1_seq.len().min(curpos + bc_len);
+                    let seq_to = r1_seq.len() - end_trim;
                     if seq_to < seq_from {
                         break 'linker_scan;
                     }
 
                     return (
-                        bc, 
+                        bc,
                         ReadPair {
                             r1: &r1_seq[seq_from..seq_to],
                             r2: &r2_seq,
@@ -158,16 +155,13 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                             q2: &r2_qual,
                             umi: &[],
                         },
-                    )
-
-                } else if adapter_score==32 {
+                    );
+                } else if adapter_score == 32 {
                     //If we found a perfect linker hit then we are done, even if the barcode was bad. Otherwise we should continue scanning
                     break 'linker_scan;
                 }
-
             }
         }
-
 
         //TODO discard if not enough of read left
         return (
@@ -178,9 +172,8 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
                 q1: &r1_qual,
                 q2: &r2_qual,
                 umi: &[],
-            }, 
-        )
-        
+            },
+        );
     }
 
     fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
@@ -203,9 +196,7 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
         );
         return result;
     }
-
 }
-
 
 /// Copy a list of u8 into a u32 (almost a transmute).
 /// This function is as fast as if the size was explicitly given; size is likely added on top during inlining
@@ -216,8 +207,6 @@ fn copy_u8_to_u32(out: &[u8]) -> u32 {
     let toret = u32::from_ne_bytes(arr);
     toret
 }
-
-
 
 /// Copy a list of u8 into a u64 (almost a transmute).
 /// This function is as fast as if the size was explicitly given; size is likely added on top during inlining

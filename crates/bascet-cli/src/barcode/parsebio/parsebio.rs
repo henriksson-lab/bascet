@@ -17,7 +17,6 @@ pub struct ParseBioChemistry3 {
     subchemistry: String,
 }
 impl Chemistry for ParseBioChemistry3 {
-
     /*
     ///////////////////////////////
     /// Prepare a chemistry by e.g. fine-tuning parameters or binding barcode position
@@ -128,7 +127,6 @@ impl Chemistry for ParseBioChemistry3 {
         Ok(())
     }
      */
-    
 
     fn prepare_using_rp_vecs<C: bascet_core::Composite>(
         &mut self,
@@ -156,7 +154,9 @@ impl Chemistry for ParseBioChemistry3 {
         //map_round_bcs.retain(|k,_v| k=="WT v2");
 
         if self.subchemistry == "" {
-            panic!("Subchemistry detection is disabled for now. specify manually. it is too dangerous to rely on automatic detection currently");
+            panic!(
+                "Subchemistry detection is disabled for now. specify manually. it is too dangerous to rely on automatic detection currently"
+            );
         }
 
         self.barcode = if self.subchemistry != "" {
@@ -234,7 +234,6 @@ impl Chemistry for ParseBioChemistry3 {
         Ok(())
     }
 
-
     fn detect_barcode_and_trim<'a>(
         &mut self,
         r1_seq: &'a [u8],
@@ -265,14 +264,13 @@ impl Chemistry for ParseBioChemistry3 {
             let umi_from = self.barcode.umi_from;
             let umi_to = self.barcode.umi_to;
 
-
             //PolyT trimming of R2, as it starts from TTTTT. Remove until first non-T base
             let first_non_t = r2_seq.iter().position(|&i| i != b'T');
             let r2_from = if let Some(pos) = first_non_t {
                 pos
             } else {
                 r2_seq.len()
-            }; 
+            };
             let r2_to = r2_seq.len();
 
             (

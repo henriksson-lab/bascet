@@ -2,7 +2,7 @@ use std::io::Write;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{BBGZTrailer};
+use crate::BBGZTrailer;
 
 // NOTE this is very much an incomplete and unsound implementation of the _general_ gzip protocol
 //      and the bgzf protocol. However, we right now generate this data as the sole source

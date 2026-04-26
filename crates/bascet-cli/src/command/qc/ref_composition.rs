@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
 use clap::Args;
 use clio::{InputPath, OutputPath};
-use rust_htslib::bam::{Read, Reader};
 use rust_htslib::bam::record::Record as BamRecord;
+use rust_htslib::bam::{Read, Reader};
 use tracing::{info, warn};
 
 use bascet_derive::Budget;
@@ -26,11 +29,7 @@ pub struct QcRefCompositionCMD {
     )]
     pub paths_in: Vec<InputPath>,
 
-    #[arg(
-        short = 'o',
-        long = "out",
-        help = "Output file path"
-    )]
+    #[arg(short = 'o', long = "out", help = "Output file path")]
     pub path_out: OutputPath,
 
     #[arg(
@@ -98,7 +97,10 @@ impl QcRefCompositionCMD {
 
         budget.log();
 
-        info!(input_files = self.paths_in.len(), "Starting ref-composition");
+        info!(
+            input_files = self.paths_in.len(),
+            "Starting ref-composition"
+        );
 
         ////////////////////////////////////////////////////////////////////
         // Create thread for writing output
@@ -107,7 +109,9 @@ impl QcRefCompositionCMD {
 
         let thread_writer = budget.spawn::<TWrite, _, _>(0, move || {
             let mut bufwriter = BufWriter::new(output_file);
-            bufwriter.write_all(b"id\treference\tcountof_reads\n").unwrap();
+            bufwriter
+                .write_all(b"id\treference\tcountof_reads\n")
+                .unwrap();
 
             while let Ok(row) = write_rx.recv() {
                 for (ref_name, count) in &row.entries {
@@ -144,7 +148,9 @@ impl QcRefCompositionCMD {
             vec_worker_handles.push(budget.spawn::<TWork, _, _>(thread_idx, move || {
                 while let Ok(path) = thread_file_rx.recv() {
                     info!(path = ?path, "Processing BAM");
-                    if let Err(e) = process_file(&path, &thread_write_tx, &thread_countof_cells_processed) {
+                    if let Err(e) =
+                        process_file(&path, &thread_write_tx, &thread_countof_cells_processed)
+                    {
                         warn!(path = ?path, error = %e, "Failed to process BAM");
                     }
                 }

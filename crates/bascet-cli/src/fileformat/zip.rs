@@ -1,6 +1,4 @@
 use anyhow::bail;
-use tracing::debug;
-use tracing::info;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufRead;
@@ -8,6 +6,8 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::debug;
+use tracing::info;
 use zip::read::ZipArchive;
 
 use crate::fileformat::ReadPair;
@@ -19,10 +19,9 @@ use super::shard::CellID;
 use super::shard::ShardFileExtractor;
 use super::shard::ShardRandomFileExtractor;
 
-
-/// 
+///
 /// Factory of ZIP-readers, as shards
-/// 
+///
 #[derive(Debug, Clone)]
 pub struct ZipBascetShardReaderFactory {}
 impl ZipBascetShardReaderFactory {
@@ -46,9 +45,9 @@ pub struct ZipBascetShardReader {
     list_cells: Vec<CellID>,
 }
 impl ZipBascetShardReader {
-    /// 
+    ///
     /// Constructor of ZIP-file readers
-    /// 
+    ///
     pub fn new(fname: &PathBuf) -> anyhow::Result<ZipBascetShardReader> {
         //FIXME: file paths are not expanded and symlinks not resolved.
         let file = File::open(fname)
@@ -85,7 +84,7 @@ impl ZipBascetShardReader {
         Ok(ZipBascetShardReader {
             files_for_cell: files_for_cell,
             zip_shard: zip_shard,
-            current_cell_index: 0,//"".to_string(),
+            current_cell_index: 0, //"".to_string(),
             list_cells: list_cells,
         })
     }
@@ -108,7 +107,7 @@ impl ShardFileExtractor for ZipBascetShardReader {
     fn get_files_for_cell(&mut self) -> anyhow::Result<Vec<String>> {
         let current_cell = self.list_cells.get(self.current_cell_index);
         if let Some(current_cell) = current_cell {
-            let flist=self.files_for_cell.get(current_cell).unwrap();
+            let flist = self.files_for_cell.get(current_cell).unwrap();
             anyhow::Ok(flist.clone())
         } else {
             bail!("Cell # {} not in bascet", &self.current_cell_index)
@@ -116,7 +115,10 @@ impl ShardFileExtractor for ZipBascetShardReader {
     }
 
     fn extract_as(&mut self, file_name: &String, path_outfile: &PathBuf) -> anyhow::Result<()> {
-        let cell_id = self.list_cells.get(self.current_cell_index).expect("Current cell outside range"); 
+        let cell_id = self
+            .list_cells
+            .get(self.current_cell_index)
+            .expect("Current cell outside range");
         let zip_fname = format!("{cell_id}/{file_name}");
         let mut entry = self
             .zip_shard
@@ -146,8 +148,11 @@ impl ShardFileExtractor for ZipBascetShardReader {
         fail_if_missing: bool,
         out_directory: &PathBuf,
     ) -> anyhow::Result<bool> {
-        let cell_id = self.list_cells.get(self.current_cell_index).expect("Current cell outside range"); 
-//        let cell_id = &self.current_cell;
+        let cell_id = self
+            .list_cells
+            .get(self.current_cell_index)
+            .expect("Current cell outside range");
+        //        let cell_id = &self.current_cell;
 
         let list_files_for_cell = self
             .files_for_cell
@@ -200,22 +205,18 @@ impl ShardFileExtractor for ZipBascetShardReader {
     }
 }
 impl ShardRandomFileExtractor for ZipBascetShardReader {
-    /// 
+    ///
     /// Set current cell to work with
-    /// 
+    ///
     fn set_current_cell(&mut self, cell_id: &CellID) {
         let ind = self.list_cells.iter().position(|n| n == cell_id);
         if let Some(ind) = ind {
-            self.current_cell_index=ind;
+            self.current_cell_index = ind;
         } else {
-            panic!("No such cellID: {}",cell_id);
+            panic!("No such cellID: {}", cell_id);
         }
     }
 }
-
-
-
-
 
 #[derive(Debug, Clone)]
 pub struct ZipStreamingReadPairReaderFactory {}
@@ -231,16 +232,10 @@ impl ConstructFromPath<ZipBascetShardReader> for ZipStreamingReadPairReaderFacto
     }
 }
 
-
-
-
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
-
 impl StreamingReadPairReader for ZipBascetShardReader {
-
     fn get_reads_for_next_cell(&mut self) -> anyhow::Result<Option<ListReadWithBarcode>> {
-
         let cell_id = self.list_cells.get(self.current_cell_index);
         if let Some(cell_id) = cell_id {
             //Ensure we move to the next cell for the next call
@@ -252,33 +247,40 @@ impl StreamingReadPairReader for ZipBascetShardReader {
             let zip_fname_r2 = format!("{cell_id}/r2.fa");
             if let Some(dat) = parse_fasta_to_strings(&mut self.zip_shard, &zip_fname_contigs) {
                 // A single contigs.fa; empty R2
-                let list_rp:Vec<ReadPair> = dat.iter().map(|r| {
-                    let qs = make_good_q_for_seq(r.as_bytes());
-                    ReadPair {
-                        r1: r.clone().into_bytes(),
-                        r2: Vec::new(),
-                        q1: qs,
-                        q2: Vec::new(),
-                        umi: Vec::new(),
-                    }                    
-                }).collect();
+                let list_rp: Vec<ReadPair> = dat
+                    .iter()
+                    .map(|r| {
+                        let qs = make_good_q_for_seq(r.as_bytes());
+                        ReadPair {
+                            r1: r.clone().into_bytes(),
+                            r2: Vec::new(),
+                            q1: qs,
+                            q2: Vec::new(),
+                            umi: Vec::new(),
+                        }
+                    })
+                    .collect();
                 let list_rp = Arc::new(list_rp);
                 anyhow::Ok(Some(Arc::new((cell_id.clone(), list_rp))))
-            } else if let Some(dat_r1) = parse_fasta_to_strings(&mut self.zip_shard, &zip_fname_r1) {
+            } else if let Some(dat_r1) = parse_fasta_to_strings(&mut self.zip_shard, &zip_fname_r1)
+            {
                 // R1 and R2 expected
-                let dat_r2 = parse_fasta_to_strings(&mut self.zip_shard, &zip_fname_r2).expect("Found r1.fa, but not r2.fa");
+                let dat_r2 = parse_fasta_to_strings(&mut self.zip_shard, &zip_fname_r2)
+                    .expect("Found r1.fa, but not r2.fa");
                 let twodat = dat_r1.iter().zip(dat_r2.iter());
-                let list_rp:Vec<ReadPair> = twodat.map(|(r1,r2)| {
-                    let q1 = make_good_q_for_seq(r1.as_bytes());
-                    let q2 = make_good_q_for_seq(r2.as_bytes());
-                    ReadPair {
-                        r1: r1.clone().into_bytes(),
-                        r2: r2.clone().into_bytes(),
-                        q1: q1,
-                        q2: q2,
-                        umi: Vec::new(),
-                    }                    
-                }).collect();                
+                let list_rp: Vec<ReadPair> = twodat
+                    .map(|(r1, r2)| {
+                        let q1 = make_good_q_for_seq(r1.as_bytes());
+                        let q2 = make_good_q_for_seq(r2.as_bytes());
+                        ReadPair {
+                            r1: r1.clone().into_bytes(),
+                            r2: r2.clone().into_bytes(),
+                            q1: q1,
+                            q2: q2,
+                            umi: Vec::new(),
+                        }
+                    })
+                    .collect();
                 let list_rp = Arc::new(list_rp);
                 anyhow::Ok(Some(Arc::new((cell_id.clone(), list_rp))))
             } else {
@@ -289,39 +291,33 @@ impl StreamingReadPairReader for ZipBascetShardReader {
             anyhow::Ok(None)
         }
     }
-
 }
 
-
-fn make_good_q_for_seq(
-    r:&[u8],
-) -> Vec<u8> {
-    let mut qs=Vec::new();
+fn make_good_q_for_seq(r: &[u8]) -> Vec<u8> {
+    let mut qs = Vec::new();
     for _i in 0..r.len() {
         qs.push(b'F');
     }
     qs
 }
 
-
 ///
 /// Attempt to parse a FASTA to list of strings (one per record)
-/// 
+///
 fn parse_fasta_to_strings(
-    zip_shard: &mut ZipArchive<BufReader<File>>, 
-    zip_fname: &String
+    zip_shard: &mut ZipArchive<BufReader<File>>,
+    zip_fname: &String,
 ) -> Option<Vec<String>> {
-    let mut entry = zip_shard
-        .by_name(&zip_fname);
+    let mut entry = zip_shard.by_name(&zip_fname);
     if let Ok(entry) = &mut entry {
         let bufreader_found = BufReader::new(entry);
         let mut list_read = Vec::new();
         let mut lines = bufreader_found.lines();
 
         while let Some(v1) = lines.next() {
-            let v1=v1.unwrap();
-            let v2=lines.next().expect("No sequence line").unwrap();
-            let v2=v2.trim();
+            let v1 = v1.unwrap();
+            let v2 = lines.next().expect("No sequence line").unwrap();
+            let v2 = v2.trim();
             if !v1.starts_with(">") {
                 panic!("Expected >; is this FASTA content?")
             }
@@ -334,14 +330,13 @@ fn parse_fasta_to_strings(
     }
 }
 
-
 /*
 ///
 /// Return a list of (sequence,qscore)
 /// Not used yet
-/// 
+///
 fn parse_fastq_to_strings(
-    zip_shard: &mut ZipArchive<BufReader<File>>, 
+    zip_shard: &mut ZipArchive<BufReader<File>>,
     zip_fname: &String
 ) -> Option<Vec<(String, String)>> {
     let mut entry = zip_shard

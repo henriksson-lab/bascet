@@ -1,5 +1,4 @@
 use crossbeam::channel::{Receiver, RecvError, Sender, TryRecvError};
-use tracing::warn;
 use std::{
     cell::UnsafeCell,
     collections::VecDeque,
@@ -9,6 +8,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+use tracing::warn;
 
 use crate::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 
@@ -19,7 +19,9 @@ pub fn ordered_dense<T, const N: usize>() -> (OrderedDenseSender<T, N>, OrderedD
     let fastpath = Arc::new(OrderedDenseFastpathInner {
         base: AtomicUsize::new(0),
         is_init: (0..N).map(|_| AtomicBool::new(false)).collect(),
-        ordered: (0..N).map(|_| UnsafeCell::new(MaybeUninit::uninit())).collect(),
+        ordered: (0..N)
+            .map(|_| UnsafeCell::new(MaybeUninit::uninit()))
+            .collect(),
     });
     let slowpath = OrderedDenseSlowpathInner {
         base: 0,

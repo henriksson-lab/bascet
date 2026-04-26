@@ -1,19 +1,17 @@
-use bgzip::{write::BGZFMultiThreadWriter, BGZFError, Compression};
+use bgzip::{BGZFError, Compression, write::BGZFMultiThreadWriter};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::fileformat::ReadPairWriter;
-use crate::{
-    fileformat::{
-        shard::{CellID, ReadPair},
-        CellUMI,
-    },
+use crate::fileformat::{
+    CellUMI,
+    shard::{CellID, ReadPair},
 };
 
 use super::{
-    bam, detect_fileformat::get_fq_filename_r2_from_r1, ConstructFromPath, StreamingReadPairReader,
+    ConstructFromPath, StreamingReadPairReader, bam, detect_fileformat::get_fq_filename_r2_from_r1,
 };
 
 use seq_io::fastq::Reader as FastqReader;
@@ -259,9 +257,6 @@ impl ConstructFromPath<PairedFastqStreamingReadPairReader>
         PairedFastqStreamingReadPairReader::new(fname)
     }
 }
-
-
-
 
 /// Open a FASTQ file
 pub fn open_fastq(file_handle: &PathBuf) -> anyhow::Result<FastqReader<Box<dyn std::io::Read>>> {

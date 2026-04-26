@@ -1,25 +1,22 @@
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 
 use tracing::debug;
 
 use crate::kmer::minhash::MinHash;
 use crate::mapcell::CompressionMode;
-use crate::mapcell::MissingFileMode;
 use crate::mapcell::MapCellFunction;
+use crate::mapcell::MissingFileMode;
 
 #[derive(Clone, Debug)]
-pub struct MapCellMinHashFQ {
-}
+pub struct MapCellMinHashFQ {}
 impl MapCellFunction for MapCellMinHashFQ {
-
     fn invoke(
         &self,
         input_dir: &PathBuf,
         output_dir: &PathBuf,
-        _num_threads: usize
+        _num_threads: usize,
     ) -> anyhow::Result<(bool, String)> {
-
         //Define files
         let input_file_r1 = input_dir.join("r1.fq");
         let input_file_r2 = input_dir.join("r2.fq");
@@ -39,14 +36,11 @@ impl MapCellFunction for MapCellMinHashFQ {
             input_file_r2,
             kmer_size,
             num_min_hash,
-            max_reads
-        ).expect("Could not get minhash");
+            max_reads,
+        )
+        .expect("Could not get minhash");
 
-        MinHash::store_minhash_seq(
-            kmer_size,
-            &mut min_hash,
-            &output_file
-        );
+        MinHash::store_minhash_seq(kmer_size, &mut min_hash, &output_file);
 
         Ok((true, String::from("")))
     }

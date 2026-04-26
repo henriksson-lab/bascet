@@ -7,15 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
-use bascet_io::{
-    BBGZWriteBlock, Compression,
-};
+use bascet_io::{BBGZWriteBlock, Compression};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use clap::{Args, Subcommand};
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{Receiver, RecvTimeoutError};
-use itertools::{izip};
+use itertools::izip;
 
 use bascet_core::attr::{meta::*, quality::*, sequence::*};
 use bascet_core::*;
@@ -32,7 +30,7 @@ use crate::barcode::atrandi_wgs_barcode_longread::DebarcodeAtrandiWGSChemistryLo
 use crate::barcode::{Chemistry, ParseBioChemistry3, TenxRNAChemistry};
 use crate::command::shardify::ShardifyCMD;
 use crate::{bbgz_compression_parser, bounded_parser};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 #[derive(Args)]
 pub struct GetRawCMD {
@@ -225,9 +223,7 @@ pub enum GetRawChemistryCMD {
         subchemistry: String,
     },
     /// 10x chemistry, uses combinatorial 16bp barcodes for debarcoding.
-    Tenx {
-        
-    }
+    Tenx {},
 }
 
 #[derive(Clone)]
@@ -313,7 +309,9 @@ impl GetRawCMD {
         {
             let n_hist = self.paths_hist.as_ref().unwrap().len();
             let n_out = self.paths_out.len();
-            error!("Number of histogram paths ({n_hist}) does not match number of output paths ({n_out})");
+            error!(
+                "Number of histogram paths ({n_hist}) does not match number of output paths ({n_out})"
+            );
             panic!("Histogram paths count mismatch");
         }
 
@@ -341,10 +339,8 @@ impl GetRawCMD {
                 .to_path_buf()
         };
 
-
         //Only perform debarcoding if skipping is disabled
         if vec_input_debarcode_merge.is_empty() {
-
             //Provide further settings to the chosen chemistry
             let mut chemistry = match &self.chemistry {
                 GetRawChemistryCMD::AtrandiWGS { .. } => {
@@ -356,20 +352,20 @@ impl GetRawCMD {
                 GetRawChemistryCMD::ParseBio { subchemistry, .. } => {
                     GetRawChemistry::ParseBio(ParseBioChemistry3::new(&subchemistry))
                 }
-                GetRawChemistryCMD::Tenx { .. } => {
-                    GetRawChemistry::Tenx(TenxRNAChemistry::new())
-                }
+                GetRawChemistryCMD::Tenx { .. } => GetRawChemistry::Tenx(TenxRNAChemistry::new()),
             };
-            
+
             //Check if we have single-end or paired-end data
             let paths_r1 = self.paths_r1.clone();
             let paths_r2 = self.paths_r2.clone();
             if paths_r1.is_empty() {
-                error!("No valid input files found. All input files failed to open or do not exist.");
+                error!(
+                    "No valid input files found. All input files failed to open or do not exist."
+                );
                 panic!("No valid input files found");
             }
 
-            let ((r1_rx, r2_rx), (r1_handle, r2_handle)) = if paths_r2.len()==0 {
+            let ((r1_rx, r2_rx), (r1_handle, r2_handle)) = if paths_r2.len() == 0 {
                 //No R2 files given ==> this must be single-end input
 
                 //////////// For the given chemistry, check the read content (single-end version)
@@ -387,7 +383,6 @@ impl GetRawCMD {
 
                 //////////// Prepare readers to process the full file (single-end version)
                 spawn_single_readers(paths_r1, &budget, self.sizeof_stream_arena)
-
             } else {
                 //Both R1 and R2 ==> this must be paired-end input
                 if paths_r1.len() != paths_r2.len() {
@@ -408,7 +403,6 @@ impl GetRawCMD {
                 //////////// Prepare readers to process the full file (paired-end version)
                 spawn_paired_readers(vec_input, &budget, self.sizeof_stream_arena)
             };
-
 
             let (rp_rx, rt_handle) = spawn_debarcode_router(r1_rx, r2_rx, &budget);
             let (db_rx, db_handles, chemistry) = spawn_debarcode_workers(rp_rx, chemistry, &budget);
@@ -484,24 +478,22 @@ impl GetRawCMD {
             &budget,
             &path_temp_dir,
             &timestamp_temp_files,
-            &vec_input_debarcode_merge
+            &vec_input_debarcode_merge,
         )?;
 
         Ok(())
     }
 }
 
-
-
-/// 
+///
 /// Given R1 and R2 input paths, spawn readers
-/// 
+///
 fn do_merging(
-    s: &GetRawCMD, 
-    budget: &GetrawBudget, 
+    s: &GetRawCMD,
+    budget: &GetrawBudget,
     path_temp_dir: &PathBuf,
     timestamp_temp_files: &String,
-    vec_input_debarcode_merge: &Vec<InputPath>
+    vec_input_debarcode_merge: &Vec<InputPath>,
 ) -> anyhow::Result<()> {
     let countof_merge_streams = (*budget.threads::<Total>()).get() as usize;
     let vec_input_debarcode_merge = vec_input_debarcode_merge.clone();
@@ -544,8 +536,7 @@ fn do_merging(
                 continue;
             }
 
-            let temp_fname =
-                format!("{}_{mergeround_counter}_{batch_idx}", timestamp_temp_files);
+            let temp_fname = format!("{}_{mergeround_counter}_{batch_idx}", timestamp_temp_files);
             let temp_pathbuf = path_temp_dir.join(temp_fname).with_extension("tirp.bbgz");
 
             let temp_output_path = match OutputPath::try_from(&temp_pathbuf) {
@@ -619,10 +610,8 @@ fn do_merging(
             let hist_path = if let Some(ref hist_paths) = s.paths_hist {
                 hist_paths[i].clone()
             } else {
-                match OutputPath::try_from(&format!(
-                    "{}.hist",
-                    output_path.path().path().display()
-                )) {
+                match OutputPath::try_from(&format!("{}.hist", output_path.path().path().display()))
+                {
                     Ok(path) => path,
                     Err(e) => panic!("{e}, {:?}.hist", output_path.path().path().display()),
                 }
@@ -631,8 +620,7 @@ fn do_merging(
         })
         .collect();
 
-    let hist_handles =
-        spawn_histogram_workers(output_hist_pairs, &budget, s.sizeof_stream_arena);
+    let hist_handles = spawn_histogram_workers(output_hist_pairs, &budget, s.sizeof_stream_arena);
 
     for (i, handle) in hist_handles.into_iter().enumerate() {
         handle
@@ -642,15 +630,11 @@ fn do_merging(
     debug!("All histogram worker threads finished");
 
     Ok(())
-
 }
 
-
-
-
-/// 
+///
 /// Given R1 and R2 input paths, spawn paired readers
-/// 
+///
 fn spawn_paired_readers(
     vec_input: Vec<(InputPath, InputPath)>,
     budget: &GetrawBudget,
@@ -727,13 +711,11 @@ fn spawn_paired_readers(
     return ((r1_rx, r2_rx), (handle_r1, handle_r2));
 }
 
-
-
-/// 
+///
 /// Given R1 input path, spawn single-end readers
-/// 
+///
 /// TODO is this a good way?
-/// 
+///
 fn spawn_single_readers(
     vec_input: Vec<InputPath>,
     budget: &GetrawBudget,
@@ -775,26 +757,20 @@ fn spawn_single_readers(
             while let Ok(Some(record)) = q1.next() {
                 let _ = r1_tx.send(record);
                 let dummy_record_r2 = bascet_io::parse::fastq::Record::empty();
-                let _ = r2_tx.send(dummy_record_r2); 
+                let _ = r2_tx.send(dummy_record_r2);
             }
             debug!("R1 finished reading");
         }
     });
 
-    let handle_r2 = budget.spawn::<TRead, _, _>(0, move || {
-    });
+    let handle_r2 = budget.spawn::<TRead, _, _>(0, move || {});
 
     return ((r1_rx, r2_rx), (handle_r1, handle_r2));
 }
 
-
-
-
-
-
 ///
 /// Route inputs from two readers into a stream of paired end
-/// 
+///
 fn spawn_debarcode_router(
     r1_rx: Receiver<fastq::Record>,
     r2_rx: Receiver<fastq::Record>,
@@ -830,18 +806,15 @@ fn spawn_debarcode_router(
     return (rp_rx, rt_handle);
 }
 
-
-
-/// 
+///
 /// Sample a couple of reads for the purpose of analyzing the content
-/// 
+///
 fn sample_reads(
-    input_path: &InputPath, 
-    s: &GetRawCMD, 
-    budget: &GetrawBudget, 
-    readname: &str
+    input_path: &InputPath,
+    s: &GetRawCMD,
+    budget: &GetrawBudget,
+    readname: &str,
 ) -> Vec<fastq::OwnedRecord> {
-
     // NOTE fine to use all threads briefly. Nothing else does work yet.
     let countof_threads_total = (*budget.threads::<Total>()).get();
     // prepare chemistry using r2
@@ -875,15 +848,12 @@ fn sample_reads(
     unsafe {
         streamer.shutdown();
     }
-    list_reads    
+    list_reads
 }
-
-
-
 
 ///
 /// Spawn workers, receiving readpairs and debarcoding/trimming them all
-/// 
+///
 fn spawn_debarcode_workers(
     rp_rx: Receiver<(fastq::Record, fastq::Record)>,
     chemistry: GetRawChemistry,
@@ -970,11 +940,9 @@ fn spawn_debarcode_workers(
     return (ct_rx, thread_handles, chemistry);
 }
 
-
-
 ///
 /// Spawn collector, taking debarcoded/trimmed readers and collecting them for the next step
-/// 
+///
 fn spawn_collector(
     db_rx: Receiver<(u32, DebarcodedRecord)>,
     budget: &GetrawBudget,
@@ -1049,7 +1017,7 @@ fn spawn_collector(
 
 ///
 /// Spawn sorters. By sorting chunks of reads while they are already in memory, the first major sort pass will already be done in the first write to disk
-/// 
+///
 fn spawn_sort_workers(
     ct_rx: Receiver<Vec<(u32, DebarcodedRecord)>>,
     chemistry: GetRawChemistry,
@@ -1097,8 +1065,6 @@ fn spawn_sort_workers(
     drop(st_tx);
     return (st_rx, thread_handles);
 }
-
-
 
 fn spawn_chunk_writers(
     st_rx: Receiver<Vec<(Vec<u8>, DebarcodedRecord)>>,
@@ -1295,8 +1261,8 @@ fn spawn_mergesort_workers(
 }
 
 ///
-/// Spawn workers that generate histograms of cellid vs 
-/// 
+/// Spawn workers that generate histograms of cellid vs
+///
 fn spawn_histogram_workers(
     output_hist_pairs: Vec<(OutputPath, OutputPath)>,
     budget: &GetrawBudget,
@@ -1318,8 +1284,13 @@ fn spawn_histogram_workers(
 
     for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {
         let thread_shared_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
-        let extra = if (thread_idx as u64) < countof_threads_remainder { 1 } else { 0 };
-        let thread_countof_threads = BoundedU64::new_saturating(countof_threads_per_worker_base + extra);
+        let extra = if (thread_idx as u64) < countof_threads_remainder {
+            1
+        } else {
+            0
+        };
+        let thread_countof_threads =
+            BoundedU64::new_saturating(countof_threads_per_worker_base + extra);
 
         let worker_handle = budget.spawn::<Total, _, _>(thread_idx as u64, move || {
             let thread = std::thread::current();

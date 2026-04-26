@@ -1,8 +1,6 @@
 // HTSlib version - does not work with our version of TIRP so taken out of the pipeline for now
 
-
 use anyhow::bail;
-use tracing::{debug, info};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufRead;
@@ -12,6 +10,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use tracing::{debug, info};
 
 use bgzip::{Compression, write::BGZFMultiThreadWriter};
 
@@ -112,9 +111,9 @@ impl ShardCellDictionary for TirpBascetShardReader {
     }
 }
 impl ShardRandomFileExtractor for TirpBascetShardReader {
-    /// 
+    ///
     /// Set cell to work with
-    /// 
+    ///
     fn set_current_cell(&mut self, cell_id: &CellID) {
         self.current_cell = cell_id.clone();
     }
@@ -208,9 +207,9 @@ impl ShardFileExtractor for TirpBascetShardReader {
     }
 }
 
-/// 
+///
 /// Write a pair of reads to TIRP file
-/// 
+///
 pub fn write_records_pair_to_tirp(writer: &mut impl Write, cell_id: &CellID, read: &ReadPair) {
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi

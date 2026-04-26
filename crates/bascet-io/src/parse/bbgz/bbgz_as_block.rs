@@ -4,7 +4,7 @@ use smallvec::{SmallVec, smallvec};
 use crate::{
     BBGZExtra, BBGZHeaderBase, BBGZTrailer,
     codec::bbgz::{MARKER_EOF, MAX_SIZEOF_BLOCKusize, MIN_SIZEOF_HEADERusize},
-    parse::{BBGZParser, BBGZBlock}
+    parse::{BBGZBlock, BBGZParser},
 };
 
 impl Parse<ArenaSlice<u8>> for BBGZParser {
@@ -38,7 +38,8 @@ impl Parse<ArenaSlice<u8>> for BBGZParser {
             return ParseResult::Error(anyhow::anyhow!(
                 "magic bytes not found at cursor {}: got ({:#04x}, {:#04x})",
                 self.inner_cursor,
-                found.0, found.1
+                found.0,
+                found.1
             ));
         }
 

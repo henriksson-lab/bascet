@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use tracing::info;
 use super::KMER2bit;
+use tracing::info;
 
 pub struct OneUMI {
     umi: u32,

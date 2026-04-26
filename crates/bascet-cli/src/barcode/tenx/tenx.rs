@@ -21,7 +21,6 @@ static TENX_NAMES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 static TENX_IDS_TO_NAMES: OnceLock<HashMap<String, u32>> = OnceLock::new();
 
 fn to_compact(barcode: &[u8]) -> u32 {
-
     const ASCII_A: u8 = 'A' as u8;
     const ASCII_C: u8 = 'C' as u8;
     const ASCII_G: u8 = 'G' as u8;
@@ -33,7 +32,6 @@ fn to_compact(barcode: &[u8]) -> u32 {
     const COMPACT_BASE_G: u8 = 0b10;
     const COMPACT_BASE_T: u8 = 0b11;
 
-    
     const fn ascii_to_compact(a: u8) -> u8 {
         match a {
             ASCII_A => COMPACT_BASE_A,
@@ -43,7 +41,6 @@ fn to_compact(barcode: &[u8]) -> u32 {
             _ => panic!("Not possible"),
         }
     }
-
 
     assert!(barcode.len() >= 16);
 
@@ -56,7 +53,6 @@ fn to_compact(barcode: &[u8]) -> u32 {
     }
 
     bits
-    
 }
 
 fn from_compact(bc: u32) -> Vec<u8> {
@@ -75,7 +71,7 @@ fn from_compact(bc: u32) -> Vec<u8> {
     }
 
     let mut out = Vec::with_capacity(16);
-    
+
     for i in 0..16 {
         let low = bc >> (i * 2);
         let c = compact_to_char(low as u8);
@@ -89,12 +85,15 @@ fn from_compact(bc: u32) -> Vec<u8> {
 pub struct TenxRNAChemistry {
     barcode: CombinatorialBarcode,
     name_to_index_map: HashMap<String, u32>,
-    name_table: Vec<Vec<u8>>
+    name_table: Vec<Vec<u8>>,
 }
 
 impl Chemistry for TenxRNAChemistry {
-
-    fn prepare_using_rp_files(&mut self,_fastq_file_r1: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,_fastq_file_r2: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,) -> anyhow::Result<()> {
+    fn prepare_using_rp_files(
+        &mut self,
+        _fastq_file_r1: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,
+        _fastq_file_r2: &mut seq_io::fastq::Reader<Box<dyn std::io::Read>>,
+    ) -> anyhow::Result<()> {
         unimplemented!()
     }
 
@@ -107,7 +106,6 @@ impl Chemistry for TenxRNAChemistry {
         C: bascet_core::Get<bascet_core::attr::sequence::R0>,
         <C as bascet_core::Get<bascet_core::attr::sequence::R0>>::Value: AsRef<[u8]>,
     {
-
         info!("Loading 10x barcodes");
 
         //Load the possible barcode systems. Possible to multithread
@@ -120,17 +118,22 @@ impl Chemistry for TenxRNAChemistry {
 
         info!("Searching for best barcode match");
 
-
         //For each barcode system, try to match it to reads. then decide which barcode system to use.
         //This code is a bit complicated because we wish to compare the same reads for all chemistry options
         let mut map_chem_match_cnt = HashMap::new();
         let n_reads = 100;
-        
-        // 10x barcodes are in r1. 
-        for seq in vec_r1.iter().take(n_reads).map(|record| record.as_bytes::<R0>()) {
 
+        // 10x barcodes are in r1.
+        for seq in vec_r1
+            .iter()
+            .take(n_reads)
+            .map(|record| record.as_bytes::<R0>())
+        {
             for (chem_name, bcs) in &map_round_bcs {
-                let DetectedBarcode {within_threshold: isok, ..} = bcs.detect_barcode(seq, true, 4, 1);
+                let DetectedBarcode {
+                    within_threshold: isok,
+                    ..
+                } = bcs.detect_barcode(seq, true, 4, 1);
 
                 //Count reads. Ensure entry for this chemistry is created
                 let e = map_chem_match_cnt.entry(chem_name.clone()).or_insert(0);
@@ -171,30 +174,36 @@ impl Chemistry for TenxRNAChemistry {
         Ok(())
     }
 
-    fn detect_barcode_and_trim<'a>(&mut self, r1_seq: &'a[u8], r1_qual: &'a[u8], r2_seq: &'a[u8], r2_qual: &'a[u8])
-        -> (u32, crate::common::ReadPair<'a>)
-    {
+    fn detect_barcode_and_trim<'a>(
+        &mut self,
+        r1_seq: &'a [u8],
+        r1_qual: &'a [u8],
+        r2_seq: &'a [u8],
+        r2_qual: &'a [u8],
+    ) -> (u32, crate::common::ReadPair<'a>) {
         let total_cutoff = 4;
         let part_cutoff = 1;
 
-        let detected = self.barcode.detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
+        let detected = self
+            .barcode
+            .detect_barcode(r1_seq, true, total_cutoff, part_cutoff);
 
-        (detected.barcode, ReadPair {
-            r1: r1_seq,
-            r2: r2_seq,
-            q1: r1_qual,
-            q2: r2_qual,
-            umi: &[]
-        })
-        
+        (
+            detected.barcode,
+            ReadPair {
+                r1: r1_seq,
+                r2: r2_seq,
+                q1: r1_qual,
+                q2: r2_qual,
+                umi: &[],
+            },
+        )
     }
 
     fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
         from_compact(*index32)
     }
-   
 }
-
 
 impl TenxRNAChemistry {
     ///////////////////////////////
@@ -203,7 +212,7 @@ impl TenxRNAChemistry {
         TenxRNAChemistry {
             barcode: CombinatorialBarcode::new(),
             name_table: Vec::new(),
-            name_to_index_map: HashMap::new()
+            name_to_index_map: HashMap::new(),
         }
     }
 
@@ -283,7 +292,7 @@ impl TenxRNAChemistry {
         for result in reader.deserialize() {
             let record: ChemistryDefCsvFileRow = result.unwrap();
 
-            let chemname = record.kit; 
+            let chemname = record.kit;
 
             let mut bc_setup = CombinatorialBarcode::new();
 
@@ -322,4 +331,3 @@ struct ChemistryDefCsvFileRow {
     trim1: u64,
     notes: String,
 }
-

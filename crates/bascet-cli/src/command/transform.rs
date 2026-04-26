@@ -13,10 +13,9 @@ use std::sync::Arc;
 use tracing::info;
 
 use bascet_core::{
-    attr::{meta::*, sequence::*, quality::*},
+    attr::{meta::*, quality::*, sequence::*},
     *,
 };
-
 
 use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
 use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
@@ -80,12 +79,9 @@ impl TransformCMD {
     }
 }
 
-
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////// Previous algorithm. Unable to read the recent TIRP format due to bug in htslib ///////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 /// Algorithm:
 /// Convert from [X] -> [Y], with selection of cells. this enables splitting, merging and subsetting in one command.
@@ -120,7 +116,9 @@ impl TransformFile {
 
             match crate::fileformat::detect_shard_format(&p) {
                 DetectedFileformat::ZIP => {
-                    panic!("Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option")
+                    panic!(
+                        "Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option"
+                    )
                 }
                 DetectedFileformat::TIRP => create_writer_thread(
                     &p,
@@ -235,10 +233,9 @@ pub fn create_random_readers(
     Ok(())
 }
 
-
-/// 
+///
 /// Reader from any format
-/// 
+///
 pub fn create_stream_readers(
     path_in: &Vec<std::path::PathBuf>,
     tx_data: &Sender<Option<ListReadWithBarcode>>,
@@ -264,8 +261,8 @@ pub fn create_stream_readers(
                 &Arc::new(TirpStreamingReadPairReaderFactory::new()),
             ),
             */
-            
-            DetectedFileformat::TIRP => create_stream_reader_thread_newtirp( ////////////////////////////////////////////////////////// Not working with new TIRP files. but we can make a special reader!
+            DetectedFileformat::TIRP => create_stream_reader_thread_newtirp(
+                ////////////////////////////////////////////////////////// Not working with new TIRP files. but we can make a special reader!
                 &p,
                 &thread_pool_read,
                 &tx_data,
@@ -299,12 +296,9 @@ pub fn create_stream_readers(
     Ok(())
 }
 
-
-
-
-/// 
+///
 /// Writer to any format
-/// 
+///
 fn create_writer_thread<W>(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -352,7 +346,9 @@ fn get_list_of_all_cells(params: &Arc<TransformFile>) -> Vec<CellID> {
             if let Some(cells) = try_get_cells_in_file(&p).expect("Failed to parse input file") {
                 all_cells.extend(cells);
             } else {
-                panic!("Cannot obtain list of cell names from this input file format. Try streaming the content instead");
+                panic!(
+                    "Cannot obtain list of cell names from this input file format. Try streaming the content instead"
+                );
             }
         }
         let all_cells: Vec<CellID> = all_cells.iter().cloned().collect();
@@ -405,9 +401,6 @@ where
     Ok(())
 }
 
-
-
-
 ////////////////
 /// Reader from any format that supports streaming
 pub fn create_stream_reader_thread<R>(
@@ -454,12 +447,9 @@ where
     Ok(())
 }
 
-
-
-
 ///
 /// Reader from new TIRP format. Needed because htslib does not cope with it anymore
-/// 
+///
 pub fn create_stream_reader_thread_newtirp(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -469,11 +459,10 @@ pub fn create_stream_reader_thread_newtirp(
     let tx_data = tx_data.clone();
 
     thread_pool.execute(move || {
-
         // Streamer from input TIRP
-        let num_threads=bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
-        let sizeof_stream_arena=DEFAULT_SIZEOF_ARENA;
-        let sizeof_stream_buffer:ByteSize = ByteSize::gib(4);  //////////////////////////// parameter is made up TODO
+        let num_threads = bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
+        let sizeof_stream_arena = DEFAULT_SIZEOF_ARENA;
+        let sizeof_stream_buffer: ByteSize = ByteSize::gib(4); //////////////////////////// parameter is made up TODO
         let decoder: bascet_io::BBGZDecoder = bascet_io::codec::BBGZDecoder::builder()
             .with_path(&infile)
             .countof_threads(num_threads)
@@ -488,11 +477,11 @@ pub fn create_stream_reader_thread_newtirp(
             .build();
 
         let mut query = stream.query::<bascet_io::tirp::Record>();
-        
+
         //Handle all cell requests
         let mut num_proc_cell: u64 = 0;
         let mut last_cellid = Vec::new();
-        let mut cur_rps:Vec<ReadPair> = Vec::new();
+        let mut cur_rps: Vec<ReadPair> = Vec::new();
 
         loop {
             match query.next_into::<bascet_io::tirp::Record>() {
@@ -515,9 +504,9 @@ pub fn create_stream_reader_thread_newtirp(
                     //Send records to process if we got them all
                     if record_id != last_cellid.as_slice() {
                         if cur_rps.len() > 0 {
-                            let prev_cur_rps=cur_rps;
-                            cur_rps=Vec::new();
-                            let allreads = Arc::new(prev_cur_rps);                        
+                            let prev_cur_rps = cur_rps;
+                            cur_rps = Vec::new();
+                            let allreads = Arc::new(prev_cur_rps);
                             let cellid = String::from_utf8_lossy(last_cellid.as_slice());
                             let list_reads = Arc::new((cellid.to_string(), allreads));
                             tx_data.send(Some(list_reads)).unwrap();
@@ -529,10 +518,10 @@ pub fn create_stream_reader_thread_newtirp(
                         }
                         last_cellid = record_id.to_vec();
                     }
-                    cur_rps.push(rp);                    
+                    cur_rps.push(rp);
                 }
                 Ok(None) => {
-                        break;
+                    break;
                 }
                 Err(e) => {
                     panic!("{:?}", e);
@@ -542,20 +531,15 @@ pub fn create_stream_reader_thread_newtirp(
 
         //Send final records to process
         if cur_rps.len() > 0 {
-            let allreads = Arc::new(cur_rps);                        
+            let allreads = Arc::new(cur_rps);
             let cellid = String::from_utf8_lossy(last_cellid.as_slice());
             let list_reads = Arc::new((cellid.to_string(), allreads));
             tx_data.send(Some(list_reads)).unwrap();
             num_proc_cell += 1;
-        } 
+        }
 
         info!("Processed a final of {} cells", num_proc_cell);
         info!("Shutting down streaming reader for {}", infile.display());
     });
     Ok(())
 }
-
-
-
-
-

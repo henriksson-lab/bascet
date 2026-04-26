@@ -18,18 +18,14 @@ use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::detect_shard_format;
 
-
-
 use bascet_core::{
-    attr::{meta::*, sequence::*, quality::*},
+    attr::{meta::*, quality::*, sequence::*},
     *,
 };
 
-
-
-/// 
+///
 /// General interface to all types of readers, enabling iteration over shard-type files
-/// 
+///
 pub fn iterate_shard_reader_multithreaded(
     threads_read: usize,
     path_in: &PathBuf,
@@ -60,7 +56,8 @@ pub fn iterate_shard_reader_multithreaded(
             info!("Detected input as TIRP");
             for _tidx in 0..threads_read {
                 /////////// option #2: keep list of files separately from list of readers
-                _ = create_streaming_tirp_reader( ///////////////////////////////////////////////////// Note: Use Bascet 2.x TIRP-specific streamer here
+                _ = create_streaming_tirp_reader(
+                    ///////////////////////////////////////////////////// Note: Use Bascet 2.x TIRP-specific streamer here
                     &path_in,
                     &thread_pool_readers,
                     sizeof_stream_arena,
@@ -137,17 +134,9 @@ pub fn iterate_shard_reader_multithreaded(
     }
 }
 
-
-
-
-
-
-
-
-
-/// 
+///
 /// Reader for random I/O shard files
-/// 
+///
 fn create_random_shard_reader<R>(
     path_in: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -209,11 +198,10 @@ where
     Ok(())
 }
 
-
 /*
-/// 
+///
 /// Reader for streaming I/O shard files --- not used right now but could be readded if alternatives to TIRP added
-/// 
+///
 fn create_streaming_shard_reader<R>(
     path_in: &PathBuf,
     //params_io: &Arc<MapCell>,
@@ -264,19 +252,9 @@ where
 
  */
 
-
-
-
-
-
-
-
-
-
-
-/// 
+///
 /// Reader for streaming I/O on new Bascet 2.x TIRP files
-/// 
+///
 fn create_streaming_tirp_reader(
     path_in: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
@@ -292,7 +270,6 @@ fn create_streaming_tirp_reader(
     let num_threads = bounded_integer::BoundedU64::new(num_threads as u64).unwrap();
 
     thread_pool.execute(move || {
-
         // Streamer from input TIRP
         let decoder: bascet_io::BBGZDecoder = bascet_io::codec::BBGZDecoder::builder()
             .with_path(&path_in)
@@ -308,11 +285,11 @@ fn create_streaming_tirp_reader(
             .build();
 
         let mut query = stream.query::<bascet_io::tirp::Record>();
-        
+
         //Handle all cell requests
         let mut num_proc_cell: u64 = 0;
         let mut last_cellid = Vec::new();
-        let mut cur_rps:Vec<ReadPair> = Vec::new();
+        let mut cur_rps: Vec<ReadPair> = Vec::new();
 
         loop {
             match query.next_into::<bascet_io::tirp::Record>() {
@@ -335,8 +312,8 @@ fn create_streaming_tirp_reader(
                     //Send records to process if we got them all
                     if record_id != last_cellid.as_slice() {
                         if cur_rps.len() > 0 {
-                            let prev_cur_rps=cur_rps;
-                            cur_rps=Vec::new();
+                            let prev_cur_rps = cur_rps;
+                            cur_rps = Vec::new();
                             let cellid = String::from_utf8_lossy(last_cellid.as_slice());
 
                             let mut dat = ShardFileExtractorInmem {
@@ -352,10 +329,10 @@ fn create_streaming_tirp_reader(
                         }
                         last_cellid = record_id.to_vec();
                     }
-                    cur_rps.push(rp);                    
+                    cur_rps.push(rp);
                 }
                 Ok(None) => {
-                        break;
+                    break;
                 }
                 Err(e) => {
                     panic!("{:?}", e);
@@ -373,7 +350,7 @@ fn create_streaming_tirp_reader(
             run_func((cellid.to_string(), &mut Box::new(&mut dat)));
 
             num_proc_cell += 1;
-        } 
+        }
 
         info!("Processed a final of {} cells", num_proc_cell);
         info!("Shutting down streaming reader for {}", path_in.display());

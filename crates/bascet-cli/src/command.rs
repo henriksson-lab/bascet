@@ -21,11 +21,12 @@ pub mod detect_kmer_fq;
 pub mod detect_kmer_kmc;
 pub mod sam_add_barcode_tag_cmd;
 pub mod shardify;
+#[cfg(feature = "skesa")]
+pub mod skesa;
 pub mod snpcall;
 pub mod threadcount;
 pub mod transform;
 pub mod tofq;
-
 
 // BAM/SAM operations
 pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
@@ -52,6 +53,8 @@ pub use kraken::KrakenCMD;
 
 // Thread management
 pub use shardify::ShardifyCMD;
+#[cfg(feature = "skesa")]
+pub use skesa::SkesaCMD;
 pub use threadcount::{
     determine_thread_counts_1, determine_thread_counts_2, determine_thread_counts_3,
 };
@@ -81,6 +84,8 @@ pub enum Commands {
     MinhashHist(MinhashHistCMD),
     PipeSamAddTags(PipeSamAddTagsCMD), //Not needed for bascet anymore, but useful if anyone needs to use a non-standard aligner
     Shardify(ShardifyCMD),
+    #[cfg(feature = "skesa")]
+    Skesa(SkesaCMD),
     Sysinfo(SysinfoCMD),
     ToFastq(ToFastqCMD),
     Transform(TransformCMD),

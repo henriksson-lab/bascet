@@ -1,27 +1,25 @@
-use std::{fs::File, io::{BufWriter, Write}, path::PathBuf};
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+};
 
 use crate::fileformat::{ReadPair, ShardFileExtractor};
 
-
 ///
 /// Extractor for readpairs already kept in memory. Nonideal in terms of streaming but simple drop-in solution
-/// 
+///
 pub struct ShardFileExtractorInmem {
     pub cellid: String,
     pub rp: Vec<ReadPair>,
 }
 impl ShardFileExtractor for ShardFileExtractorInmem {
-
-
-
     fn extract_as(&mut self, file_name: &String, path_outfile: &PathBuf) -> anyhow::Result<()> {
-
-
         if file_name == "r1.fq" {
             let f = File::create(path_outfile).expect("Could not open r1.fq file for writing");
             let mut writer = BufWriter::new(f);
 
-            for one_read in self.rp.iter() {          
+            for one_read in self.rp.iter() {
                 writer.write_all(b"@x")?;
                 //writer.write_all(head.as_slice())?;  //no name of read needed
                 writer.write_all(b"\n")?;
@@ -35,7 +33,7 @@ impl ShardFileExtractor for ShardFileExtractorInmem {
             let f = File::create(path_outfile).expect("Could not open r2.fq file for writing");
             let mut writer = BufWriter::new(f);
 
-            for one_read in self.rp.iter() {                
+            for one_read in self.rp.iter() {
                 writer.write_all(b"@x")?;
                 //writer.write_all(head.as_slice())?;  //no name of read needed
                 writer.write_all(b"\n")?;
@@ -48,11 +46,7 @@ impl ShardFileExtractor for ShardFileExtractorInmem {
         } else {
             anyhow::bail!("File not present")
         }
-
     }
-
-
-
 
     fn extract_to_outdir(
         &mut self,
@@ -78,4 +72,3 @@ impl ShardFileExtractor for ShardFileExtractorInmem {
         Ok(list_files)
     }
 }
-

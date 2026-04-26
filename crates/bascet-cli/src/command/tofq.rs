@@ -1,10 +1,6 @@
-use crate::{
-    bounded_parser
-};
+use crate::bounded_parser;
 
-use bascet_core::{
-    *,
-};
+use bascet_core::*;
 use bascet_derive::Budget;
 
 use anyhow::Result;
@@ -12,14 +8,10 @@ use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
-use std::{
-    io::BufWriter, path::PathBuf
-};
+use std::{io::BufWriter, path::PathBuf};
 use tracing::{info, warn};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
-
-
 
 #[derive(Args)]
 pub struct ToFastqCMD {
@@ -30,24 +22,13 @@ pub struct ToFastqCMD {
     )]
     pub path_in: InputPath,
 
-    #[arg(
-        long = "out-r1",
-        help = "FASTQ output file R1"
-    )]
+    #[arg(long = "out-r1", help = "FASTQ output file R1")]
     pub path_r1: PathBuf,
 
-
-    #[arg(
-        long = "out-r2",
-        help = "FASTQ output file R2"
-    )]
+    #[arg(long = "out-r2", help = "FASTQ output file R2")]
     pub path_r2: PathBuf,
-        
 
-    #[arg(
-        long = "temp",
-        help = "Temp directory; must exist already"
-    )]
+    #[arg(long = "temp", help = "Temp directory; must exist already")]
     pub path_temp: PathBuf,
 
     #[arg(
@@ -100,7 +81,6 @@ pub struct ToFastqCMD {
         value_parser = clap::value_parser!(ByteSize),
     )]
     sizeof_stream_arena: ByteSize,
-
 }
 
 #[derive(Budget, Debug)]
@@ -116,15 +96,13 @@ struct ToFastqBudget {
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 ) as u64).unwrap())]
     numof_threads_write: BoundedU64<1, { u64::MAX }>,
-    
+
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
 }
 
 impl ToFastqCMD {
     pub fn try_execute(&mut self) -> Result<()> {
-
-
         let budget = ToFastqBudget::builder()
             .threads(self.total_threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -155,7 +133,6 @@ impl ToFastqCMD {
             "Converting to fastq"
         );
 
-
         /////////////////////////////////////////////////////////////////////////////////////
         // Set up writers
         let tpool = rust_htslib::tpool::ThreadPool::new(budget.numof_threads_write.get() as u32)?;
@@ -165,11 +142,10 @@ impl ToFastqCMD {
         writer_r1.set_thread_pool(&tpool)?;
         writer_r2.set_thread_pool(&tpool)?;
 
-        let mut writer_r1 = BufWriter::new(writer_r1);  
+        let mut writer_r1 = BufWriter::new(writer_r1);
         let mut writer_r2 = BufWriter::new(writer_r2);
 
-
-        ///////////////////////////////////////////////////////////////////////////////////// 
+        /////////////////////////////////////////////////////////////////////////////////////
         // All threads are now set up. Send all readpairs to writers.
         // This function blocks until reading is done
         super::AlignCMD::write_tirp_to_2fq(
@@ -181,14 +157,10 @@ impl ToFastqCMD {
             budget.sizeof_stream_buffer,
         )?;
 
-        info!(
-            "Conversion complete"
-        );
+        info!("Conversion complete");
 
         //Move temp files to their right positions TODO
-
 
         Ok(())
     }
 }
-

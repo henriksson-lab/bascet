@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::Args;
-use tracing::{info, debug};
 use std::fs::File;
 use std::{
     io::{BufReader, BufWriter},
     path::PathBuf,
 };
+use tracing::{debug, info};
 use zip::ZipArchive;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";

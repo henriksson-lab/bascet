@@ -94,7 +94,6 @@ echo "USE_THREADS  = ${USE_THREADS}"
 gecco run -j ${USE_THREADS} \
     --genome ${INPUT_DIR}/contigs.fa \
     -o ./gecco_out \
-    -j 1 \
     --merge-gbk --mask
 
 ### The last line must be "MAPCELL-OK".

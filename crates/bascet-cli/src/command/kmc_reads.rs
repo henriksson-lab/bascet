@@ -1,10 +1,6 @@
-use crate::{
-    bounded_parser
-};
+use crate::bounded_parser;
 
-use bascet_core::{
-    *,
-};
+use bascet_core::*;
 use bascet_derive::Budget;
 
 use anyhow::Result;
@@ -13,12 +9,12 @@ use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    io::{BufRead, BufReader}, path::{Path, PathBuf}
+    io::{BufRead, BufReader},
+    path::{Path, PathBuf},
 };
 use tracing::{info, warn};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
-
 
 ////////////// this module does not work. kmc cannot read from pipes...
 
@@ -31,23 +27,13 @@ pub struct KmcReadsCMD {
     )]
     pub path_in: InputPath,
 
-    #[arg(
-        short = 'o',
-        long = "out",
-        help = "Output file without suffix"
-    )]
+    #[arg(short = 'o', long = "out", help = "Output file without suffix")]
     pub path_out: PathBuf,
-    
-    #[arg(
-        long = "ci",
-        help = "KMC -ci"
-    )]
+
+    #[arg(long = "ci", help = "KMC -ci")]
     pub kmc_ci: Option<u64>,
-    
-    #[arg(
-        long = "temp",
-        help = "Temp directory; must exist already"
-    )]
+
+    #[arg(long = "temp", help = "Temp directory; must exist already")]
     pub path_temp: PathBuf,
 
     #[arg(
@@ -109,7 +95,6 @@ pub struct KmcReadsCMD {
         value_parser = clap::value_parser!(ByteSize),
     )]
     sizeof_kmc_mem: Option<ByteSize>,
-
 }
 
 #[derive(Budget, Debug)]
@@ -123,10 +108,11 @@ struct KmcBudget {
     #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 * 0.2) as u64).unwrap())]
     numof_threads_read: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TKmc, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 * 0.8) as u64).unwrap())] 
+    #[threads(TKmc, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 * 0.8) as u64).unwrap())]
     numof_threads_kmc: BoundedU64<1, { u64::MAX }>,
-    
-    #[mem(MBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))] /// TODO some minimum size. need 1gb at least
+
+    #[mem(MBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.1) as u64))]
+    /// TODO some minimum size. need 1gb at least
     sizeof_stream_buffer: ByteSize,
 
     #[mem(MKmc, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.9) as u64))]
@@ -135,7 +121,6 @@ struct KmcBudget {
 
 impl KmcReadsCMD {
     pub fn try_execute(&mut self) -> Result<()> {
-
         let budget = KmcBudget::builder()
             .threads(self.total_threads.unwrap_or_else(|| {
                 std::thread::available_parallelism()
@@ -166,31 +151,27 @@ impl KmcReadsCMD {
             "Starting kmer counter"
         );
 
-
-
-
-
-
-
         info!("wtf2????");
 
-        /////////////////////////////////////////////////////////////////////////////////////   
+        /////////////////////////////////////////////////////////////////////////////////////
         // Set up named pipes
         let path_pipe_r12 = self.path_temp.join("fifo_r12.fq");
-        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU).expect("Failed to create pipe"); /////////////////////// TODO put all of this + cleanup in a class
+        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU)
+            .expect("Failed to create pipe"); /////////////////////// TODO put all of this + cleanup in a class
 
-        ///////////////////////////////////////////////////////////////////////////////////// 
+        /////////////////////////////////////////////////////////////////////////////////////
         // Start KMC
         let proc_aligner = create_kmc_process(
-                &path_pipe_r12,
-                &self.path_out,
-                &self.path_temp,
-                &budget,
-                &self
-        ).expect("Failed to start kmer counter");        
+            &path_pipe_r12,
+            &self.path_out,
+            &self.path_temp,
+            &budget,
+            &self,
+        )
+        .expect("Failed to start kmer counter");
         info!("wtf3????");
 
-        ///////////////////////////////////////////////////////////////////////////////////// 
+        /////////////////////////////////////////////////////////////////////////////////////
         // All threads are now set up. Send all readpairs to KRAKEN2.
         // Note that KRAKEN2 requires interleaved reads as paired-end mode reads one file at a file, blocking the pipe!
         super::KrakenCMD::write_tirp_to_interleaved_fq(
@@ -213,15 +194,12 @@ impl KmcReadsCMD {
             }
         }
 
-
-//        proc_aligner.wait().unwrap(); ////////////////////////// TODO: should watch this process for abnormal exit, possibly panic. need to do in parallel to write_tirp_to_fq
+        //        proc_aligner.wait().unwrap(); ////////////////////////// TODO: should watch this process for abnormal exit, possibly panic. need to do in parallel to write_tirp_to_fq
 
         //Clean up: remove pipes
         std::fs::remove_file(path_pipe_r12)?;
 
-        info!(
-            "All steps complete"
-        );
+        info!("All steps complete");
 
         //Move temp files to their right positions
 
@@ -229,39 +207,46 @@ impl KmcReadsCMD {
     }
 }
 
-
-
 ///
 /// Generate KMC3 command
-/// 
+///
 /// Impossible! kmc cannot handle named pipes
-/// 
-fn create_kmc_process<P> (
+///
+fn create_kmc_process<P>(
     path_in: &P,
     path_out: &P,
     path_temp: &P,
     budget: &KmcBudget,
-    cmd: &KmcReadsCMD
-) -> Result<std::process::Child> where P: AsRef<Path> {
+    cmd: &KmcReadsCMD,
+) -> Result<std::process::Child>
+where
+    P: AsRef<Path>,
+{
     info!("wtf????!!");
-    let path_in = format!("{}",path_in.as_ref().as_os_str().to_str().expect("os str"));
-    let path_out = format!("{}",path_out.as_ref().as_os_str().to_str().expect("os str"));
-    let path_temp = format!("{}",path_temp.as_ref().as_os_str().to_str().expect("os str"));
+    let path_in = format!("{}", path_in.as_ref().as_os_str().to_str().expect("os str"));
+    let path_out = format!(
+        "{}",
+        path_out.as_ref().as_os_str().to_str().expect("os str")
+    );
+    let path_temp = format!(
+        "{}",
+        path_temp.as_ref().as_os_str().to_str().expect("os str")
+    );
 
     info!("wtf????");
 
     let mem_gb = budget.sizeof_kmc_mem.as_gb().round() as u64;
-    if mem_gb==0 {
+    if mem_gb == 0 {
         panic!("Need at least 1gb mem for KMC")
     }
 
     let mut args = vec![
-        format!("-k{}",31),  ///////////////// make this a param
-        format!("-m{}",mem_gb),
-        format!("-t{}",budget.numof_threads_kmc.get()),
+        format!("-k{}", 31), ///////////////// make this a param
+        format!("-m{}", mem_gb),
+        format!("-t{}", budget.numof_threads_kmc.get()),
     ];
     if let Some(val) = cmd.kmc_ci {
-        args.push(format!("-ci{}",val));
+        args.push(format!("-ci{}", val));
     }
 
     args.push(path_in);
@@ -270,28 +255,24 @@ fn create_kmc_process<P> (
 
     info!("Starting KMC {:?}", args);
 
-    let proc_cmd = std::process::Command::new("kmc")  // /data/henlab/software/bin/kmc
+    let proc_cmd = std::process::Command::new("kmc") // /data/henlab/software/bin/kmc
         .args(args)
-//        .stderr(Stdio::piped())
-//        .stdout(Stdio::piped())
+        //        .stderr(Stdio::piped())
+        //        .stdout(Stdio::piped())
         .spawn()?;
 
     Ok(proc_cmd)
 }
 
-
 /*
- * 
+ *
  * New strat: run KMC3 for each cell
- * 
+ *
  * OR: metagraph for each cell, output contigs, concatenate all contigs into one file.
  * this appears to be safer as KMC is pretty unstable
- * 
- * 
- * 
+ *
+ *
+ *
  * this does not work. kmc is not compatible with pipes
- * 
+ *
  */
-
-
-

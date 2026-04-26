@@ -3,7 +3,6 @@ use super::CombinatorialBarcode;
 use seq_io::fastq::Reader as FastqReader;
 use std::io::Cursor;
 
-
 /*
 https://tavazoielab.c2b2.columbia.edu/PETRI-seq/
 
@@ -39,7 +38,7 @@ impl Chemistry for PetriseqChemistry {
             .expect("Failed to detect barcode setup from reads");
         Ok(())
     }
-/*
+    /*
 
     ////////////////
     ///  Detect barcode, and trim if ok
@@ -102,7 +101,6 @@ impl Chemistry for PetriseqChemistry {
         }
     }
     */
-
 }
 
 impl PetriseqChemistry {

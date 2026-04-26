@@ -44,7 +44,7 @@ impl OwnedRecord {
             id: vec![],
             r0: vec![],
             q0: vec![],
-            owned_backing: ()
+            owned_backing: (),
         }
     }
 }
@@ -62,10 +62,9 @@ impl Into<OwnedRecord> for Record {
 }
 
 impl Record {
-
     ///
-    /// Generate a record from a raw 
-    /// 
+    /// Generate a record from a raw
+    ///
     pub unsafe fn from_raw(
         buf_record: &[u8],
         pos_newline: [usize; 4],
@@ -90,9 +89,11 @@ impl Record {
                 Context (512 bytes around, {}..{}): {:?}\n\
                 Full record: {:?}",
                 hdr.get(0).map(|&b| b as char),
-                hdr_start, hdr_end,
+                hdr_start,
+                hdr_end,
                 String::from_utf8_lossy(hdr),
-                context_start, context_end,
+                context_start,
+                context_end,
                 String::from_utf8_lossy(&buf_record[context_start..context_end]),
                 String::from_utf8_lossy(buf_record),
             );
@@ -110,9 +111,11 @@ impl Record {
                 Context (512 bytes around, {}..{}): {:?}\n\
                 Full record: {:?}",
                 sep.get(0).map(|&b| b as char),
-                sep_start, sep_end,
+                sep_start,
+                sep_end,
                 String::from_utf8_lossy(sep),
-                context_start, context_end,
+                context_start,
+                context_end,
                 String::from_utf8_lossy(&buf_record[context_start..context_end]),
                 String::from_utf8_lossy(buf_record),
             );
@@ -136,14 +139,19 @@ impl Record {
                 Quality content: {:?}\n\
                 Sequence context (512 bytes around, {}..{}): {:?}\n\
                 Quality context (512 bytes around, {}..{}): {:?}",
-                seq.len(), qal.len(),
-                seq_start, seq_end,
-                qal_start, qal_end,
+                seq.len(),
+                qal.len(),
+                seq_start,
+                seq_end,
+                qal_start,
+                qal_end,
                 String::from_utf8_lossy(seq),
                 String::from_utf8_lossy(qal),
-                seq_context_start, seq_context_end,
+                seq_context_start,
+                seq_context_end,
                 String::from_utf8_lossy(&buf_record[seq_context_start..seq_context_end]),
-                qal_context_start, qal_context_end,
+                qal_context_start,
+                qal_context_end,
                 String::from_utf8_lossy(&buf_record[qal_context_start..qal_context_end])
             );
         }
@@ -161,21 +169,16 @@ impl Record {
         }
     }
 
-
-
     ///
-    /// Generate a record from a raw 
-    /// 
-    pub fn empty (
-    ) -> Self {
+    /// Generate a record from a raw
+    ///
+    pub fn empty() -> Self {
         const DUMMY_EMPTY_VEC: &[u8] = &[];
         Self {
             id: &DUMMY_EMPTY_VEC,
             r0: &DUMMY_EMPTY_VEC,
             q0: &DUMMY_EMPTY_VEC,
-            arena_backing: smallvec::SmallVec::new()
+            arena_backing: smallvec::SmallVec::new(),
         }
     }
-
 }
-

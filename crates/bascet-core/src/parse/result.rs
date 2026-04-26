@@ -1,4 +1,3 @@
-
 pub enum ParseResult<T> {
     Full(T),
     Partial,

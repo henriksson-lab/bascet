@@ -17,6 +17,10 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+default = ["skesa"]
+skesa = ["dep:skesa-rs"]
+
 [dependencies]
 anyhow.workspace = true
 bascet-core.workspace = true
@@ -37,6 +41,7 @@ delegate.workspace = true
 enum_dispatch.workspace = true
 flate2.workspace = true
 fraction.workspace = true
+gecco.workspace = true
 glidesort.workspace = true
 gxhash.workspace = true
 hdf5.workspace = true
@@ -57,6 +62,7 @@ semver.workspace = true
 seq_io.workspace = true
 serde.workspace = true
 shellexpand.workspace = true
+skesa-rs = { path = "/home/mahogny/github/claude/skesa-rs", default-features = false, optional = true }
 smallvec.workspace = true
 sprs.workspace = true
 strum.workspace = true

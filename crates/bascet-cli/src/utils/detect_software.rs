@@ -1,9 +1,9 @@
 use anyhow::bail;
-use tracing::{info, debug};
 use semver::{Version, VersionReq};
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
+use tracing::{debug, info};
 
 ///////////////////////////////
 /// Get directory where all Bascet data files are stored. These are kept separate

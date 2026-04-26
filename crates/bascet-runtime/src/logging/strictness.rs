@@ -50,7 +50,7 @@ impl<S: Subscriber> Layer<S> for LogStrictnessLayer {
 
             if count >= limit {
                 Self::is_poisoned().store(true, Ordering::Release);
-                
+
                 error!(
                     "Warning limit exceeded ({}/{}): {} in {}",
                     count + 1,

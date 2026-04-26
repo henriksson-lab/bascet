@@ -38,7 +38,8 @@ podman_upload: #docker
 	cp docker_image/bascet.tar.gz  docker_image/bascet.tar.gz.md5	/corgi/public_http/public/bascet/
 
 	#make singularity image. Careful! this command takes from eithe docker or podman, whichever is running. stick to one!
-	singularity pull --force singularity/bascet.sif  docker-daemon:henriksson-lab/bascet:latest
+	#singularity pull --force singularity/bascet.sif  docker-daemon:henriksson-lab/bascet:latest
+	podman save henriksson-lab/bascet:latest | singularity pull --force singularity/bascet.sif docker-archive:/dev/stdin
 	md5sum singularity/bascet.sif > singularity/bascet.sif.md5
 
 	cp singularity/bascet.sif  singularity/bascet.sif.md5		/corgi/public_http/public/bascet/

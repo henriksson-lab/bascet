@@ -13,10 +13,7 @@ pub struct BascetError {
 #[bon::bon]
 impl BascetError {
     #[builder]
-    pub fn new(
-        with_error: impl Into<anyhow::Error>,
-        with_span: tracing::Span
-    ) -> Self {
+    pub fn new(with_error: impl Into<anyhow::Error>, with_span: tracing::Span) -> Self {
         BascetError {
             inner: with_error.into(),
             span: with_span,
