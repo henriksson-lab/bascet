@@ -6,9 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use bio::bio_types::strand::ReqStrand;
-use rust_htslib::bam::record::Record as BamRecord;
-use rust_htslib::bam::Read;
+use noodles::core::{Position, Region};
+use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
 use noodles::gff::feature::record::Strand;
@@ -243,7 +242,10 @@ impl CountFeature {
 
             thread_pool_work.execute(move || {
                 //Open file for reading in this thread. This can fail if file is not there; or index not present. ideally check earlier!
-                let mut bam = rust_htslib::bam::IndexedReader::from_path(path_in).unwrap();
+                let mut bam = noodles::bam::io::indexed_reader::Builder::default()
+                    .build_from_path(path_in)
+                    .unwrap();
+                let header = bam.read_header().unwrap();
 
                 while let Ok(Some(meta)) = rx.recv() {
                     //Get a suitable counter
@@ -254,8 +256,9 @@ impl CountFeature {
                     let mut cell_counter = CountPerCell::new(current_cellintmapping);
 
                     //Read BAM file and deduplicate
-                    let cnt = Self::process_bam_one_feature(&mut bam, &meta, &mut cell_counter)
-                        .expect("Failed to count featuee in BAM");
+                    let cnt =
+                        Self::process_bam_one_feature(&mut bam, &header, &meta, &mut cell_counter)
+                            .expect("Failed to count featuee in BAM");
 
                     //Put count data into matrix. To do this, we need access to the common state
                     //of the process. The operations below should thus be as fast as possible
@@ -322,48 +325,38 @@ impl CountFeature {
     /// Extract counts for one single feature
     ///
     fn process_bam_one_feature(
-        bam: &mut rust_htslib::bam::IndexedReader,
+        bam: &mut noodles::bam::io::IndexedReader<noodles::bgzf::io::Reader<std::fs::File>>,
+        header: &noodles::sam::Header,
         meta: &GeneMeta,
         map_cell_count: &mut CountPerCell,
     ) -> anyhow::Result<CounterResult> {
         let mut counters: HashMap<Cellid, CellCounter> = HashMap::new();
 
-        let bam_feature = rust_htslib::bam::FetchDefinition::RegionString(
-            meta.gene_chr.as_slice(),
-            meta.gene_start as i64,
-            meta.gene_end as i64,
-        );
-        bam.fetch(bam_feature).expect(
-            format!(
-                "Could not find feature {:?} {} {}",
-                meta.gene_chr, meta.gene_start as i64, meta.gene_end as i64
-            )
-            .as_str(),
-        );
+        let start = Position::try_from(meta.gene_start as usize + 1)?;
+        let end = Position::try_from(meta.gene_end as usize)?;
+        let region = Region::new(meta.gene_chr.clone(), start..=end);
 
         let mut num_reads: u64 = 0;
 
         //Transfer all records
-        let mut record = BamRecord::new();
-        while let Some(_r) = bam.read(&mut record) {
-            //let record = record.expect("Failed to parse record");
-            // https://samtools.github.io/hts-specs/SAMv1.pdf
+        for result in bam.query(header, &region)? {
+            let record = BamRecord::try_from_alignment_record(header, &result?)?;
 
             //Only keep mapping reads
             let flags = record.flags();
-            if flags & 0x4 == 0 {
+            if !flags.is_unmapped() {
                 //Figure out the cell barcode. In one format, this is before the first :
                 //TODO support read name as a TAG
-                let read_name = record.qname();
+                let read_name: &[u8] = record.name().expect("missing read name").as_ref();
                 let mut splitter = read_name.split(|b| *b == b':');
                 let cell_id = splitter
                     .next()
                     .expect("Could not parse cellID from read name");
                 let umi = splitter.next().expect("Could not parse UMI from read name");
 
-                let _strand = match record.strand() {
-                    ReqStrand::Forward => Strand::Forward,
-                    ReqStrand::Reverse => Strand::Reverse,
+                let _strand = match flags.is_reverse_complemented() {
+                    false => Strand::Forward,
+                    true => Strand::Reverse,
                 };
 
                 //This gene overlaps, so add to its read count

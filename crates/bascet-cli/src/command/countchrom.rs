@@ -7,7 +7,6 @@ use clap::Args;
 use rust_htslib::bam::record::Cigar;
 use rust_htslib::bam::record::Record as BamRecord;
 use rust_htslib::bam::Read;
-use rust_htslib::htslib::uint;
 use tracing::info;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
@@ -96,8 +95,8 @@ impl CountChrom {
         let mut last_chr: Vec<u8> = Vec::new();
 
         //Map cellid -> count. Note that we do not have a list of cellid's at start; we need to harmonize this later
-        let mut map_cell_count: BTreeMap<Cellid, uint> = BTreeMap::new();
-        let mut map_cell_unclassified_count: BTreeMap<u32, uint> = BTreeMap::new();
+        let mut map_cell_count: BTreeMap<Cellid, u32> = BTreeMap::new();
+        let mut map_cell_unclassified_count: BTreeMap<u32, u32> = BTreeMap::new();
 
         //To remove doublets, keep track of last position
         let mut map_cell_lastread: HashMap<Cellid, i64> = HashMap::new();

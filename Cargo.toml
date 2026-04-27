@@ -53,7 +53,7 @@ fraction = "0.15.3"
 gecco = { version = "0.4", default-features = false }
 glidesort = "0.1.2"
 gxhash = "3.5.0"
-hdf5 = { package = "hdf5-metno", version = "0.12.3" }
+hdf5 = { package = "hdf5-pure-rust", version = "0.3.0" }
 itertools = "0.13.0"
 lazy_static = "1.5.0"
 likely_stable = "0.1.3"
@@ -66,16 +66,20 @@ nix = { version = "0.31.1", features = ["fs"] }
 noodles = { version = "0.97.0", features = [
   "bam",
   "cram",
+  "core",
   "fastq",
   "sam",
+  "csi",
   "gff",
   "gtf",
   "bgzf",
+  "tabix",
 ] }
 nthash-rs = "0.1.3"
 paste = "1.0.15"
 path-clean = "1.0.1"
 rand = { version = "0.8.5", features = ["small_rng"] }
+rayon = "1.10"
 rust-htslib = "1.0.0"
 semver = "1.0.23"
 seq_io = "0.3.1"

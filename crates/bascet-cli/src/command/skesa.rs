@@ -18,7 +18,6 @@ use zip::ZipWriter;
 use crate::fileformat::ReadPair;
 
 const DEFAULT_SIZEOF_STREAM_BUFFER: ByteSize = ByteSize::gib(4);
-const BENCHMARK_CELL_LIMIT: u64 = 10;
 
 #[derive(Args)]
 pub struct SkesaCMD {
@@ -42,9 +41,14 @@ pub struct SkesaCMD {
     #[arg(long = "num-threads-read", default_value_t = 1)]
     pub num_threads_read: usize,
 
-    /// Memory available to each skesa assembly, in GB.
-    #[arg(long = "memory", default_value_t = 32)]
-    pub memory_gb: usize,
+    /// Total memory budget.
+    #[arg(
+        short = 'm',
+        long = "memory",
+        default_value_t = ByteSize::gib(32),
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    pub total_memory: ByteSize,
 
     /// Minimal k-mer length for assembly.
     #[arg(long = "kmer", default_value_t = 21)]
@@ -121,8 +125,9 @@ impl SkesaCMD {
         self.validate()?;
         skesa_rs::sorted_counter::set_single_pass_counter(self.single_pass_counter);
 
+        let memory_gb_per_worker = self.memory_gb_per_worker();
         let params = SkesaParams {
-            memory_gb: self.memory_gb,
+            memory_gb: memory_gb_per_worker,
             kmer: self.kmer,
             max_kmer: self.max_kmer,
             steps: self.steps,
@@ -160,8 +165,8 @@ impl SkesaCMD {
         if self.num_threads_read == 0 {
             bail!("--num-threads-read must be > 0");
         }
-        if self.memory_gb <= 2 {
-            bail!("--memory must be > 2");
+        if self.memory_gb_per_worker() < 4 {
+            bail!("--memory must provide at least 4 GiB per skesa worker");
         }
         if self.kmer < 21 || self.kmer % 2 == 0 {
             bail!("--kmer must be an odd number >= 21");
@@ -188,6 +193,10 @@ impl SkesaCMD {
             bail!("--min-contig must be > 0");
         }
         Ok(())
+    }
+
+    fn memory_gb_per_worker(&self) -> usize {
+        (self.total_memory.0 / self.skesa_workers as u64 / ByteSize::gib(1).0) as usize
     }
 }
 
@@ -218,6 +227,7 @@ struct CellReads {
 struct CellAssembly {
     cell_id: String,
     contigs: Vec<u8>,
+    log: Vec<u8>,
 }
 
 fn run_skesa_cells(
@@ -322,15 +332,6 @@ fn stream_tirp_cells(
         if record_id != current_cell_id.as_slice() {
             if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_reads)? {
                 num_cells_queued += 1;
-                if num_cells_queued >= BENCHMARK_CELL_LIMIT {
-                    info!(
-                        "stopping after benchmark limit of {} cells",
-                        BENCHMARK_CELL_LIMIT
-                    );
-                    std::mem::forget(query);
-                    std::mem::forget(stream);
-                    return Ok(());
-                }
             }
             current_cell_id = record_id.to_vec();
             if num_cells_queued > 0 && num_cells_queued % 1000 == 0 {
@@ -380,8 +381,14 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
     }
     let mut reads = read_set.into_pairs();
 
+    let output = skesa_rs::output::SharedWriterOutput::with_stream_labels(Vec::new());
     if params.vector_percent < 1.0 {
-        skesa_rs::reads_getter::clip_adapters(&mut reads, params.vector_percent, 100);
+        skesa_rs::reads_getter::clip_adapters_with_output(
+            &mut reads,
+            params.vector_percent,
+            100,
+            &output,
+        );
     }
 
     let raw_kmer_num: usize = reads
@@ -410,9 +417,18 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
         allow_snps: params.allow_snps,
         ncores: params.skesa_cores,
         memory_gb: params.memory_gb,
+        retain_all_graphs: false,
+        retain_all_iterations: false,
     };
 
-    let result = skesa_rs::assembler::run_assembly(&reads, &assembler_params, &[]);
+    let result =
+        skesa_rs::assembler::run_assembly_with_output(&reads, &assembler_params, &[], &output);
+    let log = output.into_inner().map_err(|_| {
+        anyhow::anyhow!(
+            "skesa output log writer lock poisoned for cell {}",
+            cell.cell_id
+        )
+    })?;
     let mut contigs = Vec::new();
     if let Some((kmer_len, kmers)) = result.graphs.first() {
         skesa_rs::contig_output::write_contigs_with_abundance(
@@ -429,6 +445,7 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
     Ok(CellAssembly {
         cell_id: cell.cell_id,
         contigs,
+        log,
     })
 }
 
@@ -447,6 +464,12 @@ fn write_zip(path_out: PathBuf, rx_assemblies: Receiver<Result<CellAssembly>>) -
         zip_writer.start_file(entry_name, options)?;
         let mut contigs = assembly.contigs.as_slice();
         std::io::copy(&mut contigs, &mut zip_writer)?;
+
+        let entry_name = format!("{}/skesa.log", assembly.cell_id);
+        zip_writer.start_file(entry_name, options)?;
+        let mut log = assembly.log.as_slice();
+        std::io::copy(&mut log, &mut zip_writer)?;
+
         num_cells += 1;
         if num_cells % 100 == 0 {
             info!("wrote skesa output for {} cells", num_cells);

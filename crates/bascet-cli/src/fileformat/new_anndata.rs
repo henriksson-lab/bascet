@@ -3,11 +3,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use rust_htslib::htslib::uint;
 use tracing::info;
 
-use hdf5::File as H5File;
-use hdf5::types::VarLenUnicode;
+use hdf5::WritableFile as H5File;
 
 type Cellid = Vec<u8>;
 type Featureid = Vec<u8>;
@@ -34,11 +32,11 @@ use sprs::{CsMat, TriMat};
 pub struct SparseMatrixAnnDataBuilder {
     entries: Vec<(u32, u32, u32)>, //feature, cell, count
 
-    cell_to_index: BTreeMap<Cellid, uint>,
+    cell_to_index: BTreeMap<Cellid, u32>,
     /// this could easily be a hashset instead TODO
-    feature_to_index: BTreeMap<Featureid, uint>,
+    feature_to_index: BTreeMap<Featureid, u32>,
     /// this could easily be a hashset instead TODO
-    map_cell_unclassified_count: BTreeMap<u32, uint>,
+    map_cell_unclassified_count: BTreeMap<u32, u32>,
     /// this could easily be a hashset instead TODO
     cur_num_cell: u32,
     cur_num_feature: u32,
@@ -246,24 +244,22 @@ impl SparseMatrixAnnDataBuilder {
         //TODO: storing unmapped count, in "obs" data frame. need new builder?
 
         //Store count of unmapped
-        let mut list_cell_unmapped: Vec<uint> = vec![0; n_rows as usize];
+        let mut list_cell_unmapped: Vec<u32> = vec![0; n_rows as usize];
         for (cellid, cellid_int) in &self.map_cell_unclassified_count {
             list_cell_unmapped[*cellid as usize] = *cellid_int;
         }
 
         file.store_cell_names(&list_cell_names, Some(&list_cell_unmapped))?;
+        file.close()?;
 
         Ok(())
     }
 
-    fn gather_map_to_index(
-        map_to_index: &BTreeMap<Cellid, uint>,
-        len: usize,
-    ) -> Vec<hdf5::types::VarLenUnicode> {
-        let mut list_cell_names: Vec<hdf5::types::VarLenUnicode> = vec![VarLenUnicode::new(); len]; // Vec::w();
+    fn gather_map_to_index(map_to_index: &BTreeMap<Cellid, u32>, len: usize) -> Vec<String> {
+        let mut list_cell_names: Vec<String> = vec![String::new(); len]; // Vec::w();
         for (cellid, cellid_int) in map_to_index {
             list_cell_names[*cellid_int as usize] =
-                SparseMatrixAnnDataWriter::listu8_to_h5_string(cellid);
+                SparseMatrixAnnDataWriter::listu8_to_string(cellid);
         }
         list_cell_names
     }
@@ -273,7 +269,7 @@ impl SparseMatrixAnnDataBuilder {
 /// Writer for AnnData files, assuming data has already been prepared for writing
 ///
 pub struct SparseMatrixAnnDataWriter {
-    file: hdf5::File,
+    file: hdf5::WritableFile,
 }
 impl SparseMatrixAnnDataWriter {
     ///
@@ -288,18 +284,20 @@ impl SparseMatrixAnnDataWriter {
         Ok(SparseMatrixAnnDataWriter { file: file })
     }
 
+    pub fn close(self) -> anyhow::Result<()> {
+        self.file.close()?;
+        Ok(())
+    }
+
     ///
     /// x
     ///
-    pub fn store_feature_names(
-        &mut self,
-        list_feature_names: &Vec<VarLenUnicode>,
-    ) -> anyhow::Result<()> {
-        let group = self.file.create_group("var")?;
-        let builder = group.new_dataset_builder();
-        let _ = builder
-            .with_data(list_feature_names.as_slice())
-            .create("_index")?;
+    pub fn store_feature_names(&mut self, list_feature_names: &Vec<String>) -> anyhow::Result<()> {
+        let mut group = self.file.create_group("var")?;
+        let list_feature_names = strings_as_strs(list_feature_names);
+        group
+            .new_dataset_builder("_index")
+            .write_vlen_utf8_strings(&list_feature_names)?;
         Ok(())
     }
 
@@ -308,23 +306,22 @@ impl SparseMatrixAnnDataWriter {
     ///
     pub fn store_cell_names(
         &mut self,
-        list_cell_names: &Vec<VarLenUnicode>,
-        list_cell_unmapped: Option<&Vec<uint>>,
+        list_cell_names: &Vec<String>,
+        list_cell_unmapped: Option<&Vec<u32>>,
     ) -> anyhow::Result<()> {
-        let group = self.file.create_group("obs")?;
+        let mut group = self.file.create_group("obs")?;
 
         //Store names of cells
-        let builder = group.new_dataset_builder();
-        let _ = builder
-            .with_data(list_cell_names.as_slice())
-            .create("_index")?;
+        let list_cell_names = strings_as_strs(list_cell_names);
+        group
+            .new_dataset_builder("_index")
+            .write_vlen_utf8_strings(&list_cell_names)?;
 
         //Optional: Store count of unmapped reads (property of cell, rather than in count matrix)
         if let Some(list_cell_unmapped) = list_cell_unmapped {
-            let builder = group.new_dataset_builder();
-            let _ = builder
-                .with_data(list_cell_unmapped.as_slice())
-                .create("_unmapped")?;
+            group
+                .new_dataset_builder("_unmapped")
+                .write(list_cell_unmapped.as_slice())?;
         }
 
         Ok(())
@@ -415,46 +412,45 @@ impl SparseMatrixAnnDataWriter {
         X: hdf5::H5Type,
     {
         //Extract separate vectors to store
-        let mat_indices = csr_mat.indices();
+        let mat_indices: Vec<u64> = csr_mat.indices().iter().map(|x| *x as u64).collect();
         let mat_data = csr_mat.data();
         let mat_indptr = csr_mat.indptr();
-        let mat_indptr = mat_indptr.as_slice().unwrap();
+        let mat_indptr: Vec<u64> = mat_indptr
+            .as_slice()
+            .unwrap()
+            .iter()
+            .map(|x| *x as u64)
+            .collect();
 
         //Store the sparse matrix here
-        let group = self.file.create_group("X")?;
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&mat_data).create("data")?; //Data
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&mat_indices).create("indices")?; // Columns
-        let builder = group.new_dataset_builder();
-        let _ = builder.with_data(&mat_indptr).create("indptr")?; // Rows
+        let mut group = self.file.create_group("X")?;
+        group.new_dataset_builder("data").write(mat_data)?; //Data
+        group.new_dataset_builder("indices").write(&mat_indices)?; // Columns
+        group.new_dataset_builder("indptr").write(&mat_indptr)?; // Rows
 
         //Store the matrix size
-        let builder = group.new_dataset_builder();
-        let _ = builder
-            .with_data(
-                &[
-                    n_rows, //num cells
-                    n_cols, //num features
-                ]
-                .as_slice(),
-            )
-            .create("shape")?;
+        group.new_dataset_builder("shape").write(&[
+            n_rows, //num cells
+            n_cols, //num features
+        ])?;
         Ok(())
     }
 
     ///
-    /// Helper: convert string to HDF5 variable length unicode
+    /// Helper: convert string bytes to UTF-8.
     ///
-    pub fn listu8_to_h5_string(list: &Vec<u8>) -> hdf5::types::VarLenUnicode {
-        let f = String::from_utf8(list.to_vec()).unwrap();
-        f.parse().unwrap()
+    pub fn listu8_to_string(list: &Vec<u8>) -> String {
+        String::from_utf8(list.to_vec()).unwrap()
     }
 
     ///
     /// Helper: convert list of strings to HDF5
     ///
-    pub fn list_string_to_h5(list: &Vec<Vec<u8>>) -> Vec<hdf5::types::VarLenUnicode> {
-        list.iter().map(|x| Self::listu8_to_h5_string(x)).collect()
+    pub fn list_string_to_h5(list: &Vec<Vec<u8>>) -> Vec<String> {
+        list.iter().map(|x| Self::listu8_to_string(x)).collect()
     }
+}
+
+fn strings_as_strs(values: &[String]) -> Vec<&str> {
+    values.iter().map(String::as_str).collect()
 }

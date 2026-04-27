@@ -298,8 +298,8 @@ impl AlignCMD {
     ///
     pub fn write_tirp_to_2fq<P>(
         path_in: P,
-        writer_r1: &mut BufWriter<impl Write>,
-        writer_r2: &mut BufWriter<impl Write>,
+        writer_r1: &mut impl Write,
+        writer_r2: &mut impl Write,
         num_threads: BoundedU64<1, { u64::MAX }>,
         sizeof_stream_arena: ByteSize,
         sizeof_stream_buffer: ByteSize,

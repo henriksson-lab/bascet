@@ -1,9 +1,9 @@
-use std::sync::atomic::{Ordering};
+use std::sync::atomic::Ordering;
 
 use bascet_cli::command::{self, Commands};
 use bascet_runtime::logging::{
-    log_filter_parser, log_mode_parser, log_ordered_parser, log_strictness_parser,
-    LogConfig, LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer
+    log_filter_parser, log_mode_parser, log_ordered_parser, log_strictness_parser, LogConfig,
+    LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer,
 };
 use clap::Parser;
 use tracing::{error, info};
@@ -43,7 +43,6 @@ struct Cli {
         value_parser = log_ordered_parser!(LogOrdered)
     )]
     log_ordered: LogOrdered,
-    
 }
 
 ///////////////////////////////
@@ -55,17 +54,16 @@ fn main() -> std::process::ExitCode {
     //Output from these commands need to get out without any log text. The commands are responsible for some type of error handing
     //as Zorn must be able to parse the output
     match &cli.command {
-        Commands::Sysinfo(cmd) => { 
-            _ = cmd.try_execute();            
-            return std::process::ExitCode::SUCCESS; 
-        },
-        Commands::ExtractStream(cmd) => { 
-            _ = cmd.try_execute(); 
-            return std::process::ExitCode::SUCCESS; 
+        Commands::Sysinfo(cmd) => {
+            _ = cmd.try_execute();
+            return std::process::ExitCode::SUCCESS;
         }
-        _ => ()
+        Commands::ExtractStream(cmd) => {
+            _ = cmd.try_execute();
+            return std::process::ExitCode::SUCCESS;
+        }
+        _ => (),
     };
-
 
     LogGuard::with_config(LogConfig {
         level: cli.log_level,
@@ -121,7 +119,11 @@ fn main() -> std::process::ExitCode {
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(_cmd) => panic!("Command handled in the wrong place"),
+        #[cfg(feature = "fastqc")]
+        Commands::Fastqc(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
+        #[cfg(feature = "gecco")]
+        Commands::Gecco(mut cmd) => cmd.try_execute(),
         Commands::GetRaw(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),

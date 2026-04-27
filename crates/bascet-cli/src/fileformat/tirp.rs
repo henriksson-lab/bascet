@@ -7,13 +7,15 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use bgzip::{Compression, write::BGZFMultiThreadWriter};
+use bgzip::{write::BGZFMultiThreadWriter, Compression};
 
+use super::shard::StreamingReadPairReader;
 use super::CellID;
 use super::ConstructFromPath;
 use super::ReadPair;
@@ -23,14 +25,11 @@ use super::ShardCellDictionary;
 use super::ShardFileExtractor;
 use super::ShardRandomFileExtractor;
 use super::ShardStreamingFileExtractor;
-use super::shard::StreamingReadPairReader;
 
-use rust_htslib::tbx::Read;
-use rust_htslib::tbx::Reader as TabixReader;
-
+use noodles::fastq::record::Definition;
 use noodles::fastq::Record as FastqRecord;
 use noodles::fastq::Writer as FastqWriter;
-use noodles::fastq::record::Definition;
+use noodles::{core::Region, csi::BinningIndex};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
@@ -53,7 +52,8 @@ impl ConstructFromPath<TirpBascetShardReader> for TirpBascetShardReaderFactory {
 ///////////////////////////////
 /// A reader of TIRPs as shards
 pub struct TirpBascetShardReader {
-    pub tabix_reader: TabixReader, // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    path: PathBuf,
+    seqnames: Vec<CellID>,
     current_cell: CellID,
 }
 impl TirpBascetShardReader {
@@ -67,34 +67,43 @@ impl TirpBascetShardReader {
             );
         }
 
-        // Create a tabix reader for reading a tabix-indexed BED file.
-        let tbx_reader =
-            TabixReader::from_path(&fname).expect(&format!("Could not open {:?}", fname));
+        let index = noodles::tabix::fs::read(&index_path)
+            .expect(&format!("Could not open {:?}", index_path));
+        let seqnames = index
+            .header()
+            .expect("TIRP tabix index is missing a header")
+            .reference_sequence_names()
+            .iter()
+            .map(|name| String::from_utf8_lossy(name.as_ref()).into_owned())
+            .collect();
 
         let dat = TirpBascetShardReader {
-            tabix_reader: tbx_reader,
+            path: fname.clone(),
+            seqnames,
             current_cell: "".to_string(),
         };
         Ok(dat)
     }
+
+    fn records_for_cell(&self, cell_id: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+        let mut reader =
+            noodles::tabix::io::indexed_reader::Builder::default().build_from_path(&self.path)?;
+        let start = noodles::core::Position::MIN;
+        let end = noodles::core::Position::try_from(100usize)?;
+        let region = Region::new(cell_id.to_string(), start..=end);
+
+        let mut records = Vec::new();
+        for result in reader.query(&region)? {
+            records.push(result?.as_ref().as_bytes().to_vec());
+        }
+        Ok(records)
+    }
 }
 impl ReadPairReader for TirpBascetShardReader {
     fn get_reads_for_cell(&mut self, cell_id: &String) -> anyhow::Result<Arc<Vec<ReadPair>>> {
-        //Get tabix id for the cell
-        let tid = self
-            .tabix_reader
-            .tid(&cell_id)
-            .expect("Could not tabix ID for cell");
-
-        // Seek to the reads (all of them)
-        self.tabix_reader
-            .fetch(tid, 0, 100) //hopefully ok!
-            .expect("could not find reads");
-
         //Get all reads
         let mut reads: Vec<ReadPair> = Vec::new();
-        for line in self.tabix_reader.records() {
-            let line = line.expect("Failed to get one TIRP line");
+        for line in self.records_for_cell(cell_id)? {
             let rp = parse_tirp_readpair(&line);
             reads.push(rp);
         }
@@ -103,11 +112,11 @@ impl ReadPairReader for TirpBascetShardReader {
 }
 impl ShardCellDictionary for TirpBascetShardReader {
     fn get_cell_ids(&mut self) -> anyhow::Result<Vec<CellID>> {
-        Ok(self.tabix_reader.seqnames())
+        Ok(self.seqnames.clone())
     }
 
     fn has_cell(&mut self, cellid: &CellID) -> bool {
-        self.tabix_reader.seqnames().contains(&cellid)
+        self.seqnames.contains(cellid)
     }
 }
 impl ShardRandomFileExtractor for TirpBascetShardReader {
@@ -155,12 +164,6 @@ impl ShardFileExtractor for TirpBascetShardReader {
             }
         }
 
-        //Get tabix id for the cell
-        let tid = self
-            .tabix_reader
-            .tid(&cell_id)
-            .expect("Could not tabix ID for cell");
-
         if get_fastq {
             ///// Prepare r1 fastq
             let path_outfile = out_directory.join(PathBuf::from("r1.fq"));
@@ -174,16 +177,10 @@ impl ShardFileExtractor for TirpBascetShardReader {
             let bufwriter_out = BufWriter::new(file_out);
             let mut fqwriter_r2 = FastqWriter::new(bufwriter_out);
 
-            // Seek to the reads (all of them)
-            self.tabix_reader
-                .fetch(tid, 0, 100) //hopefully ok!
-                .expect("could not find reads");
-
             //For now, keep it simple and just provide r1.fq and r2.fq.
             //Read through all records in region.
             let mut num_read = 0;
-            for line in self.tabix_reader.records() {
-                let line = line.expect("Failed to get one TIRP line");
+            for line in self.records_for_cell(cell_id)? {
                 let rp = parse_tirp_readpair(&line);
 
                 let rec_r1 =
@@ -339,21 +336,17 @@ pub fn get_tbi_path_for_tirp(p: &PathBuf) -> PathBuf {
 
 ///////////////////////////////
 /// A streaming reader of TIRPs - giving read pairs
-#[derive(Debug)]
 pub struct TirpStreamingReadPairReader {
-    reader: BufReader<rust_htslib::bgzf::Reader>, //TabixReader,     // https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html
+    reader: BufReader<noodles::bgzf::io::MultithreadedReader<File>>,
     last_rp: Option<(Vec<u8>, ReadPair)>,
-    _pool: rust_htslib::tpool::ThreadPool,
 }
 impl TirpStreamingReadPairReader {
     ///////////////////////////////
     /// Create a new TIRP file reader
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingReadPairReader> {
-        let pool = rust_htslib::tpool::ThreadPool::new(12).unwrap();
-        let mut reader = rust_htslib::bgzf::Reader::from_path(&fname)
-            .expect(&format!("Could not open {:?}", fname));
-        _ = reader.set_thread_pool(&pool).unwrap();
-
+        let file = File::open(fname).expect(&format!("Could not open {:?}", fname));
+        let worker_count = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        let reader = noodles::bgzf::io::MultithreadedReader::with_worker_count(worker_count, file);
         let mut reader = BufReader::new(reader);
 
         //Read the first read right away
@@ -368,7 +361,6 @@ impl TirpStreamingReadPairReader {
             Ok(TirpStreamingReadPairReader {
                 reader: reader,
                 last_rp: Some(last_rp),
-                _pool: pool,
             })
         } else {
             //The BAM file is empty!
@@ -377,7 +369,6 @@ impl TirpStreamingReadPairReader {
             Ok(TirpStreamingReadPairReader {
                 reader: reader,
                 last_rp: None,
-                _pool: pool,
             })
         }
     }

@@ -8,7 +8,7 @@ use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
-use std::{io::BufWriter, path::PathBuf};
+use std::{fs::File, num::NonZeroUsize, path::PathBuf};
 use tracing::{info, warn};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
@@ -135,15 +135,20 @@ impl ToFastqCMD {
 
         /////////////////////////////////////////////////////////////////////////////////////
         // Set up writers
-        let tpool = rust_htslib::tpool::ThreadPool::new(budget.numof_threads_write.get() as u32)?;
+        let write_threads = budget.numof_threads_write.get() as usize;
+        let writer_threads_per_file =
+            NonZeroUsize::new((write_threads / 2).max(1)).expect("thread count is nonzero");
 
-        let mut writer_r1 = rust_htslib::bgzf::Writer::from_path(&self.path_r1)?;
-        let mut writer_r2 = rust_htslib::bgzf::Writer::from_path(&self.path_r2)?;
-        writer_r1.set_thread_pool(&tpool)?;
-        writer_r2.set_thread_pool(&tpool)?;
-
-        let mut writer_r1 = BufWriter::new(writer_r1);
-        let mut writer_r2 = BufWriter::new(writer_r2);
+        let file_r1 = File::create(&self.path_r1)?;
+        let file_r2 = File::create(&self.path_r2)?;
+        let mut writer_r1 = noodles::bgzf::io::MultithreadedWriter::with_worker_count(
+            writer_threads_per_file,
+            file_r1,
+        );
+        let mut writer_r2 = noodles::bgzf::io::MultithreadedWriter::with_worker_count(
+            writer_threads_per_file,
+            file_r2,
+        );
 
         /////////////////////////////////////////////////////////////////////////////////////
         // All threads are now set up. Send all readpairs to writers.
@@ -156,6 +161,8 @@ impl ToFastqCMD {
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
         )?;
+        writer_r1.finish()?;
+        writer_r2.finish()?;
 
         info!("Conversion complete");
 

@@ -18,8 +18,10 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["bwa-mem2-rs-align", "skesa"]
+default = ["bwa-mem2-rs-align", "skesa", "fastqc", "gecco"]
 bwa-mem2-rs-align = ["dep:bwa-mem2-rs"]
+fastqc = ["dep:fastqc-rs"]
+gecco = ["dep:gecco"]
 skesa = ["dep:skesa-rs"]
 
 [dependencies]
@@ -33,7 +35,7 @@ bio.workspace = true
 blart.workspace = true
 bon.workspace = true
 bounded-integer.workspace = true
-bwa-mem2-rs = { path = "/data/henriksson/github/claude/bwa-mem2-rs", optional = true }
+bwa-mem2-rs = { package = "bwa-mem2-pure-rs", path = "/data/henriksson/github/claude/bwa-mem2-rs", optional = true }
 bytesize.workspace = true
 clap.workspace = true
 clio.workspace = true
@@ -43,7 +45,8 @@ delegate.workspace = true
 enum_dispatch.workspace = true
 flate2.workspace = true
 fraction.workspace = true
-gecco.workspace = true
+fastqc-rs = { package = "fastqc-compliant-rs", version = "0.4.0", default-features = false, optional = true }
+gecco = { path = "/home/mahogny/github/claude/gecco-rs", default-features = false, features = ["bundled-data"], optional = true }
 glidesort.workspace = true
 gxhash.workspace = true
 hdf5.workspace = true
@@ -59,12 +62,13 @@ nthash-rs.workspace = true
 paste.workspace = true
 path-clean.workspace = true
 rand.workspace = true
+rayon.workspace = true
 rust-htslib.workspace = true
 semver.workspace = true
 seq_io.workspace = true
 serde.workspace = true
 shellexpand.workspace = true
-skesa-rs = { path = "/home/mahogny/github/claude/skesa-rs", default-features = false, optional = true }
+skesa-rs = { version = "0.2.0", default-features = false, optional = true }
 smallvec.workspace = true
 sprs.workspace = true
 strum.workspace = true

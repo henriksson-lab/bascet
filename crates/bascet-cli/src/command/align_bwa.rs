@@ -1,4 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io::Cursor,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use bascet_core::{
@@ -8,17 +13,18 @@ use bascet_core::{
 use bascet_io::{codec, parse, tirp};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
-use rust_htslib::bam::{
-    self,
-    header::{Header, HeaderRecord},
-    record::{Aux, Record},
-    Format,
+use noodles::{
+    bam, bgzf, sam,
+    sam::alignment::{
+        io::Write as _, record::data::field::Tag, record_buf::data::field::Value, RecordBuf,
+    },
 };
 use tracing::info;
 
 use super::align::{index_bam, sort_bam};
 
 const BWA_MEM2_BATCH_BASES: usize = 10_000_000;
+type NoodlesBamWriter = bam::io::Writer<bgzf::io::MultithreadedWriter<File>>;
 
 pub fn try_execute_bwa_mem2(
     path_in: &Path,
@@ -38,20 +44,26 @@ pub fn try_execute_bwa_mem2(
         .map_err(|e| anyhow::anyhow!(e))?;
 
     let sam_header = aligner.sam_header().map_err(|e| anyhow::anyhow!(e))?;
-    let bam_header = parse_sam_header(&sam_header)?;
-    let mut writer_bam = bam::Writer::from_path(path_out_unsorted, &bam_header, Format::Bam)
+    let bam_header = sam_header.parse::<sam::Header>()?;
+    let worker_count = NonZeroUsize::new(numof_threads_writebam)
+        .context("BAM writer thread count must be nonzero")?;
+    let file = File::create(path_out_unsorted)
         .with_context(|| format!("failed to create BAM writer for {:?}", path_out_unsorted))?;
-    writer_bam.set_threads(numof_threads_writebam)?;
+    let bgzf_writer = bgzf::io::MultithreadedWriter::with_worker_count(worker_count, file);
+    let mut writer_bam = bam::io::Writer::from(bgzf_writer);
+    writer_bam.write_header(&bam_header)?;
 
     align_tirp_with_bwa_mem2(
         path_in,
         &mut aligner,
+        &bam_header,
         &mut writer_bam,
         numof_threads_read,
         sizeof_stream_arena,
         sizeof_stream_buffer,
     )?;
-    drop(writer_bam);
+    let mut bgzf_writer = writer_bam.into_inner();
+    bgzf_writer.finish()?;
 
     info!("Sorting BAM file");
     sort_bam(path_out_unsorted, path_out_sorted, path_temp, total_threads)
@@ -72,7 +84,8 @@ pub fn try_execute_bwa_mem2(
 fn align_tirp_with_bwa_mem2<P>(
     path_in: P,
     aligner: &mut bwa_mem2_rs::mem_api::MemAligner,
-    writer_bam: &mut bam::Writer,
+    header: &sam::Header,
+    writer_bam: &mut NoodlesBamWriter,
     num_threads: BoundedU64<1, { u64::MAX }>,
     sizeof_stream_arena: ByteSize,
     sizeof_stream_buffer: ByteSize,
@@ -123,7 +136,7 @@ where
                     info!("{}M read pairs aligned", num_read / 1_000_000);
                 }
                 if batch_bases >= BWA_MEM2_BATCH_BASES {
-                    flush_bwa_mem2_batch(aligner, writer_bam, &batch)?;
+                    flush_bwa_mem2_batch(aligner, header, writer_bam, &batch)?;
                     batch.clear();
                     batch_bases = 0;
                 }
@@ -133,7 +146,7 @@ where
         };
     }
 
-    flush_bwa_mem2_batch(aligner, writer_bam, &batch)?;
+    flush_bwa_mem2_batch(aligner, header, writer_bam, &batch)?;
     Ok(())
 }
 
@@ -147,7 +160,8 @@ struct OwnedBwaReadPair {
 
 fn flush_bwa_mem2_batch(
     aligner: &mut bwa_mem2_rs::mem_api::MemAligner,
-    writer: &mut bam::Writer,
+    header: &sam::Header,
+    writer: &mut NoodlesBamWriter,
     batch: &[OwnedBwaReadPair],
 ) -> Result<()> {
     if batch.is_empty() {
@@ -169,68 +183,53 @@ fn flush_bwa_mem2_batch(
         .align_pairs(&pairs)
         .map_err(|e| anyhow::anyhow!(e))?;
     for line in sam_lines {
-        write_tagged_bam_alignment(writer, &line)?;
+        write_tagged_bam_alignment(writer, header, &line)?;
     }
     Ok(())
 }
 
-fn write_tagged_bam_alignment(writer: &mut bam::Writer, line: &str) -> Result<()> {
+fn write_tagged_bam_alignment(
+    writer: &mut NoodlesBamWriter,
+    header: &sam::Header,
+    line: &str,
+) -> Result<()> {
     let line = line.trim_end_matches('\n');
     if line.is_empty() {
         return Ok(());
     }
 
-    let mut record = Record::from_sam(writer.header(), line.as_bytes())
+    let mut sam_reader = sam::io::Reader::new(Cursor::new(line.as_bytes()));
+    let mut record = RecordBuf::default();
+    sam_reader
+        .read_record_buf(header, &mut record)
         .with_context(|| format!("failed to parse BWA SAM record: {line}"))?;
 
-    let (cell_id, umi) = crate::fileformat::bam::readname_to_cell_umi(record.qname());
+    let read_name = record.name().context("BWA SAM record is missing QNAME")?;
+    let (cell_id, umi) = crate::fileformat::bam::readname_to_cell_umi(read_name.as_ref());
     let cell_id = std::str::from_utf8(cell_id)
-        .with_context(|| format!("cell id in read name is not UTF-8: {:?}", record.qname()))?
+        .with_context(|| format!("cell id in read name is not UTF-8: {:?}", read_name))?
         .to_owned();
     let umi = if umi.is_empty() {
         None
     } else {
         Some(
             std::str::from_utf8(umi)
-                .with_context(|| format!("UMI in read name is not UTF-8: {:?}", record.qname()))?
+                .with_context(|| format!("UMI in read name is not UTF-8: {:?}", read_name))?
                 .to_owned(),
         )
     };
 
-    record.push_aux(b"CB", Aux::String(&cell_id))?;
+    record
+        .data_mut()
+        .insert(Tag::CELL_BARCODE_ID, Value::from(cell_id));
     if let Some(umi) = umi.as_deref() {
-        record.push_aux(b"UB", Aux::String(umi))?;
+        record
+            .data_mut()
+            .insert(Tag::new(b'U', b'B'), Value::from(umi));
     }
 
-    writer.write(&record)?;
+    writer.write_alignment_record(header, &record)?;
     Ok(())
-}
-
-fn parse_sam_header(sam_header: &str) -> Result<Header> {
-    let mut header = Header::new();
-
-    for line in sam_header.lines().filter(|line| !line.is_empty()) {
-        let Some(line) = line.strip_prefix('@') else {
-            anyhow::bail!("SAM header line does not start with @: {line}");
-        };
-
-        let mut fields = line.split('\t');
-        let record_type = fields
-            .next()
-            .context("SAM header line is missing record type")?;
-        let mut record = HeaderRecord::new(record_type.as_bytes());
-
-        for field in fields {
-            let (tag, value) = field
-                .split_once(':')
-                .with_context(|| format!("invalid SAM header tag field: {field}"))?;
-            record.push_tag(tag.as_bytes(), value);
-        }
-
-        header.push_record(&record);
-    }
-
-    Ok(header)
 }
 
 fn make_bascet_read_name(record_id: &[u8], record_umi: &[u8], num_read: u64) -> String {
