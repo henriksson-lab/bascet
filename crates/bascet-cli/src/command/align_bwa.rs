@@ -16,7 +16,7 @@ use bytesize::ByteSize;
 use noodles::{
     bam, bgzf, sam,
     sam::alignment::{
-        io::Write as _, record::data::field::Tag, record_buf::data::field::Value, RecordBuf,
+        RecordBuf, io::Write as _, record::data::field::Tag, record_buf::data::field::Value,
     },
 };
 use tracing::info;

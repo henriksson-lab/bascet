@@ -241,7 +241,7 @@ impl KrakenCMD {
         let mut query = stream.query::<tirp::Record>();
 
         let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?); //blocks until reader ready; so open reader first
-                                                                              //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
+        //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
         info!("Sending read pairs");
         let mut num_read: u64 = 0;
         loop {

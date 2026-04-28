@@ -7,12 +7,12 @@ use std::io::Write;
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
-use crate::fileformat::read_cell_list_file;
-use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::CellID;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
+use crate::fileformat::read_cell_list_file;
+use crate::fileformat::shard::ShardCellDictionary;
 use crate::utils::{atomic_temp_path, check_kmc_tools, publish_atomic_output};
 
 use clap::Args;

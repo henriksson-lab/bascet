@@ -6,6 +6,15 @@ pub const MAX_SIZEOF_BLOCK: ByteSize = ByteSize::kib(64);
 #[allow(non_upper_case_globals)]
 pub const MAX_SIZEOF_BLOCKusize: usize = MAX_SIZEOF_BLOCK.as_u64() as usize;
 
+// BBGZ/BGZF blocks have a 64 KiB compressed container limit. Deflate can expand
+// high-entropy payloads, especially FASTQ quality strings, so raw payloads must
+// stop below that limit. 60 KiB leaves room for deflate overhead, BBGZ headers,
+// trailers, and the final 03 00 marker while keeping blocks large enough for
+// efficient merging.
+pub const MAX_SIZEOF_RAW_BLOCK: ByteSize = ByteSize::kib(60);
+#[allow(non_upper_case_globals)]
+pub const MAX_SIZEOF_RAW_BLOCKusize: usize = MAX_SIZEOF_RAW_BLOCK.as_u64() as usize;
+
 #[allow(non_upper_case_globals)]
 pub const MIN_SIZEOF_BLOCKusize: usize =
     BBGZHeaderBase::SSIZE + BBGZExtra::SSIZE + BGZFExtra::SSIZE + BBGZTrailer::SSIZE;
@@ -30,13 +39,3 @@ pub const MARKER_EOF: [u8; 28] = [
 ];
 #[allow(non_upper_case_globals)]
 pub const SIZEOF_MARKER_EOFusize: usize = MARKER_EOF.len();
-
-// The windowBits parameter is the base two logarithm of the window size (the size of the history buffer).
-// windowBits can be –8..–15 for raw deflate. In this case, -windowBits determines the window size.
-// deflate() will then generate raw deflate data with no zlib header or trailer, and will not compute a check value.
-pub(crate) const ZLIB_WINDOW_SIZE: i8 = -15;
-// The memLevel parameter specifies how much memory should be allocated for the internal compression state.
-// memLevel=1 uses minimum memory but is slow and reduces compression ratio;
-// memLevel=9 uses maximum memory for optimal speed.
-// See zconf.h for total memory usage as a function of windowBits and memLevel.
-pub(crate) const ZLIB_MEM_LEVEL: i8 = 9;

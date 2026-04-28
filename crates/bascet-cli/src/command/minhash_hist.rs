@@ -12,12 +12,12 @@ use std::sync::Arc;
 
 use tracing::info;
 
-use crate::fileformat::read_cell_list_file;
-use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::CellID;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
+use crate::fileformat::read_cell_list_file;
+use crate::fileformat::shard::ShardCellDictionary;
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";

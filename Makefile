@@ -22,6 +22,8 @@ loc:
 	bascet*/*/*/*.rs \
 	bascet*/*/*/*/*.rs
 
+all_win:
+	cargo build --profile=release --target x86_64-pc-windows-gnu -p bascet-cli --no-default-features
 
 podman:
 #docker:
@@ -62,6 +64,9 @@ publish_test:
 	cargo publish --dry-run
 
 
+install_mingw:
+	#needed to cross-compile to windows
+	sudo apt-get install mingw-w64
 
 
 #########

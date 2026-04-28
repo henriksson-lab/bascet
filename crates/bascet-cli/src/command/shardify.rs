@@ -2,18 +2,18 @@ use anyhow::Result;
 use bascet_core::{
     attr::{block::*, meta::*},
     channel::PeekableReceiver,
-    threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN},
+    threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark},
     *,
 };
 use bascet_derive::Budget;
-use bascet_io::{codec, parse, BBGZHeader, BBGZTrailer, MAX_SIZEOF_BLOCKusize};
+use bascet_io::{BBGZHeader, BBGZTrailer, MAX_SIZEOF_BLOCKusize, codec, parse};
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use clap::Args;
 use clio::{InputPath, OutputPath};
 use crossbeam::channel::{self, Receiver, Sender};
 use itertools::izip;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
@@ -373,6 +373,12 @@ impl ShardifyCMD {
                                 new_header
                                     .write_with_csize(&mut thread_buf_writer, merge_csize)
                                     .unwrap();
+                                // BBGZ compressed payloads end with 03 00: an
+                                // empty final fixed-Huffman deflate block added
+                                // by BBGZWriter after SyncFlush. Merging keeps
+                                // the byte-aligned SyncFlush boundaries, strips
+                                // those per-block final markers, and appends one
+                                // final 03 00 for the combined deflate stream.
                                 let last_idx = merge_blocks.len() - 1;
                                 for i in 0..last_idx {
                                     let merge_raw_bytes = unsafe { merge_blocks.get_unchecked(i) }
@@ -439,6 +445,10 @@ impl ShardifyCMD {
                         new_header
                             .write_with_csize(&mut thread_buf_writer, merge_csize)
                             .unwrap();
+                        // See the identical merge block above: each input
+                        // payload is SyncFlush output plus a removable 03 00
+                        // final empty fixed-Huffman block. The merged payload
+                        // gets exactly one final 03 00.
                         let last_idx = merge_blocks.len() - 1;
                         for i in 0..last_idx {
                             let merge_raw_bytes =

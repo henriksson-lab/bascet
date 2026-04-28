@@ -17,18 +17,18 @@ use bascet_core::{
     *,
 };
 
-use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
-use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
-use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
-use crate::fileformat::tirp::BascetTIRPWriterFactory;
-use crate::fileformat::tirp::TirpBascetShardReaderFactory;
-use crate::fileformat::try_get_cells_in_file;
 use crate::fileformat::ConstructFromPath;
 use crate::fileformat::DetectedFileformat;
 use crate::fileformat::ReadPairReader;
 use crate::fileformat::ReadPairWriter;
 use crate::fileformat::ShardCellDictionary;
 use crate::fileformat::StreamingReadPairReader;
+use crate::fileformat::bam::BAMStreamingReadPairReaderFactory;
+use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
+use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
+use crate::fileformat::tirp::BascetTIRPWriterFactory;
+use crate::fileformat::tirp::TirpBascetShardReaderFactory;
+use crate::fileformat::try_get_cells_in_file;
 use crate::fileformat::{CellID, ReadPair};
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 

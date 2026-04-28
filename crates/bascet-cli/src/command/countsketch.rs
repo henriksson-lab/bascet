@@ -2,7 +2,7 @@ use crate::{bounded_parser, countsketch::CountSketch};
 
 use bascet_core::{
     attr::{meta::*, sequence::*},
-    threading::spinpark_loop::{self, SpinPark, SPINPARK_COUNTOF_PARKS_BEFORE_WARN},
+    threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark},
     *,
 };
 use bascet_derive::Budget;
@@ -20,9 +20,8 @@ use std::{
     io::BufWriter,
     path::PathBuf,
     sync::{
-        self,
+        self, Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
     },
 };
 use tracing::{debug, info, warn};

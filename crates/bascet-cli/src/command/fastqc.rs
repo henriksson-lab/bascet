@@ -3,7 +3,7 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 use std::thread;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bascet_core::DEFAULT_SIZEOF_ARENA;
 use bascet_core::{
     attr::{meta::*, quality::*, sequence::*},

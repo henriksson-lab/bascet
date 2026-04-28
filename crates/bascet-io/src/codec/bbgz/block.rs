@@ -2,7 +2,7 @@ use bascet_core::ArenaSlice;
 
 use crate::{
     BBGZCompressionJob, BBGZHeader, BBGZTrailer, BBGZWriter,
-    codec::bbgz::consts::{MAX_SIZEOF_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
+    codec::bbgz::consts::{MAX_SIZEOF_RAW_BLOCKusize, SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize},
 };
 
 pub struct BBGZWriteBlock<'a> {
@@ -30,7 +30,7 @@ impl<'a> BBGZWriteBlock<'a> {
             + SIZEOF_MARKER_DEFLATE_ALIGN_BYTESusize
             + BBGZTrailer::SSIZE;
 
-        if size + hsize > MAX_SIZEOF_BLOCKusize && self.inner_raw_bytes_written > 0 {
+        if size + hsize > MAX_SIZEOF_RAW_BLOCKusize && self.inner_raw_bytes_written > 0 {
             let new_raw = self.inner_compressor.alloc_raw();
             let mut send_raw = std::mem::replace(&mut self.inner_raw, new_raw);
             unsafe {

@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 use crossbeam::channel::{Receiver, Sender};
-use gecco::{orf::SeqRecord, Gecco};
+use gecco::{Gecco, orf::SeqRecord};
 use tracing::info;
-use zip::{read::ZipArchive, ZipWriter};
+use zip::{ZipWriter, read::ZipArchive};
 
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 

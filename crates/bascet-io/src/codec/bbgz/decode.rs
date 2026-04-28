@@ -3,8 +3,8 @@ use std::{
     io::{self, BufReader, Read},
     path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
     time::Duration,
@@ -16,11 +16,11 @@ use crossbeam::channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender};
 use libdeflater::Decompressor;
 
 use bascet_core::{
-    channel::{OrderedDenseReceiver, OrderedDenseSender},
     Decode, DecodeResult,
+    channel::{OrderedDenseReceiver, OrderedDenseSender},
 };
 
-use crate::{codec::bbgz::MARKER_EOF, BBGZExtra, BBGZHeaderBase, BBGZTrailer};
+use crate::{BBGZExtra, BBGZHeaderBase, BBGZTrailer, codec::bbgz::MARKER_EOF};
 
 pub struct BBGZDecoder {
     inner_reader_handle: Option<JoinHandle<()>>,
@@ -380,7 +380,7 @@ fn is_eof_marker(base: &[u8; BBGZHeaderBase::SSIZE], extra: &[u8], rest: &[u8]) 
 #[cfg(test)]
 mod tests {
     use std::{
-        fs::{remove_file, File},
+        fs::{File, remove_file},
         io::Write,
         time::{SystemTime, UNIX_EPOCH},
     };

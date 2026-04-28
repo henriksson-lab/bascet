@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Args;
+use noodles::sam::alignment::RecordBuf as BamRecord;
 use noodles::sam::alignment::record::cigar::op::Kind as CigarKind;
 use noodles::sam::alignment::record::data::field::Tag;
-use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;

@@ -1,2 +1,30 @@
 [build]
 rustflags = ["-C", "target-feature=+aes"]
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
+
+[env]
+CC_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-gcc"
+AR_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-ar"
+CXX_x86_64_pc_windows_gnu = "x86_64-w64-mingw32-g++"
+CC_x86_64_apple_darwin = "x86_64-apple-darwin23-clang"
+AR_x86_64_apple_darwin = "x86_64-apple-darwin23-ar"
+CXX_x86_64_apple_darwin = "x86_64-apple-darwin23-clang++"
+
+CC_aarch64_apple_darwin = "aarch64-apple-darwin23-clang"
+AR_aarch64_apple_darwin = "aarch64-apple-darwin23-ar"
+CXX_aarch64_apple_darwin = "aarch64-apple-darwin23-clang++"
+
+
+
+#assuming osxcross is installed
+[target.x86_64-apple-darwin]
+linker = "x86_64-apple-darwin23-clang"
+ar = "x86_64-apple-darwin23-ar"
+
+[target.aarch64-apple-darwin]
+linker = "aarch64-apple-darwin23-clang"
+ar = "aarch64-apple-darwin23-ar"
+

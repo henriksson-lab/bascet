@@ -1,8 +1,6 @@
 use std::{
-    ffi::c_int,
     io::{Seek, Write},
-    mem::MaybeUninit,
-    sync::Arc,
+    sync::{Arc, Condvar, Mutex},
     thread::JoinHandle,
 };
 
@@ -14,11 +12,13 @@ use bascet_core::{
 use bounded_integer::BoundedU64;
 use bytesize::ByteSize;
 use crossbeam::channel::{Receiver, Sender};
-use libz_ng_sys as zlib;
+use flate2::{Compress as FlateCompress, FlushCompress, Status};
 
 use crate::{
-    BBGZTrailer, BBGZWriteBlock, Compression, ZLIB_MEM_LEVEL, ZLIB_WINDOW_SIZE,
-    codec::bbgz::{BBGZHeader, MARKER_EOF, MAX_SIZEOF_BLOCK, MAX_SIZEOF_BLOCKusize},
+    BBGZTrailer, BBGZWriteBlock, Compression,
+    codec::bbgz::{
+        BBGZHeader, MARKER_EOF, MAX_SIZEOF_BLOCK, MAX_SIZEOF_BLOCKusize, MAX_SIZEOF_RAW_BLOCKusize,
+    },
 };
 
 pub struct BBGZCompressionJob {
@@ -31,6 +31,113 @@ pub struct BBGZCompressionResult {
     pub compressed: ArenaSlice<u8>,
     pub crc32: u32,
     pub isize: usize,
+}
+
+struct BbgzCompressor {
+    inner: FlateCompress,
+}
+
+impl BbgzCompressor {
+    fn new(compression_level: Compression) -> Self {
+        Self {
+            inner: FlateCompress::new(
+                flate2::Compression::new(compression_level.level() as u32),
+                false,
+            ),
+        }
+    }
+
+    fn compress_into(
+        &mut self,
+        raw: &mut ArenaSlice<u8>,
+        compression_alloc: &ArenaPool<u8>,
+    ) -> ArenaSlice<u8> {
+        let mut compressed = compression_alloc.alloc(MAX_SIZEOF_BLOCKusize);
+
+        let compressed = {
+            let slice_raw = raw.as_mut_slice();
+            let slice_compressed = compressed.as_mut_slice();
+
+            // SyncFlush finishes the current deflate block, then appends a
+            // non-final empty stored block. zlib-rs implements that as:
+            // [alignment bits] [LEN=0] [NLEN=!0], i.e. 00 00 ff ff after
+            // byte alignment.
+            let status = self
+                .inner
+                .compress(slice_raw, slice_compressed, FlushCompress::Sync)
+                .expect("deflate failed");
+            assert!(
+                matches!(status, Status::Ok | Status::BufError),
+                "unexpected deflate status: {status:?}"
+            );
+            assert_eq!(
+                self.inner.total_in() as usize,
+                slice_raw.len(),
+                "deflate did not consume the full BBGZ block"
+            );
+
+            let total_out = self.inner.total_out() as usize;
+            assert!(
+                total_out + 2 <= slice_compressed.len(),
+                "compressed BBGZ block exceeded output buffer"
+            );
+            self.inner.reset();
+
+            // Append an empty final fixed-Huffman block. This emits no
+            // uncompressed bytes, but makes this BBGZ block a complete deflate
+            // stream. Shard merging depends on this exact contract: it strips
+            // 03 00 from intermediate compressed payloads, keeps the SyncFlush
+            // boundaries, and appends one final 03 00 to the merged payload.
+            slice_compressed[total_out] = 0x03;
+            slice_compressed[total_out + 1] = 0x00;
+
+            unsafe { compressed.truncate(total_out + 2) }
+        };
+
+        compressed
+    }
+}
+
+struct InFlightLimiter {
+    available: Mutex<usize>,
+    ready: Condvar,
+}
+
+impl InFlightLimiter {
+    fn new(cap: usize) -> Self {
+        Self {
+            available: Mutex::new(cap.max(1)),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>) -> InFlightPermit {
+        let mut available = self.available.lock().unwrap();
+        while *available == 0 {
+            available = self.ready.wait(available).unwrap();
+        }
+        *available -= 1;
+
+        InFlightPermit {
+            limiter: Arc::clone(self),
+        }
+    }
+
+    fn release(&self) {
+        let mut available = self.available.lock().unwrap();
+        *available += 1;
+        self.ready.notify_one();
+    }
+}
+
+struct InFlightPermit {
+    limiter: Arc<InFlightLimiter>,
+}
+
+impl Drop for InFlightPermit {
+    fn drop(&mut self) {
+        self.limiter.release();
+    }
 }
 
 pub struct BBGZWriter {
@@ -47,6 +154,16 @@ pub struct BBGZWriter {
     pub(crate) inner_write_worker: JoinHandle<()>,
 }
 
+pub struct BBGZFinishHandle {
+    inner: JoinHandle<()>,
+}
+
+impl BBGZFinishHandle {
+    pub fn join(self) -> std::thread::Result<()> {
+        self.inner.join()
+    }
+}
+
 #[bon::bon]
 impl BBGZWriter {
     #[builder]
@@ -61,6 +178,7 @@ impl BBGZWriter {
         #[builder(default = Compression::balanced())] compression_level: Compression,
         with_opt_raw_arena_pool: Option<Arc<ArenaPool<u8>>>,
         with_opt_compression_arena_pool: Option<Arc<ArenaPool<u8>>>,
+        with_opt_rayon_pool: Option<Arc<rayon::ThreadPool>>,
     ) -> Self
     where
         W: Write + Seek + Send + 'static,
@@ -76,17 +194,34 @@ impl BBGZWriter {
             Arc::new(ArenaPool::new(sizeof_compression_buffer, MAX_SIZEOF_BLOCK))
         };
 
-        let (compression_tx, compression_rx) = crossbeam::channel::unbounded();
+        let effective_countof_threads = with_opt_rayon_pool
+            .as_ref()
+            .map(|pool| pool.current_num_threads())
+            .unwrap_or_else(|| countof_threads.get() as usize)
+            .max(1);
+        let compression_queue_capacity = effective_countof_threads.saturating_mul(4).max(1);
+        let (compression_tx, compression_rx) =
+            crossbeam::channel::bounded(compression_queue_capacity);
         let (write_tx, write_rx) =
             bascet_core::channel::ordered_dense::<BBGZCompressionResult, 16384>();
 
-        let compression_workers = Self::spawn_compression_workers(
-            Arc::clone(&compression_allocator),
-            compression_rx,
-            compression_level,
-            write_tx,
-            countof_threads,
-        );
+        let compression_workers = if let Some(rayon_pool) = with_opt_rayon_pool {
+            Self::spawn_rayon_compression_dispatcher(
+                Arc::clone(&compression_allocator),
+                compression_rx,
+                compression_level,
+                write_tx,
+                rayon_pool,
+            )
+        } else {
+            Self::spawn_compression_workers(
+                Arc::clone(&compression_allocator),
+                compression_rx,
+                compression_level,
+                write_tx,
+                countof_threads,
+            )
+        };
 
         let write_worker = Self::spawn_write_worker(with_writer, write_rx);
 
@@ -105,9 +240,19 @@ impl BBGZWriter {
         BBGZWriteBlock::new(self, header)
     }
 
+    pub fn finish_async(self) -> BBGZFinishHandle {
+        let handle = std::thread::Builder::new()
+            .name("BBGZFinish@0".to_string())
+            .spawn(move || drop(self))
+            .unwrap();
+        BBGZFinishHandle { inner: handle }
+    }
+
     pub(crate) fn alloc_raw(&mut self) -> ArenaSlice<u8> {
-        // NOTE: usize_MAX_SIZEOF_BLOCK is the max LEN. alloc allocates n SLOTS.
-        let buf = self.inner_raw_allocator.alloc(MAX_SIZEOF_BLOCKusize);
+        // Use the raw payload ceiling, not the container ceiling. Otherwise an
+        // unlucky high-entropy block can compress larger than the remaining
+        // BBGZ space and leave the ordered writer waiting for a failed block.
+        let buf = self.inner_raw_allocator.alloc(MAX_SIZEOF_RAW_BLOCKusize);
         buf
     }
 
@@ -136,20 +281,7 @@ impl BBGZWriter {
                 std::thread::Builder::new()
                     .name(format!("BBGZCompression@{}", idx))
                     .spawn(move || {
-                        let mut mu_thread_compressor: MaybeUninit<zlib::z_stream> =
-                            MaybeUninit::zeroed();
-                        unsafe {
-                            let res = zlib::zng_deflateInit2(
-                                mu_thread_compressor.as_mut_ptr(),
-                                compression_level.level() as c_int,
-                                zlib::Z_DEFLATED,
-                                ZLIB_WINDOW_SIZE as c_int,
-                                ZLIB_MEM_LEVEL as c_int,
-                                zlib::Z_DEFAULT_STRATEGY,
-                            );
-                            assert!(res == zlib::Z_OK, "deflateInit2 failed: {}", res);
-                        }
-                        let thread_compressor = unsafe { mu_thread_compressor.assume_init_mut() };
+                        let mut thread_compressor = BbgzCompressor::new(compression_level);
 
                         loop {
                             let (k, job) = match thread_compression_rx.recv() {
@@ -159,51 +291,8 @@ impl BBGZWriter {
 
                             let mut buf_raw = job.raw;
                             let crc32_raw = crc32fast::hash(buf_raw.as_slice());
-
-                            let mut buf_compressed =
-                                thread_compression_alloc.alloc(MAX_SIZEOF_BLOCKusize);
-
-                            let buf_compressed = {
-                                let slice_raw = buf_raw.as_mut_slice();
-                                let slice_compressed = buf_compressed.as_mut_slice();
-
-                                let total_out = unsafe {
-                                    thread_compressor.next_in = slice_raw.as_mut_ptr();
-                                    thread_compressor.avail_in = slice_raw.len() as zlib::uInt;
-                                    thread_compressor.next_out = slice_compressed.as_mut_ptr();
-                                    thread_compressor.avail_out =
-                                        slice_compressed.len() as zlib::uInt;
-
-                                    // Z_SYNC_FLUSH produces: [huffman data, all BFINAL=0] [sync: <unaligned byte> 00 00 ff ff]
-                                    let res_compressor_deflate =
-                                        zlib::deflate(thread_compressor, zlib::Z_SYNC_FLUSH);
-
-                                    assert!(
-                                        res_compressor_deflate == zlib::Z_OK
-                                            || res_compressor_deflate == zlib::Z_STREAM_END,
-                                        "deflate failed: {}",
-                                        res_compressor_deflate
-                                    );
-
-                                    let total_out = thread_compressor.total_out as usize;
-                                    let res_compressor_reset =
-                                        zlib::deflateReset(thread_compressor);
-                                    assert!(
-                                        res_compressor_reset == zlib::Z_OK,
-                                        "deflateReset failed: {}",
-                                        res_compressor_reset
-                                    );
-                                    total_out
-                                };
-
-                                // [data] [sync: <unaligned byte> 0x00 0x00 0xff 0xff] [terminator: 0x03 0x00]
-                                // For merging: strip terminator bytes from intermediate blocks and append
-                                // terminator to last
-                                slice_compressed[total_out] = 0x03;
-                                slice_compressed[total_out + 1] = 0x00;
-
-                                unsafe { buf_compressed.truncate(total_out + 2) }
-                            };
+                            let buf_compressed = thread_compressor
+                                .compress_into(&mut buf_raw, &thread_compression_alloc);
 
                             let job_result = BBGZCompressionResult {
                                 header: job.header,
@@ -214,20 +303,54 @@ impl BBGZWriter {
 
                             thread_write_tx.send(k, job_result);
                         }
-
-                        unsafe {
-                            let res_compressor_end = zlib::deflateEnd(thread_compressor);
-                            assert!(
-                                res_compressor_end == zlib::Z_OK,
-                                "deflateEnd failed: {}",
-                                res_compressor_end
-                            )
-                        }
                     })
                     .unwrap(),
             );
         }
         handles
+    }
+
+    fn spawn_rayon_compression_dispatcher(
+        compression_alloc: Arc<ArenaPool<u8>>,
+        compression_rx: Receiver<(usize, BBGZCompressionJob)>,
+        compression_level: Compression,
+        write_tx: OrderedDenseSender<BBGZCompressionResult, 16384>,
+        rayon_pool: Arc<rayon::ThreadPool>,
+    ) -> Vec<JoinHandle<()>> {
+        let handle = std::thread::Builder::new()
+            .name("BBGZCompressionDispatch@0".to_string())
+            .spawn(move || {
+                let inflight_limiter =
+                    Arc::new(InFlightLimiter::new(rayon_pool.current_num_threads()));
+                rayon_pool.scope(|scope| {
+                    while let Ok((k, job)) = compression_rx.recv() {
+                        let permit = inflight_limiter.acquire();
+                        let task_compression_alloc = Arc::clone(&compression_alloc);
+                        let task_write_tx = write_tx.clone();
+
+                        scope.spawn(move |_| {
+                            let _permit = permit;
+                            let mut compressor = BbgzCompressor::new(compression_level);
+                            let mut buf_raw = job.raw;
+                            let crc32_raw = crc32fast::hash(buf_raw.as_slice());
+                            let buf_compressed =
+                                compressor.compress_into(&mut buf_raw, &task_compression_alloc);
+
+                            let job_result = BBGZCompressionResult {
+                                header: job.header,
+                                compressed: buf_compressed,
+                                crc32: crc32_raw,
+                                isize: buf_raw.len(),
+                            };
+
+                            task_write_tx.send(k, job_result);
+                        });
+                    }
+                });
+            })
+            .unwrap();
+
+        vec![handle]
     }
 
     fn spawn_write_worker<W>(

@@ -7,11 +7,11 @@ use std::io::Read;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
-use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
+use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
+use crate::fileformat::shard::ShardCellDictionary;
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 use anyhow::Result;
