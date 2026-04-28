@@ -15,9 +15,18 @@ use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
+use kraken2_rs::{
+    classify::{ClassifyDb, ClassifyOptions, classify_sequence},
+    minimizer::MinimizerScanner,
+    readcounts::TaxonCounters,
+    types::{Sequence, SequenceFormat},
+};
+use rayon::prelude::*;
 use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
+    thread::JoinHandle,
+    time::Instant,
 };
 use tracing::{info, warn};
 
@@ -28,8 +37,86 @@ use std::io::BufReader;
 use std::sync::Arc;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
+const KRAKEN_CLASSIFY_BATCH_SIZE: usize = 10_000;
+const KRAKEN_OUTPUT_FLUSH_INTERVAL: u64 = 1_000_000;
+const KRAKEN_MIN_STREAM_BUFFER: ByteSize = ByteSize::mib(256);
+const KRAKEN_MEMORY_HEADROOM: ByteSize = ByteSize::mib(512);
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
+
+struct KrakenReadPair {
+    cell_id: Arc<[u8]>,
+    header: Option<String>,
+    r1: String,
+    r2: String,
+}
+
+type KrakenBatch = Vec<KrakenReadPair>;
+
+struct KrakenClassifyScratch {
+    scanner: MinimizerScanner,
+    taxa: Vec<kraken2_rs::types::TaxId>,
+    hit_counts: ahash::AHashMap<kraken2_rs::types::TaxId, u32>,
+    tx_frames: Vec<String>,
+    taxon_counters: TaxonCounters,
+    output_buf: String,
+    r1: Sequence,
+    r2: Sequence,
+}
+
+struct KrakenClassification {
+    raw_line: Option<String>,
+    external_taxid: Option<u32>,
+}
+
+#[derive(Default)]
+struct KrakenCellCounts {
+    taxid_counter: BTreeMap<u32, u32>,
+    unclassified_counter: u32,
+}
+
+#[derive(Default)]
+struct KrakenMatrixAccumulator {
+    cell_counts: BTreeMap<Arc<[u8]>, KrakenCellCounts>,
+}
+
+impl KrakenMatrixAccumulator {
+    fn add_call(&mut self, cell_id: &Arc<[u8]>, external_taxid: Option<u32>) {
+        let cell_counts = self.cell_counts.entry(Arc::clone(cell_id)).or_default();
+        if let Some(taxid) = external_taxid {
+            *cell_counts.taxid_counter.entry(taxid + 1).or_insert(0) += 1;
+        } else {
+            cell_counts.unclassified_counter += 1;
+        }
+    }
+
+    fn add(&mut self, pair: &KrakenReadPair, classification: &KrakenClassification) {
+        self.add_call(&pair.cell_id, classification.external_taxid);
+    }
+
+    fn merge(&mut self, other: KrakenMatrixAccumulator) {
+        for (cell_id, other_counts) in other.cell_counts {
+            let counts = self.cell_counts.entry(cell_id).or_default();
+            counts.unclassified_counter += other_counts.unclassified_counter;
+            for (taxid, count) in other_counts.taxid_counter {
+                *counts.taxid_counter.entry(taxid).or_insert(0) += count;
+            }
+        }
+    }
+
+    fn into_anndata_builder(self) -> Result<SparseMatrixAnnDataBuilder> {
+        let mut matrix = SparseMatrixAnnDataBuilder::new();
+
+        for (cell_id, mut counts) in self.cell_counts {
+            let cell_index = matrix.get_or_create_cell(cell_id.as_ref());
+            matrix.add_cell_counts_per_feature_index(cell_index, &mut counts.taxid_counter);
+            matrix.add_unclassified(cell_index, counts.unclassified_counter);
+        }
+
+        matrix.compress_feature_column("taxid_")?;
+        Ok(matrix)
+    }
+}
 
 #[derive(Args)]
 pub struct KrakenCMD {
@@ -41,7 +128,13 @@ pub struct KrakenCMD {
     pub path_in: InputPath,
 
     #[arg(long = "out-raw", help = "Raw KRAKEN2 output file")]
-    pub path_out_raw: PathBuf,
+    pub path_out_raw: Option<PathBuf>,
+
+    #[arg(
+        long = "enable-raw-output",
+        help = "Write raw KRAKEN2 output in addition to the count matrix"
+    )]
+    pub enable_raw_output: bool,
 
     #[arg(long = "out-matrix", help = "Output count matrix")]
     pub path_out_matrix: PathBuf,
@@ -56,24 +149,16 @@ pub struct KrakenCMD {
         short = '@',
         long = "threads",
         help = "Total threads to use (defaults to std::threads::available parallelism)",
-        value_name = "2..",
-        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+        value_name = "4..",
+        value_parser = bounded_parser!(BoundedU64<4, { u64::MAX }>),
     )]
-    total_threads: Option<BoundedU64<2, { u64::MAX }>>,
-
-    #[arg(
-        long = "numof-threads-read",
-        help = "Number of reader threads",
-        value_name = "1.. (default is 1)", // 50% of total threads
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    numof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
+    total_threads: Option<BoundedU64<4, { u64::MAX }>>,
 
     #[arg(
         short = 'm',
         long = "memory",
         help = "Total memory budget",
-        default_value_t = ByteSize::gib(1),
+        default_value_t = ByteSize::gb(30),
         value_parser = clap::value_parser!(ByteSize),
     )]
     total_mem: ByteSize,
@@ -99,16 +184,19 @@ pub struct KrakenCMD {
 #[derive(Budget, Debug)]
 struct KrakenBudget {
     #[threads(Total)]
-    threads: BoundedU64<2, { u64::MAX }>,
+    threads: BoundedU64<4, { u64::MAX }>,
 
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 ) as u64).unwrap())]
-    numof_threads_read: BoundedU64<1, { u64::MAX }>,
-
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct KrakenThreadAllocation {
+    read_threads: BoundedU64<1, { u64::MAX }>,
+    classify_threads: usize,
 }
 
 impl KrakenCMD {
@@ -130,78 +218,68 @@ impl KrakenCMD {
                 std::thread::available_parallelism()
                     .map(|p| p.get())
                     .unwrap_or_else(|e| {
-                        warn!(error = %e, "Failed to determine available parallelism, using 2 threads");
-                        2
+                        warn!(error = %e, "Failed to determine available parallelism, using 4 threads");
+                        4
                     })
                     .try_into()
                     .unwrap_or_else(|e| {
-                        warn!(error = %e, "Failed to convert parallelism to valid thread count, using 2 threads");
-                        2.try_into().unwrap()
+                        warn!(error = %e, "Failed to convert parallelism to valid thread count, using 4 threads");
+                        4.try_into().unwrap()
                     })
             }))
             .memory(self.total_mem)
-            .maybe_numof_threads_read(self.numof_threads_read)
-            //.maybe_numof_threads_writebam(self.numof_threads_writebam)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
 
         budget.validate();
+        let thread_allocation = Self::allocate_threads(budget.threads.get() as usize);
 
         info!(
             using = %budget,
+            read_threads = thread_allocation.read_threads.get(),
+            classify_threads = thread_allocation.classify_threads,
             input_path = ?self.path_in,
             path_out_raw = ?self.path_out_raw,
             "Starting KRAKEN2"
         );
 
-        /////////////////////////////////////////////////////////////////////////////////////
-        // Set up named pipes
-        let path_pipe_r12 = self.path_temp.join("fifo_r12.fq");
-        nix::unistd::mkfifo(&path_pipe_r12, nix::sys::stat::Mode::S_IRWXU)
-            .expect("Failed to create pipe"); /////////////////////// TODO put all of this + cleanup in a class
+        let path_out_raw_tmp = if self.enable_raw_output {
+            let path_out_raw = self
+                .path_out_raw
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("--enable-raw-output requires --out-raw"))?;
+            Some(atomic_temp_path(path_out_raw))
+        } else {
+            None
+        };
 
         /////////////////////////////////////////////////////////////////////////////////////
-        // Start KRAKEN2
-        let num_threads = budget.threads.get();
-        let path_out_raw_tmp = atomic_temp_path(&self.path_out_raw);
-        let mut proc_aligner = create_kraken_process(
-            &self.path_db,
-            &path_pipe_r12,
-            &path_out_raw_tmp,
-            num_threads,
-        )
-        .expect("Failed to start KRAKEN");
-
-        /////////////////////////////////////////////////////////////////////////////////////
-        // All threads are now set up. Send all readpairs to KRAKEN2.
-        // Note that KRAKEN2 requires interleaved reads as paired-end mode reads one file at a file, blocking the pipe!
-        Self::write_tirp_to_interleaved_fq(
+        // Stream read pairs directly into the Rust Kraken library.
+        let matrix = Self::write_tirp_to_kraken(
             self.path_in.path().path(),
-            &path_pipe_r12,
-            //&path_pipe_r2,
-            budget.numof_threads_read,
+            &self.path_db,
+            path_out_raw_tmp.as_deref(),
+            thread_allocation.classify_threads,
+            thread_allocation.read_threads,
             self.sizeof_stream_arena,
             budget.sizeof_stream_buffer,
-        )
-        .expect("Failed to create pipe writer");
+        )?;
 
-        //Wait until process done
-        info!("Waiting for KRAKEN2 process to finish");
-        proc_aligner.wait().unwrap(); ////////////////////////// TODO: should watch this process for abnormal exit, possibly panic. need to do in parallel to write_tirp_to_fq
+        if let Some(path_out_raw_tmp) = path_out_raw_tmp {
+            let path_out_raw = self
+                .path_out_raw
+                .as_ref()
+                .expect("--enable-raw-output path checked earlier");
+            publish_atomic_output(path_out_raw_tmp, path_out_raw)?;
+        }
 
-        //Clean up: remove pipes
-        std::fs::remove_file(path_pipe_r12)?;
-        publish_atomic_output(&path_out_raw_tmp, &self.path_out_raw)?;
-
-        //Generate matrix
-        info!("Generating KRAKEN2 matrix");
-
-        let params = KrakenMatrix {
-            path_tmp: self.path_temp.clone(),
-            path_input: self.path_out_raw.clone(),
-            path_output: self.path_out_matrix.clone(),
-        };
-        KrakenMatrix::run(&Arc::new(params))?;
+        info!("Storing count table to {}", self.path_out_matrix.display());
+        let path_matrix_tmp = atomic_temp_path(&self.path_out_matrix);
+        matrix
+            .into_anndata_builder()?
+            .save_to_anndata(&path_matrix_tmp)
+            .expect("Failed to save to HDF5 file");
+        publish_atomic_output(path_matrix_tmp, &self.path_out_matrix)?;
 
         info!("All KRAKEN2 steps complete");
 
@@ -210,12 +288,223 @@ impl KrakenCMD {
         Ok(())
     }
 
+    fn allocate_threads(total_threads: usize) -> KrakenThreadAllocation {
+        let read_threads = (total_threads / 4).max(2);
+        KrakenThreadAllocation {
+            read_threads: bounded_integer::BoundedU64::new(read_threads as u64)
+                .expect("read thread allocation is at least one"),
+            classify_threads: total_threads,
+        }
+    }
+
     ///
-    /// Get a TIRP, stream to fastq. Not primarily used by aligners, but KRAKEN
+    /// Get a TIRP, stream read pairs directly to Kraken.
     ///
+    fn write_tirp_to_kraken(
+        path_in: impl AsRef<Path>,
+        path_db: impl AsRef<Path>,
+        path_out_raw: Option<&Path>,
+        classify_threads: usize,
+        read_threads: BoundedU64<1, { u64::MAX }>,
+        sizeof_stream_arena: ByteSize,
+        sizeof_stream_buffer: ByteSize,
+    ) -> Result<KrakenMatrixAccumulator> {
+        let db = Self::load_kraken_db(path_db)?;
+        let sizeof_stream_buffer = Self::kraken_stream_buffer_after_db_load(sizeof_stream_buffer);
+        let classify_opts = ClassifyOptions {
+            paired_end_processing: true,
+            single_file_pairs: true,
+            use_translated_search: !db.idx_opts.dna_db,
+            ..ClassifyOptions::default()
+        };
+        let classify_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(classify_threads)
+            .build()?;
+        let write_raw_output = path_out_raw.is_some();
+        let mut writer = path_out_raw
+            .map(std::fs::File::create)
+            .transpose()?
+            .map(BufWriter::new);
+
+        let (batch_rx, reader_handle) = Self::spawn_kraken_batch_reader(
+            path_in.as_ref().to_path_buf(),
+            read_threads,
+            sizeof_stream_arena,
+            sizeof_stream_buffer,
+            write_raw_output,
+        )?;
+
+        info!("Classifying read pairs");
+        let mut num_read: u64 = 0;
+        let mut matrix = KrakenMatrixAccumulator::default();
+        let mut total_read_time = std::time::Duration::ZERO;
+        let mut total_classify_time = std::time::Duration::ZERO;
+        let mut total_accumulate_time = std::time::Duration::ZERO;
+        while let Ok(batch_result) = batch_rx.recv() {
+            let (batch, read_time) = batch_result?;
+            total_read_time += read_time;
+            num_read += batch.len() as u64;
+
+            let classify_started = Instant::now();
+            let lines = if write_raw_output {
+                Some(classify_pool.install(|| {
+                    batch
+                        .par_iter()
+                        .map_init(
+                            || Self::kraken_classify_scratch(&db),
+                            |scratch, pair| {
+                                Self::classify_kraken_pair(&db, &classify_opts, pair, scratch, true)
+                            },
+                        )
+                        .collect::<Vec<_>>()
+                }))
+            } else {
+                let batch_matrix = classify_pool.install(|| {
+                    batch
+                        .par_iter()
+                        .fold(
+                            || {
+                                (
+                                    Self::kraken_classify_scratch(&db),
+                                    KrakenMatrixAccumulator::default(),
+                                )
+                            },
+                            |(mut scratch, mut local_matrix), pair| {
+                                let classification = Self::classify_kraken_pair(
+                                    &db,
+                                    &classify_opts,
+                                    pair,
+                                    &mut scratch,
+                                    false,
+                                );
+                                local_matrix.add(pair, &classification);
+                                (scratch, local_matrix)
+                            },
+                        )
+                        .map(|(_scratch, local_matrix)| local_matrix)
+                        .reduce(KrakenMatrixAccumulator::default, |mut left, right| {
+                            left.merge(right);
+                            left
+                        })
+                });
+                matrix.merge(batch_matrix);
+                None
+            };
+            total_classify_time += classify_started.elapsed();
+
+            let accumulate_started = Instant::now();
+            if let Some(lines) = lines {
+                for (pair, classification) in batch.iter().zip(lines.iter()) {
+                    if let (Some(writer), Some(raw_line)) =
+                        (writer.as_mut(), classification.raw_line.as_ref())
+                    {
+                        writer.write_all(raw_line.as_bytes())?;
+                    }
+                    matrix.add(pair, classification);
+                }
+            }
+            total_accumulate_time += accumulate_started.elapsed();
+            if num_read % KRAKEN_OUTPUT_FLUSH_INTERVAL == 0 {
+                if let Some(writer) = writer.as_mut() {
+                    writer.flush()?;
+                }
+                info!(
+                    read_pairs = num_read,
+                    read_time = ?total_read_time,
+                    classify_time = ?total_classify_time,
+                    accumulate_time = ?total_accumulate_time,
+                    "Classified read pairs"
+                );
+            }
+        }
+        info!(
+            read_time = ?total_read_time,
+            classify_time = ?total_classify_time,
+            accumulate_time = ?total_accumulate_time,
+            "All readpairs classified"
+        );
+        reader_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("KRAKEN reader thread panicked"))??;
+
+        if let Some(writer) = writer.as_mut() {
+            writer.flush()?;
+            info!("All KRAKEN2 output flushed");
+        }
+
+        Ok(matrix)
+    }
+
+    fn spawn_kraken_batch_reader(
+        path_in: PathBuf,
+        read_threads: BoundedU64<1, { u64::MAX }>,
+        sizeof_stream_arena: ByteSize,
+        sizeof_stream_buffer: ByteSize,
+        write_raw_output: bool,
+    ) -> Result<(
+        crossbeam::channel::Receiver<Result<(KrakenBatch, std::time::Duration)>>,
+        JoinHandle<Result<()>>,
+    )> {
+        let (batch_tx, batch_rx) = crossbeam::channel::bounded(3);
+        let reader_handle = std::thread::Builder::new()
+            .name("KrakenRead@0".to_string())
+            .spawn(move || -> Result<()> {
+                let decoder = codec::BBGZDecoder::builder()
+                    .with_path(path_in)
+                    .countof_threads(read_threads)
+                    .build();
+                let parser = parse::Tirp::builder().build();
+
+                let mut stream = Stream::builder()
+                    .with_decoder(decoder)
+                    .with_parser(parser)
+                    .sizeof_decode_arena(sizeof_stream_arena)
+                    .sizeof_decode_buffer(sizeof_stream_buffer)
+                    .build();
+
+                let mut query = stream.query::<tirp::Record>();
+                let mut num_read = 0_u64;
+
+                loop {
+                    let read_started = Instant::now();
+                    let mut batch = Vec::with_capacity(KRAKEN_CLASSIFY_BATCH_SIZE);
+                    while batch.len() < KRAKEN_CLASSIFY_BATCH_SIZE {
+                        match query.next_into::<tirp::Record>() {
+                            Ok(Some(record)) => {
+                                batch.push(Self::kraken_read_pair_from_record(
+                                    &record,
+                                    num_read,
+                                    write_raw_output,
+                                ));
+                                num_read += 1;
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                let _ = batch_tx.send(Err(e));
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    if batch.is_empty() {
+                        break;
+                    }
+
+                    let read_time = read_started.elapsed();
+                    if batch_tx.send(Ok((batch, read_time))).is_err() {
+                        break;
+                    }
+                }
+
+                Ok(())
+            })?;
+
+        Ok((batch_rx, reader_handle))
+    }
+
     pub fn write_tirp_to_interleaved_fq<P>(
         path_in: P,
-        path_r1: P,
+        path_out: P,
         num_threads: BoundedU64<1, { u64::MAX }>,
         sizeof_stream_arena: ByteSize,
         sizeof_stream_buffer: ByteSize,
@@ -223,8 +512,6 @@ impl KrakenCMD {
     where
         P: AsRef<Path>,
     {
-        /////////////////////////////////////////////////////////////////////////////////////
-        // Streamer from input TIRP
         let decoder = codec::BBGZDecoder::builder()
             .with_path(path_in)
             .countof_threads(num_threads)
@@ -239,131 +526,237 @@ impl KrakenCMD {
             .build();
 
         let mut query = stream.query::<tirp::Record>();
-
-        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_r1)?); //blocks until reader ready; so open reader first
-        //let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_r2)?);
-        info!("Sending read pairs");
+        let mut writer = BufWriter::new(std::fs::File::create(&path_out)?);
         let mut num_read: u64 = 0;
+
         loop {
             match query.next_into::<tirp::Record>() {
                 Ok(Some(record)) => {
-                    let record_id = *record.get_ref::<Id>();
-                    let record_r1 = *record.get_ref::<R1>();
-                    let record_r2 = *record.get_ref::<R2>();
-                    let record_q1 = *record.get_ref::<Q1>();
-                    let record_q2 = *record.get_ref::<Q2>();
-                    let record_umi = *record.get_ref::<Umi>();
-
-                    fn write_read_bascetfq<W>(
-                        writer: &mut W,
-                        record_id: &[u8],
-                        record_read: &[u8],
-                        record_qual: &[u8],
-                        record_umi: &[u8],
-                        num_read: u64,
-                    ) -> Result<()>
-                    where
-                        W: Write,
-                    {
-                        writer.write_all(b"@")?;
-                        writer.write_all(record_id)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(record_umi)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(format!("{}", num_read).as_bytes())?;
-
-                        writer.write_all(b"\n")?;
-                        writer.write_all(record_read)?;
-                        writer.write_all(b"\n+\n")?;
-                        writer.write_all(record_qual)?;
-                        writer.write_all(b"\n")?;
-                        Ok(())
-                    }
-
-                    write_read_bascetfq(
-                        &mut writer_r1,
-                        &record_id,
-                        &record_r1,
-                        &record_q1,
-                        &record_umi,
+                    Self::write_fastq_record(
+                        &mut writer,
+                        *record.get_ref::<Id>(),
+                        *record.get_ref::<R1>(),
+                        *record.get_ref::<Q1>(),
+                        *record.get_ref::<Umi>(),
                         num_read,
                     )?;
-
-                    write_read_bascetfq(
-                        &mut writer_r1,
-                        &record_id,
-                        &record_r2,
-                        &record_q2,
-                        &record_umi,
+                    Self::write_fastq_record(
+                        &mut writer,
+                        *record.get_ref::<Id>(),
+                        *record.get_ref::<R2>(),
+                        *record.get_ref::<Q2>(),
+                        *record.get_ref::<Umi>(),
                         num_read,
                     )?;
-
-                    //What about Q? it might not be used at all. but could output as an option
-                    /*
-                    Encoding: BWA-MEM defaults to Phred+33, which is standard for Illumina data
-                    @SEQ_ID
-                    GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
-                    +
-                    !''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65
-                    */
                     num_read += 1;
                 }
-                Ok(None) => {
-                    break;
-                }
-                Err(e) => {
-                    panic!("{:?}", e);
-                }
-            };
+                Ok(None) => break,
+                Err(e) => panic!("{:?}", e),
+            }
         }
-        info!("All readpairs sent");
 
-        //Ensure data is properly pushed out
-        writer_r1.flush()?;
-        //drop(writer_r1); //don't think needed
-        info!("All readpairs flushed");
-
+        writer.flush()?;
         Ok(())
     }
-}
 
-///
-/// Generate KRAKEN2 command
-///
-pub fn create_kraken_process<P>(
-    path_db: &P,
-    path_r12: &P,
-    path_out_raw: &P,
-    num_threads: u64,
-) -> Result<std::process::Child>
-where
-    P: AsRef<Path>,
-{
-    let num_threads = format!("{}", num_threads);
-    let path_db = format!("{}", path_db.as_ref().as_os_str().to_str().expect("os str"));
-    let path_r12 = format!(
-        "{}",
-        path_r12.as_ref().as_os_str().to_str().expect("os str")
-    );
-    let path_out_raw = format!(
-        "{}",
-        path_out_raw.as_ref().as_os_str().to_str().expect("os str")
-    );
+    fn write_fastq_record<W>(
+        writer: &mut W,
+        record_id: &[u8],
+        record_read: &[u8],
+        record_qual: &[u8],
+        record_umi: &[u8],
+        num_read: u64,
+    ) -> Result<()>
+    where
+        W: Write,
+    {
+        writer.write_all(b"@")?;
+        writer.write_all(record_id)?;
+        writer.write_all(b":")?;
+        writer.write_all(record_umi)?;
+        writer.write_all(b":")?;
+        write!(writer, "{}", num_read)?;
+        writer.write_all(b"\n")?;
+        writer.write_all(record_read)?;
+        writer.write_all(b"\n+\n")?;
+        writer.write_all(record_qual)?;
+        writer.write_all(b"\n")?;
+        Ok(())
+    }
 
-    let args = vec![
-        "build", ////////////////////////////// new! worked without before
-        "--db",
-        &path_db,
-        "--threads",
-        &num_threads,
-        "--output",
-        &path_out_raw,
-        "--interleaved", ////////////////// has been unknown command
-        &path_r12,
-    ];
+    fn kraken_read_pair_from_record(
+        record: &tirp::Record,
+        num_read: u64,
+        write_raw_output: bool,
+    ) -> KrakenReadPair {
+        let record_id = *record.get_ref::<Id>();
+        let header = if write_raw_output {
+            let record_umi = *record.get_ref::<Umi>();
+            Some(format!(
+                "{}:{}:{}",
+                String::from_utf8_lossy(record_id),
+                String::from_utf8_lossy(record_umi),
+                num_read
+            ))
+        } else {
+            None
+        };
 
-    let proc_cmd = std::process::Command::new("kraken2").args(args).spawn()?;
-    Ok(proc_cmd)
+        KrakenReadPair {
+            cell_id: Arc::from(record_id),
+            header,
+            r1: Self::record_sequence_string(*record.get_ref::<R1>()),
+            r2: Self::record_sequence_string(*record.get_ref::<R2>()),
+        }
+    }
+
+    fn record_sequence_string(seq: &[u8]) -> String {
+        debug_assert!(std::str::from_utf8(seq).is_ok());
+        // TIRP read sequences are ASCII nucleotide strings. Kraken's Sequence type
+        // stores sequence data as String, so keep the ownership transfer cheap.
+        unsafe { String::from_utf8_unchecked(seq.to_vec()) }
+    }
+
+    fn kraken_classify_scratch(db: &ClassifyDb) -> KrakenClassifyScratch {
+        KrakenClassifyScratch {
+            scanner: MinimizerScanner::new(
+                db.idx_opts.k as isize,
+                db.idx_opts.l as isize,
+                db.idx_opts.spaced_seed_mask,
+                db.idx_opts.dna_db,
+                db.idx_opts.toggle_mask,
+                db.idx_opts.revcom_version,
+            ),
+            taxa: Vec::new(),
+            hit_counts: Default::default(),
+            tx_frames: Vec::new(),
+            taxon_counters: TaxonCounters::new(),
+            output_buf: String::with_capacity(512),
+            r1: Sequence {
+                format: SequenceFormat::Fastq,
+                ..Sequence::default()
+            },
+            r2: Sequence {
+                format: SequenceFormat::Fastq,
+                ..Sequence::default()
+            },
+        }
+    }
+
+    fn classify_kraken_pair(
+        db: &ClassifyDb,
+        classify_opts: &ClassifyOptions,
+        pair: &KrakenReadPair,
+        scratch: &mut KrakenClassifyScratch,
+        write_raw_output: bool,
+    ) -> KrakenClassification {
+        Self::fill_kraken_sequence(&mut scratch.r1, pair, true);
+        Self::fill_kraken_sequence(&mut scratch.r2, pair, false);
+
+        let call = classify_sequence(
+            &scratch.r1,
+            Some(&scratch.r2),
+            &db.hash,
+            &db.taxonomy,
+            &db.idx_opts,
+            classify_opts,
+            &mut scratch.scanner,
+            &mut scratch.taxa,
+            &mut scratch.hit_counts,
+            &mut scratch.tx_frames,
+            &mut scratch.taxon_counters,
+            &mut scratch.output_buf,
+        );
+
+        let external_taxid = if call == 0 {
+            None
+        } else {
+            Some(db.taxonomy.node(call).external_id as u32)
+        };
+
+        KrakenClassification {
+            raw_line: write_raw_output.then(|| scratch.output_buf.clone()),
+            external_taxid,
+        }
+    }
+
+    fn fill_kraken_sequence(seq: &mut Sequence, pair: &KrakenReadPair, first_mate: bool) {
+        seq.format = SequenceFormat::Fastq;
+        seq.header.clear();
+        if let Some(header) = &pair.header {
+            seq.header.push_str(header);
+        }
+        seq.comment.clear();
+        seq.seq.clear();
+        seq.seq
+            .push_str(if first_mate { &pair.r1 } else { &pair.r2 });
+        seq.quals.clear();
+    }
+
+    fn load_kraken_db(path_db: impl AsRef<Path>) -> Result<ClassifyDb> {
+        let path_db = path_db.as_ref();
+        let hash_path = path_db.join("hash.k2d");
+        let taxonomy_path = path_db.join("taxo.k2d");
+        let opts_path = path_db.join("opts.k2d");
+
+        for required_file in [&hash_path, &taxonomy_path, &opts_path] {
+            if !required_file.is_file() {
+                anyhow::bail!(
+                    "Specified database path is not a KRAKEN2 database (missing {})",
+                    required_file.display()
+                );
+            }
+        }
+
+        let hash_path = hash_path.to_string_lossy().into_owned();
+        let taxonomy_path = taxonomy_path.to_string_lossy().into_owned();
+        let opts_path = opts_path.to_string_lossy().into_owned();
+
+        info!(
+            db = %path_db.display(),
+            hash = %hash_path,
+            taxonomy = %taxonomy_path,
+            opts = %opts_path,
+            "Loading KRAKEN2 database"
+        );
+        let started = Instant::now();
+        let db = ClassifyDb::from_files(&hash_path, &taxonomy_path, &opts_path, false)?;
+        info!(
+            db = %path_db.display(),
+            elapsed = ?started.elapsed(),
+            "KRAKEN2 database loaded"
+        );
+
+        Ok(db)
+    }
+
+    fn kraken_stream_buffer_after_db_load(requested_stream_buffer: ByteSize) -> ByteSize {
+        let Some(memory) = memory_stats::memory_stats() else {
+            warn!(
+                requested_stream_buffer = %requested_stream_buffer,
+                "Could not read current memory usage; using requested KRAKEN stream buffer"
+            );
+            return requested_stream_buffer;
+        };
+
+        let current_usage = ByteSize(memory.physical_mem as u64);
+        let remaining = requested_stream_buffer
+            .as_u64()
+            .saturating_sub(current_usage.as_u64())
+            .saturating_sub(KRAKEN_MEMORY_HEADROOM.as_u64());
+        let adjusted = ByteSize(remaining.max(KRAKEN_MIN_STREAM_BUFFER.as_u64()));
+        let adjusted = ByteSize(adjusted.as_u64().min(requested_stream_buffer.as_u64()));
+
+        info!(
+            current_physical_memory = %current_usage,
+            requested_stream_buffer = %requested_stream_buffer,
+            memory_headroom = %KRAKEN_MEMORY_HEADROOM,
+            adjusted_stream_buffer = %adjusted,
+            "Adjusted KRAKEN stream buffer after database load"
+        );
+
+        adjusted
+    }
 }
 
 #[derive(Args)]

@@ -25,6 +25,7 @@ gecco = ["dep:gecco"]
 skesa = ["dep:skesa-rs"]
 
 [dependencies]
+ahash = "0.8"
 anyhow.workspace = true
 bascet-core.workspace = true
 bascet-derive.workspace = true
@@ -51,6 +52,7 @@ glidesort.workspace = true
 gxhash.workspace = true
 hdf5.workspace = true
 itertools.workspace = true
+kraken2-rs = { path = "/home/mahogny/github/claude/kraken-rs" }
 lazy_static.workspace = true
 memchr.workspace = true
 memory-stats.workspace = true
