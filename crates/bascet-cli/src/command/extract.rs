@@ -8,6 +8,8 @@ use std::{
 use tracing::{debug, info};
 use zip::ZipArchive;
 
+use crate::utils::{atomic_temp_path, publish_atomic_output};
+
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
 #[derive(Args)]
@@ -51,10 +53,13 @@ impl ExtractCMD {
         if entry.is_file() {
             debug!("extracting {} ", self.fname);
 
-            let file_out = File::create(&self.path_out).unwrap();
+            let path_tmp = atomic_temp_path(&self.path_out);
+            let file_out = File::create(&path_tmp).unwrap();
             let mut bufwriter_out = BufWriter::new(&file_out);
             let mut bufreader_found = BufReader::new(&mut entry);
             std::io::copy(&mut bufreader_found, &mut bufwriter_out).unwrap();
+            drop(bufwriter_out);
+            publish_atomic_output(path_tmp, &self.path_out)?;
         }
 
         info!("Extract has finished succesfully");

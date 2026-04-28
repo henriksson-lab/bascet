@@ -30,6 +30,7 @@ use crate::fileformat::ReadPairWriter;
 use crate::fileformat::ShardCellDictionary;
 use crate::fileformat::StreamingReadPairReader;
 use crate::fileformat::{CellID, ReadPair};
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
@@ -111,31 +112,37 @@ impl TransformFile {
         let (tx_data, rx_data) = (Arc::new(tx_data), Arc::new(rx_data));
 
         /////////////////////////////////////////////// Start writer threads
-        for p in &params.path_out {
+        let output_path_pairs: Vec<(PathBuf, PathBuf)> = params
+            .path_out
+            .iter()
+            .map(|path| (path.clone(), atomic_temp_path(path)))
+            .collect();
+
+        for (p_final, p_tmp) in &output_path_pairs {
             //let writer = BascetFastqWriter::new(&p).expect("Could not open output fastq file");
 
-            match crate::fileformat::detect_shard_format(&p) {
+            match crate::fileformat::detect_shard_format(&p_final) {
                 DetectedFileformat::ZIP => {
                     panic!(
                         "Storing reads in ZipBascet not implemented. Consider TIRP format instead as it is a more relevant option"
                     )
                 }
                 DetectedFileformat::TIRP => create_writer_thread(
-                    &p,
+                    &p_tmp,
                     &thread_pool_write,
                     &rx_data,
                     &Arc::new(BascetTIRPWriterFactory::new()),
                 )
                 .unwrap(),
                 DetectedFileformat::SingleFASTQ => create_writer_thread(
-                    &p,
+                    &p_tmp,
                     &thread_pool_write,
                     &rx_data,
                     &Arc::new(BascetSingleFastqWriterFactory::new()),
                 )
                 .unwrap(),
                 DetectedFileformat::PairedFASTQ => create_writer_thread(
-                    &p,
+                    &p_tmp,
                     &thread_pool_write,
                     &rx_data,
                     &Arc::new(BascetPairedFastqWriterFactory::new()),
@@ -148,7 +155,7 @@ impl TransformFile {
                 _ => {
                     anyhow::bail!(
                         "Output file format for {} not supported for this operation",
-                        p.display()
+                        p_final.display()
                     )
                 }
             }
@@ -170,8 +177,37 @@ impl TransformFile {
         //Wait for writer threads to be done
         thread_pool_write.join();
 
+        for (p_final, p_tmp) in output_path_pairs {
+            publish_atomic_output(&p_tmp, &p_final)?;
+            match crate::fileformat::detect_shard_format(&p_final) {
+                DetectedFileformat::PairedFASTQ => {
+                    let p_tmp_r2 = paired_r2_by_last_r1(&p_tmp)?;
+                    let p_final_r2 = paired_r2_by_last_r1(&p_final)?;
+                    publish_atomic_output(p_tmp_r2, p_final_r2)?;
+                }
+                DetectedFileformat::TIRP => {
+                    publish_atomic_output(tabix_index_path(&p_tmp), tabix_index_path(&p_final))?;
+                }
+                _ => {}
+            }
+        }
+
         Ok(())
     }
+}
+
+fn paired_r2_by_last_r1(path: &PathBuf) -> anyhow::Result<PathBuf> {
+    let path_string = path.to_string_lossy();
+    let last_pos = path_string
+        .rfind("R1")
+        .ok_or_else(|| anyhow::anyhow!("Could not find R2 path for {}", path.display()))?;
+    let mut bytes = path_string.as_bytes().to_vec();
+    bytes[last_pos + 1] = b'2';
+    Ok(PathBuf::from(String::from_utf8(bytes)?))
+}
+
+fn tabix_index_path(path: &PathBuf) -> PathBuf {
+    PathBuf::from(format!("{}.tbi", path.display()))
 }
 
 pub fn create_random_readers(

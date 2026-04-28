@@ -13,9 +13,8 @@ use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use bgzip::{write::BGZFMultiThreadWriter, Compression};
+use bgzip::{Compression, write::BGZFMultiThreadWriter};
 
-use super::shard::StreamingReadPairReader;
 use super::CellID;
 use super::ConstructFromPath;
 use super::ReadPair;
@@ -25,10 +24,11 @@ use super::ShardCellDictionary;
 use super::ShardFileExtractor;
 use super::ShardRandomFileExtractor;
 use super::ShardStreamingFileExtractor;
+use super::shard::StreamingReadPairReader;
 
-use noodles::fastq::record::Definition;
 use noodles::fastq::Record as FastqRecord;
 use noodles::fastq::Writer as FastqWriter;
+use noodles::fastq::record::Definition;
 use noodles::{core::Region, csi::BinningIndex};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;

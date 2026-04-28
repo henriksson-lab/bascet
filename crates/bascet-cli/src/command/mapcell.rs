@@ -102,8 +102,8 @@ impl MapCellCMD {
         let script: Arc<Box<dyn MapCellFunction>> = if preset_name.starts_with("_") {
             info!("Using preset script: {:?}", self.path_script);
             let preset_name = &preset_name[1..]; //Remove the initial _  ; or capital letter?
-                                                 //            let script = ;
-                                                 //                .expect("Unable to load preset script")
+            //            let script = ;
+            //                .expect("Unable to load preset script")
             if let Some(script) = crate::mapcell_scripts::get_preset_script(preset_name) {
                 script
             } else {

@@ -11,6 +11,7 @@ use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
 use super::determine_thread_counts_1;
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_THREADS: usize = 5;
@@ -85,7 +86,8 @@ impl Bam2Fragments {
             .collect();
 
         //Save a "Fragments.tsv", bgzip-format. Writer is multithreaded
-        let mut outfile = File::create(&params.path_output).expect("Could not open output file");
+        let path_tmp = atomic_temp_path(&params.path_output);
+        let mut outfile = File::create(&path_tmp).expect("Could not open output file");
         let mut writer =
             bgzip::write::BGZFMultiThreadWriter::new(&mut outfile, Compression::default());
         writer.write_all(b"#CHR\tFROM\tTO\tCELLID\tCNT\tUMI\n")?; // UMI is optional; what works with Signac?
@@ -144,10 +146,14 @@ impl Bam2Fragments {
             }
         }
         writer.close()?;
-
         //Tabix-index the output file to prepare it for loading
         info!("Indexing final output file");
-        index_fragments(&params.path_output).expect("Failed to tabix index output file");
+        index_fragments(&path_tmp).expect("Failed to tabix index output file");
+        publish_atomic_output(&path_tmp, &params.path_output)?;
+        publish_atomic_output(
+            tabix_index_path(&path_tmp),
+            tabix_index_path(&params.path_output),
+        )?;
 
         Ok(())
     }
@@ -172,4 +178,8 @@ pub fn index_fragments(p: &PathBuf) -> anyhow::Result<()> {
 
     let _ = process.output().expect("Failed to run tabix");
     Ok(())
+}
+
+fn tabix_index_path(p: &PathBuf) -> PathBuf {
+    PathBuf::from(format!("{}.tbi", p.display()))
 }

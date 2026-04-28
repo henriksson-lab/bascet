@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Args;
-use std::io::{self, stdout, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write, stdout};
 
 #[derive(Args)]
 pub struct PipeSamAddTagsCMD {

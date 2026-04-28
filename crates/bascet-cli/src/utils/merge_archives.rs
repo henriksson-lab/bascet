@@ -8,6 +8,8 @@ use std::ffi::OsString;
 use tracing::info;
 use zip::{ZipArchive, ZipWriter};
 
+use crate::utils::rename_or_copy_across_filesystems;
+
 ///////////////////////////////
 /// Merge a list of ZIP archives
 pub fn merge_archives<P>(destination: &P, sources: &Vec<P>) -> anyhow::Result<()>
@@ -74,7 +76,7 @@ where
     zipwriter_destination.finish().unwrap();
 
     //Move file from temp-file to real file, signifying that the file is now complete
-    std::fs::rename(destination_temp, destination)?;
+    rename_or_copy_across_filesystems(destination_temp, destination)?;
 
     Ok(())
 }

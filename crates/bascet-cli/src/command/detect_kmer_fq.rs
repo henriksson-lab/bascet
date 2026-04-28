@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
 use crate::fileformat::{CellID, ReadPair};
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
@@ -160,8 +161,10 @@ impl DetectKmerFq {
         //Save the final count matrix
         info!("Storing count table to {}", params.path_output.display());
         let mut mm = mm.lock().unwrap();
-        mm.save_to_anndata(&params.path_output)
+        let path_tmp = atomic_temp_path(&params.path_output);
+        mm.save_to_anndata(&path_tmp)
             .expect("Failed to save to HDF5 file");
+        publish_atomic_output(path_tmp, &params.path_output)?;
 
         Ok(())
     }

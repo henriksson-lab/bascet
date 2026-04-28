@@ -111,6 +111,11 @@ wide = "1.1.1"
 # crucial to disable default features though due to dependency conflicts
 zip = { version = ">=4.3.0, <4.4.0", default-features = false, features = ["zstd","deflate-flate2"] }
 
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
+
 [workspace.lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"

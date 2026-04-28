@@ -22,6 +22,7 @@ use noodles::{
 use tracing::info;
 
 use super::align::{index_bam, sort_bam};
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 const BWA_MEM2_BATCH_BASES: usize = 10_000_000;
 type NoodlesBamWriter = bam::io::Writer<bgzf::io::MultithreadedWriter<File>>;
@@ -47,8 +48,13 @@ pub fn try_execute_bwa_mem2(
     let bam_header = sam_header.parse::<sam::Header>()?;
     let worker_count = NonZeroUsize::new(numof_threads_writebam)
         .context("BAM writer thread count must be nonzero")?;
-    let file = File::create(path_out_unsorted)
-        .with_context(|| format!("failed to create BAM writer for {:?}", path_out_unsorted))?;
+    let path_out_unsorted_tmp = atomic_temp_path(path_out_unsorted);
+    let file = File::create(&path_out_unsorted_tmp).with_context(|| {
+        format!(
+            "failed to create BAM writer for {:?}",
+            path_out_unsorted_tmp
+        )
+    })?;
     let bgzf_writer = bgzf::io::MultithreadedWriter::with_worker_count(worker_count, file);
     let mut writer_bam = bam::io::Writer::from(bgzf_writer);
     writer_bam.write_header(&bam_header)?;
@@ -64,6 +70,7 @@ pub fn try_execute_bwa_mem2(
     )?;
     let mut bgzf_writer = writer_bam.into_inner();
     bgzf_writer.finish()?;
+    publish_atomic_output(&path_out_unsorted_tmp, path_out_unsorted)?;
 
     info!("Sorting BAM file");
     sort_bam(path_out_unsorted, path_out_sorted, path_temp, total_threads)

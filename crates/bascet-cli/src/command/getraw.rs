@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,6 +30,7 @@ use crate::barcode::atrandi_wgs_barcode_illumina::DebarcodeAtrandiWGSChemistryIl
 use crate::barcode::atrandi_wgs_barcode_longread::DebarcodeAtrandiWGSChemistryLongread;
 use crate::barcode::{Chemistry, ParseBioChemistry3, TenxRNAChemistry};
 use crate::command::shardify::ShardifyCMD;
+use crate::utils::{atomic_temp_path, publish_atomic_output, rename_or_copy_across_filesystems};
 use crate::{bbgz_compression_parser, bounded_parser};
 use tracing::{debug, error, info, warn};
 
@@ -85,10 +87,10 @@ pub struct GetRawCMD {
     #[arg(
         long = "countof-threads-read",
         help = "Number of reader threads",
-        value_name = "2..",
-        value_parser = bounded_parser!(BoundedU64<2, { u64::MAX }>),
+        value_name = "1..",
+        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
     )]
-    countof_threads_read: Option<BoundedU64<2, { u64::MAX }>>,
+    countof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
 
     #[arg(
         long = "countof-threads-debarcode",
@@ -244,16 +246,16 @@ struct GetrawBudget {
     memory: ByteSize,
 
     #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.15) as u64))]
-    countof_threads_read: BoundedU64<2, { u64::MAX }>,
-    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
+    countof_threads_read: BoundedU64<1, { u64::MAX }>,
+    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.2) as u64))]
     countof_threads_debarcode: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.3) as u64))]
+    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.2) as u64))]
     countof_threads_sort: BoundedU64<1, { u64::MAX }>,
 
     #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
     countof_threads_write: BoundedU64<1, { u64::MAX }>,
-    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.2) as u64))]
+    #[threads(TCompress, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.4) as u64))]
     countof_threads_compress: BoundedU64<1, { u64::MAX }>,
 
     #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.5) as u64))]
@@ -587,7 +589,7 @@ fn do_merging(
 
     let mut output_paths = Vec::new();
     for (final_path, output_path) in izip!(&mergeround_merge_next, &s.paths_out) {
-        match std::fs::rename(&**final_path.path(), &**output_path.path()) {
+        match rename_or_copy_across_filesystems(&**final_path.path(), &**output_path.path()) {
             Ok(_) => {
                 debug!("Moved {final_path} -> {output_path}");
                 output_paths.push(output_path.clone());
@@ -1180,7 +1182,7 @@ fn spawn_chunk_writers(
                         // Reserve space for entire record to prevent splitting across blocks
                         let record_size = 11 + // 8x '\t' + '1' + '1' + '\n'
                             library_bytes.len() +
-                            library_sep_bytes.len() + 
+                            library_sep_bytes.len() +
                             id_bytes.len() +
                             r1_bytes.len() +
                             r2_bytes.len() +
@@ -1318,10 +1320,12 @@ fn spawn_histogram_workers(
                     "id_current < id_context",
                 );
 
-            let hist_file = match hist_path.clone().create() {
+            let hist_final_path = hist_path.path().path().to_path_buf();
+            let hist_tmp_path = atomic_temp_path(&hist_final_path);
+            let hist_file = match File::create(&hist_tmp_path) {
                 Ok(file) => file,
                 Err(e) => {
-                    error!(path = ?hist_path, error = %e, "Failed to create output file");
+                    error!(path = ?hist_tmp_path, error = %e, "Failed to create output file");
                     panic!("Failed to create output file");
                 }
             };
@@ -1353,6 +1357,8 @@ fn spawn_histogram_workers(
             }
 
             bufwriter.flush().unwrap();
+            drop(bufwriter);
+            publish_atomic_output(&hist_tmp_path, &hist_final_path).unwrap();
             debug!("Wrote histogram at {}", hist_path);
         });
         thread_handles.push(worker_handle);

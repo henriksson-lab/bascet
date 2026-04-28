@@ -7,6 +7,8 @@ use clio::{InputPath, OutputPath};
 use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
+use crate::utils::{atomic_temp_path, publish_atomic_output};
+
 type NoodlesBamReader = noodles::bam::io::Reader<noodles::bgzf::io::Reader<File>>;
 
 #[derive(Args)]
@@ -100,7 +102,9 @@ impl QcAlignedCoverageCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         info!("Running QC aligned-coverage");
 
-        let output_file = self.path_out.clone().create()?;
+        let final_path = self.path_out.path().path().to_path_buf();
+        let path_tmp = atomic_temp_path(&final_path);
+        let output_file = File::create(&path_tmp)?;
         let mut bufwriter = BufWriter::new(output_file);
 
         bufwriter.write_all(b"id\treference\tsizeof_reference\tunion_aligned_bases\tsumof_aligned_bases\tcountof_alignments\tpileup\n")?;
@@ -205,6 +209,8 @@ impl QcAlignedCoverageCMD {
         }
 
         bufwriter.flush()?;
+        drop(bufwriter);
+        publish_atomic_output(path_tmp, final_path)?;
         Ok(())
     }
 }

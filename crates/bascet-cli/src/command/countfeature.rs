@@ -15,6 +15,7 @@ use noodles::gff::feature::record::Strand;
 use super::determine_thread_counts_1;
 use crate::fileformat::new_anndata::SparseMatrixAnnDataWriter;
 use crate::umi::umi_dedup::UMIcounter;
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 use sprs::{CsMat, TriMat};
 
@@ -432,7 +433,8 @@ impl CountFeature {
 
         info!("- Store as anndata");
 
-        let mut file = SparseMatrixAnnDataWriter::create_anndata(path_out)?;
+        let path_tmp = atomic_temp_path(path_out);
+        let mut file = SparseMatrixAnnDataWriter::create_anndata(&path_tmp)?;
 
         let list_cell_names =
             SparseMatrixAnnDataWriter::list_string_to_h5(&state.current_cellintmapping.list_cell);
@@ -464,6 +466,9 @@ impl CountFeature {
         } else {
             file.store_sparse_count_matrix(&compressed_mat, n_rows, n_cols)?;
         }
+
+        drop(file);
+        publish_atomic_output(path_tmp, path_out)?;
 
         anyhow::Ok(())
     }

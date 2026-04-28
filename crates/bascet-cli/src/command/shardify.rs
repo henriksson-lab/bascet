@@ -22,6 +22,8 @@ use std::{
 };
 use tracing::{debug, error, info, warn};
 
+use crate::utils::{atomic_temp_path, publish_atomic_output};
+
 use crate::bounded_parser;
 
 /// Commandline option: Take parsed reads and organize them as shards
@@ -288,15 +290,27 @@ impl ShardifyCMD {
 
         let global_cells_written = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-        for (thread_idx, (thread_output, thread_write_rx)) in
-            izip!(self.paths_out.clone(), vec_write_rx).enumerate()
-        {
-            debug!(thread = thread_idx, output_path = %thread_output, "Starting writer thread");
+        let final_output_paths: Vec<PathBuf> = self
+            .paths_out
+            .iter()
+            .map(|path| path.path().path().to_path_buf())
+            .collect();
+        let temp_output_paths: Vec<PathBuf> =
+            final_output_paths.iter().map(atomic_temp_path).collect();
 
-            let thread_file = match thread_output.clone().create() {
+        for (thread_idx, (thread_output_final, thread_output_tmp, thread_write_rx)) in izip!(
+            final_output_paths.clone(),
+            temp_output_paths.clone(),
+            vec_write_rx
+        )
+        .enumerate()
+        {
+            debug!(thread = thread_idx, output_path = ?thread_output_final, "Starting writer thread");
+
+            let thread_file = match File::create(&thread_output_tmp) {
                 Ok(file) => file,
                 Err(e) => {
-                    error!(path = ?thread_output.path(), error = %e, "Failed to create output file");
+                    error!(path = ?thread_output_tmp, error = %e, "Failed to create output file");
                     panic!("Failed to create output file");
                 }
             };
@@ -308,7 +322,7 @@ impl ShardifyCMD {
             vec_writer_handles.push(budget.spawn::<TWrite, _, _>(thread_idx as u64, move || {
                 let thread = std::thread::current();
                 let thread_name = thread.name().unwrap_or("unknown thread");
-                debug!(thread = thread_name, path = %thread_output, "Starting writer");
+                debug!(thread = thread_name, path = ?thread_output_tmp, "Starting writer");
 
                 let mut merge_blocks: SmallVec<[parse::BBGZBlock; 32]> = SmallVec::new();
                 let mut merge_csize;
@@ -588,6 +602,9 @@ impl ShardifyCMD {
         drop(vec_write_tx);
         for handle in vec_writer_handles {
             handle.join().expect("Writer thread panicked");
+        }
+        for (path_tmp, path_final) in izip!(temp_output_paths, final_output_paths) {
+            publish_atomic_output(path_tmp, path_final)?;
         }
         debug!("Write handles closed");
 

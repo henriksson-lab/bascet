@@ -1,5 +1,5 @@
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 use clap::Args;
 use itertools::Itertools;
 use std::fs::File;

@@ -11,6 +11,8 @@ use gecco::{orf::SeqRecord, Gecco};
 use tracing::info;
 use zip::{read::ZipArchive, ZipWriter};
 
+use crate::utils::{atomic_temp_path, publish_atomic_output};
+
 #[derive(Args)]
 pub struct GeccoCMD {
     /// Input zip file containing CELLID/contigs.fa entries.
@@ -258,8 +260,9 @@ fn run_gecco_cell(pipeline: &Gecco, records: &[SeqRecord]) -> Result<GeccoReport
 }
 
 fn write_zip(path_out: PathBuf, rx_reports: Receiver<Result<CellGecco>>) -> Result<()> {
-    let output = File::create(&path_out)
-        .with_context(|| format!("failed to create output zip {}", path_out.display()))?;
+    let path_tmp = atomic_temp_path(&path_out);
+    let output = File::create(&path_tmp)
+        .with_context(|| format!("failed to create output zip {}", path_tmp.display()))?;
     let mut zip_writer = ZipWriter::new(BufWriter::new(output));
     let options: zip::write::FileOptions<()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -276,6 +279,7 @@ fn write_zip(path_out: PathBuf, rx_reports: Receiver<Result<CellGecco>>) -> Resu
     }
 
     zip_writer.finish()?;
+    publish_atomic_output(&path_tmp, &path_out)?;
     info!("wrote GECCO output for final total of {} cells", num_cells);
     Ok(())
 }

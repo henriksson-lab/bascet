@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::{fs::File, num::NonZeroUsize, path::PathBuf};
 use tracing::info;
 
-use super::shard::StreamingReadPairReader;
 use super::ConstructFromPath;
+use super::shard::StreamingReadPairReader;
 use crate::fileformat::shard::ReadPair;
 
 use super::CellID;

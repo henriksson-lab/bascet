@@ -2,8 +2,8 @@ use std::sync::atomic::Ordering;
 
 use bascet_cli::command::{self, Commands};
 use bascet_runtime::logging::{
-    log_filter_parser, log_mode_parser, log_ordered_parser, log_strictness_parser, LogConfig,
-    LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer,
+    LogConfig, LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer,
+    log_filter_parser, log_mode_parser, log_ordered_parser, log_strictness_parser,
 };
 use clap::Parser;
 use tracing::{error, info};

@@ -16,7 +16,10 @@ use tracing::{info, warn};
 
 use bascet_derive::Budget;
 
-use crate::bounded_parser;
+use crate::{
+    bounded_parser,
+    utils::{atomic_temp_path, publish_atomic_output},
+};
 
 type NoodlesBamReader = noodles::bam::io::Reader<noodles::bgzf::io::Reader<File>>;
 
@@ -106,7 +109,9 @@ impl QcRefCompositionCMD {
 
         ////////////////////////////////////////////////////////////////////
         // Create thread for writing output
-        let output_file = self.path_out.clone().create()?;
+        let final_path = self.path_out.path().path().to_path_buf();
+        let path_tmp = atomic_temp_path(&final_path);
+        let output_file = File::create(&path_tmp)?;
         let (write_tx, write_rx) = crossbeam::channel::unbounded::<CellRow>();
 
         let thread_writer = budget.spawn::<TWrite, _, _>(0, move || {
@@ -164,6 +169,7 @@ impl QcRefCompositionCMD {
             handle.join().unwrap();
         }
         thread_writer.join().unwrap();
+        publish_atomic_output(path_tmp, final_path)?;
 
         Ok(())
     }

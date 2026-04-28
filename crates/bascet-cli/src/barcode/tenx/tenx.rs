@@ -1,7 +1,7 @@
+use crate::barcode::Chemistry;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcode16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcodePart16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::DetectedBarcode;
-use crate::barcode::Chemistry;
 use crate::common::ReadPair;
 use bascet_core::sequence::R0;
 

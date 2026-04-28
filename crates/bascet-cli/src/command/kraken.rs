@@ -1,4 +1,7 @@
-use crate::bounded_parser;
+use crate::{
+    bounded_parser,
+    utils::{atomic_temp_path, publish_atomic_output},
+};
 
 use bascet_core::{
     attr::{meta::*, quality::*, sequence::*},
@@ -160,10 +163,11 @@ impl KrakenCMD {
         /////////////////////////////////////////////////////////////////////////////////////
         // Start KRAKEN2
         let num_threads = budget.threads.get();
+        let path_out_raw_tmp = atomic_temp_path(&self.path_out_raw);
         let mut proc_aligner = create_kraken_process(
             &self.path_db,
             &path_pipe_r12,
-            &self.path_out_raw,
+            &path_out_raw_tmp,
             num_threads,
         )
         .expect("Failed to start KRAKEN");
@@ -187,6 +191,7 @@ impl KrakenCMD {
 
         //Clean up: remove pipes
         std::fs::remove_file(path_pipe_r12)?;
+        publish_atomic_output(&path_out_raw_tmp, &self.path_out_raw)?;
 
         //Generate matrix
         info!("Generating KRAKEN2 matrix");
@@ -486,8 +491,10 @@ impl KrakenMatrix {
 
         //Save the final count matrix
         info!("Storing count table to {}", params.path_output.display());
-        mm.save_to_anndata(&params.path_output)
+        let path_tmp = atomic_temp_path(&params.path_output);
+        mm.save_to_anndata(&path_tmp)
             .expect("Failed to save to HDF5 file");
+        publish_atomic_output(path_tmp, &params.path_output)?;
 
         Ok(())
     }

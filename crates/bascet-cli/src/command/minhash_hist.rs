@@ -18,6 +18,7 @@ use crate::fileformat::CellID;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 
@@ -183,12 +184,15 @@ impl MinhashHist {
 
         //Write out histogram
         info!("Storing histogram");
-        let f = File::create(&params.path_output)
-            .expect("Could not open KMER histogram file for writing");
+        let path_tmp = atomic_temp_path(&params.path_output);
+        let f = File::create(&path_tmp).expect("Could not open KMER histogram file for writing");
         let mut bw = BufWriter::new(f);
         for (kmer_string, cnt) in hist {
             writeln!(bw, "{}\t{}", &kmer_string, cnt).unwrap();
         }
+        bw.flush()?;
+        drop(bw);
+        publish_atomic_output(path_tmp, &params.path_output)?;
 
         //Delete temp folder
         //fs::remove_dir_all(&params.path_tmp).unwrap();

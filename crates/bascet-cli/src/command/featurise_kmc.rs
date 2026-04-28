@@ -13,7 +13,7 @@ use crate::fileformat::CellID;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
-use crate::utils::check_kmc_tools;
+use crate::utils::{atomic_temp_path, check_kmc_tools, publish_atomic_output};
 
 use clap::Args;
 
@@ -161,12 +161,13 @@ impl FeaturiseKMC {
         info!("Making KMC union script");
         let path_kmc_union_script = params.path_tmp.join("kmc_union.op");
         //let path_kmc_union_db = params.path_tmp.join("kmc_union");
-        let path_kmc_union_db = &params.path_output; //.join("kmc_union");
-        write_union_script(&path_kmc_union_script, &path_kmc_union_db, dbs_to_merge).unwrap();
+        let path_kmc_union_db_tmp = atomic_temp_path(&params.path_output);
+        write_union_script(&path_kmc_union_script, &path_kmc_union_db_tmp, dbs_to_merge).unwrap();
 
         // Run KMC tools on union script --- output is the KMC database
         info!("Running KMC union script");
         run_kmc_tools(&path_kmc_union_script, params.threads_work).unwrap();
+        publish_kmc_db(&path_kmc_union_db_tmp, &params.path_output)?;
 
         /*
                 // Generate a total summary file, text format
@@ -182,6 +183,19 @@ impl FeaturiseKMC {
 
         Ok(())
     }
+}
+
+fn publish_kmc_db(path_tmp_prefix: &PathBuf, path_final_prefix: &PathBuf) -> anyhow::Result<()> {
+    for extension in ["kmc_pre", "kmc_suf"] {
+        let path_tmp = kmc_db_part_path(path_tmp_prefix, extension);
+        let path_final = kmc_db_part_path(path_final_prefix, extension);
+        publish_atomic_output(path_tmp, path_final)?;
+    }
+    Ok(())
+}
+
+fn kmc_db_part_path(prefix: &PathBuf, extension: &str) -> PathBuf {
+    PathBuf::from(format!("{}.{}", prefix.display(), extension))
 }
 
 fn run_kmc_tools(path_script: &PathBuf, threads_work: usize) -> anyhow::Result<()> {

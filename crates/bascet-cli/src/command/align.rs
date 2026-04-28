@@ -1,4 +1,7 @@
-use crate::bounded_parser;
+use crate::{
+    bounded_parser,
+    utils::{atomic_temp_path, publish_atomic_output},
+};
 
 use bascet_core::{
     attr::{meta::*, quality::*, sequence::*},
@@ -218,8 +221,9 @@ impl AlignCMD {
         } else {
             1
         };
+        let path_out_unsorted_tmp = atomic_temp_path(&self.path_out_unsorted);
         let mut proc_samtobam =
-            proc_sam_to_bam(numof_threads_writebam as usize, &self.path_out_unsorted)?;
+            proc_sam_to_bam(numof_threads_writebam as usize, &path_out_unsorted_tmp)?;
         let writer_tagbam =
             BufWriter::new(proc_samtobam.stdin.take().expect("could not open samtobam"));
 
@@ -256,6 +260,7 @@ impl AlignCMD {
         handle_tagbam.join().unwrap();
         //Wait for sam2bam writer as well
         proc_samtobam.wait()?;
+        publish_atomic_output(&path_out_unsorted_tmp, &self.path_out_unsorted)?;
 
         //Clean up: remove pipes
         std::fs::remove_file(path_pipe_r1)?;
@@ -655,10 +660,9 @@ where
     let num_threads = format!("{}", num_threads);
 
     let path_in = format!("{}", path_in.as_ref().as_os_str().to_str().expect("os str"));
-    let path_out = format!(
-        "{}",
-        path_out.as_ref().as_os_str().to_str().expect("os str")
-    );
+    let path_out_final = path_out.as_ref().to_path_buf();
+    let path_out_tmp = atomic_temp_path(&path_out_final);
+    let path_out_arg = format!("{}", path_out_tmp.as_os_str().to_str().expect("os str"));
 
     let path_temp_prefix = PathBuf::from(path_temp.as_ref()).join("sort");
     let path_temp_prefix = format!("{}", path_temp_prefix.as_os_str().to_str().expect("os str"));
@@ -671,13 +675,14 @@ where
         "-T",
         &path_temp_prefix,
         "-o",
-        &path_out,
+        &path_out_arg,
     ];
 
     let _proc_out = std::process::Command::new("samtools")
         .args(args)
         .status()
         .expect("failed to run samtools sort");
+    publish_atomic_output(path_out_tmp, path_out_final)?;
     Ok(())
 }
 
@@ -685,12 +690,18 @@ where
 /// Index a given BAM file
 ///
 pub fn index_bam(path_in: &str) -> Result<()> {
-    let args = vec!["index", path_in];
+    let path_index = PathBuf::from(format!("{path_in}.bai"));
+    let path_index_tmp = atomic_temp_path(&path_index);
+    let path_index_tmp_arg = path_index_tmp
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("invalid BAM index path"))?;
+    let args = vec!["index", "-o", path_index_tmp_arg, path_in];
 
     let _proc_out = std::process::Command::new("samtools")
         .args(args)
         .status()
         .expect("failed to run samtools index");
+    publish_atomic_output(path_index_tmp, path_index)?;
 
     Ok(())
 }

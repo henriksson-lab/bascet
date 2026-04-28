@@ -27,6 +27,8 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
+use crate::utils::{atomic_temp_path, publish_atomic_output};
+
 #[derive(Args)]
 pub struct CountsketchCMD {
     #[arg(
@@ -171,10 +173,12 @@ impl CountsketchCMD {
         ////////////////////////////////////////////////////////////////////
         // Create threads for writing output. Note that
         // cells can be written in any order for this file format
-        let output_file = match File::create(&self.path_out) {
+        let path_out = self.path_out.clone();
+        let path_tmp = atomic_temp_path(&path_out);
+        let output_file = match File::create(&path_tmp) {
             Ok(output) => output,
             Err(e) => {
-                warn!(path = ?self.path_out, error = %e, "Failed to create output countsketch file");
+                warn!(path = ?path_tmp, error = %e, "Failed to create output countsketch file");
                 anyhow::bail!("Failed to create output countsketch file");
             }
         };
@@ -407,6 +411,7 @@ impl CountsketchCMD {
         drop(write_tx);
         //Wait for writers to finish
         thread_writer.join().unwrap();
+        publish_atomic_output(path_tmp, path_out)?;
 
         Ok(())
     }

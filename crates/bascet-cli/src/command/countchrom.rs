@@ -12,6 +12,7 @@ use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 use super::determine_thread_counts_1;
 
@@ -241,7 +242,9 @@ impl CountChrom {
         }
 
         //Save count matrix
-        cnt_mat.save_to_anndata(&params.path_out).unwrap();
+        let path_tmp = atomic_temp_path(&params.path_out);
+        cnt_mat.save_to_anndata(&path_tmp).unwrap();
+        publish_atomic_output(path_tmp, &params.path_out)?;
 
         Ok(())
     }

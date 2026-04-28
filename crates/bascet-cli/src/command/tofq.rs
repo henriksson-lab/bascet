@@ -1,4 +1,7 @@
-use crate::bounded_parser;
+use crate::{
+    bounded_parser,
+    utils::{atomic_temp_path, publish_atomic_output},
+};
 
 use bascet_core::*;
 use bascet_derive::Budget;
@@ -139,8 +142,10 @@ impl ToFastqCMD {
         let writer_threads_per_file =
             NonZeroUsize::new((write_threads / 2).max(1)).expect("thread count is nonzero");
 
-        let file_r1 = File::create(&self.path_r1)?;
-        let file_r2 = File::create(&self.path_r2)?;
+        let path_r1_tmp = atomic_temp_path(&self.path_r1);
+        let path_r2_tmp = atomic_temp_path(&self.path_r2);
+        let file_r1 = File::create(&path_r1_tmp)?;
+        let file_r2 = File::create(&path_r2_tmp)?;
         let mut writer_r1 = noodles::bgzf::io::MultithreadedWriter::with_worker_count(
             writer_threads_per_file,
             file_r1,
@@ -163,6 +168,8 @@ impl ToFastqCMD {
         )?;
         writer_r1.finish()?;
         writer_r2.finish()?;
+        publish_atomic_output(path_r1_tmp, &self.path_r1)?;
+        publish_atomic_output(path_r2_tmp, &self.path_r2)?;
 
         info!("Conversion complete");
 

@@ -16,7 +16,10 @@ use fastqc_rs::{config::FastQCConfig, sequence::Sequence};
 use tracing::info;
 use zip::ZipWriter;
 
-use crate::fileformat::ReadPair;
+use crate::{
+    fileformat::ReadPair,
+    utils::{atomic_temp_path, publish_atomic_output},
+};
 
 const DEFAULT_SIZEOF_STREAM_BUFFER: ByteSize = ByteSize::gib(4);
 
@@ -376,10 +379,10 @@ fn fastqc_data_report(
 }
 
 fn write_zip(path_out: PathBuf, rx_reports: Receiver<Result<CellFastqc>>) -> Result<()> {
-    let file = File::create(&path_out)
-        .with_context(|| format!("failed to create output zip {}", path_out.display()))?;
-    let buf_writer = BufWriter::new(file);
-    let mut zip_writer = ZipWriter::new(buf_writer);
+    let path_tmp = atomic_temp_path(&path_out);
+    let file = File::create(&path_tmp)
+        .with_context(|| format!("failed to create output zip {}", path_tmp.display()))?;
+    let mut zip_writer = ZipWriter::new(BufWriter::new(file));
     let options: zip::write::FileOptions<()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -403,6 +406,7 @@ fn write_zip(path_out: PathBuf, rx_reports: Receiver<Result<CellFastqc>>) -> Res
     }
 
     zip_writer.finish()?;
+    publish_atomic_output(&path_tmp, &path_out)?;
     info!("wrote fastqc output for final total of {} cells", num_cells);
     Ok(())
 }

@@ -1,6 +1,7 @@
 mod clap_utils;
 mod command_to_string;
 mod detect_software;
+mod fs_utils;
 mod merge_archives;
 mod path_utils;
 
@@ -12,6 +13,7 @@ pub use detect_software::check_kmc_tools;
 pub use detect_software::check_samtools;
 pub use detect_software::check_tabix;
 
+pub use fs_utils::{atomic_temp_path, publish_atomic_output, rename_or_copy_across_filesystems};
 pub use path_utils::expand_and_resolve;
 
 pub use command_to_string::command_to_string;

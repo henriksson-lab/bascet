@@ -12,6 +12,7 @@ use crate::fileformat::shard::ShardCellDictionary;
 use crate::fileformat::ShardFileExtractor;
 use crate::fileformat::ShardRandomFileExtractor;
 use crate::fileformat::ZipBascetShardReader;
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 use anyhow::Result;
 //use anyhow::bail;
@@ -176,8 +177,10 @@ impl QueryKmc {
 
         //Save the final count matrix
         info!("Storing count table to {}", params.path_output.display());
-        mm.save_to_anndata(&params.path_output)
+        let path_tmp = atomic_temp_path(&params.path_output);
+        mm.save_to_anndata(&path_tmp)
             .expect("Failed to save to HDF5 file");
+        publish_atomic_output(path_tmp, &params.path_output)?;
 
         //TODO delete temp files
         info!("Cleaning up temp files");
