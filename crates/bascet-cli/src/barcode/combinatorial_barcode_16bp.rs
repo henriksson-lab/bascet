@@ -414,16 +414,6 @@ impl CombinatorialBarcodePart16bpFast {
             }
         }
 
-        const fn compact_to_char(a: u8) -> char {
-            match a & 0b11 {
-                COMPACT_BASE_A => 'A',
-                COMPACT_BASE_C => 'C',
-                COMPACT_BASE_G => 'G',
-                COMPACT_BASE_T => 'T',
-                _ => panic!("Invalid"),
-            }
-        }
-
         assert!(barcode.len() >= 16);
 
         let mut bits: u32 = 0;
@@ -533,41 +523,6 @@ impl CombinatorialBarcodePart16bpFast {
         let sum = wide::u16x8::from(upper) | wide::u16x8::from(lower);
 
         sum.to_array().iter().copied().any(|v| v != 0)
-    }
-
-    // Assumes 16 wide 32-bit vectors
-    // Performs a (hopefully) branchless and faster reduction.
-    fn simd_any32(vector: FullVector) -> bool {
-        let mut upper: [u32; 8] = [0; 8];
-        let mut lower: [u32; 8] = [0; 8];
-        upper.copy_from_slice(&vector.as_array()[0..8]);
-        lower.copy_from_slice(&vector.as_array()[8..16]);
-        let sum = wide::u32x8::from(upper) | wide::u32x8::from(lower);
-
-        // let mut upper: [u32; 4] = [0; 4];
-        // let mut lower: [u32; 4] = [0; 4];
-        // upper.copy_from_slice(&sum.as_array()[0..4]);
-        // lower.copy_from_slice(&sum.as_array()[4..8]);
-        // let sum = wide::u32x4::from(upper) | wide::u32x4::from(lower);
-
-        sum.any()
-    }
-
-    fn simd_reduce_min16(vector: HalfVector) -> u16 {
-        let mut upper: [u16; 16] = [0; 16];
-        let mut lower: [u16; 16] = [0; 16];
-        upper.copy_from_slice(&vector.as_array()[0..16]);
-        lower.copy_from_slice(&vector.as_array()[16..32]);
-        let sum = wide::u16x16::from(upper).min(wide::u16x16::from(lower));
-
-        let mut upper: [u16; 8] = [0; 8];
-        let mut lower: [u16; 8] = [0; 8];
-        upper.copy_from_slice(&sum.as_array()[0..8]);
-        lower.copy_from_slice(&sum.as_array()[8..16]);
-        let sum = wide::u16x8::from(upper).min(wide::u16x8::from(lower));
-
-        // Unwrap should never trigger since it is from an array some value is always lowest.
-        sum.to_array().iter().copied().min().unwrap()
     }
 
     /// Returns an index and score if a match is found

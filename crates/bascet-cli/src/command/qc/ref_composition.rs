@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::{
@@ -10,13 +11,14 @@ use anyhow::Result;
 use bounded_integer::BoundedU64;
 use clap::Args;
 use clio::{InputPath, OutputPath};
-use rust_htslib::bam::record::Record as BamRecord;
-use rust_htslib::bam::{Read, Reader};
+use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::{info, warn};
 
 use bascet_derive::Budget;
 
 use crate::bounded_parser;
+
+type NoodlesBamReader = noodles::bam::io::Reader<noodles::bgzf::io::Reader<File>>;
 
 #[derive(Args)]
 pub struct QcRefCompositionCMD {
@@ -172,25 +174,24 @@ fn process_file(
     write_tx: &crossbeam::channel::Sender<CellRow>,
     arc_countof_cells_processed: &Arc<AtomicU64>,
 ) -> Result<()> {
-    let mut reader = Reader::from_path(path)?;
-    let header = reader.header().clone();
+    let (mut reader, header) = open_bam_reader(path)?;
 
     let ref_names: Vec<String> = header
-        .target_names()
+        .reference_sequences()
         .iter()
-        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .map(|(name, _)| String::from_utf8_lossy(name.as_ref()).into_owned())
         .collect();
 
     let mut cell_counts: HashMap<usize, u64> = HashMap::new();
     let mut record_id_last: Vec<u8> = Vec::new();
 
-    let mut record = BamRecord::new();
-    while let Some(Ok(_)) = reader.read(&mut record) {
-        if record.is_unmapped() {
+    let mut record = BamRecord::default();
+    while reader.read_record_buf(&header, &mut record)? > 0 {
+        if record.flags().is_unmapped() {
             continue;
         }
 
-        let record_qname = record.qname();
+        let record_qname: &[u8] = record.name().expect("missing read name").as_ref();
         let record_id = match memchr::memmem::find(record_qname, b"::") {
             Some(pos) => &record_qname[..pos],
             None => record_qname,
@@ -220,7 +221,9 @@ fn process_file(
             record_id_last = record_id.to_vec();
         }
 
-        let tid = record.tid() as usize;
+        let tid = record
+            .reference_sequence_id()
+            .expect("mapped read missing reference sequence id");
         *cell_counts.entry(tid).or_insert(0) += 1;
     }
 
@@ -231,6 +234,16 @@ fn process_file(
 
     info!(path = ?path, "Finished BAM");
     Ok(())
+}
+
+fn open_bam_reader(
+    path: &std::path::Path,
+) -> anyhow::Result<(NoodlesBamReader, noodles::sam::Header)> {
+    let file = File::open(path)?;
+    let bgzf_reader = noodles::bgzf::io::Reader::new(file);
+    let mut reader = noodles::bam::io::Reader::from(bgzf_reader);
+    let header = reader.read_header()?;
+    Ok((reader, header))
 }
 
 fn flush_cell(

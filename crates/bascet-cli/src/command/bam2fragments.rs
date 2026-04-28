@@ -1,23 +1,25 @@
 use anyhow::Result;
 use bgzip::Compression;
 use clap::Args;
-use rust_htslib::bam::record::Record as BamRecord;
-use rust_htslib::bam::Read;
 use std::fs::File;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process::Command;
+
+use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
 use super::determine_thread_counts_1;
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_THREADS: usize = 5;
+type NoodlesBamReader = noodles::bam::io::Reader<noodles::bgzf::io::MultithreadedReader<File>>;
 
 #[derive(Args)]
 pub struct Bam2FragmentsCMD {
     #[arg(short = 'i', value_parser)]
-    /// BAM or CRAM file; sorted, indexed? unless cell_id's given, no need for sorting
+    /// BAM file; sorted, indexed? unless cell_id's given, no need for sorting
     pub path_in: PathBuf,
 
     #[arg(short = 'o', value_parser)]
@@ -71,11 +73,16 @@ pub struct Bam2Fragments {
 impl Bam2Fragments {
     /// Run the algorithm
     pub fn run(params: &Bam2Fragments) -> anyhow::Result<()> {
-        //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads
-        let mut bam = rust_htslib::bam::Reader::from_path(&params.path_input)?;
-
-        //Activate multithreaded reading
-        bam.set_threads(params.num_threads).unwrap();
+        //Read BAM. This is a multithreaded reader already, so no need for separate threads.
+        let (mut bam, header) = open_bam_reader(&params.path_input, params.num_threads)?;
+        let ref_names: Vec<Vec<u8>> = header
+            .reference_sequences()
+            .iter()
+            .map(|(name, _)| {
+                let name: &[u8] = name.as_ref();
+                name.to_vec()
+            })
+            .collect();
 
         //Save a "Fragments.tsv", bgzip-format. Writer is multithreaded
         let mut outfile = File::create(&params.path_output).expect("Could not open output file");
@@ -84,14 +91,13 @@ impl Bam2Fragments {
         writer.write_all(b"#CHR\tFROM\tTO\tCELLID\tCNT\tUMI\n")?; // UMI is optional; what works with Signac?
 
         //Transfer all records
-        let mut record = BamRecord::new();
-        while let Some(_r) = bam.read(&mut record) {
-            //let record = record.expect("Failed to parse record");
+        let mut record = BamRecord::default();
+        while bam.read_record_buf(&header, &mut record)? > 0 {
             // https://samtools.github.io/hts-specs/SAMv1.pdf
 
             //Only keep mapping reads
             let flags = record.flags();
-            if flags & 0x4 == 0 {
+            if !flags.is_unmapped() {
                 /*
                 println!("{:?} ",record);
                 println!("{:?} ",record.pos());
@@ -100,26 +106,32 @@ impl Bam2Fragments {
 
                 //Figure out the cell barcode. In one format, this is before the first :
                 //TODO support read name as a TAG
-                let read_name = record.qname();
+                let read_name: &[u8] = record.name().expect("missing read name").as_ref();
                 let mut splitter = read_name.split(|b| *b == b':');
                 let cell_id = splitter
                     .next()
                     .expect("Could not parse cellID from read name");
 
-                let header = bam.header();
-
-                let chr = header.tid2name(record.tid() as u32);
+                let tid = record
+                    .reference_sequence_id()
+                    .expect("mapped read missing reference sequence id");
+                let chr = &ref_names[tid];
 
                 //Get left-most mapping position
-                let startpos = record.pos();
+                let startpos = record
+                    .alignment_start()
+                    .map(|pos| pos.get() - 1)
+                    .unwrap_or(0);
 
                 //mpos();
                 //From samtools specification: "1-based leftmost mapping POSition of the first CIGAR operation that “consumes” a reference base". ==> This is any of MDN=I
                 //If POS is 0, no assumptions can be made about RNAME and CIGAR"
 
                 //Figure the end-position from the CIGAR
-                let cigar = record.cigar();
-                let endpos = cigar.end_pos();
+                let endpos = record
+                    .alignment_end()
+                    .map(|pos| pos.get())
+                    .unwrap_or(startpos);
 
                 //TODO: future option is to split read by S* to handle splicing.
                 //Note that resorting is then needed. but the local nature suggests that a priority queue can be used along with other tricks
@@ -139,6 +151,18 @@ impl Bam2Fragments {
 
         Ok(())
     }
+}
+
+fn open_bam_reader(
+    path: &PathBuf,
+    num_threads: usize,
+) -> anyhow::Result<(NoodlesBamReader, noodles::sam::Header)> {
+    let file = File::open(path)?;
+    let worker_count = NonZeroUsize::new(num_threads.max(1)).unwrap_or(NonZeroUsize::MIN);
+    let bgzf_reader = noodles::bgzf::io::MultithreadedReader::with_worker_count(worker_count, file);
+    let mut reader = noodles::bam::io::Reader::from(bgzf_reader);
+    let header = reader.read_header()?;
+    Ok((reader, header))
 }
 
 pub fn index_fragments(p: &PathBuf) -> anyhow::Result<()> {

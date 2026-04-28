@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use super::KMER2bit;
-use tracing::info;
 
 pub struct OneUMI {
     umi: u32,
@@ -134,7 +133,7 @@ mod tests {
 
         let cnt = UMIcounter::directional_algorithm(&mut prep, 1);
 
-        info!("umis {}", cnt);
+        tracing::info!("umis {}", cnt);
 
         assert_eq!(cnt, 2);
     }
@@ -159,7 +158,7 @@ mod tests {
 
         let cnt = UMIcounter::directional_algorithm(&mut prep, 0);
 
-        info!("umis {}", cnt);
+        tracing::info!("umis {}", cnt);
 
         assert_eq!(cnt, 4);
     }

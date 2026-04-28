@@ -1,11 +1,13 @@
+use std::fs::File;
 use std::io::{BufWriter, Write};
 
 use anyhow::Result;
 use clap::Args;
 use clio::{InputPath, OutputPath};
-use rust_htslib::bam::record::Record as BamRecord;
-use rust_htslib::bam::{Read, Reader};
+use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
+
+type NoodlesBamReader = noodles::bam::io::Reader<noodles::bgzf::io::Reader<File>>;
 
 #[derive(Args)]
 pub struct QcAlignedCoverageCMD {
@@ -105,19 +107,20 @@ impl QcAlignedCoverageCMD {
 
         for input in &self.paths_in {
             info!(path = %input, "Processing BAM");
-            let mut reader = Reader::from_path(&**input.path())?;
-            let header = reader.header().clone();
+            let (mut reader, header) = open_bam_reader(input.path())?;
 
-            let countof_refs = header.target_names().len();
+            let countof_refs = header.reference_sequences().len();
 
             let ref_names: Vec<String> = header
-                .target_names()
+                .reference_sequences()
                 .iter()
-                .map(|name| String::from_utf8_lossy(name).into_owned())
+                .map(|(name, _)| String::from_utf8_lossy(name.as_ref()).into_owned())
                 .collect();
 
-            let ref_lengths: Vec<usize> = (0..countof_refs)
-                .map(|tid| header.target_len(tid as u32).unwrap_or(0) as usize)
+            let ref_lengths: Vec<usize> = header
+                .reference_sequences()
+                .values()
+                .map(|reference_sequence| usize::from(reference_sequence.length()))
                 .collect();
 
             let mut cell_pileups: Vec<Option<RefPileup>> =
@@ -125,13 +128,13 @@ impl QcAlignedCoverageCMD {
             let mut record_id_last: Vec<u8> = Vec::new();
             let mut countof_cells_processed = 0u64;
 
-            let mut record = BamRecord::new();
-            while let Some(Ok(_)) = reader.read(&mut record) {
-                if record.is_unmapped() {
+            let mut record = BamRecord::default();
+            while reader.read_record_buf(&header, &mut record)? > 0 {
+                if record.flags().is_unmapped() {
                     continue;
                 }
 
-                let record_qname = record.qname();
+                let record_qname: &[u8] = record.name().expect("missing read name").as_ref();
                 let record_id = match memchr::memmem::find(record_qname, b"::") {
                     Some(pos) => &record_qname[..pos],
                     None => record_qname,
@@ -165,10 +168,17 @@ impl QcAlignedCoverageCMD {
                     record_id_last = record_id.to_vec();
                 }
 
-                let tid = record.tid() as usize;
-                let cigar = record.cigar();
-                let pos_start = cigar.pos();
-                let pos_end = cigar.end_pos();
+                let tid = record
+                    .reference_sequence_id()
+                    .expect("mapped read missing reference sequence id");
+                let pos_start = record
+                    .alignment_start()
+                    .map(|pos| pos.get() as i64 - 1)
+                    .unwrap_or(0);
+                let pos_end = record
+                    .alignment_end()
+                    .map(|pos| pos.get() as i64)
+                    .unwrap_or(pos_start);
                 let sizeof_seq = pos_end - pos_start;
 
                 if cell_pileups[tid].is_none() {
@@ -197,6 +207,16 @@ impl QcAlignedCoverageCMD {
         bufwriter.flush()?;
         Ok(())
     }
+}
+
+fn open_bam_reader(
+    path: &std::path::Path,
+) -> anyhow::Result<(NoodlesBamReader, noodles::sam::Header)> {
+    let file = File::open(path)?;
+    let bgzf_reader = noodles::bgzf::io::Reader::new(file);
+    let mut reader = noodles::bam::io::Reader::from(bgzf_reader);
+    let header = reader.read_header()?;
+    Ok((reader, header))
 }
 
 fn write_cell(

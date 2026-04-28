@@ -89,7 +89,7 @@ impl StreamingReadPairReader for BAMStreamingReadPairReader {
 /// Given the name of a read, divide into cell ID and UMI
 pub fn readname_to_cell_umi(read_name: &[u8]) -> (&[u8], &[u8]) {
     let mut splitter = read_name.split(|b| *b == b':');
-    let mut cell_id = splitter
+    let cell_id = splitter
         .next()
         .expect("Could not parse cellID from read name");
     let umi = splitter.next().expect("Could not parse UMI from read name");

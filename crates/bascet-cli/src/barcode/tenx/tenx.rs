@@ -1,7 +1,7 @@
-use crate::barcode::Chemistry;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcode16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::CombinatorialBarcodePart16bpFast;
 use crate::barcode::combinatorial_barcode_16bp::DetectedBarcode;
+use crate::barcode::Chemistry;
 use crate::common::ReadPair;
 use bascet_core::sequence::R0;
 
@@ -11,49 +11,10 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::{BufRead, BufReader};
-use std::sync::OnceLock;
 use tracing::info;
 
 type CombinatorialBarcode = CombinatorialBarcode16bpFast;
 type CombinatorialBarcodePart = CombinatorialBarcodePart16bpFast;
-
-static TENX_NAMES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
-static TENX_IDS_TO_NAMES: OnceLock<HashMap<String, u32>> = OnceLock::new();
-
-fn to_compact(barcode: &[u8]) -> u32 {
-    const ASCII_A: u8 = 'A' as u8;
-    const ASCII_C: u8 = 'C' as u8;
-    const ASCII_G: u8 = 'G' as u8;
-    const ASCII_T: u8 = 'T' as u8;
-    const ASCII_N: u8 = 'N' as u8;
-
-    const COMPACT_BASE_A: u8 = 0b00;
-    const COMPACT_BASE_C: u8 = 0b01;
-    const COMPACT_BASE_G: u8 = 0b10;
-    const COMPACT_BASE_T: u8 = 0b11;
-
-    const fn ascii_to_compact(a: u8) -> u8 {
-        match a {
-            ASCII_A => COMPACT_BASE_A,
-            ASCII_C => COMPACT_BASE_C,
-            ASCII_G => COMPACT_BASE_G,
-            ASCII_T => COMPACT_BASE_T,
-            _ => panic!("Not possible"),
-        }
-    }
-
-    assert!(barcode.len() >= 16);
-
-    let mut bits: u32 = 0;
-    for (i, mut base) in barcode.iter().take(16).copied().enumerate() {
-        if base == ASCII_N {
-            base = ASCII_A;
-        }
-        bits |= (ascii_to_compact(base) as u32) << (i * 2);
-    }
-
-    bits
-}
 
 fn from_compact(bc: u32) -> Vec<u8> {
     const COMPACT_BASE_A: u8 = 0b00;
@@ -84,8 +45,6 @@ fn from_compact(bc: u32) -> Vec<u8> {
 #[derive(Clone)]
 pub struct TenxRNAChemistry {
     barcode: CombinatorialBarcode,
-    name_to_index_map: HashMap<String, u32>,
-    name_table: Vec<Vec<u8>>,
 }
 
 impl Chemistry for TenxRNAChemistry {
@@ -211,8 +170,6 @@ impl TenxRNAChemistry {
     pub fn new() -> TenxRNAChemistry {
         TenxRNAChemistry {
             barcode: CombinatorialBarcode::new(),
-            name_table: Vec::new(),
-            name_to_index_map: HashMap::new(),
         }
     }
 

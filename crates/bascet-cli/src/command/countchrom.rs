@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::fs::File;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Args;
-use rust_htslib::bam::record::Cigar;
-use rust_htslib::bam::record::Record as BamRecord;
-use rust_htslib::bam::Read;
+use noodles::sam::alignment::record::cigar::op::Kind as CigarKind;
+use noodles::sam::alignment::record::data::field::Tag;
+use noodles::sam::alignment::RecordBuf as BamRecord;
 use tracing::info;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
@@ -18,7 +20,7 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 #[derive(Args)]
 pub struct CountChromCMD {
     #[arg(short = 'i', value_parser)]
-    /// BAM or CRAM file; sorted, indexed? unless cell_id's given, no need for sorting
+    /// BAM file; sorted, indexed? unless cell_id's given, no need for sorting
     pub path_in: PathBuf,
 
     #[arg(short = 'o', value_parser)]
@@ -70,6 +72,7 @@ impl CountChromCMD {
 }
 
 type Cellid = Vec<u8>;
+type NoodlesBamReader = noodles::bam::io::Reader<noodles::bgzf::io::MultithreadedReader<File>>;
 
 pub struct CountChrom {
     pub path_in: std::path::PathBuf,
@@ -84,12 +87,17 @@ impl CountChrom {
     pub fn run(params: &CountChrom) -> anyhow::Result<()> {
         let mut cnt_mat = SparseMatrixAnnDataBuilder::new();
 
-        //Read BAM/CRAM. This is a multithreaded reader already, so no need for separate threads.
+        //Read BAM. This is a multithreaded reader already, so no need for separate threads.
         //cannot be TIRF; if we divide up reads we risk double counting
-        let mut bam = rust_htslib::bam::Reader::from_path(&params.path_in)?;
-
-        //Activate multithreaded reading
-        bam.set_threads(params.num_threads).unwrap();
+        let (mut bam, header) = open_bam_reader(&params.path_in, params.num_threads)?;
+        let ref_names: Vec<Vec<u8>> = header
+            .reference_sequences()
+            .iter()
+            .map(|(name, _)| {
+                let name: &[u8] = name.as_ref();
+                name.to_vec()
+            })
+            .collect();
 
         //Keep track of last chromosome seen (assuming that file is sorted)
         let mut last_chr: Vec<u8> = Vec::new();
@@ -104,14 +112,13 @@ impl CountChrom {
         let mut num_reads = 0;
 
         //Transfer all records
-        let mut record = BamRecord::new();
-        while let Some(_r) = bam.read(&mut record) {
-            //let record = record.expect("Failed to parse record");
+        let mut record = BamRecord::default();
+        while bam.read_record_buf(&header, &mut record)? > 0 {
             // https://samtools.github.io/hts-specs/SAMv1.pdf
 
             //Figure out the cell barcode. In one format, this is before the first :
             //TODO support read name as a TAG
-            let read_name = record.qname();
+            let read_name: &[u8] = record.name().expect("missing read name").as_ref();
             let mut splitter = read_name.split(|b| *b == b':');
             let cell_id = splitter
                 .next()
@@ -119,14 +126,16 @@ impl CountChrom {
 
             //Check if the read mapped
             let flags = record.flags();
-            if flags & 0x4 == 0 {
+            if !flags.is_unmapped() {
                 //Count this as a mapping read
 
-                let header = bam.header();
-                let chr = header.tid2name(record.tid() as u32);
+                let tid = record
+                    .reference_sequence_id()
+                    .expect("mapped read missing reference sequence id");
+                let chr = &ref_names[tid];
 
                 //Check if we now work on a new chromosome
-                if chr != last_chr {
+                if chr.as_slice() != last_chr {
                     //Clear set of last read position
                     map_cell_lastread.clear();
 
@@ -150,7 +159,10 @@ impl CountChrom {
                 }
 
                 //Remove duplicate reads
-                let rpos = record.pos();
+                let rpos = record
+                    .alignment_start()
+                    .map(|pos| pos.get() as i64)
+                    .unwrap_or(0);
                 let lastpos = map_cell_lastread.get(cell_id);
                 let count_read = if let Some(lastpos) = lastpos {
                     if rpos == *lastpos && params.remove_duplicates {
@@ -166,8 +178,8 @@ impl CountChrom {
                 //Remove multimapper
                 //TODO tons of if's; can we reduce somehow?
                 let map_uniquely = if params.remove_multimapper {
-                    let tag_xa = record.aux(b"XA");
-                    if let Ok(_t) = tag_xa {
+                    let tag_xa = record.data().get(&Tag::new(b'X', b'A'));
+                    if tag_xa.is_some() {
                         //For BWA: XA-tag is produced for multimappers
                         false
                     } else {
@@ -185,9 +197,9 @@ impl CountChrom {
                     //Get number of matching bases
                     let mut num_matching = 0;
                     let cigar = record.cigar();
-                    for cigar_part in cigar.iter() {
-                        if let Cigar::Match(x) = cigar_part {
-                            num_matching += x;
+                    for cigar_part in cigar.as_ref() {
+                        if cigar_part.kind() == CigarKind::Match {
+                            num_matching += cigar_part.len() as u32;
                         }
                     }
 
@@ -233,6 +245,18 @@ impl CountChrom {
 
         Ok(())
     }
+}
+
+fn open_bam_reader(
+    path: &PathBuf,
+    num_threads: usize,
+) -> anyhow::Result<(NoodlesBamReader, noodles::sam::Header)> {
+    let file = File::open(path)?;
+    let worker_count = NonZeroUsize::new(num_threads.max(1)).unwrap_or(NonZeroUsize::MIN);
+    let bgzf_reader = noodles::bgzf::io::MultithreadedReader::with_worker_count(worker_count, file);
+    let mut reader = noodles::bam::io::Reader::from(bgzf_reader);
+    let header = reader.read_header()?;
+    Ok((reader, header))
 }
 
 /*
