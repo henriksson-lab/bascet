@@ -16,10 +16,9 @@ use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use std::{
-    fs::File,
-    io::{BufReader, BufWriter, Write},
+    io::Write,
     path::{Path, PathBuf},
-    process::Stdio,
+    sync::Arc,
 };
 use tracing::{debug, info, warn};
 
@@ -62,22 +61,6 @@ pub struct AlignCMD {
     total_threads: Option<BoundedU64<2, { u64::MAX }>>,
 
     #[arg(
-        long = "numof-threads-read",
-        help = "Number of reader threads",
-        value_name = "1.. (default is 1)", // 50% of total threads
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    numof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
-
-    #[arg(
-        long = "numof-threads-writebam",
-        help = "Number of threads threads for writing the unsorted BAM file",
-        value_name = "1.. (default is 1)",  // 50% of total threads
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    numof_threads_writebam: Option<BoundedU64<1, { u64::MAX }>>,
-
-    #[arg(
         short = 'm',
         long = "memory",
         help = "Total memory budget",
@@ -109,6 +92,14 @@ pub struct AlignCMD {
         hide_short_help = true
     )]
     aligner: String,
+
+    #[arg(
+        long = "minimap2-preset",
+        help = "minimap2 preset to use when --aligner minimap2 is selected",
+        default_value = "map-ont",
+        hide_short_help = true
+    )]
+    minimap2_preset: String,
 }
 
 #[derive(Budget, Debug)]
@@ -119,14 +110,39 @@ struct AlignBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new((total_threads as f64 ) as u64).unwrap())]
+    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.15) as u64))]
     numof_threads_read: BoundedU64<1, { u64::MAX }>,
 
-    #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]
-    numof_threads_writebam: BoundedU64<1, { u64::MAX }>, // max 1
+    #[skip(budget)]
+    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating(total_threads))]
+    numof_threads_writebam: BoundedU64<1, { u64::MAX }>,
 
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
     sizeof_stream_buffer: ByteSize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AlignThreadAllocation {
+    read: BoundedU64<1, { u64::MAX }>,
+    write_bam: usize,
+}
+
+impl AlignThreadAllocation {
+    fn from_budget(budget: &AlignBudget) -> Self {
+        let total_threads = budget.threads.get();
+        let read = budget.numof_threads_read;
+        let write_bam = budget.numof_threads_writebam.get() as usize;
+        let reserved = read.get() + write_bam as u64;
+        if reserved >= total_threads {
+            info!(
+                total_threads,
+                read_threads = read.get(),
+                write_bam_threads = write_bam,
+                "Using oversubscribed helper threads; shared Rayon pool still caps CPU use"
+            );
+        }
+        Self { read, write_bam }
+    }
 }
 
 impl AlignCMD {
@@ -146,15 +162,22 @@ impl AlignCMD {
                     })
             }))
             .memory(self.total_mem)
-            .maybe_numof_threads_read(self.numof_threads_read)
-            .maybe_numof_threads_writebam(self.numof_threads_writebam)
             .maybe_sizeof_stream_buffer(self.sizeof_stream_buffer)
             .build();
 
         budget.validate();
+        let thread_allocation = AlignThreadAllocation::from_budget(&budget);
+        let rayon_pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(budget.threads.get() as usize)
+                .build()?,
+        );
 
         info!(
             using = %budget,
+            rayon_pool_threads = budget.threads.get(),
+            read_threads = thread_allocation.read.get(),
+            write_bam_threads = thread_allocation.write_bam,
             input_path = ?self.path_in,
             unsorted_output_path = ?self.path_out_unsorted,
             sorted_output_path = ?self.path_out_sorted,
@@ -163,139 +186,67 @@ impl AlignCMD {
 
         #[cfg(feature = "bwa-mem2-rs-align")]
         if self.aligner == "BWA" {
-            let numof_threads_writebam = if let Some(t) = self.numof_threads_writebam {
-                t.get()
-            } else {
-                1
-            };
             return super::align_bwa::try_execute_bwa_mem2(
                 self.path_in.path().path(),
                 &self.path_genome,
                 &self.path_out_unsorted,
                 &self.path_out_sorted,
                 &self.path_temp,
-                numof_threads_writebam as usize,
-                budget.threads.get(),
-                budget.numof_threads_read,
+                thread_allocation.write_bam,
+                budget.threads.get() as usize,
+                thread_allocation.read,
                 self.sizeof_stream_arena,
                 budget.sizeof_stream_buffer,
+                budget.memory,
+                budget.threads.get(),
+                Arc::clone(&rayon_pool),
             );
         }
 
-        /////////////////////////////////////////////////////////////////////////////////////    /////// TODO delete these pipes!
-        // Set up named pipes
-        let path_pipe_r1 = self.path_temp.join("fifo_r1.fq");
-        let path_pipe_r2 = self.path_temp.join("fifo_r2.fq");
-        nix::unistd::mkfifo(&path_pipe_r1, nix::sys::stat::Mode::S_IRWXU)
-            .expect("Previous pipe file exists in temp dir; stopping");
-        nix::unistd::mkfifo(&path_pipe_r2, nix::sys::stat::Mode::S_IRWXU)
-            .expect("Previous pipe file exists in temp dir; stopping");
-
-        /////////////////////////////////////////////////////////////////////////////////////
-        // Start the aligner
-        let num_threads = budget.threads.get();
-        let path_aln_temp = self.path_temp.join("_align_tmp");
-        std::fs::create_dir(&path_aln_temp).expect("Failed to create tempdir");
-        let mut proc_aligner = if self.aligner == "STAR" {
-            prep_star(
+        #[cfg(feature = "star-rs-align")]
+        if self.aligner == "STAR" {
+            let star_threads = budget.threads.get() as usize;
+            return super::align_star::try_execute_star_rs(
+                self.path_in.path().path(),
                 &self.path_genome,
-                &path_pipe_r1,
-                &path_pipe_r2,
-                &path_aln_temp,
-                num_threads,
-            )
-        } else if self.aligner == "BWA" {
-            prep_bwa(&self.path_genome, &path_pipe_r1, &path_pipe_r2, num_threads)
-        } else if self.aligner == "bowtie2" {
-            prep_bowtie2(&self.path_genome, &path_pipe_r1, &path_pipe_r2, num_threads)
-        } else {
-            panic!("Aligner argument is invalid");
-        }?;
-        let aligner_stdout = proc_aligner.stdout.take().expect("Failed to get stdout");
-        let reader_aligner_stdout = BufReader::new(aligner_stdout);
+                &self.path_out_unsorted,
+                &self.path_out_sorted,
+                &self.path_temp,
+                thread_allocation.write_bam,
+                star_threads,
+                thread_allocation.read,
+                self.sizeof_stream_arena,
+                budget.sizeof_stream_buffer,
+                budget.memory,
+                budget.threads.get(),
+                Arc::clone(&rayon_pool),
+            );
+        }
 
-        /////////////////////////////////////////////////////////////////////////////////////
-        // Convert SAM => BAM and store unsorted to disk
-        let numof_threads_writebam = if let Some(t) = self.numof_threads_writebam {
-            t.get()
-        } else {
-            1
-        };
-        let path_out_unsorted_tmp = atomic_temp_path(&self.path_out_unsorted);
-        let mut proc_samtobam =
-            proc_sam_to_bam(numof_threads_writebam as usize, &path_out_unsorted_tmp)?;
-        let writer_tagbam =
-            BufWriter::new(proc_samtobam.stdin.take().expect("could not open samtobam"));
+        #[cfg(feature = "minimap2-rs-align")]
+        if self.aligner.eq_ignore_ascii_case("minimap2") {
+            return super::align_minimap2::try_execute_minimap2(
+                self.path_in.path().path(),
+                &self.path_genome,
+                &self.path_out_unsorted,
+                &self.path_out_sorted,
+                &self.path_temp,
+                thread_allocation.write_bam,
+                budget.threads.get() as usize,
+                thread_allocation.read,
+                self.sizeof_stream_arena,
+                budget.sizeof_stream_buffer,
+                &self.minimap2_preset,
+                budget.memory,
+                budget.threads.get(),
+                Arc::clone(&rayon_pool),
+            );
+        }
 
-        /////////////////////////////////////////////////////////////////////////////////////
-        // This thread takes the output SAM data, and adds proper tags to it
-        let handle_tagbam = budget.spawn::<TWrite, _, _>(0 as u64, move || {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unknown thread");
-            info!(thread = thread_name, "Starting tag-bam worker");
-
-            sam_add_bc_tag(writer_tagbam, reader_aligner_stdout).expect("Failed to run BAM tagger");
-
-            //            pipe_to_screen(&mut reader_aligner_stdout).unwrap();
-        });
-
-        /////////////////////////////////////////////////////////////////////////////////////
-        // All threads are now set up. Send all readpairs to the aligner
-        let mut writer_r1 = BufWriter::new(std::fs::File::create(&path_pipe_r1)?); //blocks until reader ready; so open reader first
-        let mut writer_r2 = BufWriter::new(std::fs::File::create(&path_pipe_r2)?);
-
-        AlignCMD::write_tirp_to_2fq(
-            self.path_in.path().path(),
-            &mut writer_r1,
-            &mut writer_r2,
-            budget.numof_threads_read,
-            self.sizeof_stream_arena,
-            budget.sizeof_stream_buffer,
-        )?;
-        drop(writer_r1);
-        drop(writer_r2);
-
-        //Wait for the output BAM to have been converted
-        info!("Waiting for aligner process to finish");
-        handle_tagbam.join().unwrap();
-        //Wait for sam2bam writer as well
-        proc_samtobam.wait()?;
-        publish_atomic_output(&path_out_unsorted_tmp, &self.path_out_unsorted)?;
-
-        //Clean up: remove pipes
-        std::fs::remove_file(path_pipe_r1)?;
-        std::fs::remove_file(path_pipe_r2)?;
-
-        //Sort the bam file
-        info!("Sorting BAM file");
-        sort_bam(
-            &self.path_out_unsorted,
-            &self.path_out_sorted,
-            &self.path_temp,
-            budget.threads.get(),
+        anyhow::bail!(
+            "aligner {} is not available; use --aligner BWA with the Rust BWA feature, --aligner STAR with the Rust STAR feature, or --aligner minimap2 with the Rust minimap2 feature",
+            self.aligner
         )
-        .expect("Failed to sort output");
-
-        //Index the bam file
-        info!("Indexing BAM file");
-        index_bam(
-            self.path_out_sorted
-                .to_str()
-                .expect("error getting unsorted path"),
-        )
-        .expect("Failed to index output");
-
-        //Clean up temp files
-        std::fs::remove_dir_all(&path_aln_temp).expect("Failed to remove tempdir");
-
-        info!(
-            "All alignment steps complete" //            "input_file" => self.path_in.path().path()
-                                           //            "output_file" => self.pa
-        );
-
-        //Move temp files to their right positions
-
-        Ok(())
     }
 
     ///
@@ -419,235 +370,94 @@ impl AlignCMD {
     }
 }
 
-///
-/// Read SAM content, and output SAM content with added barcode tags
-///
-pub fn sam_add_bc_tag<W, R>(writer: W, reader: R) -> Result<()>
-where
-    W: Sized + std::io::Write,
-    R: std::io::BufRead,
-{
-    let mut writer = BufWriter::new(writer);
-    for line in reader.lines() {
-        let line = line.unwrap();
+pub(super) fn stream_buffer_after_index_load(
+    aligner_name: &str,
+    total_memory: ByteSize,
+    requested_stream_buffer: ByteSize,
+    sizeof_stream_arena: ByteSize,
+    total_threads: u64,
+) -> ByteSize {
+    let minimum_stream_buffer = ByteSize(
+        (sizeof_stream_arena.as_u64() * 2)
+            .max(ByteSize::mib(64).as_u64())
+            .min(requested_stream_buffer.as_u64()),
+    );
+    let memory_headroom = ByteSize(
+        ByteSize::mib(512)
+            .as_u64()
+            .max((total_memory.as_u64() as f64 * 0.05) as u64),
+    );
+    let future_reading_reserve = ByteSize(
+        ByteSize::mib(256)
+            .as_u64()
+            .max(total_threads.saturating_mul(ByteSize::mib(64).as_u64())),
+    );
 
-        if line.starts_with("@") {
-            //This is a header line
-            writeln!(writer, "{}", line).unwrap();
-        } else {
-            //This is a read that need to be mangled
-            let (cell_id, umi) = crate::fileformat::bam::readname_to_cell_umi(line.as_bytes());
+    let Some(memory) = memory_stats::memory_stats() else {
+        warn!(
+            aligner = aligner_name,
+            total_memory = %total_memory,
+            requested_stream_buffer = %requested_stream_buffer,
+            "Could not read current RSS after aligner index load; using requested stream buffer"
+        );
+        return requested_stream_buffer;
+    };
 
-            writer.write_all(line.as_bytes())?;
-            writer.write_all(b"\tCB:Z:")?;
-            writer.write_all(cell_id)?;
+    let index_loaded_rss = ByteSize(memory.physical_mem as u64);
+    let available_for_stream = total_memory
+        .as_u64()
+        .saturating_sub(index_loaded_rss.as_u64())
+        .saturating_sub(memory_headroom.as_u64())
+        .saturating_sub(future_reading_reserve.as_u64());
+    let adjusted = ByteSize(
+        available_for_stream
+            .max(minimum_stream_buffer.as_u64())
+            .min(requested_stream_buffer.as_u64()),
+    );
 
-            if !umi.is_empty() {
-                //The SAM specification does not allow empty tags. The UMI can be empty
-                writer.write_all(b"\tUB:Z:")?;
-                writer.write_all(umi)?;
-            }
-            writer.write_all(b"\n")?;
-
-            //Typical 10x read
-            //A00689:440:HNTNGDRXY:1:1232:23882:9157	0	chr1	629349	3	89M1S	*	0	0	AAACTTCCTACCACTCACCCTAGCATTACTTATATGATATGTCTCCATACCCATTACAATCTCCAGCATTCCCCCTCAAACCTTAAAAAA	FFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF	NH:i:2	HI:i:1	AS:i:83	nM:i:2	RG:Z:lib1:0:1:HNTNGDRXY:1	RE:A:I	xf:i:0	CR:Z:ACGACTTAGTATTGTG	CY:Z:FFFFFFFFFFFFFFFF	CB:Z:ACGACTTAGTATTGTG-1	UR:Z:TAGGCAGAAGCT	UY:Z:FFFFFFFFFFFF	UB:Z:TAGGCAGAAGCT
-            //Thus add this:
-            //CB:Z:ACGACTTAGTATTGTG-1
-            //UB:Z:TAGGCAGAAGCT
-        }
+    if adjusted == minimum_stream_buffer && adjusted < requested_stream_buffer {
+        warn!(
+            aligner = aligner_name,
+            index_loaded_rss = %index_loaded_rss,
+            total_memory = %total_memory,
+            requested_stream_buffer = %requested_stream_buffer,
+            memory_headroom = %memory_headroom,
+            future_reading_reserve = %future_reading_reserve,
+            adjusted_stream_buffer = %adjusted,
+            "Aligner index leaves little budget for stream buffers; using minimum stream buffer"
+        );
+    } else {
+        info!(
+            aligner = aligner_name,
+            index_loaded_rss = %index_loaded_rss,
+            total_memory = %total_memory,
+            requested_stream_buffer = %requested_stream_buffer,
+            memory_headroom = %memory_headroom,
+            future_reading_reserve = %future_reading_reserve,
+            adjusted_stream_buffer = %adjusted,
+            "Adjusted aligner stream buffer after index load"
+        );
     }
-    Ok(())
+
+    adjusted
 }
 
-///
-/// Pipe to screen, for debugging
-///
-pub fn pipe_to_screen<R>(reader: &mut R) -> Result<()>
-where
-    R: std::io::BufRead,
-{
-    let mut buf = vec![0; 1024];
-    loop {
-        let len = reader.read(&mut buf).expect("could not read");
-        let s = String::from_utf8(buf[0..len].to_vec()).unwrap();
-        info!(line = s, "input");
-        if len == 0 {
-            break;
-        }
+pub(super) fn warn_if_index_disk_size_exceeds_memory(
+    aligner_name: &str,
+    index_path: &Path,
+    index_disk_size_bytes: u64,
+    total_memory: ByteSize,
+) {
+    let index_disk_size = ByteSize(index_disk_size_bytes);
+    if index_disk_size.as_u64() > total_memory.as_u64() {
+        warn!(
+            aligner = aligner_name,
+            index_path = ?index_path,
+            index_disk_size = %index_disk_size,
+            total_memory = %total_memory,
+            "Aligner index files on disk are larger than the provided memory budget"
+        );
     }
-    Ok(())
-}
-
-///
-/// Create a samtools process, converting sam to bam
-///
-pub fn proc_sam_to_bam<P>(num_threads: usize, path_bam: P) -> Result<std::process::Child>
-where
-    P: AsRef<Path>,
-{
-    let path_bam = format!(
-        "{}",
-        path_bam.as_ref().as_os_str().to_str().expect("os str")
-    );
-    let num_threads = format!("{}", num_threads);
-
-    let args = vec![
-        "view",
-        "-",
-        "-S", //Input is SAM format
-        "-b", //Output bam
-        "-@",
-        &num_threads, //Parallel compression
-        "-o",
-        &path_bam,
-    ];
-
-    let proc_cmd = std::process::Command::new("samtools")
-        .args(args)
-        .stdin(Stdio::piped())
-        .spawn()?;
-
-    Ok(proc_cmd)
-}
-
-///
-/// Generate STAR command. Output will be on stdout
-///
-pub fn prep_star<P>(
-    path_genome: &P,
-    path_r1: &P,
-    path_r2: &P,
-    path_aln_temp: &P,
-    num_threads: u64,
-) -> Result<std::process::Child>
-where
-    P: AsRef<Path>,
-{
-    let num_threads = format!("{}", num_threads);
-
-    let path_out_prefix = PathBuf::from(path_aln_temp.as_ref()).join("STAR_");
-    let path_out_prefix = format!("{}", path_out_prefix.as_os_str().to_str().expect("os str"));
-
-    let path_genome = format!(
-        "{}",
-        path_genome.as_ref().as_os_str().to_str().expect("os str")
-    );
-    let path_r1 = format!("{}", path_r1.as_ref().as_os_str().to_str().expect("os str"));
-    let path_r2 = format!("{}", path_r2.as_ref().as_os_str().to_str().expect("os str"));
-    let path_aln_temp = format!(
-        "{}",
-        path_aln_temp.as_ref().as_os_str().to_str().expect("os str")
-    );
-
-    let args = vec![
-        "--genomeDir",
-        &path_genome,
-        "--readFilesIn",
-        &path_r1,
-        &path_r2,
-        "--runThreadN",
-        &num_threads,
-        "--outSAMtype",
-        "SAM", //  this implies unsorted
-        "--outSAMunmapped",
-        "Within",
-        "--outSAMattributes",
-        "Standard",
-        "--outStd",
-        "SAM",
-        "--outTmpDir",
-        &path_aln_temp,
-        "--outFileNamePrefix",
-        &path_out_prefix,
-    ];
-
-    let proc_cmd = std::process::Command::new("STAR")
-        .args(args)
-        .stdout(Stdio::piped())
-        .spawn()?;
-    Ok(proc_cmd)
-}
-
-///
-/// Generate BWA command. Output will be on stdout
-///
-pub fn prep_bwa<P>(
-    path_genome: P,
-    path_r1: P,
-    path_r2: P,
-    num_threads: u64,
-) -> Result<std::process::Child>
-where
-    P: AsRef<Path>,
-{
-    let num_threads = format!("{}", num_threads);
-
-    let path_genome = format!(
-        "{}",
-        path_genome.as_ref().as_os_str().to_str().expect("os str")
-    );
-    let path_r1 = format!("{}", path_r1.as_ref().as_os_str().to_str().expect("os str"));
-    let path_r2 = format!("{}", path_r2.as_ref().as_os_str().to_str().expect("os str"));
-
-    let args = vec!["mem", "-t", &num_threads, &path_genome, &path_r1, &path_r2];
-
-    let proc_cmd = std::process::Command::new("bwa")
-        .args(args)
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    Ok(proc_cmd)
-}
-
-///
-/// Generate Bowtie2 command. Output will be on stdout
-///
-pub fn prep_bowtie2<P>(
-    path_genome: P,
-    path_r1: P,
-    path_r2: P,
-    num_threads: u64,
-) -> Result<std::process::Child>
-where
-    P: AsRef<Path>,
-{
-    let log_name = format!("./temp_bt.log");
-    let log = File::create(log_name).expect("failed to open log");
-
-    //    let out_name = format!("./temp_bt.out");
-    //    let out = File::create(out_name).expect("failed to open log");
-
-    let num_threads = format!("{}", num_threads);
-    let path_genome = format!(
-        "{}",
-        path_genome.as_ref().as_os_str().to_str().expect("os str")
-    );
-    let path_r1 = format!("{}", path_r1.as_ref().as_os_str().to_str().expect("os str"));
-    let path_r2 = format!("{}", path_r2.as_ref().as_os_str().to_str().expect("os str"));
-
-    let args = vec![
-        "-x",
-        &path_genome,
-        "--threads",
-        &num_threads,
-        "--reorder", //Guarantees that output SAM records are printed in an order corresponding to the order of the reads in the original input file, even when -p is set greater than 1
-        "--very-sensitive-local", //recommended setting for mapping out human reads; https://www.cell.com/cell-reports-methods/fulltext/S2667-2375(25)00254-1
-        "-1",
-        &path_r1,
-        "-2",
-        &path_r2,
-        "-S",
-        "/home/mahogny/github/bascet/temp/wtf.sam",
-    ];
-
-    let proc_cmd = std::process::Command::new("bowtie2")
-        .args(args)
-        .stderr(log)
-        //        .stdout(out)
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    Ok(proc_cmd)
 }
 
 ///

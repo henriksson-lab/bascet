@@ -15,7 +15,7 @@ use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
-use kraken2_rs::{
+use kraken2_pure_rs::{
     classify::{ClassifyDb, ClassifyOptions, classify_sequence},
     minimizer::MinimizerScanner,
     readcounts::TaxonCounters,
@@ -55,8 +55,8 @@ type KrakenBatch = Vec<KrakenReadPair>;
 
 struct KrakenClassifyScratch {
     scanner: MinimizerScanner,
-    taxa: Vec<kraken2_rs::types::TaxId>,
-    hit_counts: ahash::AHashMap<kraken2_rs::types::TaxId, u32>,
+    taxa: Vec<kraken2_pure_rs::types::TaxId>,
+    hit_counts: ahash::AHashMap<kraken2_pure_rs::types::TaxId, u32>,
     tx_frames: Vec<String>,
     taxon_counters: TaxonCounters,
     output_buf: String,

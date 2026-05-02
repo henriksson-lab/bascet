@@ -1,5 +1,4 @@
 pub mod channel;
-pub mod htsutils;
 pub mod likely_unlikely;
 pub mod send;
 pub mod teq;

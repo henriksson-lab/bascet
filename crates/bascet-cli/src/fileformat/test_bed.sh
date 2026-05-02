@@ -97,12 +97,6 @@ tabix  test.bed.gz foo
 https://docs.rs/noodles-tabix/latest/noodles_tabix/
 
 
-##########################  better!!
-https://docs.rs/rust-htslib/latest/rust_htslib/tbx/index.html   #only reading
-
-https://docs.rs/rust-htslib/latest/rust_htslib/bgzf/struct.Writer.html    
-
-
 ######### piping to bgzip is tricky
 https://github.com/samtools/htslib/issues/1726
 
@@ -120,5 +114,4 @@ if(!file.exists(fragpath_index)){
   #"tabix -p vcf fragments.tsv.gz"
   #"fragments.tsv.gz.tbi"
 }
-
 

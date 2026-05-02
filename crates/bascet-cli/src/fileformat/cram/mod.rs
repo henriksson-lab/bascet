@@ -1,5 +1,3 @@
-pub mod bam; //
-
 // to refactor
 
 //pub mod cram_index;

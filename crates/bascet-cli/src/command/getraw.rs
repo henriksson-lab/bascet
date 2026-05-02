@@ -1173,7 +1173,7 @@ fn spawn_paired_readers(
             if max_read_pairs.is_some_and(|limit| records_read >= limit) {
                 break;
             }
-            let d1 = codec::bgzf::Bgzf::builder()
+            let d1 = codec::BBGZDecoder::builder()
                 .with_path(&**input_r1.path())
                 .countof_threads(stream_each_n_threads)
                 .build();
@@ -1234,7 +1234,7 @@ fn spawn_paired_readers(
             if max_read_pairs.is_some_and(|limit| records_read >= limit) {
                 break;
             }
-            let d2 = codec::bgzf::Bgzf::builder()
+            let d2 = codec::BBGZDecoder::builder()
                 .with_path(&**input_r2.path())
                 .countof_threads(stream_each_n_threads)
                 .build();
@@ -1328,7 +1328,7 @@ fn spawn_single_readers(
             if max_read_pairs.is_some_and(|limit| records_read >= limit) {
                 break;
             }
-            let d1 = codec::bgzf::Bgzf::builder()
+            let d1 = codec::BBGZDecoder::builder()
                 .with_path(&**input_r1.path())
                 .countof_threads(stream_each_n_threads)
                 .build();

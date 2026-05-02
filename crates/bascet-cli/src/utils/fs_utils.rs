@@ -1,0 +1,79 @@
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+/// Return a hidden sibling temp path for writing a final output.
+///
+/// Writing in the destination directory keeps the final publish step atomic on
+/// the common path, because the temp file and destination live on the same
+/// filesystem.
+pub fn atomic_temp_path(final_path: impl AsRef<Path>) -> PathBuf {
+    let final_path = final_path.as_ref();
+    let parent = final_path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = final_path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("output"))
+        .to_string_lossy();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+
+    parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        timestamp
+    ))
+}
+
+pub fn publish_atomic_output(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
+    rename_or_copy_across_filesystems(from, to)
+}
+
+/// Move a completed file into place.
+///
+/// This uses an atomic rename when source and destination are on the same
+/// filesystem. If the paths cross filesystem boundaries, it falls back to
+/// copy-and-delete because POSIX rename returns EXDEV in that case.
+pub fn rename_or_copy_across_filesystems(
+    from: impl AsRef<Path>,
+    to: impl AsRef<Path>,
+) -> io::Result<()> {
+    let from = from.as_ref();
+    let to = to.as_ref();
+
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(err) if is_cross_device_link(&err) => {
+            copy_to_temp_then_rename(from, to)?;
+            fs::remove_file(from)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn copy_to_temp_then_rename(from: &Path, to: &Path) -> io::Result<()> {
+    let copy_temp = copy_temp_path(to);
+    if copy_temp.exists() {
+        fs::remove_file(&copy_temp)?;
+    }
+
+    fs::copy(from, &copy_temp)?;
+    fs::rename(&copy_temp, to)
+}
+
+fn copy_temp_path(to: &Path) -> PathBuf {
+    let mut extension = to.extension().unwrap_or_default().to_os_string();
+    if extension.is_empty() {
+        extension.push("tmp");
+    } else {
+        extension.push(".tmp");
+    }
+    to.with_extension(extension)
+}
+
+fn is_cross_device_link(err: &io::Error) -> bool {
+    err.raw_os_error() == Some(18)
+}

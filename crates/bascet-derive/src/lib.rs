@@ -17,7 +17,7 @@ pub fn define_backing(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     attrs::define_backing(input)
 }
 
-#[proc_macro_derive(Budget, attributes(threads, mem))]
+#[proc_macro_derive(Budget, attributes(threads, mem, skip))]
 pub fn derive_budget(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     runtime::derive_budget(item)
 }

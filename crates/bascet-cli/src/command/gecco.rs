@@ -1,7 +1,10 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor, Read};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 
 use anyhow::{Context, Result, bail};
@@ -126,6 +129,7 @@ fn run_gecco_zip(
     let queue_size = gecco_workers * 2;
     let (tx_cells, rx_cells) = crossbeam::channel::bounded::<Result<CellContigs>>(queue_size);
     let (tx_reports, rx_reports) = crossbeam::channel::bounded::<Result<CellGecco>>(queue_size);
+    let cancel = Arc::new(AtomicBool::new(false));
 
     let writer = thread::spawn(move || write_zip(path_out, rx_reports));
 
@@ -134,19 +138,30 @@ fn run_gecco_zip(
         let rx_cells = rx_cells.clone();
         let tx_reports = tx_reports.clone();
         let pipeline = Arc::clone(&pipeline);
+        let cancel = Arc::clone(&cancel);
         workers.push(thread::spawn(move || {
             while let Ok(cell) = rx_cells.recv() {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
                 let result = cell.and_then(|cell| {
                     info!("gecco worker {} processing {}", worker_id, cell.cell_id);
                     let records = read_fasta_records(&cell.contigs, &cell.cell_id)?;
-                    let reports = run_gecco_cell(&pipeline, &records)
-                        .with_context(|| format!("GECCO failed for cell {}", cell.cell_id))?;
+                    let reports = run_gecco_cell(&pipeline, &records).with_context(|| {
+                        format!("GECCO worker {worker_id} failed for cell {}", cell.cell_id)
+                    })?;
                     Ok(CellGecco {
                         cell_id: cell.cell_id,
                         reports,
                     })
                 });
+                if result.is_err() {
+                    cancel.store(true, Ordering::Release);
+                }
                 if tx_reports.send(result).is_err() {
+                    break;
+                }
+                if cancel.load(Ordering::Acquire) {
                     break;
                 }
             }
@@ -155,7 +170,8 @@ fn run_gecco_zip(
     drop(rx_cells);
     drop(tx_reports);
 
-    if let Err(e) = read_zip_cells(path_in, tx_cells.clone()) {
+    if let Err(e) = read_zip_cells(path_in, tx_cells.clone(), &cancel) {
+        cancel.store(true, Ordering::Release);
         let _ = tx_cells.send(Err(e));
     }
     drop(tx_cells);
@@ -173,7 +189,11 @@ fn run_gecco_zip(
     Ok(())
 }
 
-fn read_zip_cells(path_in: PathBuf, tx_cells: Sender<Result<CellContigs>>) -> Result<()> {
+fn read_zip_cells(
+    path_in: PathBuf,
+    tx_cells: Sender<Result<CellContigs>>,
+    cancel: &AtomicBool,
+) -> Result<()> {
     info!("Reading GECCO input zip {}", path_in.display());
     let input = File::open(&path_in)
         .with_context(|| format!("failed to open input zip {}", path_in.display()))?;
@@ -182,6 +202,9 @@ fn read_zip_cells(path_in: PathBuf, tx_cells: Sender<Result<CellContigs>>) -> Re
 
     let mut num_cells = 0_u64;
     for index in 0..archive.len() {
+        if cancel.load(Ordering::Acquire) {
+            bail!("stopping GECCO input reader because a worker failed");
+        }
         let mut file = archive.by_index(index)?;
         let Some(cell_id) = contigs_cell_id(file.name()).map(str::to_owned) else {
             continue;

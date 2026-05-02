@@ -23,7 +23,6 @@ flate2.workspace = true
 libdeflater.workspace = true
 memchr.workspace = true
 rayon.workspace = true
-rust-htslib.workspace = true
 serde.workspace = true
 smallvec.workspace = true
 tracing.workspace = true

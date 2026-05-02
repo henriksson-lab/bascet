@@ -3,7 +3,7 @@ use std::{
     io::{self, BufReader, Read},
     path::Path,
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
@@ -51,6 +51,7 @@ impl BBGZDecoder {
             1,
             { u64::MAX },
         >,
+        with_opt_rayon_pool: Option<Arc<rayon::ThreadPool>>,
     ) -> Self {
         let file = File::open(with_path.as_ref()).unwrap_or_else(|err| {
             panic!(
@@ -59,17 +60,26 @@ impl BBGZDecoder {
             )
         });
 
-        let worker_count = countof_threads.get() as usize;
+        let worker_count = with_opt_rayon_pool
+            .as_ref()
+            .map(|pool| pool.current_num_threads())
+            .unwrap_or_else(|| countof_threads.get() as usize)
+            .max(1);
         let sizeof_block = ByteSize::kib(64);
         let sizeof_alloc =
-            ((countof_threads.get() * sizeof_block.as_u64()) / (size_of::<u8>() as u64)) as usize;
+            ((worker_count as u64 * sizeof_block.as_u64()) / (size_of::<u8>() as u64)) as usize;
         let cancel = Arc::new(AtomicBool::new(false));
-        let (job_tx, job_rx) = crossbeam::channel::bounded(worker_count * 4);
+        let job_queue_capacity = worker_count.saturating_mul(2).max(1);
+        let (job_tx, job_rx) = crossbeam::channel::bounded(job_queue_capacity);
         let (result_tx, result_rx) = bascet_core::channel::ordered_dense::<_, 4096>();
 
         let reader_handle =
             spawn_reader(file, job_tx.clone(), result_tx.clone(), Arc::clone(&cancel));
-        let worker_handles = spawn_workers(worker_count, job_rx, result_tx, Arc::clone(&cancel));
+        let worker_handles = if let Some(rayon_pool) = with_opt_rayon_pool {
+            spawn_rayon_workers(job_rx, result_tx, Arc::clone(&cancel), rayon_pool)
+        } else {
+            spawn_workers(worker_count, job_rx, result_tx, Arc::clone(&cancel))
+        };
 
         Self {
             inner_reader_handle: Some(reader_handle),
@@ -222,6 +232,85 @@ fn spawn_workers(
                 .unwrap()
         })
         .collect()
+}
+
+fn spawn_rayon_workers(
+    job_rx: Receiver<BBGZDecodeJob>,
+    result_tx: OrderedDenseSender<BBGZDecodeResult, 4096>,
+    cancel: Arc<AtomicBool>,
+    rayon_pool: Arc<rayon::ThreadPool>,
+) -> Vec<JoinHandle<()>> {
+    let handle = std::thread::Builder::new()
+        .name("BBGZDecodeDispatch@0".to_string())
+        .spawn(move || {
+            let inflight_limiter = Arc::new(InFlightLimiter::new(rayon_pool.current_num_threads()));
+            rayon_pool.scope(|scope| {
+                loop {
+                    let job = match job_rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok(job) => job,
+                        Err(RecvTimeoutError::Timeout) => {
+                            if cancel.load(Ordering::Acquire) {
+                                break;
+                            }
+                            continue;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
+
+                    let permit = inflight_limiter.acquire();
+                    let task_result_tx = result_tx.clone();
+                    scope.spawn(move |_| {
+                        let _permit = permit;
+                        let seq = job.seq;
+                        let mut decompressor = Decompressor::new();
+                        let result = decode_job(&mut decompressor, job);
+                        task_result_tx.send(seq, result);
+                    });
+                }
+            });
+        })
+        .unwrap();
+
+    vec![handle]
+}
+
+struct InFlightLimiter {
+    max: usize,
+    count: Mutex<usize>,
+    available: Condvar,
+}
+
+struct InFlightPermit {
+    limiter: Arc<InFlightLimiter>,
+}
+
+impl InFlightLimiter {
+    fn new(max: usize) -> Self {
+        Self {
+            max: max.max(1),
+            count: Mutex::new(0),
+            available: Condvar::new(),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>) -> InFlightPermit {
+        let mut count = self.count.lock().unwrap();
+        while *count >= self.max {
+            count = self.available.wait(count).unwrap();
+        }
+        *count += 1;
+        InFlightPermit {
+            limiter: Arc::clone(self),
+        }
+    }
+}
+
+impl Drop for InFlightPermit {
+    fn drop(&mut self) {
+        let mut count = self.limiter.count.lock().unwrap();
+        *count = count.saturating_sub(1);
+        self.limiter.available.notify_one();
+    }
 }
 
 fn read_next_job<R: Read>(reader: &mut R, seq: usize) -> anyhow::Result<Option<BBGZDecodeJob>> {

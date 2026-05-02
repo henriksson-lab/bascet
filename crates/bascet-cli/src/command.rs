@@ -4,19 +4,26 @@ use clap::Subcommand;
 pub mod align;
 #[cfg(feature = "bwa-mem2-rs-align")]
 pub mod align_bwa;
+#[cfg(feature = "minimap2-rs-align")]
+pub mod align_minimap2;
+pub mod align_output;
+#[cfg(feature = "star-rs-align")]
+pub mod align_star;
 pub mod bam2fragments;
 pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
 pub mod extract;
 pub mod extract_terminal;
+pub mod exttool;
 #[cfg(feature = "fastqc")]
 pub mod fastqc;
 pub mod featurise_kmc;
 #[cfg(feature = "gecco")]
 pub mod gecco;
 pub mod getraw;
-pub mod kmc_reads;
+// Disabled until the pipe-based KMC path is replaced with a Rust KMC implementation.
+// pub mod kmc_reads;
 pub mod kraken;
 pub mod sysinfo;
 //pub mod kmc_new;
@@ -37,7 +44,7 @@ pub mod transform;
 // BAM/SAM operations
 pub use align::AlignCMD;
 pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
-pub use kmc_reads::KmcReadsCMD;
+// pub use kmc_reads::KmcReadsCMD;
 pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 
 // Count operations
@@ -48,6 +55,7 @@ pub use detect_kmer_fq::{DetectKmerFq, DetectKmerFqCMD};
 pub use detect_kmer_kmc::{DetectKmerKmcCMD, QueryKmc, QueryKmcParams};
 pub use extract::ExtractCMD;
 pub use extract_terminal::ExtractStreamCMD;
+pub use exttool::ExttoolCMD;
 #[cfg(feature = "fastqc")]
 pub use fastqc::FastqcCMD;
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
@@ -86,6 +94,7 @@ pub enum Commands {
     DetectKmerFq(DetectKmerFqCMD),
     Extract(ExtractCMD),
     ExtractStream(ExtractStreamCMD),
+    Exttool(ExttoolCMD),
     #[cfg(feature = "fastqc")]
     Fastqc(FastqcCMD),
     Featurise(FeaturiseKmcCMD),

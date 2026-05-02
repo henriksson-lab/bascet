@@ -62,6 +62,15 @@ fn main() -> std::process::ExitCode {
             _ = cmd.try_execute();
             return std::process::ExitCode::SUCCESS;
         }
+        Commands::Exttool(cmd) => {
+            return match cmd.try_execute() {
+                Ok(code) => code,
+                Err(err) => {
+                    eprintln!("Error: {err:#}");
+                    std::process::ExitCode::FAILURE
+                }
+            };
+        }
         _ => (),
     };
 
@@ -119,6 +128,7 @@ fn main() -> std::process::ExitCode {
         Commands::Countsketch(mut cmd) => cmd.try_execute(),
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(_cmd) => panic!("Command handled in the wrong place"),
+        Commands::Exttool(_cmd) => panic!("Command handled in the wrong place"),
         #[cfg(feature = "fastqc")]
         Commands::Fastqc(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
@@ -142,7 +152,13 @@ fn main() -> std::process::ExitCode {
     };
 
     if let Err(e) = result {
-        error!("Error occurred: {}", e);
+        error!("Error occurred: {:#}", e);
+        for (index, cause) in e.chain().skip(1).enumerate() {
+            error!("  caused by {}: {}", index + 1, cause);
+        }
+        error!(elapsed = ?start.elapsed(), "Failure!");
+        LogGuard::flush();
+        return std::process::ExitCode::FAILURE;
     } else {
         info!(elapsed = ?start.elapsed(), "Success!");
     }
