@@ -123,6 +123,7 @@ fn main() -> std::process::ExitCode {
     let result = match cli.command {
         Commands::Align(mut cmd) => cmd.try_execute(),
         Commands::Bam2fragments(mut cmd) => cmd.try_execute(),
+        Commands::BamSort(mut cmd) => cmd.try_execute(),
         Commands::Countchrom(mut cmd) => cmd.try_execute(),
         Commands::Countfeature(mut cmd) => cmd.try_execute(),
         Commands::Countsketch(mut cmd) => cmd.try_execute(),

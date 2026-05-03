@@ -15,7 +15,7 @@ use bytesize::ByteSize;
 use noodles::sam;
 use tracing::{debug, info};
 
-use super::align::{index_bam, sort_bam};
+use super::bamsort::sort_and_index_bam;
 use super::align_output::{
     SamRecordSink, TaggedBamSamSink, create_tagged_bam_writer, finish_tagged_bam_writer,
     make_bascet_read_name,
@@ -94,17 +94,14 @@ pub fn try_execute_star_rs(
 
     cleanup_star_temp(&path_star_tmp);
 
-    info!("Sorting BAM file");
-    sort_bam(path_out_unsorted, path_out_sorted, path_temp, total_threads)
-        .expect("Failed to sort output");
-
-    info!("Indexing BAM file");
-    index_bam(
-        path_out_sorted
-            .to_str()
-            .expect("error getting unsorted path"),
-    )
-    .expect("Failed to index output");
+    info!("Sorting + indexing BAM file (in-process)");
+    sort_and_index_bam(
+        path_out_unsorted,
+        path_out_sorted,
+        path_temp,
+        total_memory,
+        total_threads as usize,
+    )?;
 
     info!("All alignment steps complete");
     Ok(())
@@ -266,12 +263,11 @@ fn run_star_rs_with_tirp(
 ) -> std::result::Result<StarMainResult, String> {
     let mut runner = DirectStarRun::new(args)?;
     info!("STAR index loaded");
-    let sizeof_stream_buffer = super::align::stream_buffer_after_index_load(
+    let sizeof_stream_buffer = super::align_stream_helpers::stream_buffer_after_index_load(
         "STAR",
         total_memory,
         sizeof_stream_buffer,
         sizeof_stream_arena,
-        rayon_pool.current_num_threads() as u64,
     );
     info!("Streaming TIRP reads directly into STAR chunks");
 

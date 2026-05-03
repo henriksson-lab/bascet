@@ -4,12 +4,17 @@ use clap::Subcommand;
 pub mod align;
 #[cfg(feature = "bwa-mem2-rs-align")]
 pub mod align_bwa;
+#[cfg(feature = "bwa-mem2-rs-align")]
+pub mod align_bwa_stock_driver;
 #[cfg(feature = "minimap2-rs-align")]
 pub mod align_minimap2;
 pub mod align_output;
+#[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
+pub mod align_stream_helpers;
 #[cfg(feature = "star-rs-align")]
 pub mod align_star;
 pub mod bam2fragments;
+pub mod bamsort;
 pub mod countchrom;
 pub mod countfeature;
 pub mod countsketch;
@@ -25,6 +30,7 @@ pub mod getraw;
 // Disabled until the pipe-based KMC path is replaced with a Rust KMC implementation.
 // pub mod kmc_reads;
 pub mod kraken;
+pub mod limiters;
 pub mod sysinfo;
 //pub mod kmc_new;
 pub mod detect_kmer_fq;
@@ -44,6 +50,7 @@ pub mod transform;
 // BAM/SAM operations
 pub use align::AlignCMD;
 pub use bam2fragments::{Bam2Fragments, Bam2FragmentsCMD};
+pub use bamsort::BamSortCMD;
 // pub use kmc_reads::KmcReadsCMD;
 pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 
@@ -87,6 +94,7 @@ use crate::command::{sysinfo::SysinfoCMD, tofq::ToFastqCMD};
 pub enum Commands {
     Align(AlignCMD),
     Bam2fragments(Bam2FragmentsCMD),
+    BamSort(BamSortCMD),
     Countchrom(CountChromCMD),
     Countfeature(CountFeatureCMD),
     Countsketch(CountsketchCMD),

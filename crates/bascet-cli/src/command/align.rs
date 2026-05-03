@@ -1,7 +1,4 @@
-use crate::{
-    bounded_parser,
-    utils::{atomic_temp_path, publish_atomic_output},
-};
+use crate::bounded_parser;
 
 use bascet_core::{
     attr::{meta::*, quality::*, sequence::*},
@@ -18,8 +15,9 @@ use clio::InputPath;
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
 };
+#[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 #[derive(Args)]
@@ -89,6 +87,7 @@ pub struct AlignCMD {
     #[arg(
         long = "aligner",
         help = "The command to send the data to",
+        value_parser = ["BWAMEM2", "STAR", "minimap2"],
         hide_short_help = true
     )]
     aligner: String,
@@ -114,7 +113,7 @@ struct AlignBudget {
     numof_threads_read: BoundedU64<1, { u64::MAX }>,
 
     #[skip(budget)]
-    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating(total_threads))]
+    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating(total_threads.min(8)))]
     numof_threads_writebam: BoundedU64<1, { u64::MAX }>,
 
     #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
@@ -167,6 +166,9 @@ impl AlignCMD {
 
         budget.validate();
         let thread_allocation = AlignThreadAllocation::from_budget(&budget);
+        // Only the STAR and minimap2 paths consume an external rayon pool; BWAMEM2 manages
+        // its own internal pool via the stock-driver pipeline.
+        #[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
         let rayon_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
                 .num_threads(budget.threads.get() as usize)
@@ -185,21 +187,16 @@ impl AlignCMD {
         );
 
         #[cfg(feature = "bwa-mem2-rs-align")]
-        if self.aligner == "BWA" {
+        if self.aligner == "BWAMEM2" {
             return super::align_bwa::try_execute_bwa_mem2(
                 self.path_in.path().path(),
                 &self.path_genome,
                 &self.path_out_unsorted,
                 &self.path_out_sorted,
                 &self.path_temp,
-                thread_allocation.write_bam,
                 budget.threads.get() as usize,
-                thread_allocation.read,
-                self.sizeof_stream_arena,
-                budget.sizeof_stream_buffer,
                 budget.memory,
                 budget.threads.get(),
-                Arc::clone(&rayon_pool),
             );
         }
 
@@ -244,7 +241,7 @@ impl AlignCMD {
         }
 
         anyhow::bail!(
-            "aligner {} is not available; use --aligner BWA with the Rust BWA feature, --aligner STAR with the Rust STAR feature, or --aligner minimap2 with the Rust minimap2 feature",
+            "aligner {} is not available; use --aligner BWAMEM2 with the Rust BWA feature, --aligner STAR with the Rust STAR feature, or --aligner minimap2 with the Rust minimap2 feature",
             self.aligner
         )
     }
@@ -370,78 +367,6 @@ impl AlignCMD {
     }
 }
 
-pub(super) fn stream_buffer_after_index_load(
-    aligner_name: &str,
-    total_memory: ByteSize,
-    requested_stream_buffer: ByteSize,
-    sizeof_stream_arena: ByteSize,
-    total_threads: u64,
-) -> ByteSize {
-    let minimum_stream_buffer = ByteSize(
-        (sizeof_stream_arena.as_u64() * 2)
-            .max(ByteSize::mib(64).as_u64())
-            .min(requested_stream_buffer.as_u64()),
-    );
-    let memory_headroom = ByteSize(
-        ByteSize::mib(512)
-            .as_u64()
-            .max((total_memory.as_u64() as f64 * 0.05) as u64),
-    );
-    let future_reading_reserve = ByteSize(
-        ByteSize::mib(256)
-            .as_u64()
-            .max(total_threads.saturating_mul(ByteSize::mib(64).as_u64())),
-    );
-
-    let Some(memory) = memory_stats::memory_stats() else {
-        warn!(
-            aligner = aligner_name,
-            total_memory = %total_memory,
-            requested_stream_buffer = %requested_stream_buffer,
-            "Could not read current RSS after aligner index load; using requested stream buffer"
-        );
-        return requested_stream_buffer;
-    };
-
-    let index_loaded_rss = ByteSize(memory.physical_mem as u64);
-    let available_for_stream = total_memory
-        .as_u64()
-        .saturating_sub(index_loaded_rss.as_u64())
-        .saturating_sub(memory_headroom.as_u64())
-        .saturating_sub(future_reading_reserve.as_u64());
-    let adjusted = ByteSize(
-        available_for_stream
-            .max(minimum_stream_buffer.as_u64())
-            .min(requested_stream_buffer.as_u64()),
-    );
-
-    if adjusted == minimum_stream_buffer && adjusted < requested_stream_buffer {
-        warn!(
-            aligner = aligner_name,
-            index_loaded_rss = %index_loaded_rss,
-            total_memory = %total_memory,
-            requested_stream_buffer = %requested_stream_buffer,
-            memory_headroom = %memory_headroom,
-            future_reading_reserve = %future_reading_reserve,
-            adjusted_stream_buffer = %adjusted,
-            "Aligner index leaves little budget for stream buffers; using minimum stream buffer"
-        );
-    } else {
-        info!(
-            aligner = aligner_name,
-            index_loaded_rss = %index_loaded_rss,
-            total_memory = %total_memory,
-            requested_stream_buffer = %requested_stream_buffer,
-            memory_headroom = %memory_headroom,
-            future_reading_reserve = %future_reading_reserve,
-            adjusted_stream_buffer = %adjusted,
-            "Adjusted aligner stream buffer after index load"
-        );
-    }
-
-    adjusted
-}
-
 pub(super) fn warn_if_index_disk_size_exceeds_memory(
     aligner_name: &str,
     index_path: &Path,
@@ -458,62 +383,6 @@ pub(super) fn warn_if_index_disk_size_exceeds_memory(
             "Aligner index files on disk are larger than the provided memory budget"
         );
     }
-}
-
-///
-/// Sort a given BAM file, to a new a file
-///
-pub fn sort_bam<P>(path_in: P, path_out: P, path_temp: P, num_threads: u64) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let num_threads = format!("{}", num_threads);
-
-    let path_in = format!("{}", path_in.as_ref().as_os_str().to_str().expect("os str"));
-    let path_out_final = path_out.as_ref().to_path_buf();
-    let path_out_tmp = atomic_temp_path(&path_out_final);
-    let path_out_arg = format!("{}", path_out_tmp.as_os_str().to_str().expect("os str"));
-
-    let path_temp_prefix = PathBuf::from(path_temp.as_ref()).join("sort");
-    let path_temp_prefix = format!("{}", path_temp_prefix.as_os_str().to_str().expect("os str"));
-
-    let args = vec![
-        "sort",
-        "-@",
-        &num_threads,
-        &path_in,
-        "-T",
-        &path_temp_prefix,
-        "-o",
-        &path_out_arg,
-    ];
-
-    let _proc_out = std::process::Command::new("samtools")
-        .args(args)
-        .status()
-        .expect("failed to run samtools sort");
-    publish_atomic_output(path_out_tmp, path_out_final)?;
-    Ok(())
-}
-
-///
-/// Index a given BAM file
-///
-pub fn index_bam(path_in: &str) -> Result<()> {
-    let path_index = PathBuf::from(format!("{path_in}.bai"));
-    let path_index_tmp = atomic_temp_path(&path_index);
-    let path_index_tmp_arg = path_index_tmp
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("invalid BAM index path"))?;
-    let args = vec!["index", "-o", path_index_tmp_arg, path_in];
-
-    let _proc_out = std::process::Command::new("samtools")
-        .args(args)
-        .status()
-        .expect("failed to run samtools index");
-    publish_atomic_output(path_index_tmp, path_index)?;
-
-    Ok(())
 }
 
 //TODO: single-end reads
