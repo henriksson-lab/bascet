@@ -1560,39 +1560,39 @@ fn sample_reads(
     readname: &str,
 ) -> Vec<fastq::OwnedRecord> {
     // NOTE fine to use all threads briefly. Nothing else does work yet.
-    let countof_threads_total = (*budget.threads::<Total>()).get();
-    // prepare chemistry using r2
-    let decoder = codec::BBGZDecoder::builder()
-        .with_path(input_path.path().path())
-        // SAFETY   budget.threads::<Total>() is 7..
-        .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
-        .build();
+    // let countof_threads_total = (*budget.threads::<Total>()).get();
+    // // prepare chemistry using r2
+    // let decoder = codec::BBGZDecoder::builder()
+    //     .with_path(input_path.path().path())
+    //     // SAFETY   budget.threads::<Total>() is 7..
+    //     .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
+    //     .build();
 
-    let p1 = parse::Fastq::builder().build();
+    // let p1 = parse::Fastq::builder().build();
 
-    let mut streamer = Stream::builder()
-        .with_decoder(decoder)
-        .with_parser(p1)
-        .sizeof_decode_arena(s.sizeof_stream_arena)
-        .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
-        .build();
+    // let mut streamer = Stream::builder()
+    //     .with_decoder(decoder)
+    //     .with_parser(p1)
+    //     .sizeof_decode_arena(s.sizeof_stream_arena)
+    //     .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
+    //     .build();
 
-    let mut q1 = streamer.query::<fastq::Record>();
+    // let mut q1 = streamer.query::<fastq::Record>();
 
-    let mut list_reads: Vec<fastq::OwnedRecord> = Vec::with_capacity(10000);
-    while let Ok(Some(token)) = q1.next() {
-        list_reads.push(token.into());
+    // let mut list_reads: Vec<fastq::OwnedRecord> = Vec::with_capacity(10000);
+    // while let Ok(Some(token)) = q1.next() {
+    //     list_reads.push(token.into());
 
-        if list_reads.len() >= 10000 {
-            break;
-        }
-    }
+    //     if list_reads.len() >= 10000 {
+    //         break;
+    //     }
+    // }
 
-    info!("Finished reading first 10000 reads of {}...", readname);
-    unsafe {
-        streamer.shutdown();
-    }
-    list_reads
+    // info!("Finished reading first 10000 reads of {}...", readname);
+    // unsafe {
+    //     streamer.shutdown();
+    // }
+    vec![fastq::OwnedRecord::empty()]
 }
 
 ///
