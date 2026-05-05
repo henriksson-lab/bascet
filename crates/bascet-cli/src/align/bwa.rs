@@ -1,11 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result};
 use bytesize::ByteSize;
 use tracing::info;
 
-use super::align_bwa_stock_driver::{StockDriverState, run_stock_driver_tirp_to_bam};
-use super::bamsort::sort_and_index_bam;
+use super::bwa_stock_driver::{StockDriverState, run_stock_driver_tirp_to_bam};
+use crate::command::bamsort::sort_and_index_bam;
 
 /// Drive the BWAMEM2 stock driver end-to-end: TIRP → pipelined BAM (reader → aligner →
 /// compressor pool → writer with bounded memory + in-flight limiters) → sort → index.
@@ -18,10 +21,12 @@ pub fn try_execute_bwa_mem2(
     align_threads: usize,
     total_memory: ByteSize,
     total_threads: u64,
+    worker_pool: Arc<rayon::ThreadPool>,
+    mem_overhead_per_input_byte: u64,
 ) -> Result<()> {
-    info!("Using bwa-mem2-rs stock driver");
+    info!("BWAMEM2 selected");
     let index_disk_size = validate_bwa_mem2_index(path_genome)?;
-    super::align::warn_if_index_disk_size_exceeds_memory(
+    super::common::warn_if_index_disk_size_exceeds_memory(
         "BWAMEM2",
         path_genome,
         index_disk_size,
@@ -31,6 +36,7 @@ pub fn try_execute_bwa_mem2(
     let prefix = path_genome
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("BWAMEM2 genome path is not UTF-8: {path_genome:?}"))?;
+    info!(index_prefix = prefix, "Loading BWAMEM2 index");
     let mut state = StockDriverState::new(prefix, align_threads)?;
     info!("BWAMEM2 index loaded");
 
@@ -40,6 +46,8 @@ pub fn try_execute_bwa_mem2(
         path_out_unsorted,
         total_memory,
         total_threads,
+        worker_pool,
+        mem_overhead_per_input_byte,
     )?;
     // Free the FMI index + worker_t before the sort phase so the in-process sort gets the
     // full memory budget.

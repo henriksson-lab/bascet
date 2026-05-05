@@ -1,7 +1,9 @@
 use std::process::ExitCode;
 
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+#[cfg(feature = "gecco")]
+use clap::Parser;
+use clap::{Args, Subcommand};
 
 #[derive(Args)]
 pub struct ExttoolCMD {

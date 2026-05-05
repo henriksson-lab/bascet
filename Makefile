@@ -1,3 +1,27 @@
+CARGO ?= cargo
+ZIGBUILD ?= cargo zigbuild
+RUSTUP ?= rustup
+LIPO ?= $(shell command -v llvm-lipo 2>/dev/null || command -v llvm-lipo-14 2>/dev/null || printf llvm-lipo)
+CROSS_PROFILE ?= release
+CROSS_PACKAGE ?= bascet-cli
+CROSS_FEATURES ?= --all-features
+BASCET_BIN ?= bascet
+MAC_UNIVERSAL_OUT ?= target/universal-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN)
+LINUX_BIN_OUT ?= target/$(CROSS_PROFILE)/$(BASCET_BIN)
+WINDOWS_BIN_OUT ?= target/x86_64-pc-windows-gnu/$(CROSS_PROFILE)/$(BASCET_BIN).exe
+BINS_PUBLISH_DIR ?= /corgi/public_http/public/bascet/bins
+LINUX_PUBLISH_BIN ?= bascet-linux-x86_64
+WINDOWS_PUBLISH_BIN ?= bascet-windows-x86_64.exe
+MAC_PUBLISH_BIN ?= bascet-macos-universal
+WINDOWS_TARGETS ?= x86_64-pc-windows-gnu
+MAC_TARGETS ?= \
+	x86_64-apple-darwin \
+	aarch64-apple-darwin
+CROSS_TARGETS ?= $(WINDOWS_TARGETS) $(MAC_TARGETS)
+MACOS_X86_CFLAGS ?= -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
+
+.PHONY: all test fix install_rust loc all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
+
 all:
 	cargo +nightly build --profile=release
 
@@ -22,8 +46,44 @@ loc:
 	bascet*/*/*/*.rs \
 	bascet*/*/*/*/*.rs
 
-all_win:
-	cargo build --profile=release --target x86_64-pc-windows-gnu -p bascet-cli --no-default-features
+all_win all_windows: $(addprefix cross-,$(WINDOWS_TARGETS))
+
+all_mac: $(addprefix cross-,$(MAC_TARGETS))
+
+linux_release:
+	$(CARGO) build --profile=$(CROSS_PROFILE) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+
+mac_universal: all_mac
+	mkdir -p $(dir $(MAC_UNIVERSAL_OUT))
+	$(LIPO) -create \
+		target/x86_64-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN) \
+		target/aarch64-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN) \
+		-output $(MAC_UNIVERSAL_OUT)
+
+publish_bins: linux_release all_win mac_universal
+	mkdir -p $(BINS_PUBLISH_DIR)
+	cp $(LINUX_BIN_OUT) $(BINS_PUBLISH_DIR)/$(LINUX_PUBLISH_BIN)
+	cp $(WINDOWS_BIN_OUT) $(BINS_PUBLISH_DIR)/$(WINDOWS_PUBLISH_BIN)
+	cp $(MAC_UNIVERSAL_OUT) $(BINS_PUBLISH_DIR)/$(MAC_PUBLISH_BIN)
+	cd $(BINS_PUBLISH_DIR) && md5sum $(LINUX_PUBLISH_BIN) > $(LINUX_PUBLISH_BIN).md5
+	cd $(BINS_PUBLISH_DIR) && md5sum $(WINDOWS_PUBLISH_BIN) > $(WINDOWS_PUBLISH_BIN).md5
+	cd $(BINS_PUBLISH_DIR) && md5sum $(MAC_PUBLISH_BIN) > $(MAC_PUBLISH_BIN).md5
+
+cross: $(addprefix cross-,$(CROSS_TARGETS))
+
+cross_targets:
+	$(RUSTUP) target add $(CROSS_TARGETS)
+
+cross-%: FORCE
+	$(CARGO) build --profile=$(CROSS_PROFILE) --target $* -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+
+cross-x86_64-apple-darwin: FORCE
+	CFLAGS_x86_64_apple_darwin="$(MACOS_X86_CFLAGS) $(CFLAGS_x86_64_apple_darwin)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+
+cross-aarch64-apple-darwin: FORCE
+	$(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+
+FORCE:
 
 podman:
 #docker:
@@ -250,5 +310,3 @@ test_rna_3_2:
 
 test_quast:
 	cargo +nightly run extract -i testdata/quast.zip  -o  testdata/out.temp -b a  -f report.txt
-
-

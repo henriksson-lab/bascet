@@ -1,3 +1,4 @@
+pub mod align;
 pub mod barcode;
 pub mod command;
 pub mod common;

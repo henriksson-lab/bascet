@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use ahash::AHashMap;
 use tracing::info;
 
 use hdf5::WritableFile as H5File;
@@ -106,6 +107,19 @@ impl SparseMatrixAnnDataBuilder {
         counter: &mut BTreeMap<u32, u32>, //map cell_index -> count
     ) {
         //let feature_index = self.add_feature(&feature);
+        for (cellid_int, cnt) in counter {
+            self.entries.push((feature_index, *cellid_int, *cnt));
+        }
+    }
+
+    ///
+    /// For a given feature, add counts for a set of cells
+    ///
+    pub fn add_cell_counts_per_cell_index_ahash(
+        &mut self,
+        feature_index: u32,
+        counter: &mut AHashMap<u32, u32>, //map cell_index -> count
+    ) {
         for (cellid_int, cnt) in counter {
             self.entries.push((feature_index, *cellid_int, *cnt));
         }

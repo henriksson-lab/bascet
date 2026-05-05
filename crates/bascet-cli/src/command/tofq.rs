@@ -158,7 +158,7 @@ impl ToFastqCMD {
         /////////////////////////////////////////////////////////////////////////////////////
         // All threads are now set up. Send all readpairs to writers.
         // This function blocks until reading is done
-        super::AlignCMD::write_tirp_to_2fq(
+        crate::align::common::write_tirp_to_2fq(
             self.path_in.path().path(),
             &mut writer_r1,
             &mut writer_r2,

@@ -16,11 +16,11 @@ use noodles::sam;
 use rayon::prelude::*;
 use tracing::info;
 
-use super::bamsort::sort_and_index_bam;
-use super::align_output::{
+use super::output::{
     SamRecordSink, TaggedBamSamSink, TaggedBamWriter, create_tagged_bam_writer,
     finish_tagged_bam_writer,
 };
+use crate::command::bamsort::sort_and_index_bam;
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 // Outer batch scales with thread count so each parallel mapping scope amortizes spawn/join +
@@ -71,7 +71,7 @@ pub fn try_execute_minimap2(
         .metadata()
         .with_context(|| format!("failed to stat minimap2 index path: {path_genome:?}"))?
         .len();
-    super::align::warn_if_index_disk_size_exceeds_memory(
+    super::common::warn_if_index_disk_size_exceeds_memory(
         "minimap2",
         path_genome,
         index_disk_size,
@@ -85,7 +85,7 @@ pub fn try_execute_minimap2(
         .map_err(anyhow::Error::msg)?;
     aligner.map_opt.flag |= MapFlags::OUT_SAM | MapFlags::CIGAR;
     info!("minimap2 index loaded");
-    let sizeof_stream_buffer = super::align_stream_helpers::stream_buffer_after_index_load(
+    let sizeof_stream_buffer = super::stream_helpers::stream_buffer_after_index_load(
         "minimap2",
         total_memory,
         sizeof_stream_buffer,
@@ -162,7 +162,7 @@ where
 
     let mut query = stream.query::<tirp::Record>();
     let mut batch = MinimapReadBatch::default();
-    let memory_cap = super::align_stream_helpers::aligner_batch_bases_cap(
+    let memory_cap = super::stream_helpers::aligner_batch_bases_cap(
         "minimap2",
         total_memory,
         MINIMAP2_RSS_BYTES_PER_INPUT_BYTE,
@@ -195,7 +195,13 @@ where
 
                 name_buf.clear();
                 write_bascet_read_name(&mut name_buf, record_id, record_umi, num_read);
-                batch.push(name_buf.as_bytes(), record_id, record_umi, record_r1, record_q1)?;
+                batch.push(
+                    name_buf.as_bytes(),
+                    record_id,
+                    record_umi,
+                    record_r1,
+                    record_q1,
+                )?;
 
                 num_read += 1;
                 if num_read % 1_000_000 == 0 {

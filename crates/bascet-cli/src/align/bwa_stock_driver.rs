@@ -14,14 +14,14 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
 };
 
 use anyhow::{Context, Result};
 use bwa_mem2_rs::generated::{
     bwa_h::bseq1_t,
-    bwamem_cpp::{mem_opt_init, mem_process_seqs},
+    bwamem_cpp::{mem_opt_init, mem_process_seqs, with_current_rayon_pool},
     bwamem_h::{mem_opt_t, mem_pestat_t, worker_t},
     fmi_search_cpp::FMI_search,
 };
@@ -31,8 +31,8 @@ use noodles::{bam, bgzf, sam};
 use tracing::{debug, info};
 
 use crate::fileformat::bam::readname_to_cell_umi;
-use sam::alignment::{RecordBuf, io::Write as _, record::data::field::Tag};
 use sam::alignment::record_buf::data::field::Value;
+use sam::alignment::{RecordBuf, io::Write as _, record::data::field::Tag};
 
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
@@ -178,15 +178,15 @@ fn make_bseq(id: i32, name: &str, seq: &[u8], qual: &[u8]) -> Result<bseq1_t> {
         .with_context(|| format!("read sequence for {name} is not valid UTF-8"))?;
     let qual = std::str::from_utf8(qual)
         .with_context(|| format!("read qualities for {name} are not valid UTF-8"))?;
-    let l_seq = i32::try_from(seq.len())
-        .map_err(|_| anyhow::anyhow!("read too long: {}", seq.len()))?;
+    let l_seq =
+        i32::try_from(seq.len()).map_err(|_| anyhow::anyhow!("read too long: {}", seq.len()))?;
     Ok(bseq1_t {
         l_seq,
         id,
-        name: Some(name.to_string().into_boxed_str()),
+        name: Some(name.to_string()),
         comment: None,
-        seq: Some(seq.to_string().into_boxed_str()),
-        qual: Some(qual.to_string().into_boxed_str()),
+        seq: Some(seq.to_string()),
+        qual: Some(qual.to_string()),
         sam: None,
         seq_nt4: Vec::new(),
     })
@@ -263,14 +263,19 @@ fn process_batch_into_sam_lines(
     n_processed: i64,
     pes0: Option<&[mem_pestat_t; 4]>,
     worker: &mut worker_t,
+    worker_pool: &rayon::ThreadPool,
 ) -> Vec<Box<str>> {
     let n_seqs = i32::try_from(seqs.len()).expect("n_seqs fits in i32");
-    mem_process_seqs(opt, n_processed, n_seqs, seqs, pes0, worker);
+    worker_pool.install(|| {
+        with_current_rayon_pool(|| {
+            mem_process_seqs(opt, n_processed, n_seqs, seqs, pes0, worker);
+        });
+    });
 
     let mut sam_lines: Vec<Box<str>> = Vec::with_capacity(seqs.len());
     for seq in seqs.iter_mut() {
         if let Some(sam) = seq.sam.take() {
-            sam_lines.push(sam);
+            sam_lines.push(sam.into_boxed_str());
         }
         // Match stock's cleanup — frees per-read owned strings before next batch starts.
         seq.name = None;
@@ -296,8 +301,8 @@ const ENCODE_CHUNK_RECORDS: usize = 4096;
 /// independently in parallel, strip each chunk's trailing EOF marker, concatenate, and
 /// append exactly one EOF marker at the very end. See SAM/BAM spec §4.1.2.
 const BGZF_EOF_BLOCK: [u8; 28] = [
-    0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02,
-    0x00, 0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02, 0x00,
+    0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 /// Encode + compress one helper-input bytes buffer into a self-contained BGZF blob and strip
@@ -411,17 +416,14 @@ fn normalize_empty_sam_seq_qual(line: &str) -> std::borrow::Cow<'_, str> {
 // autobalancing. This is the default and only BWAMEM2 BAM output path.
 // ============================================================================
 
-/// Empirical multiplier: per byte of TIRP sequence input, how many bytes of peak resident
-/// working memory the alignment pipeline holds. Derived from observed ~9 GiB RSS on ~1 GiB
-/// of in-flight input (chunk_size = opt.chunk_size × n_threads ≈ 1 GiB at --threads=10),
-/// rounded up for safety. Used by `ReadMemoryLimiter` to charge each batch.
-const MEM_OVERHEAD_PER_INPUT_BYTE: u64 = 12;
-
 /// Fraction of the user's `--memory` budget the pipeline is allowed to use for in-flight
 /// batches (the rest is for the FMI index, sort buffers, OS, etc.).
-const MEMORY_BUDGET_FRACTION: f64 = 0.5;
+const MEMORY_BUDGET_FRACTION: f64 = 1.0;
+const MIN_PIPELINE_MEM_CAP: usize = 256 * 1024 * 1024;
 
-use super::limiters::{InFlightLimiter, InFlightPermit, ReadMemoryLimiter, ReadMemoryPermit};
+use crate::command::limiters::{
+    InFlightLimiter, InFlightPermit, ReadMemoryLimiter, ReadMemoryPermit,
+};
 
 /// One alignment-input batch flowing reader → aligner.
 struct AlignBatch {
@@ -434,6 +436,16 @@ struct AlignBatch {
 }
 
 /// One chunk of SAM blocks flowing aligner → compressor pool. We hand a shared `Arc` of the
+/// full batch's blocks plus a `[start, end)` range, instead of cloning sub-slices, to avoid
+/// per-line allocations on the aligner's hot path (each batch has ~1.7M records).
+struct SamBatch {
+    batch_idx: u64,
+    blocks: Vec<Box<str>>,
+    /// Held until the chunker has moved the permit into all chunk work items.
+    permit: ReadMemoryPermit,
+}
+
+/// One chunk of SAM blocks flowing chunker → compressor pool. We hand a shared `Arc` of the
 /// full batch's blocks plus a `[start, end)` range, instead of cloning sub-slices, to avoid
 /// per-line allocations on the aligner's hot path (each batch has ~1.7M records).
 struct ChunkWork {
@@ -473,23 +485,20 @@ pub fn run_stock_driver_tirp_to_bam(
     out_path_unsorted: &Path,
     total_memory: ByteSize,
     total_threads: u64,
+    worker_pool: Arc<rayon::ThreadPool>,
+    mem_overhead_per_input_byte: u64,
 ) -> Result<()> {
     info!(
-        in_path = ?path_in,
-        out_path = ?out_path_unsorted,
-        total_memory = %total_memory,
-        total_threads,
-        "BWAMEM2 stock-driver BAM: aligning TIRP → BAM"
+        input = %path_in.display(),
+        output = %out_path_unsorted.display(),
+        "Starting BWAMEM2 alignment"
     );
 
     // Build the SAM header up front (used both by the writer thread and by every compressor
     // worker for tag injection / record encoding).
     let header_text = state.sam_header();
-    let header: Arc<sam::Header> = Arc::new(
-        header_text
-            .parse()
-            .context("parse generated SAM header")?,
-    );
+    let header: Arc<sam::Header> =
+        Arc::new(header_text.parse().context("parse generated SAM header")?);
 
     // Output file (atomic publish on success).
     let out_tmp = atomic_temp_path(out_path_unsorted);
@@ -514,23 +523,62 @@ pub fn run_stock_driver_tirp_to_bam(
     // ---------- Budgets ----------
     let align_threads = state.opt.n_threads.max(1) as usize;
     let total_threads_usize = total_threads.max(1) as usize;
-    // Compressor pool gets the bulk of the threads. 1 reader + 1 aligner-driver + 1 writer +
-    // bwa's internal align_threads happen during alignment bursts; compressor uses the rest
-    // (or `total_threads`, accepting some oversubscription on small machines — the OS
-    // schedules it gracefully because alignment and compression rarely peak simultaneously).
-    let compressor_threads = total_threads_usize.max(1);
-    let mem_cap = ((total_memory.as_u64() as f64) * MEMORY_BUDGET_FRACTION) as usize;
+    let requested_mem_cap = ((total_memory.as_u64() as f64) * MEMORY_BUDGET_FRACTION) as usize;
+    let memory_headroom = ByteSize(
+        ByteSize::gib(2)
+            .as_u64()
+            .max((total_memory.as_u64() as f64 * 0.10) as u64),
+    );
+    let (mem_cap, index_loaded_rss) = match memory_stats::memory_stats() {
+        Some(memory) => {
+            let rss = ByteSize(memory.physical_mem as u64);
+            let available = total_memory
+                .as_u64()
+                .saturating_sub(rss.as_u64())
+                .saturating_sub(memory_headroom.as_u64());
+            if available < MIN_PIPELINE_MEM_CAP as u64 {
+                anyhow::bail!(
+                    "BWAMEM2 index/runtime RSS ({rss}) leaves only {} after reserving {memory_headroom}; refusing to start pipeline under --memory {total_memory}",
+                    ByteSize(available)
+                );
+            }
+            (requested_mem_cap.min(available as usize), Some(rss))
+        }
+        None => (requested_mem_cap, None),
+    };
+    let stock_chunk_size = i64::from(state.opt.chunk_size) * i64::from(state.opt.n_threads);
+    let mem_overhead_per_input_byte = mem_overhead_per_input_byte.max(1);
+    let memory_capped_chunk_size = (mem_cap / mem_overhead_per_input_byte as usize)
+        .max(1 << 20)
+        .min(stock_chunk_size as usize);
+    let chunk_size = i64::try_from(memory_capped_chunk_size)
+        .map_err(|_| anyhow::anyhow!("BWAMEM2 chunk size too large: {memory_capped_chunk_size}"))?;
+    let max_batch_charge =
+        memory_capped_chunk_size.saturating_mul(mem_overhead_per_input_byte as usize);
+    let read_queue_cap = mem_cap
+        .checked_div(max_batch_charge.max(1))
+        .unwrap_or(1)
+        .max(1);
     // Cap chunks in flight at `total_threads * 2` (same heuristic getraw uses) so the
     // compressor never starves and the writer's reorder buffer stays bounded.
     let inflight_cap = total_threads_usize.saturating_mul(2).max(2);
-    info!(
+    debug!(
         align_threads,
-        compressor_threads,
+        worker_pool_threads = worker_pool.current_num_threads(),
+        compression_task_cap = inflight_cap,
+        index_loaded_rss = ?index_loaded_rss,
+        memory_headroom = %memory_headroom,
+        requested_mem_cap_bytes = requested_mem_cap,
         mem_cap_bytes = mem_cap,
         mem_cap = %ByteSize(mem_cap as u64),
+        stock_chunk_size,
+        chunk_size,
+        max_batch_charge,
         inflight_cap,
+        read_queue_cap,
+        sam_batch_queue_cap = 1,
         encode_chunk_records = ENCODE_CHUNK_RECORDS,
-        mem_overhead_per_input_byte = MEM_OVERHEAD_PER_INPUT_BYTE,
+        mem_overhead_per_input_byte,
         "BWAMEM2 stock-driver BAM: budgets"
     );
 
@@ -538,20 +586,36 @@ pub fn run_stock_driver_tirp_to_bam(
     let inflight_limiter = Arc::new(InFlightLimiter::new(inflight_cap));
 
     // ---------- Channels ----------
-    // q1: reader → aligner. Tiny buffer; alignment dominates so the aligner is rarely idle.
-    let (q1_tx, q1_rx) = channel::bounded::<AlignBatch>(2);
-    // q2: aligner → compressor workers. Bounded by inflight_limiter; channel cap matches.
-    let (q2_tx, q2_rx) = channel::bounded::<ChunkWork>(inflight_cap);
-    // q3: compressor workers → writer. Bounded; writer reorders by (batch_idx, chunk_idx).
-    let (q3_tx, q3_rx) = channel::bounded::<CompressedChunk>(inflight_cap.saturating_mul(2));
+    // q1: reader → aligner. Capacity is memory-driven: the channel can hold as many full
+    // batches as `mem_cap` can permit, so read-ahead stops on the memory quota instead of an
+    // arbitrary queue depth.
+    let (q1_tx, q1_rx) = channel::bounded::<AlignBatch>(read_queue_cap);
+    // q2: aligner → chunker. Keep this small; memory permits bound total data and this lets
+    // the BWA thread start a following batch while the previous batch is split/encoded, without
+    // allowing multiple completed full-SAM batches to pile up.
+    let (q2_tx, q2_rx) = channel::bounded::<SamBatch>(1);
+    // q3: chunker → compression dispatcher. Bounded by inflight_limiter; channel cap matches.
+    let (q3_tx, q3_rx) = channel::bounded::<ChunkWork>(inflight_cap);
+    // q4: compression tasks → writer. This must not block compressor workers:
+    // the writer emits chunks in source order, so a bounded queue can fill with
+    // later chunks while the missing prefix chunk is still waiting to run. The
+    // in-flight permits carried by CompressedChunk already cap count and memory.
+    let (q4_tx, q4_rx) = channel::unbounded::<CompressedChunk>();
 
     // ---------- Reader thread ----------
     let path_in_buf = path_in.to_path_buf();
     let mem_limiter_reader = Arc::clone(&mem_limiter);
-    let chunk_size = i64::from(state.opt.chunk_size) * i64::from(state.opt.n_threads);
     let reader_handle: JoinHandle<Result<u64>> = thread::Builder::new()
         .name("BWAMEM2StockReader".to_owned())
-        .spawn(move || bam_reader_loop(path_in_buf, chunk_size, mem_limiter_reader, q1_tx))
+        .spawn(move || {
+            bam_reader_loop(
+                path_in_buf,
+                chunk_size,
+                mem_overhead_per_input_byte,
+                mem_limiter_reader,
+                q1_tx,
+            )
+        })
         .expect("spawn reader");
 
     // ---------- Aligner thread (owns state.worker exclusively) ----------
@@ -559,42 +623,42 @@ pub fn run_stock_driver_tirp_to_bam(
     // its FFI fields) can be borrowed mutably across the pipeline. Safe because the aligner
     // thread is joined before this function returns, so the borrow lifetime is bounded.
     let header_aligner = Arc::clone(&header);
-    let inflight_aligner = Arc::clone(&inflight_limiter);
     // SAFETY: state is borrowed exclusively by the aligner thread which is joined before
     // returning. We use a raw pointer to dodge the !Send bound on worker_t (which contains
     // FFI types). No other thread touches state during the pipeline.
     let state_ptr = state as *mut StockDriverState as usize;
+    let aligner_pool = Arc::clone(&worker_pool);
     let aligner_handle: JoinHandle<Result<u64>> = thread::Builder::new()
         .name("BWAMEM2StockAligner".to_owned())
         .spawn(move || -> Result<u64> {
             // SAFETY: see comment above where state_ptr is captured.
             let state = unsafe { &mut *(state_ptr as *mut StockDriverState) };
-            bam_aligner_loop(state, q1_rx, q2_tx, inflight_aligner, header_aligner)
+            bam_aligner_loop(state, q1_rx, q2_tx, header_aligner, aligner_pool)
         })
         .expect("spawn aligner");
 
-    // ---------- Compressor worker pool ----------
-    let mut compressor_handles: Vec<JoinHandle<Result<()>>> =
-        Vec::with_capacity(compressor_threads);
-    for w in 0..compressor_threads {
-        let q2_rx_w = q2_rx.clone();
-        let q3_tx_w = q3_tx.clone();
-        let header_w = Arc::clone(&header);
-        let h = thread::Builder::new()
-            .name(format!("BWAMEM2StockComp@{w}"))
-            .spawn(move || bam_compressor_loop(q2_rx_w, q3_tx_w, header_w))
-            .expect("spawn compressor worker");
-        compressor_handles.push(h);
-    }
-    // Drop the original Sender/Receiver clones owned by main so closes propagate when all
-    // workers/aligner exit naturally.
-    drop(q2_rx);
-    drop(q3_tx);
+    // ---------- Chunker thread ----------
+    // Keep compressor backpressure out of the BWA aligner. The upstream pipeline also lets the
+    // compute stage hand a completed batch off and start the next batch before output work is
+    // fully drained.
+    let chunker_handle: JoinHandle<Result<u64>> = thread::Builder::new()
+        .name("BWAMEM2StockChunker".to_owned())
+        .spawn(move || bam_chunker_loop(q2_rx, q3_tx, inflight_limiter))
+        .expect("spawn chunker");
 
+    // ---------- Compressor dispatcher ----------
+    // Encode/compress tasks run on the same fixed-size Rayon pool as BWA's internal parallel
+    // regions. This caps runnable CPU workers at `--threads` and lets compression fill BWA's
+    // serial/barrier gaps without reserving dedicated compressor cores.
+    let compressor_pool = Arc::clone(&worker_pool);
+    let compressor_handle: JoinHandle<Result<()>> = thread::Builder::new()
+        .name("BWAMEM2StockCompressor".to_owned())
+        .spawn(move || bam_compressor_dispatch_loop(q3_rx, q4_tx, header, compressor_pool))
+        .expect("spawn compressor dispatcher");
     // ---------- Writer thread (reorders + writes BGZF bytes serially) ----------
     let writer_handle: JoinHandle<Result<u64>> = thread::Builder::new()
         .name("BWAMEM2StockWriter".to_owned())
-        .spawn(move || bam_writer_loop(q3_rx, out_file))
+        .spawn(move || bam_writer_loop(q4_rx, out_file))
         .expect("spawn writer");
 
     // ---------- Wait for completion (in pipeline order so panics propagate cleanly) ----------
@@ -606,20 +670,25 @@ pub fn run_stock_driver_tirp_to_bam(
         .join()
         .map_err(|_| anyhow::anyhow!("aligner panicked"))?
         .context("aligner failed")?;
-    for h in compressor_handles {
-        h.join()
-            .map_err(|_| anyhow::anyhow!("compressor worker panicked"))?
-            .context("compressor worker failed")?;
-    }
+    let n_chunked_batches = chunker_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("chunker panicked"))?
+        .context("chunker failed")?;
+    let compressor_result = compressor_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("compressor dispatcher panicked"))?
+        .context("compressor dispatcher failed");
     let n_written_bytes = writer_handle
         .join()
         .map_err(|_| anyhow::anyhow!("writer panicked"))?
         .context("writer failed")?;
+    compressor_result?;
 
     publish_atomic_output(&out_tmp, &out_path_unsorted.to_path_buf())?;
     info!(
         n_input_batches,
         n_aligned_batches,
+        n_chunked_batches,
         n_written_bytes,
         n_reads_processed = state.n_processed,
         "BWAMEM2 stock-driver BAM: done"
@@ -630,11 +699,12 @@ pub fn run_stock_driver_tirp_to_bam(
 fn bam_reader_loop(
     path_in: PathBuf,
     chunk_size: i64,
+    mem_overhead_per_input_byte: u64,
     mem_limiter: Arc<ReadMemoryLimiter>,
     tx: channel::Sender<AlignBatch>,
 ) -> Result<u64> {
-    let bgzf_inner = File::open(&path_in)
-        .with_context(|| format!("failed to open TIRP input {path_in:?}"))?;
+    let bgzf_inner =
+        File::open(&path_in).with_context(|| format!("failed to open TIRP input {path_in:?}"))?;
     let bgzf_reader = bgzf::io::Reader::new(bgzf_inner);
     let mut tirp_lines = BufReader::with_capacity(1 << 20, bgzf_reader);
     let mut line_buf: Vec<u8> = Vec::with_capacity(8 * 1024);
@@ -644,6 +714,11 @@ fn bam_reader_loop(
     let mut eof = false;
 
     loop {
+        // Acquire before constructing the batch. Otherwise a full next batch can be allocated
+        // outside the limiter while previous batches are still in flight.
+        let max_batch_charge =
+            (chunk_size as usize).saturating_mul(mem_overhead_per_input_byte as usize);
+        let permit = mem_limiter.acquire(max_batch_charge);
         let mut seqs: Vec<bseq1_t> = Vec::new();
         let mut size = 0_i64;
         while !eof && size < chunk_size {
@@ -683,11 +758,6 @@ fn bam_reader_loop(
             break;
         }
 
-        // Memory permit charges total seq bytes × overhead multiplier. Acquire blocks if the
-        // pipeline already has too much in flight (matching getraw's backpressure pattern).
-        let bytes = (size as usize).saturating_mul(MEM_OVERHEAD_PER_INPUT_BYTE as usize);
-        let permit = mem_limiter.acquire(bytes);
-
         if tx
             .send(AlignBatch {
                 batch_idx,
@@ -708,9 +778,9 @@ fn bam_reader_loop(
 fn bam_aligner_loop(
     state: &mut StockDriverState,
     rx: channel::Receiver<AlignBatch>,
-    tx: channel::Sender<ChunkWork>,
-    inflight: Arc<InFlightLimiter>,
+    tx: channel::Sender<SamBatch>,
     _header: Arc<sam::Header>,
+    worker_pool: Arc<rayon::ThreadPool>,
 ) -> Result<u64> {
     let mut n_aligned: u64 = 0;
     while let Ok(batch) = rx.recv() {
@@ -736,37 +806,75 @@ fn bam_aligner_loop(
             state.n_processed,
             pes0,
             &mut state.worker,
+            &worker_pool,
         );
         state.n_processed += n_seqs as i64;
+
+        if tx
+            .send(SamBatch {
+                batch_idx,
+                blocks: sam_lines,
+                permit,
+            })
+            .is_err()
+        {
+            return Ok(n_aligned);
+        }
+
+        n_aligned += 1;
+        if batch_idx % 8 == 0 {
+            info!(reads_m = state.n_processed / 1_000_000, "BWAMEM2 aligned");
+        }
+    }
+    Ok(n_aligned)
+}
+
+fn bam_chunker_loop(
+    rx: channel::Receiver<SamBatch>,
+    tx: channel::Sender<ChunkWork>,
+    inflight: Arc<InFlightLimiter>,
+) -> Result<u64> {
+    let mut n_chunked: u64 = 0;
+    while let Ok(batch) = rx.recv() {
+        let SamBatch {
+            batch_idx,
+            blocks,
+            permit,
+        } = batch;
 
         // Move the per-batch memory permit into an Arc so all chunks share it. Memory will
         // only be released when the writer drops the last chunk of this batch.
         let batch_permit = Arc::new(permit);
 
         // Share the entire batch's blocks across all compressor work items via Arc + range,
-        // avoiding any per-line allocation on this hot single-threaded thread.
-        let blocks = Arc::new(sam_lines);
+        // avoiding any per-line allocation on the aligner's hot path.
+        let blocks = Arc::new(blocks);
         let total_blocks = blocks.len();
         let chunk_count = if total_blocks == 0 {
             1
         } else {
             (total_blocks + BLOCKS_PER_CHUNK - 1) / BLOCKS_PER_CHUNK
         };
-        let total_chunks = u32::try_from(chunk_count)
-            .map_err(|_| anyhow::anyhow!("too many chunks for u32"))?;
+        let total_chunks =
+            u32::try_from(chunk_count).map_err(|_| anyhow::anyhow!("too many chunks for u32"))?;
 
         if total_blocks == 0 {
             // Empty batch (rare). Send a zero-range chunk so writer's batch counter advances.
-            let _ = tx.send(ChunkWork {
-                batch_idx,
-                chunk_idx: 0,
-                total_chunks: 1,
-                blocks: Arc::clone(&blocks),
-                block_start: 0,
-                block_end: 0,
-                _batch_permit: Arc::clone(&batch_permit),
-                _inflight: inflight.acquire(),
-            });
+            if tx
+                .send(ChunkWork {
+                    batch_idx,
+                    chunk_idx: 0,
+                    total_chunks: 1,
+                    blocks: Arc::clone(&blocks),
+                    block_start: 0,
+                    block_end: 0,
+                    _batch_permit: Arc::clone(&batch_permit),
+                    _inflight: inflight.acquire(),
+                })
+                .is_err()
+            {
+                return Ok(n_chunked);
+            }
         } else {
             for chunk_idx in 0..chunk_count {
                 let block_start = chunk_idx * BLOCKS_PER_CHUNK;
@@ -785,84 +893,113 @@ fn bam_aligner_loop(
                     })
                     .is_err()
                 {
-                    return Ok(n_aligned);
+                    return Ok(n_chunked);
                 }
             }
         }
-
-        n_aligned += 1;
-        if batch_idx % 8 == 0 {
-            info!(
-                batch_idx,
-                n_processed_so_far = %comma(state.n_processed),
-                "BWAMEM2 stock-driver BAM: progress"
-            );
-        }
+        n_chunked += 1;
     }
-    Ok(n_aligned)
+    Ok(n_chunked)
 }
 
-fn bam_compressor_loop(
+fn bam_compressor_dispatch_loop(
     rx: channel::Receiver<ChunkWork>,
     tx: channel::Sender<CompressedChunk>,
     header: Arc<sam::Header>,
+    worker_pool: Arc<rayon::ThreadPool>,
 ) -> Result<()> {
+    let (err_tx, err_rx) = channel::unbounded::<anyhow::Error>();
+    let pending = Arc::new((Mutex::new(0_usize), Condvar::new()));
     while let Ok(work) = rx.recv() {
-        let ChunkWork {
+        {
+            let mut n = pending.0.lock().expect("compressor pending lock");
+            *n += 1;
+        }
+        let tx = tx.clone();
+        let header = Arc::clone(&header);
+        let err_tx = err_tx.clone();
+        let pending_task = Arc::clone(&pending);
+        worker_pool.spawn(move || {
+            if let Err(err) = bam_compress_work(work, tx, header) {
+                let _ = err_tx.send(err);
+            }
+            let mut n = pending_task.0.lock().expect("compressor pending lock");
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                pending_task.1.notify_one();
+            }
+        });
+    }
+    let mut n = pending.0.lock().expect("compressor pending lock");
+    while *n > 0 {
+        n = pending.1.wait(n).expect("compressor pending wait");
+    }
+    drop(err_tx);
+    if let Ok(err) = err_rx.try_recv() {
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn bam_compress_work(
+    work: ChunkWork,
+    tx: channel::Sender<CompressedChunk>,
+    header: Arc<sam::Header>,
+) -> Result<()> {
+    let ChunkWork {
+        batch_idx,
+        chunk_idx,
+        total_chunks,
+        blocks,
+        block_start,
+        block_end,
+        _batch_permit,
+        _inflight,
+    } = work;
+
+    // Parse SAM lines → RecordBuf with CB:Z / UB:Z tags. We split each block on '\n' here
+    // (cheap — the original Box<str> stays put; we just take string slices) instead of
+    // pre-flattening on the aligner thread.
+    let mut records: Vec<RecordBuf> = Vec::with_capacity((block_end - block_start) * 2);
+    for block_idx in block_start..block_end {
+        for line in blocks[block_idx].split('\n') {
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(rec) = parse_sam_line_to_record(line, &header)? {
+                records.push(rec);
+            }
+        }
+    }
+
+    // Encode → uncompressed BAM bytes.
+    let encoded: Vec<u8> = {
+        let buf: Vec<u8> = Vec::with_capacity(records.len().saturating_mul(256));
+        let mut enc = bam::io::Writer::from(buf);
+        for r in &records {
+            enc.write_alignment_record(&header, r)
+                .context("encode BAM record")?;
+        }
+        enc.into_inner()
+    };
+    drop(records);
+
+    // Compress → BGZF bytes (no EOF marker).
+    let compressed = bgzf_compress_chunk_no_eof(&encoded)?;
+    drop(encoded);
+
+    if tx
+        .send(CompressedChunk {
             batch_idx,
             chunk_idx,
             total_chunks,
-            blocks,
-            block_start,
-            block_end,
+            bytes: compressed,
             _batch_permit,
             _inflight,
-        } = work;
-
-        // Parse SAM lines → RecordBuf with CB:Z / UB:Z tags. We split each block on '\n' here
-        // (cheap — the original Box<str> stays put; we just take string slices) instead of
-        // pre-flattening on the aligner thread.
-        let mut records: Vec<RecordBuf> = Vec::with_capacity((block_end - block_start) * 2);
-        for block_idx in block_start..block_end {
-            for line in blocks[block_idx].split('\n') {
-                if line.is_empty() {
-                    continue;
-                }
-                if let Some(rec) = parse_sam_line_to_record(line, &header)? {
-                    records.push(rec);
-                }
-            }
-        }
-
-        // Encode → uncompressed BAM bytes.
-        let encoded: Vec<u8> = {
-            let buf: Vec<u8> = Vec::with_capacity(records.len().saturating_mul(256));
-            let mut enc = bam::io::Writer::from(buf);
-            for r in &records {
-                enc.write_alignment_record(&header, r)
-                    .context("encode BAM record")?;
-            }
-            enc.into_inner()
-        };
-        drop(records);
-
-        // Compress → BGZF bytes (no EOF marker).
-        let compressed = bgzf_compress_chunk_no_eof(&encoded)?;
-        drop(encoded);
-
-        if tx
-            .send(CompressedChunk {
-                batch_idx,
-                chunk_idx,
-                total_chunks,
-                bytes: compressed,
-                _batch_permit,
-                _inflight,
-            })
-            .is_err()
-        {
-            return Ok(());
-        }
+        })
+        .is_err()
+    {
+        return Ok(());
     }
     Ok(())
 }

@@ -55,12 +55,24 @@ fn main() -> std::process::ExitCode {
     //as Zorn must be able to parse the output
     match &cli.command {
         Commands::Sysinfo(cmd) => {
-            _ = cmd.try_execute();
-            return std::process::ExitCode::SUCCESS;
+            return match cmd.try_execute() {
+                Ok(()) => std::process::ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("Error: {err:#}");
+                    std::process::ExitCode::FAILURE
+                }
+            };
         }
         Commands::ExtractStream(cmd) => {
-            _ = cmd.try_execute();
-            return std::process::ExitCode::SUCCESS;
+            return match cmd.try_execute() {
+                Ok(()) => std::process::ExitCode::SUCCESS,
+                Err(err) => {
+                    if !err.to_string().is_empty() {
+                        eprintln!("Error: {err:#}");
+                    }
+                    std::process::ExitCode::FAILURE
+                }
+            };
         }
         Commands::Exttool(cmd) => {
             return match cmd.try_execute() {

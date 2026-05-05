@@ -7,6 +7,16 @@ use crate::barcode::parsebio::HotEncodeATCGN;
 use crate::fileformat::shard::CellID;
 // use crate::log_info;
 
+fn panic_short_barcode_read(read_seq: &[u8], required_len: usize, pos_anchor: usize) -> ! {
+    panic!(
+        "Short read (read len < barcode pool item len) encountered\nread_len={}\nrequired_len={}\npos_anchor={}\nread_seq={}",
+        read_seq.len(),
+        required_len,
+        pos_anchor,
+        String::from_utf8_lossy(read_seq)
+    );
+}
+
 ///////////////////////////////
 /// Convert string, assumed to be 8bp, to a packed barcode
 pub fn str_to_barcode_8bp(seq: &str) -> u32 {
@@ -287,10 +297,10 @@ impl CombinatorialBarcodePart8bp {
         const BC_LEN: usize = 8;
         let read_len = read_seq.len();
         let pos_anchor = self.pos_anchor;
-        assert!(
-            read_seq.len() >= BC_LEN,
-            "Short read (read len < barcode pool item len) encountered"
-        );
+        let required_len = pos_anchor + BC_LEN;
+        if read_len < required_len {
+            panic_short_barcode_read(read_seq, required_len, pos_anchor);
+        }
 
         //perform optimistic search first!
         //Extract the barcode

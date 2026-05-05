@@ -59,12 +59,24 @@ impl Chemistry for TenxRNAChemistry {
     fn prepare_using_rp_vecs<C: bascet_core::Composite>(
         &mut self,
         vec_r1: Vec<C>,
-        _vec_r2: Vec<C>,
+        vec_r2: Vec<C>,
     ) -> anyhow::Result<()>
     where
         C: bascet_core::Get<bascet_core::attr::sequence::R0>,
         <C as bascet_core::Get<bascet_core::attr::sequence::R0>>::Value: AsRef<[u8]>,
     {
+        let first_r1_len = vec_r1
+            .first()
+            .map(|record| record.as_bytes::<R0>().len())
+            .unwrap_or(0);
+        let first_r2_len = vec_r2
+            .first()
+            .map(|record| record.as_bytes::<R0>().len())
+            .unwrap_or(0);
+        info!(
+            first_r1_len,
+            first_r2_len, "Preparing 10x chemistry from sampled reads"
+        );
         info!("Loading 10x barcodes");
 
         //Load the possible barcode systems. Possible to multithread

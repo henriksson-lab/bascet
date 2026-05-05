@@ -42,13 +42,14 @@ bwa-mem2-rs = { package = "bwa-mem2-pure-rs", git = "https://github.com/henrikss
 bytesize.workspace = true
 clap.workspace = true
 clio.workspace = true
+crc32fast.workspace = true
 crossbeam.workspace = true
 csv.workspace = true
 delegate.workspace = true
 enum_dispatch.workspace = true
 flate2.workspace = true
 fraction.workspace = true
-fastqc-rs = { package = "fastqc-compliant-rs", version = "0.4.1", default-features = false, optional = true }
+fastqc-rs = { package = "fastqc-compliant-rs", version = "0.4.2", default-features = false, optional = true }
 gecco = { workspace = true, features = ["bundled-data", "cli"], optional = true }
 glidesort.workspace = true
 gxhash.workspace = true
@@ -60,6 +61,7 @@ libc = "0.2"
 memchr.workspace = true
 memory-stats.workspace = true
 min-max-heap.workspace = true
+miniz_oxide.workspace = true
 minimap2 = { package = "minimap2-pure-rs", git = "https://github.com/henriksson-lab/minimap2-pure-rs", optional = true }
 niffler.workspace = true
 noodles.workspace = true
@@ -75,11 +77,14 @@ shellexpand.workspace = true
 skesa-rs = { version = "0.2.1", default-features = false, optional = true }
 smallvec.workspace = true
 sprs.workspace = true
-star-rs = { git = "https://github.com/henriksson-lab/star-rs", optional = true }
+star-rs = { git = "https://github.com/henriksson-lab/star-rs.git", optional = true }
 strum.workspace = true
 strum_macros.workspace = true
-sysinfo.workspace = true
 threadpool.workspace = true
 tracing.workspace = true
 wide.workspace = true
 zip.workspace = true
+zune-inflate.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+sysinfo.workspace = true

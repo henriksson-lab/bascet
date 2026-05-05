@@ -42,7 +42,11 @@ pub(super) fn stream_buffer_after_index_load(
             requested_stream_buffer = %requested_stream_buffer,
             "Could not read current RSS after aligner index load; using requested stream buffer"
         );
-        return ByteSize(requested_stream_buffer.as_u64().min(MAX_STREAM_BUFFER.as_u64()));
+        return ByteSize(
+            requested_stream_buffer
+                .as_u64()
+                .min(MAX_STREAM_BUFFER.as_u64()),
+        );
     };
 
     let index_loaded_rss = ByteSize(memory.physical_mem as u64);

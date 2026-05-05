@@ -15,11 +15,11 @@ use bytesize::ByteSize;
 use noodles::sam;
 use tracing::{debug, info};
 
-use super::bamsort::sort_and_index_bam;
-use super::align_output::{
+use super::output::{
     SamRecordSink, TaggedBamSamSink, create_tagged_bam_writer, finish_tagged_bam_writer,
     make_bascet_read_name,
 };
+use crate::command::bamsort::sort_and_index_bam;
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 use star_rs::{
     direct::{DirectReadPair, DirectStarRun},
@@ -43,7 +43,7 @@ pub fn try_execute_star_rs(
 ) -> Result<()> {
     info!("Using direct star-rs aligner");
     let index_disk_size = validate_star_index_dir(path_genome)?;
-    super::align::warn_if_index_disk_size_exceeds_memory(
+    super::common::warn_if_index_disk_size_exceeds_memory(
         "STAR",
         path_genome,
         index_disk_size,
@@ -263,7 +263,7 @@ fn run_star_rs_with_tirp(
 ) -> std::result::Result<StarMainResult, String> {
     let mut runner = DirectStarRun::new(args)?;
     info!("STAR index loaded");
-    let sizeof_stream_buffer = super::align_stream_helpers::stream_buffer_after_index_load(
+    let sizeof_stream_buffer = super::stream_helpers::stream_buffer_after_index_load(
         "STAR",
         total_memory,
         sizeof_stream_buffer,

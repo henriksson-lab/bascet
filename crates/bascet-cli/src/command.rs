@@ -2,17 +2,6 @@ use clap::Subcommand;
 
 // Module declarations (alphabetical)
 pub mod align;
-#[cfg(feature = "bwa-mem2-rs-align")]
-pub mod align_bwa;
-#[cfg(feature = "bwa-mem2-rs-align")]
-pub mod align_bwa_stock_driver;
-#[cfg(feature = "minimap2-rs-align")]
-pub mod align_minimap2;
-pub mod align_output;
-#[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
-pub mod align_stream_helpers;
-#[cfg(feature = "star-rs-align")]
-pub mod align_star;
 pub mod bam2fragments;
 pub mod bamsort;
 pub mod countchrom;
@@ -39,6 +28,7 @@ pub mod mapcell;
 pub mod minhash_hist;
 pub mod qc;
 pub mod sam_add_barcode_tag_cmd;
+pub mod samtools_rs;
 pub mod shardify;
 #[cfg(feature = "skesa")]
 pub mod skesa;
