@@ -20,7 +20,7 @@ MAC_TARGETS ?= \
 CROSS_TARGETS ?= $(WINDOWS_TARGETS) $(MAC_TARGETS)
 MACOS_X86_CFLAGS ?= -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
 
-.PHONY: all test fix install_rust loc all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
+.PHONY: all test fix install_rust install_cross install_crosscompile loc all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
 
 all:
 	cargo +nightly build --profile=release
@@ -33,6 +33,9 @@ fix:
 
 install_rust:
 	rustup toolchain install nightly
+
+install_cross install_crosscompile: install_rust cross_targets install_mingw
+	$(CARGO) install cargo-zigbuild --locked
 
 loc:
 	wc -l \
