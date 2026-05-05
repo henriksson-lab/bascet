@@ -2,25 +2,28 @@ CARGO ?= cargo
 ZIGBUILD ?= cargo zigbuild
 RUSTUP ?= rustup
 LIPO ?= $(shell command -v llvm-lipo 2>/dev/null || command -v llvm-lipo-14 2>/dev/null || printf llvm-lipo)
+XDG_CACHE_HOME ?= $(CURDIR)/.tmp/xdg-cache
 CROSS_PROFILE ?= release
 CROSS_PACKAGE ?= bascet-cli
 CROSS_FEATURES ?= --all-features
 BASCET_BIN ?= bascet
 MAC_UNIVERSAL_OUT ?= target/universal-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN)
+LINUX_CROSS_TARGET ?= x86_64-unknown-linux-gnu
 LINUX_BIN_OUT ?= target/$(CROSS_PROFILE)/$(BASCET_BIN)
 WINDOWS_BIN_OUT ?= target/x86_64-pc-windows-gnu/$(CROSS_PROFILE)/$(BASCET_BIN).exe
 BINS_PUBLISH_DIR ?= /corgi/public_http/public/bascet/bins
 LINUX_PUBLISH_BIN ?= bascet-linux-x86_64
 WINDOWS_PUBLISH_BIN ?= bascet-windows-x86_64.exe
 MAC_PUBLISH_BIN ?= bascet-macos-universal
+LINUX_TARGETS ?= $(LINUX_CROSS_TARGET)
 WINDOWS_TARGETS ?= x86_64-pc-windows-gnu
 MAC_TARGETS ?= \
 	x86_64-apple-darwin \
 	aarch64-apple-darwin
-CROSS_TARGETS ?= $(WINDOWS_TARGETS) $(MAC_TARGETS)
+CROSS_TARGETS ?= $(LINUX_TARGETS) $(WINDOWS_TARGETS) $(MAC_TARGETS)
 MACOS_X86_CFLAGS ?= -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
 
-.PHONY: all test fix install_rust install_cross install_crosscompile loc all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
+.PHONY: all test fix install_rust install_cross install_crosscompile loc all_linux all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
 
 all:
 	cargo +nightly build --profile=release
@@ -51,6 +54,8 @@ loc:
 
 all_win all_windows: $(addprefix cross-,$(WINDOWS_TARGETS))
 
+all_linux: $(addprefix cross-,$(LINUX_TARGETS))
+
 all_mac: $(addprefix cross-,$(MAC_TARGETS))
 
 linux_release:
@@ -80,11 +85,14 @@ cross_targets:
 cross-%: FORCE
 	$(CARGO) build --profile=$(CROSS_PROFILE) --target $* -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
 
+cross-x86_64-unknown-linux-gnu: FORCE
+	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+
 cross-x86_64-apple-darwin: FORCE
-	CFLAGS_x86_64_apple_darwin="$(MACOS_X86_CFLAGS) $(CFLAGS_x86_64_apple_darwin)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" CFLAGS_x86_64_apple_darwin="$(MACOS_X86_CFLAGS) $(CFLAGS_x86_64_apple_darwin)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
 
 cross-aarch64-apple-darwin: FORCE
-	$(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
 
 FORCE:
 

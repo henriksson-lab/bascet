@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -36,6 +36,8 @@ use crate::command::shardify::ShardifyCMD;
 use crate::utils::{atomic_temp_path, publish_atomic_output, rename_or_copy_across_filesystems};
 use crate::{bbgz_compression_parser, bounded_parser};
 use tracing::{debug, error, info, warn};
+
+const FASTQ_INPUT_EXTENSIONS: &[&str] = &[".fastq", ".fq", ".fastq.gz", ".fq.gz"];
 
 #[derive(Args)]
 pub struct GetRawCMD {
@@ -616,6 +618,8 @@ fn first_round_sort_chunk_size(budget: &GetrawBudget) -> ByteSize {
 
 impl GetRawCMD {
     pub fn try_execute(&mut self) -> anyhow::Result<()> {
+        self.validate_fastq_inputs()?;
+
         let total_threads = self.total_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map(|p| p.get())
@@ -935,6 +939,104 @@ impl GetRawCMD {
 
         Ok(())
     }
+
+    fn validate_fastq_inputs(&self) -> anyhow::Result<()> {
+        if self.skip_debarcode.is_some() {
+            return Ok(());
+        }
+
+        if self.paths_r1.is_empty() {
+            anyhow::bail!("No R1 input files specified");
+        }
+
+        validate_fastq_input_paths(&self.paths_r1, "R1")?;
+        validate_fastq_input_paths(&self.paths_r2, "R2")?;
+
+        if !self.paths_r2.is_empty() && self.paths_r1.len() != self.paths_r2.len() {
+            anyhow::bail!(
+                "Both R1 and R2 specified but lists are of different length: {} R1 files, {} R2 files",
+                self.paths_r1.len(),
+                self.paths_r2.len()
+            );
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_fastq_input_paths(paths: &[InputPath], read_name: &str) -> anyhow::Result<()> {
+    for path in paths {
+        validate_fastq_input_path(path.path().path(), read_name)?;
+    }
+    Ok(())
+}
+
+fn validate_fastq_input_path(path: &Path, read_name: &str) -> anyhow::Result<()> {
+    if !has_fastq_extension(path) {
+        anyhow::bail!(
+            "{read_name} input '{}' must be a FASTQ file with one of these extensions: {}",
+            path.display(),
+            FASTQ_INPUT_EXTENSIONS.join(", ")
+        );
+    }
+
+    let mut file = File::open(path).map_err(|err| {
+        anyhow::anyhow!("Cannot open {read_name} input '{}': {err}", path.display())
+    })?;
+    let metadata = file.metadata().map_err(|err| {
+        anyhow::anyhow!(
+            "Cannot read metadata for {read_name} input '{}': {err}",
+            path.display()
+        )
+    })?;
+    if metadata.len() == 0 {
+        anyhow::bail!("{read_name} input '{}' is empty", path.display());
+    }
+
+    let mut header = [0; 2];
+    let count = file.read(&mut header).map_err(|err| {
+        anyhow::anyhow!(
+            "Cannot read header from {read_name} input '{}': {err}",
+            path.display()
+        )
+    })?;
+
+    if is_gzip_path(path) {
+        if count < 2 || header != [0x1f, 0x8b] {
+            anyhow::bail!(
+                "{read_name} input '{}' has a gzip FASTQ extension but does not look gzip-compressed",
+                path.display()
+            );
+        }
+    } else if count == 0 || header[0] != b'@' {
+        anyhow::bail!(
+            "{read_name} input '{}' has a FASTQ extension but does not start with '@'",
+            path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn has_fastq_extension(path: &Path) -> bool {
+    let Some(file_name) = path.file_name() else {
+        return false;
+    };
+    let file_name = file_name.to_string_lossy().to_ascii_lowercase();
+    FASTQ_INPUT_EXTENSIONS
+        .iter()
+        .any(|extension| file_name.ends_with(extension))
+}
+
+fn is_gzip_path(path: &Path) -> bool {
+    path.file_name()
+        .map(|file_name| {
+            file_name
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with(".gz")
+        })
+        .unwrap_or(false)
 }
 
 ///
