@@ -394,10 +394,8 @@ impl ReadMemoryPermit {
     fn merge(a: Self, b: Self) -> Self {
         let limiter = Arc::clone(&a.limiter);
         let bytes = a.bytes + b.bytes;
-        // std::mem::forget(a);
-        // std::mem::forget(b);
-        drop(a);
-        drop(b);
+        std::mem::forget(a);
+        std::mem::forget(b);
         Self { bytes, limiter }
     }
 }
@@ -1301,6 +1299,9 @@ fn spawn_paired_readers(
                 let permit = r1_read_memory_limiter.acquire(estimate_fastq_record_bytes(&record));
                 batch.push(Budgeted::new(record, permit));
                 records_read += 1;
+                if records_read % 1_000 == 0 {
+                    info!("1K recs read");
+                }
                 if batch.len() >= batch_capacity {
                     let send_batch =
                         std::mem::replace(&mut batch, Vec::with_capacity(batch_capacity));
