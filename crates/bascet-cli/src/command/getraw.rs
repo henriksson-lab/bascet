@@ -597,7 +597,7 @@ fn read_pair_batch_capacity(budget: &GetrawBudget) -> usize {
 }
 
 fn default_working_stream_buffer(total_mem: u64) -> ByteSize {
-    ByteSize(((total_mem as f64 * 0.5) as u64).min(ByteSize::gib(5).as_u64()))
+    ByteSize(((total_mem as f64 * 0.5) as u64).max(ByteSize::gib(5).as_u64()))
 }
 
 fn default_working_sort_buffer(sort_threads: u64) -> ByteSize {
@@ -605,7 +605,7 @@ fn default_working_sort_buffer(sort_threads: u64) -> ByteSize {
 }
 
 fn default_working_compress_buffer(total_mem: u64) -> ByteSize {
-    ByteSize(((total_mem as f64 * 0.25) as u64).min(ByteSize::gib(3).as_u64()))
+    ByteSize(((total_mem as f64 * 0.25) as u64).max(ByteSize::gib(3).as_u64()))
 }
 
 fn first_round_sort_chunk_size(budget: &GetrawBudget) -> ByteSize {
