@@ -820,6 +820,12 @@ impl GetRawCMD {
                 )
             };
 
+            info!("Waiting for R1 and R2 reader threads to finish...");
+            r1_handle.join().expect("R1 reader thread panicked");
+            r2_handle.join().expect("R2 reader thread panicked");
+            info!("R1 and R2 reader threads finished");
+
+
             let (rp_rx, rt_handle) =
                 spawn_debarcode_router(r1_rx, r2_rx, &budget, Arc::clone(&batch_stats));
             let (db_rx, db_handles, chemistry) = spawn_debarcode_workers(
@@ -851,11 +857,6 @@ impl GetRawCMD {
                 Arc::clone(&rayon_pool),
                 Arc::clone(&stage_timings),
             );
-
-            info!("Waiting for R1 and R2 reader threads to finish...");
-            r1_handle.join().expect("R1 reader thread panicked");
-            r2_handle.join().expect("R2 reader thread panicked");
-            info!("R1 and R2 reader threads finished");
 
             ////////////////// The rest here is in common
 
