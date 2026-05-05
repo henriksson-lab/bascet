@@ -66,7 +66,7 @@ mac_universal: all_mac
 	mkdir -p $(dir $(MAC_UNIVERSAL_OUT))
 	$(LIPO) -create \
 		target/x86_64-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN) \
-		target/aarch64-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN) \
+# 		target/aarch64-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN) \
 		-output $(MAC_UNIVERSAL_OUT)
 
 publish_bins: linux_release all_win mac_universal
