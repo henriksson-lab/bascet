@@ -21,6 +21,7 @@ MAC_TARGETS ?= \
 	aarch64-apple-darwin
 CROSS_TARGETS ?= $(LINUX_TARGETS) $(WINDOWS_TARGETS) $(MAC_TARGETS)
 MACOS_X86_CFLAGS ?= -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
+MACOS_ARM_CFLAGS ?= -mno-sha3
 LINUX_CFLAGS ?= -mno-avx512f -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
 
 .PHONY: all test fix install_rust install_cross install_crosscompile loc all_linux all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
@@ -92,7 +93,7 @@ cross-x86_64-apple-darwin: FORCE
 	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" CFLAGS_x86_64_apple_darwin="$(MACOS_X86_CFLAGS) $(CFLAGS_x86_64_apple_darwin)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
 
 cross-aarch64-apple-darwin: FORCE
-	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+	CFLAGS_aarch64_apple_darwin="$(MACOS_ARM_CFLAGS)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(@:cross-%=%) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
 
 FORCE:
 
