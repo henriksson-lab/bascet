@@ -595,7 +595,7 @@ fn estimate_fastq_record_bytes(record: &fastq::Record) -> usize {
 
 fn read_pair_batch_capacity(budget: &GetrawBudget) -> usize {
     let _ = budget;
-    10_000
+    100
 }
 
 fn default_working_stream_buffer(total_mem: u64) -> ByteSize {
@@ -1299,9 +1299,6 @@ fn spawn_paired_readers(
                 let permit = r1_read_memory_limiter.acquire(estimate_fastq_record_bytes(&record));
                 batch.push(Budgeted::new(record, permit));
                 records_read += 1;
-                if records_read % 1_000 == 0 {
-                    info!("1K recs read");
-                }
                 if batch.len() >= batch_capacity {
                     let send_batch =
                         std::mem::replace(&mut batch, Vec::with_capacity(batch_capacity));
