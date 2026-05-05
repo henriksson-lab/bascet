@@ -595,7 +595,7 @@ fn estimate_fastq_record_bytes(record: &fastq::Record) -> usize {
 
 fn read_pair_batch_capacity(budget: &GetrawBudget) -> usize {
     let _ = budget;
-    100
+    1
 }
 
 fn default_working_stream_buffer(total_mem: u64) -> ByteSize {
