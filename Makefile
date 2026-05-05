@@ -1,15 +1,14 @@
 CARGO ?= cargo
 ZIGBUILD ?= cargo zigbuild
 RUSTUP ?= rustup
-LIPO ?= $(shell command -v llvm-lipo 2>/dev/null || command -v llvm-lipo-14 2>/dev/null || printf llvm-lipo)
-XDG_CACHE_HOME ?= $(CURDIR)/.tmp/xdg-cache
+LIPO ?= $(shell command -v llvm-lipo 2>/dev/null || command -v llvm-lipo-14 2>/dev/null || command -v lipo 2>/dev/null || printf lipo)
 CROSS_PROFILE ?= release
 CROSS_PACKAGE ?= bascet-cli
 CROSS_FEATURES ?= --all-features
 BASCET_BIN ?= bascet
 MAC_UNIVERSAL_OUT ?= target/universal-apple-darwin/$(CROSS_PROFILE)/$(BASCET_BIN)
-LINUX_CROSS_TARGET ?= x86_64-unknown-linux-gnu
-LINUX_BIN_OUT ?= target/$(CROSS_PROFILE)/$(BASCET_BIN)
+LINUX_TARGET ?= x86_64-unknown-linux-gnu
+LINUX_BIN_OUT ?= target/$(LINUX_TARGET)/$(CROSS_PROFILE)/$(BASCET_BIN)
 WINDOWS_BIN_OUT ?= target/x86_64-pc-windows-gnu/$(CROSS_PROFILE)/$(BASCET_BIN).exe
 BINS_PUBLISH_DIR ?= /corgi/public_http/public/bascet/bins
 LINUX_PUBLISH_BIN ?= bascet-linux-x86_64
@@ -22,6 +21,7 @@ MAC_TARGETS ?= \
 	aarch64-apple-darwin
 CROSS_TARGETS ?= $(LINUX_TARGETS) $(WINDOWS_TARGETS) $(MAC_TARGETS)
 MACOS_X86_CFLAGS ?= -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
+LINUX_CFLAGS ?= -mno-avx512f -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX_VNNI -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ
 
 .PHONY: all test fix install_rust install_cross install_crosscompile loc all_linux all_win all_windows cross cross_targets all_mac linux_release mac_universal publish_bins FORCE
 
@@ -59,7 +59,7 @@ all_linux: $(addprefix cross-,$(LINUX_TARGETS))
 all_mac: $(addprefix cross-,$(MAC_TARGETS))
 
 linux_release:
-	$(CARGO) build --profile=$(CROSS_PROFILE) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
+	CFLAGS_x86_64_unknown_linux_gnu="$(LINUX_CFLAGS)" $(ZIGBUILD) --profile=$(CROSS_PROFILE) --target $(LINUX_TARGET) -p $(CROSS_PACKAGE) $(CROSS_FEATURES)
 
 mac_universal: all_mac
 	mkdir -p $(dir $(MAC_UNIVERSAL_OUT))
