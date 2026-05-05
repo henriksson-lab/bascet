@@ -394,8 +394,10 @@ impl ReadMemoryPermit {
     fn merge(a: Self, b: Self) -> Self {
         let limiter = Arc::clone(&a.limiter);
         let bytes = a.bytes + b.bytes;
-        std::mem::forget(a);
-        std::mem::forget(b);
+        // std::mem::forget(a);
+        // std::mem::forget(b);
+        drop(a);
+        drop(b);
         Self { bytes, limiter }
     }
 }
