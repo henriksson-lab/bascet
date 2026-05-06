@@ -35,29 +35,37 @@ bascet-io.workspace = true
 bascet-runtime.workspace = true
 bgzip.workspace = true
 bio.workspace = true
+bincode.workspace = true
 blart.workspace = true
 bon.workspace = true
 bounded-integer.workspace = true
 bwa-mem2-rs = { package = "bwa-mem2-pure-rs", git = "https://github.com/henriksson-lab/bwa-mem2-pure-rs", optional = true }
+byteorder.workspace = true
+byteordered.workspace = true
 bytesize.workspace = true
 clap.workspace = true
 clio.workspace = true
 crc32fast.workspace = true
 crossbeam.workspace = true
+crossbeam-channel.workspace = true
+crossbeam-utils.workspace = true
 csv.workspace = true
 delegate.workspace = true
 enum_dispatch.workspace = true
 flate2.workspace = true
 fraction.workspace = true
+futures.workspace = true
 fastqc-rs = { package = "fastqc-compliant-rs", version = "0.4.2", default-features = false, optional = true }
 gecco = { workspace = true, features = ["bundled-data", "cli"], optional = true }
 glidesort.workspace = true
 gxhash.workspace = true
 hdf5.workspace = true
+index_list.workspace = true
 itertools.workspace = true
 kraken2-pure-rs = "0.2.0"
 lazy_static.workspace = true
 libc = "0.2"
+libdeflater.workspace = true
 memchr.workspace = true
 memory-stats.workspace = true
 min-max-heap.workspace = true
@@ -81,6 +89,9 @@ star-rs = { git = "https://github.com/henriksson-lab/star-rs.git", optional = tr
 strum.workspace = true
 strum_macros.workspace = true
 threadpool.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 wide.workspace = true
 zip.workspace = true

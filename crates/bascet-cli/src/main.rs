@@ -156,6 +156,7 @@ fn main() -> std::process::ExitCode {
         Commands::Extract(mut cmd) => cmd.try_execute(),
         Commands::ExtractStream(_cmd) => panic!("Command handled in the wrong place"),
         Commands::Exttool(_cmd) => panic!("Command handled in the wrong place"),
+        Commands::Filterbam(mut cmd) => cmd.try_execute(),
         #[cfg(feature = "fastqc")]
         Commands::Fastqc(mut cmd) => cmd.try_execute(),
         Commands::Featurise(mut cmd) => cmd.try_execute(),
@@ -172,6 +173,7 @@ fn main() -> std::process::ExitCode {
         #[cfg(feature = "skesa")]
         Commands::Skesa(mut cmd) => cmd.try_execute(),
         Commands::Sysinfo(_cmd) => panic!("Command handled in the wrong place"),
+        Commands::Tobigwig(mut cmd) => cmd.try_execute(),
         Commands::ToFastq(mut cmd) => cmd.try_execute(),
         Commands::Transform(mut cmd) => cmd.try_execute(),
         Commands::DetectKmerKmc(mut cmd) => cmd.try_execute(),

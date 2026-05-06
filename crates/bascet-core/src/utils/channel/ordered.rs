@@ -280,8 +280,16 @@ impl<T, const N: usize> OrderedDenseReceiver<T, N> {
                         let max_offset = N.saturating_mul(SLOWPATH_MAX_GAP_MULTIPLIER).max(N);
                         if offset > max_offset {
                             panic!(
-                                "ordered_dense slowpath gap exceeded bounded reorder window: index={idx}, base={}, offset={offset}, max_offset={max_offset}",
-                                self.inner_slowpath.base
+                                "ordered_dense received an item too far ahead of the next expected item: \
+                                 index={idx}, next_expected={}, offset={offset}, max_offset={max_offset}, \
+                                 fastpath_window={N}, slowpath_gap_multiplier={SLOWPATH_MAX_GAP_MULTIPLIER}. \
+                                 This usually means an earlier producer task is stuck, panicked, or failed to send \
+                                 its result while later tasks kept completing. For BBGZ/TIRP inputs, suspect a \
+                                 corrupt or pathological compressed block around the next_expected index, or too \
+                                 much out-of-order decode work. Try rerunning with fewer decode threads or a \
+                                 smaller stream buffer; if it is reproducible at the same next_expected value, \
+                                 inspect or regenerate the input around that block.",
+                                self.inner_slowpath.base,
                             );
                         }
                         if offset == 0 {

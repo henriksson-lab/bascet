@@ -177,6 +177,9 @@ fn spawn_reader(
                     Ok(Some(job)) => job,
                     Ok(None) => break,
                     Err(err) => {
+                        if !result_tx.wait_until_sendable(seq) {
+                            break;
+                        }
                         result_tx.send(seq, Err(err));
                         break;
                     }
@@ -233,6 +236,9 @@ fn spawn_workers(
                         };
 
                         let seq = job.seq;
+                        if !thread_result_tx.wait_until_sendable(seq) {
+                            break;
+                        }
                         let result = decode_job_catching_panics(&mut decompressor, job);
                         thread_result_tx.send(seq, result);
                     }

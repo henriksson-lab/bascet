@@ -13,6 +13,7 @@ pub mod exttool;
 #[cfg(feature = "fastqc")]
 pub mod fastqc;
 pub mod featurise_kmc;
+pub mod filterbam;
 #[cfg(feature = "gecco")]
 pub mod gecco;
 pub mod getraw;
@@ -34,6 +35,7 @@ pub mod shardify;
 pub mod skesa;
 pub mod snpcall;
 pub mod threadcount;
+pub mod tobigwig;
 pub mod tofq;
 pub mod transform;
 
@@ -56,6 +58,7 @@ pub use exttool::ExttoolCMD;
 #[cfg(feature = "fastqc")]
 pub use fastqc::FastqcCMD;
 pub use featurise_kmc::{FeaturiseKMC, FeaturiseKmcCMD, FeaturiseParamsKMC};
+pub use filterbam::FilterBamCMD;
 #[cfg(feature = "gecco")]
 pub use gecco::GeccoCMD;
 pub use getraw::GetRawCMD;
@@ -73,6 +76,7 @@ pub use skesa::SkesaCMD;
 pub use threadcount::{
     determine_thread_counts_1, determine_thread_counts_2, determine_thread_counts_3,
 };
+pub use tobigwig::ToBigWigCMD;
 pub use transform::{TransformCMD, TransformFile};
 
 use crate::command::{sysinfo::SysinfoCMD, tofq::ToFastqCMD};
@@ -93,6 +97,7 @@ pub enum Commands {
     Extract(ExtractCMD),
     ExtractStream(ExtractStreamCMD),
     Exttool(ExttoolCMD),
+    Filterbam(FilterBamCMD),
     #[cfg(feature = "fastqc")]
     Fastqc(FastqcCMD),
     Featurise(FeaturiseKmcCMD),
@@ -108,6 +113,7 @@ pub enum Commands {
     #[cfg(feature = "skesa")]
     Skesa(SkesaCMD),
     Sysinfo(SysinfoCMD),
+    Tobigwig(ToBigWigCMD),
     ToFastq(ToFastqCMD),
     Transform(TransformCMD),
     Qc(QcCMD),

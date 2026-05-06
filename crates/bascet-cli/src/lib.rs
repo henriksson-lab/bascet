@@ -1,5 +1,6 @@
 pub mod align;
 pub mod barcode;
+pub mod bigwig;
 pub mod command;
 pub mod common;
 pub mod countsketch;

@@ -325,6 +325,10 @@ impl BBGZWriter {
                                 Err(_) => break,
                             };
 
+                            if !thread_write_tx.wait_until_sendable(k) {
+                                break;
+                            }
+
                             let mut buf_raw = job.raw;
                             let crc32_raw = crc32fast::hash(buf_raw.as_slice());
                             let buf_compressed = thread_compressor
