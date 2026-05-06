@@ -12,6 +12,12 @@ target="${1:-x86_64-apple-darwin}"
 target_env="${target//-/_}"
 target_env_upper="$(printf '%s' "$target_env" | tr '[:lower:]' '[:upper:]')"
 host_os="$(uname -s)"
+build_tool=(cargo build)
+use_zigbuild=0
+if [[ "$host_os" == "Linux" ]] && cargo --list | grep -q '^    zigbuild'; then
+  build_tool=(cargo zigbuild)
+  use_zigbuild=1
+fi
 
 case "$target" in
   x86_64-apple-darwin)
@@ -49,19 +55,14 @@ case "$target" in
     ;;
 esac
 
-if [[ "$host_os" == "Linux" ]]; then
+if [[ "$host_os" == "Linux" && "$use_zigbuild" -eq 0 ]]; then
   export "CARGO_TARGET_${target_env_upper}_LINKER=${target_cc}"
   export "CC_${target_env}=${target_cc}"
   export "AR_${target_env}=${target_ar}"
   export "CXX_${target_env}=${target_cxx}"
-  if [[ -n "$extra_cflags" ]]; then
-    export "CFLAGS_${target_env}=${extra_cflags} ${CFLAGS_x86_64_apple_darwin:-}"
-  fi
 fi
-
-build_tool=(cargo build)
-if [[ "$host_os" == "Linux" ]] && cargo --list | grep -q '^    zigbuild'; then
-  build_tool=(cargo zigbuild)
+if [[ -n "$extra_cflags" ]]; then
+  export "CFLAGS_${target_env}=${extra_cflags} ${CFLAGS_x86_64_apple_darwin:-}"
 fi
 
 echo "Building $target with: ${build_tool[*]}"

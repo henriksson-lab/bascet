@@ -3,6 +3,7 @@ use std::fs::File;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
+use bytesize::ByteSize;
 use tracing::info;
 
 use crate::command::samtools_rs::{bam, bgzf};
@@ -20,6 +21,7 @@ pub struct ToBigWigOptions {
     pub skip_secondary: bool,
     pub skip_supplementary: bool,
     pub scale_factor: f32,
+    pub total_mem: ByteSize,
     pub num_threads: usize,
 }
 
@@ -35,6 +37,7 @@ pub fn bam_to_bigwig(path_in: &Path, path_out: &Path, opts: ToBigWigOptions) -> 
         input = %path_in.display(),
         output = %path_out.display(),
         bin_size = opts.bin_size,
+        memory = %opts.total_mem,
         threads = opts.num_threads,
         "ToBigWig: starting"
     );
@@ -70,12 +73,25 @@ pub fn bam_to_bigwig(path_in: &Path, path_out: &Path, opts: ToBigWigOptions) -> 
 fn collect_binned_coverage(
     path_in: &Path,
     opts: ToBigWigOptions,
-) -> Result<(bam::Header, Vec<Vec<f32>>, u64, u64)> {
+) -> Result<(bam::Header, Vec<Vec<u32>>, u64, u64)> {
     let input =
         File::open(path_in).with_context(|| format!("open input BAM {}", path_in.display()))?;
     let mut reader = bgzf::ParallelReader::new(input, opts.num_threads);
     let header = bam::Header::read(&mut reader)
         .with_context(|| format!("read BAM header {}", path_in.display()))?;
+    let estimated_coverage_memory = estimate_binned_coverage_memory(&header, opts.bin_size)?;
+    if estimated_coverage_memory.as_u64() > opts.total_mem.as_u64() {
+        bail!(
+            "estimated tobigwig coverage memory {} exceeds --memory {}. Increase --memory or use a larger --bin-size.",
+            estimated_coverage_memory,
+            opts.total_mem
+        );
+    }
+    info!(
+        estimated_coverage_memory = %estimated_coverage_memory,
+        memory = %opts.total_mem,
+        "ToBigWig: coverage memory estimate"
+    );
     let mut coverage = init_coverage(&header, opts.bin_size)?;
 
     let mut records_read = 0_u64;
@@ -94,7 +110,32 @@ fn collect_binned_coverage(
     Ok((header, coverage, records_read, records_used))
 }
 
-fn init_coverage(header: &bam::Header, bin_size: u32) -> Result<Vec<Vec<f32>>> {
+fn estimate_binned_coverage_memory(header: &bam::Header, bin_size: u32) -> Result<ByteSize> {
+    let mut bytes = std::mem::size_of::<Vec<Vec<u32>>>() as u128;
+    bytes += (header.refs.len() as u128) * (std::mem::size_of::<Vec<u32>>() as u128);
+
+    for reference in &header.refs {
+        if reference.length < 0 {
+            bail!(
+                "negative reference length for {}",
+                String::from_utf8_lossy(&reference.name)
+            );
+        }
+        let len = reference.length as u128;
+        let bins = len.div_ceil(bin_size as u128);
+        bytes += bins * (std::mem::size_of::<u32>() as u128);
+    }
+
+    let conservative_bytes = bytes
+        .checked_mul(11)
+        .and_then(|v| v.checked_div(10))
+        .ok_or_else(|| anyhow!("coverage memory estimate overflowed"))?;
+    let conservative_bytes =
+        u64::try_from(conservative_bytes).context("coverage memory estimate exceeds u64 bytes")?;
+    Ok(ByteSize(conservative_bytes))
+}
+
+fn init_coverage(header: &bam::Header, bin_size: u32) -> Result<Vec<Vec<u32>>> {
     let mut out = Vec::with_capacity(header.refs.len());
     for reference in &header.refs {
         if reference.length < 0 {
@@ -105,7 +146,7 @@ fn init_coverage(header: &bam::Header, bin_size: u32) -> Result<Vec<Vec<f32>>> {
         }
         let len = reference.length as u32;
         let bins = len.div_ceil(bin_size) as usize;
-        out.push(vec![0.0; bins]);
+        out.push(vec![0; bins]);
     }
     Ok(out)
 }
@@ -125,7 +166,7 @@ fn should_use_record(record: &bam::Record, opts: ToBigWigOptions) -> bool {
 }
 
 fn add_record_coverage(
-    coverage: &mut [Vec<f32>],
+    coverage: &mut [Vec<u32>],
     record: &bam::Record,
     bin_size: u32,
 ) -> Result<()> {
@@ -158,7 +199,7 @@ fn add_record_coverage(
     Ok(())
 }
 
-fn add_interval_coverage(chrom_coverage: &mut [f32], start: u32, end: u32, bin_size: u32) {
+fn add_interval_coverage(chrom_coverage: &mut [u32], start: u32, end: u32, bin_size: u32) {
     if end <= start || chrom_coverage.is_empty() {
         return;
     }
@@ -171,7 +212,7 @@ fn add_interval_coverage(chrom_coverage: &mut [f32], start: u32, end: u32, bin_s
         let overlap_start = start.max(bin_start);
         let overlap_end = end.min(bin_end);
         if overlap_end > overlap_start {
-            chrom_coverage[bin] += (overlap_end - overlap_start) as f32 / bin_size as f32;
+            chrom_coverage[bin] = chrom_coverage[bin].saturating_add(overlap_end - overlap_start);
         }
     }
 }
@@ -200,7 +241,7 @@ fn chrom_sizes(header: &bam::Header) -> Result<HashMap<String, u32>> {
 
 fn coverage_values(
     header: &bam::Header,
-    coverage: &mut [Vec<f32>],
+    coverage: &mut [Vec<u32>],
     bin_size: u32,
     scale_factor: f32,
 ) -> Vec<(String, Value)> {
@@ -209,28 +250,27 @@ fn coverage_values(
         let chrom = String::from_utf8_lossy(&reference.name).into_owned();
         let chrom_len = reference.length.max(0) as u32;
         let mut run_start: Option<u32> = None;
-        let mut run_value = 0.0_f32;
-        for (bin, raw_value) in chrom_coverage.iter().enumerate() {
-            let value = raw_value * scale_factor;
+        let mut run_value = 0_u32;
+        for (bin, covered_bases) in chrom_coverage.iter().copied().enumerate() {
             let start = (bin as u32).saturating_mul(bin_size);
             let end = start.saturating_add(bin_size).min(chrom_len);
             if end <= start {
                 continue;
             }
-            if value == 0.0 {
+            if covered_bases == 0 {
                 if let Some(open_start) = run_start.take() {
                     values.push((
                         chrom.clone(),
                         Value {
                             start: open_start,
                             end: start,
-                            value: run_value,
+                            value: run_value as f32 / bin_size as f32 * scale_factor,
                         },
                     ));
                 }
                 continue;
             }
-            if run_start.is_some() && value == run_value {
+            if run_start.is_some() && covered_bases == run_value {
                 continue;
             }
             if let Some(open_start) = run_start.replace(start) {
@@ -239,11 +279,11 @@ fn coverage_values(
                     Value {
                         start: open_start,
                         end: start,
-                        value: run_value,
+                        value: run_value as f32 / bin_size as f32 * scale_factor,
                     },
                 ));
             }
-            run_value = value;
+            run_value = covered_bases;
         }
         if let Some(open_start) = run_start {
             values.push((
@@ -251,7 +291,7 @@ fn coverage_values(
                 Value {
                     start: open_start,
                     end: chrom_len,
-                    value: run_value,
+                    value: run_value as f32 / bin_size as f32 * scale_factor,
                 },
             ));
         }

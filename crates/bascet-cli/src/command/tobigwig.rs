@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use bytesize::ByteSize;
 use clap::Args;
 
 use super::determine_thread_counts_1;
@@ -38,6 +39,14 @@ pub struct ToBigWigCMD {
     #[arg(long = "scale-factor", default_value_t = 1.0)]
     pub scale_factor: f32,
 
+    /// Total memory budget. The binned coverage array is checked against this before allocation.
+    #[arg(
+        long = "memory",
+        default_value_t = ByteSize::gib(1),
+        value_parser = clap::value_parser!(ByteSize)
+    )]
+    pub total_mem: ByteSize,
+
     /// Worker threads for BAM decompression and BigWig writing.
     #[arg(short = '@', long = "threads", value_parser = clap::value_parser!(usize))]
     pub num_threads: Option<usize>,
@@ -55,6 +64,7 @@ impl ToBigWigCMD {
                 skip_secondary: self.skip_secondary,
                 skip_supplementary: self.skip_supplementary,
                 scale_factor: self.scale_factor,
+                total_mem: self.total_mem,
                 num_threads,
             },
         )

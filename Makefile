@@ -63,7 +63,7 @@ linux_release:
 	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" CROSS_PROFILE="$(CROSS_PROFILE)" CROSS_PACKAGE="$(CROSS_PACKAGE)" CROSS_FEATURES="$(CROSS_FEATURES)" ./scripts/build-linux.sh x86_64-unknown-linux-gnu
 
 mac_universal: all_mac
-	CROSS_PROFILE="$(CROSS_PROFILE)" CROSS_PACKAGE="$(CROSS_PACKAGE)" CROSS_FEATURES="$(CROSS_FEATURES)" BASCET_BIN="$(BASCET_BIN)" LIPO="$(LIPO)" ./scripts/build-macos.sh universal
+	XDG_CACHE_HOME="$(XDG_CACHE_HOME)" CROSS_PROFILE="$(CROSS_PROFILE)" CROSS_PACKAGE="$(CROSS_PACKAGE)" CROSS_FEATURES="$(CROSS_FEATURES)" BASCET_BIN="$(BASCET_BIN)" LIPO="$(LIPO)" ./scripts/build-macos.sh universal
 
 publish_bins: linux_release all_win mac_universal
 	mkdir -p $(BINS_PUBLISH_DIR)
