@@ -1,5 +1,5 @@
 #################################################
-FROM docker.io/library/rust:1.94-slim as chef
+FROM docker.io/library/rust:1.94.1-slim as chef
 RUN cargo install cargo-chef
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
