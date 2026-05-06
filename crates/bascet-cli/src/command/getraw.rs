@@ -1624,7 +1624,7 @@ fn spawn_debarcode_workers(
     GetRawChemistry,
 ) {
     let (ct_tx, ct_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
-    let (result_tx, result_rx) = crossbeam::channel::bounded(rayon_pool.current_num_threads());
+    let (result_tx, result_rx) = crossbeam::channel::unbounded();
 
     let atomic_total_counter = Arc::new(AtomicUsize::new(0));
     let atomic_success_counter = Arc::new(AtomicUsize::new(0));
