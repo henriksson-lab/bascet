@@ -1894,7 +1894,7 @@ fn spawn_sort_workers(
 ) {
     let countof_threads_sort = (*budget.threads::<TSort>()).get();
     let mut thread_handles = Vec::with_capacity(countof_threads_sort as usize);
-    let (st_tx, st_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
+    let (st_tx, st_rx) = crossbeam::channel::bounded(sort_chunk_queue_capacity(budget));
 
     for thread_idx in 0..countof_threads_sort {
         let ct_rx = ct_rx.clone();
