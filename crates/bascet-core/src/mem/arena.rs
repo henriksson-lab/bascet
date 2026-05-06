@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::ops::Index;
 use std::ptr::NonNull;
 use std::slice::SliceIndex;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tracing::warn;
 
 use crate::SendPtr;
@@ -153,7 +153,7 @@ pub struct Arena<T> {
     avl: AtomicBool,
 
     // consumer hot path (cache line 2)
-    cnt: crossbeam_utils::CachePadded<AtomicU16>,
+    cnt: crossbeam_utils::CachePadded<AtomicUsize>,
 }
 
 impl<T: bytemuck::Pod> Arena<T> {
@@ -164,7 +164,7 @@ impl<T: bytemuck::Pod> Arena<T> {
             off: 0,
             avl: AtomicBool::new(true),
 
-            cnt: CachePadded::new(AtomicU16::new(0)),
+            cnt: CachePadded::new(AtomicUsize::new(0)),
         }
     }
 
@@ -236,7 +236,7 @@ impl<T: bytemuck::Pod> Arena<T> {
     pub fn increment_strong_count(&self) {
         // SAFETY: just incrementing no data sync needed here as the value of this is not needed anywhere
         let cnt = self.cnt.fetch_add(1, Ordering::Relaxed);
-        debug_assert!(cnt < u16::MAX);
+        debug_assert!(cnt < usize::MAX);
     }
 
     #[inline(always)]
@@ -284,27 +284,15 @@ impl<T: bytemuck::Pod> ArenaPool<T> {
 
         unsafe {
             let mut vec_arenas = Vec::with_capacity(countof_arenas);
-            // TODO: construct with MmapOptions for explicit use of Huge Pages?
             let mut mmap = MmapOptions::new()
                 .len(sizeof_buffer.as_u64() as usize)
-                .huge(None)
                 .map_anon()
                 .unwrap_or_else(|_| {
-                    let mmap = MmapOptions::new()
+                    MmapOptions::new()
                         .len(sizeof_buffer.as_u64() as usize)
                         .map_anon()
-                        .unwrap();
-                    #[cfg(target_os = "linux")]
-                    {
-                        let _ = mmap.advise(memmap2::Advice::HugePage);
-                    }
-                    mmap
+                        .unwrap()
                 });
-
-            #[cfg(target_os = "linux")]
-            {
-                let _ = mmap.advise(memmap2::Advice::WillNeed);
-            }
 
             let ptrbase_arena = mmap.as_mut_ptr() as *mut T;
             for i in 0..countof_arenas {

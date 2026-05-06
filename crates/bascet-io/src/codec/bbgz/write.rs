@@ -2,6 +2,7 @@ use std::{
     io::{Seek, Write},
     sync::{Arc, Condvar, Mutex},
     thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use bascet_core::{
@@ -34,12 +35,14 @@ pub struct BBGZCompressionResult {
 }
 
 struct BbgzCompressor {
+    compression_level: Compression,
     inner: FlateCompress,
 }
 
 impl BbgzCompressor {
     fn new(compression_level: Compression) -> Self {
         Self {
+            compression_level,
             inner: FlateCompress::new(
                 flate2::Compression::new(compression_level.level() as u32),
                 false,
@@ -98,27 +101,50 @@ impl BbgzCompressor {
     }
 }
 
-struct InFlightLimiter {
+thread_local! {
+    static THREAD_BBGZ_COMPRESSOR: std::cell::RefCell<Option<BbgzCompressor>> =
+        std::cell::RefCell::new(None);
+}
+
+fn with_thread_bbgz_compressor<R>(
+    compression_level: Compression,
+    f: impl FnOnce(&mut BbgzCompressor) -> R,
+) -> R {
+    THREAD_BBGZ_COMPRESSOR.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if !slot.as_ref().is_some_and(|compressor| {
+            compressor.compression_level.level() == compression_level.level()
+        }) {
+            *slot = Some(BbgzCompressor::new(compression_level));
+        }
+        f(slot.as_mut().unwrap())
+    })
+}
+
+pub struct BBGZCompressionLimiter {
+    cap: usize,
     available: Mutex<usize>,
     ready: Condvar,
 }
 
-impl InFlightLimiter {
-    fn new(cap: usize) -> Self {
+impl BBGZCompressionLimiter {
+    pub fn new(cap: usize) -> Self {
+        let cap = cap.max(1);
         Self {
-            available: Mutex::new(cap.max(1)),
+            cap,
+            available: Mutex::new(cap),
             ready: Condvar::new(),
         }
     }
 
-    fn acquire(self: &Arc<Self>) -> InFlightPermit {
+    fn acquire(self: &Arc<Self>) -> BBGZCompressionPermit {
         let mut available = self.available.lock().unwrap();
         while *available == 0 {
             available = self.ready.wait(available).unwrap();
         }
         *available -= 1;
 
-        InFlightPermit {
+        BBGZCompressionPermit {
             limiter: Arc::clone(self),
         }
     }
@@ -128,13 +154,18 @@ impl InFlightLimiter {
         *available += 1;
         self.ready.notify_one();
     }
+
+    pub fn stats(&self) -> (usize, usize) {
+        let available = *self.available.lock().unwrap();
+        (self.cap.saturating_sub(available), self.cap)
+    }
 }
 
-struct InFlightPermit {
-    limiter: Arc<InFlightLimiter>,
+struct BBGZCompressionPermit {
+    limiter: Arc<BBGZCompressionLimiter>,
 }
 
-impl Drop for InFlightPermit {
+impl Drop for BBGZCompressionPermit {
     fn drop(&mut self) {
         self.limiter.release();
     }
@@ -178,6 +209,7 @@ impl BBGZWriter {
         #[builder(default = Compression::balanced())] compression_level: Compression,
         with_opt_raw_arena_pool: Option<Arc<ArenaPool<u8>>>,
         with_opt_compression_arena_pool: Option<Arc<ArenaPool<u8>>>,
+        with_opt_compression_limiter: Option<Arc<BBGZCompressionLimiter>>,
         with_opt_rayon_pool: Option<Arc<rayon::ThreadPool>>,
     ) -> Self
     where
@@ -206,12 +238,16 @@ impl BBGZWriter {
             bascet_core::channel::ordered_dense::<BBGZCompressionResult, 16384>();
 
         let compression_workers = if let Some(rayon_pool) = with_opt_rayon_pool {
+            let compression_limiter = with_opt_compression_limiter.unwrap_or_else(|| {
+                Arc::new(BBGZCompressionLimiter::new(effective_countof_threads))
+            });
             Self::spawn_rayon_compression_dispatcher(
                 Arc::clone(&compression_allocator),
                 compression_rx,
                 compression_level,
                 write_tx,
                 rayon_pool,
+                compression_limiter,
             )
         } else {
             Self::spawn_compression_workers(
@@ -316,25 +352,44 @@ impl BBGZWriter {
         compression_level: Compression,
         write_tx: OrderedDenseSender<BBGZCompressionResult, 16384>,
         rayon_pool: Arc<rayon::ThreadPool>,
+        inflight_limiter: Arc<BBGZCompressionLimiter>,
     ) -> Vec<JoinHandle<()>> {
         let handle = std::thread::Builder::new()
             .name("BBGZCompressionDispatch@0".to_string())
             .spawn(move || {
-                let inflight_limiter =
-                    Arc::new(InFlightLimiter::new(rayon_pool.current_num_threads()));
                 rayon_pool.scope(|scope| {
+                    let mut last_telemetry = Instant::now();
+                    let telemetry_interval = Duration::from_secs(5);
                     while let Ok((k, job)) = compression_rx.recv() {
+                        if !write_tx.wait_until_sendable(k) {
+                            break;
+                        }
+
                         let permit = inflight_limiter.acquire();
+                        if last_telemetry.elapsed() >= telemetry_interval {
+                            last_telemetry = Instant::now();
+                            let (compression_inflight, compression_inflight_cap) =
+                                inflight_limiter.stats();
+                            tracing::debug!(
+                                stage = "bbgz-compression-dispatch",
+                                compression_queue_len = compression_rx.len(),
+                                compression_queue_cap = compression_rx.capacity().unwrap_or(0),
+                                compression_inflight,
+                                compression_inflight_cap,
+                                "getraw pipeline telemetry"
+                            );
+                        }
                         let task_compression_alloc = Arc::clone(&compression_alloc);
                         let task_write_tx = write_tx.clone();
 
                         scope.spawn(move |_| {
                             let _permit = permit;
-                            let mut compressor = BbgzCompressor::new(compression_level);
                             let mut buf_raw = job.raw;
                             let crc32_raw = crc32fast::hash(buf_raw.as_slice());
                             let buf_compressed =
-                                compressor.compress_into(&mut buf_raw, &task_compression_alloc);
+                                with_thread_bbgz_compressor(compression_level, |compressor| {
+                                    compressor.compress_into(&mut buf_raw, &task_compression_alloc)
+                                });
 
                             let job_result = BBGZCompressionResult {
                                 header: job.header,

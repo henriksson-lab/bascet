@@ -1,5 +1,5 @@
 [build]
-rustflags = ["-C", "target-feature=+aes"]
+rustflags = ["-C", "target-feature=+aes,+bmi1,+bmi2"]
 
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
@@ -27,4 +27,3 @@ ar = "x86_64-apple-darwin23-ar"
 [target.aarch64-apple-darwin]
 linker = "aarch64-apple-darwin23-clang"
 ar = "aarch64-apple-darwin23-ar"
-

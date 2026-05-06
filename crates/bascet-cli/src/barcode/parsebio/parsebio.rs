@@ -14,6 +14,7 @@ use std::io::Read;
 #[derive(Clone)]
 pub struct ParseBioChemistry3 {
     barcode: CombinatorialBarcode8bp,
+    barcode_sort_ranks: Vec<[u8; 256]>,
     subchemistry: String,
 }
 impl Chemistry for ParseBioChemistry3 {
@@ -230,6 +231,7 @@ impl Chemistry for ParseBioChemistry3 {
 
             map_round_bcs.get(best_chem_name.as_str()).unwrap().clone()
         };
+        self.barcode_sort_ranks = self.barcode.barcode_name_sort_ranks();
         // log_info!("Barcode struct:{:#?}", self.barcode);
         Ok(())
     }
@@ -317,6 +319,13 @@ impl Chemistry for ParseBioChemistry3 {
 
         return result;
     }
+
+    fn bcindexu32_to_sort_key(&self, index32: &u32) -> u32 {
+        let bytes = index32.to_be_bytes();
+        ((self.barcode_sort_ranks[0][bytes[1] as usize] as u32) << 16)
+            | ((self.barcode_sort_ranks[1][bytes[2] as usize] as u32) << 8)
+            | (self.barcode_sort_ranks[2][bytes[3] as usize] as u32)
+    }
 }
 
 impl ParseBioChemistry3 {
@@ -325,6 +334,7 @@ impl ParseBioChemistry3 {
     pub fn new(subchemistry: &String) -> ParseBioChemistry3 {
         ParseBioChemistry3 {
             barcode: CombinatorialBarcode8bp::new(),
+            barcode_sort_ranks: Vec::new(),
             subchemistry: subchemistry.clone(),
         }
     }

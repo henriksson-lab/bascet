@@ -6,6 +6,12 @@ pub fn peekable<T>() -> (Sender<T>, PeekableReceiver<T>) {
     (tx, peekable_rx)
 }
 
+pub fn peekable_bounded<T>(capacity: usize) -> (Sender<T>, PeekableReceiver<T>) {
+    let (tx, rx) = crossbeam::channel::bounded(capacity);
+    let peekable_rx = PeekableReceiver::new(rx);
+    (tx, peekable_rx)
+}
+
 pub struct PeekableReceiver<T> {
     receiver: Receiver<T>,
     peeked: Option<T>,

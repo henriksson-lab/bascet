@@ -17,6 +17,18 @@ where
         self.stream.next_with(&self.queries)
     }
 
+    pub fn next_batch(&mut self, capacity: usize) -> anyhow::Result<Vec<C>> {
+        self.stream.next_batch_with(&self.queries, capacity)
+    }
+
+    pub fn next_batch_with_retained_bytes(
+        &mut self,
+        capacity: usize,
+    ) -> anyhow::Result<Vec<(C, usize)>> {
+        self.stream
+            .next_batch_with_retained_bytes(&self.queries, capacity)
+    }
+
     pub fn next_into<T>(&mut self) -> anyhow::Result<Option<T>>
     where
         T: Composite + Default,

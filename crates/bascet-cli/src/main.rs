@@ -8,6 +8,18 @@ use bascet_runtime::logging::{
 use clap::Parser;
 use tracing::{error, info};
 
+fn configure_allocator() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        // glibc otherwise creates many per-thread malloc arenas. On getraw's
+        // Rayon-heavy path those arenas showed up as dozens of resident 64 MiB
+        // anonymous mappings, bypassing the command's own memory budget.
+        libc::mallopt(libc::M_ARENA_MAX, 2);
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 4 * 1024);
+        libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024);
+    }
+}
+
 ///////////////////////////////
 /// Parser for commandline options, top level
 #[derive(Parser)]
@@ -48,6 +60,8 @@ struct Cli {
 ///////////////////////////////
 /// Entry point into the software
 fn main() -> std::process::ExitCode {
+    configure_allocator();
+
     let start = std::time::Instant::now();
     let cli = Cli::parse();
 

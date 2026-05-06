@@ -1,9 +1,84 @@
+// getraw pipeline principles
+// ==========================
+//
+// The command is a streaming pipeline:
+//
+//   FASTQ readers -> pair router -> debarcode -> collector -> sort -> chunk writer -> shard merge
+//
+// The design goal is not to split a fixed number of threads between stages.
+// There is one Rayon pool for CPU work, and ordinary OS coordinator threads for
+// blocking work. Rayon should see runnable CPU tasks from all stages and balance
+// them naturally.
+//
+// Two invariants must both hold:
+//
+//   1. Liveness: a Rayon worker must not block on an operation that requires
+//      another Rayon task to run before it can unblock.
+//   2. Memory: every queue or handoff carrying reads, records, sorted chunks,
+//      BBGZ blocks, or other input-sized data must be bounded by bytes, not just
+//      by item count or thread count.
+//
+// Violating either invariant is a bug. We have seen both failure modes:
+//
+// * If all Rayon workers block on `send()` into a full downstream queue,
+//   decode/debarcode/sort/compress tasks queued behind them cannot run and the
+//   FASTQ readers eventually sit in `OrderedReceiver::recv`.
+// * If Rayon handoff is made nonblocking with an unbounded result queue but only
+//   a count-based in-flight limit, the pipeline can remain live while retaining
+//   tens or hundreds of GB of record/chunk data outside the intended budget.
+//
+// Therefore:
+//
+// * Blocking coordinators are ordinary OS threads (`spawn_coordinator`). They
+//   may wait on bounded channels, write files, join finish handles, or perform
+//   shard merges.
+// * Rayon tasks are CPU tasks. They must not wait on file I/O, joins, condvars,
+//   mutexes held by coordinators, or bounded downstream sends.
+// * Any handoff from Rayon to a coordinator must be nonblocking for Rayon and
+//   must carry a permit whose charge is proportional to retained bytes. A
+//   permit counted only in "tasks", "chunks", or "threads" is not sufficient
+//   for data-bearing handoffs.
+// * Bounded channels are allowed for coordinator-to-coordinator flow control.
+//   They are not a complete memory bound unless the items have a fixed small
+//   size. For record/chunk/block queues, pair the bounded channel with a byte
+//   limiter or size the channel from the relevant byte budget.
+// * Backpressure should stop admission of new work. It should not park every
+//   worker that could perform work needed to drain the backlog.
+// * BBGZ chunk writing is a coordinator task. Compression inside the writer can
+//   use Rayon, but the writer loop itself must not occupy a Rayon worker while
+//   waiting for file I/O, compression queues, or finish joins.
+// * Merge fan-in is memory-derived: each shardify input stream needs at least
+//   two stream arenas, so getraw caps the number of simultaneous merge inputs by
+//   `sizeof_stream_buffer / (2 * sizeof_stream_arena)`.
+//
+// When adding a stage, check the wait graph first:
+//
+//   1. Can a Rayon task block on a bounded queue, mutex, condvar, file write, or
+//      join? If yes, move that wait to a coordinator or make the Rayon handoff
+//      nonblocking with a byte-charged permit.
+//   2. Can any queue or handoff hold input-proportional data? If yes, identify
+//      the exact budget bucket that pays for it and enforce that budget in
+//      bytes.
+//   3. Can a downstream coordinator be unable to run because it was scheduled
+//      as Rayon work? If yes, it must be an OS coordinator thread.
+//   4. Can an ordered channel miss a sequence value after a worker panic/error?
+//      The producer must send an error result or close all senders so the
+//      receiver can return instead of waiting forever.
+//   5. Does increasing `--threads` increase retained data? If yes, the code is
+//      using thread count as a memory budget; fix the budget instead.
+//
+// Avoid local "make this queue a little smaller/larger" tuning unless it follows
+// from these rules. The memory budget should explain the queue sizes and permits;
+// Rayon should explain CPU parallelism; coordinator threads should explain
+// blocking and I/O progress.
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -11,7 +86,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bascet_io::fastq::fastq;
 use bascet_io::tirp::tirp;
 use bascet_io::{BBGZFinishHandle, BBGZWriteBlock, Compression};
-use bounded_integer::BoundedU64;
+use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 use clap::{Args, Subcommand};
 use clio::{InputPath, OutputPath};
@@ -22,7 +97,7 @@ use bascet_core::attr::{meta::*, quality::*, sequence::*};
 use bascet_core::*;
 use bascet_derive::Budget;
 use bascet_io::{
-    BBGZHeader, BBGZWriter,
+    BBGZCompressionLimiter, BBGZHeader, BBGZWriter,
     codec::{self, bbgz},
     parse,
 };
@@ -37,7 +112,7 @@ use crate::utils::{atomic_temp_path, publish_atomic_output, rename_or_copy_acros
 use crate::{bbgz_compression_parser, bounded_parser};
 use tracing::{debug, error, info, warn};
 
-const FASTQ_INPUT_EXTENSIONS: &[&str] = &[".fastq", ".fq", ".fastq.gz", ".fq.gz"];
+const FASTQ_INPUT_EXTENSIONS: &[&str] = &[".fastq.gz", ".fq.gz"];
 
 #[derive(Args)]
 pub struct GetRawCMD {
@@ -88,38 +163,6 @@ pub struct GetRawCMD {
         value_parser = bounded_parser!(BoundedU64<6, { u64::MAX }>),
     )]
     total_threads: Option<BoundedU64<6, { u64::MAX }>>,
-
-    #[arg(
-        long = "countof-threads-read",
-        help = "Number of reader threads",
-        value_name = "1..",
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    countof_threads_read: Option<BoundedU64<1, { u64::MAX }>>,
-
-    #[arg(
-        long = "countof-threads-debarcode",
-        help = "Number of debarcoding threads",
-        value_name = "1..",
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    countof_threads_debarcode: Option<BoundedU64<1, { u64::MAX }>>,
-
-    #[arg(
-        long = "countof-threads-sort",
-        help = "Number of initial sort sorting threads",
-        value_name = "1..",
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    countof_threads_sort: Option<BoundedU64<1, { u64::MAX }>>,
-
-    #[arg(
-        long = "countof-threads-write",
-        help = "Number of writer threads",
-        value_name = "1..",
-        value_parser = bounded_parser!(BoundedU64<1, { u64::MAX }>),
-    )]
-    countof_threads_write: Option<BoundedU64<1, { u64::MAX }>>,
 
     #[arg(
         short = 'm',
@@ -249,16 +292,6 @@ struct GetrawBudget {
     #[mem(Total)]
     memory: ByteSize,
 
-    #[threads(TRead, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.15) as u64))]
-    countof_threads_read: BoundedU64<1, { u64::MAX }>,
-    #[threads(TDebarcode, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.2) as u64))]
-    countof_threads_debarcode: BoundedU64<1, { u64::MAX }>,
-
-    #[threads(TSort, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.2) as u64))]
-    countof_threads_sort: BoundedU64<1, { u64::MAX }>,
-
-    #[threads(TWrite, |total_threads: u64, _| bounded_integer::BoundedU64::new_saturating((total_threads as f64 * 0.05) as u64))]
-    countof_threads_write: BoundedU64<1, { u64::MAX }>,
     #[mem(MStreamBuffer, |_, total_mem| bytesize::ByteSize((total_mem as f64 * 0.5) as u64))]
     sizeof_stream_buffer: ByteSize,
 
@@ -272,15 +305,24 @@ struct GetrawBudget {
 }
 
 fn record_queue_capacity(budget: &GetrawBudget) -> usize {
-    ((*budget.threads::<Total>()).get() as usize)
+    (budget.threads.get() as usize)
         .saturating_mul(4096)
         .max(4096)
 }
 
 fn chunk_queue_capacity(budget: &GetrawBudget) -> usize {
-    ((*budget.threads::<Total>()).get() as usize)
-        .saturating_mul(2)
-        .max(2)
+    (budget.threads.get() as usize).saturating_mul(2).max(2)
+}
+
+fn spawn_coordinator<F, R>(name: &str, offset: u64, f: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    std::thread::Builder::new()
+        .name(format!("{name}@{offset}"))
+        .spawn(f)
+        .unwrap()
 }
 
 struct ReadMemoryLimiter {
@@ -304,10 +346,7 @@ impl ReadMemoryLimiter {
 
     fn acquire(self: &Arc<Self>, bytes: usize) -> ReadMemoryPermit {
         if bytes == 0 {
-            return ReadMemoryPermit {
-                bytes,
-                limiter: Arc::clone(self),
-            };
+            return ReadMemoryPermit::new(bytes, Arc::clone(self));
         }
 
         let charge = bytes.min(self.cap);
@@ -319,10 +358,7 @@ impl ReadMemoryLimiter {
         *used += charge;
         self.max_used.fetch_max(*used, Ordering::Relaxed);
 
-        ReadMemoryPermit {
-            bytes: charge,
-            limiter: Arc::clone(self),
-        }
+        ReadMemoryPermit::new(charge, Arc::clone(self))
     }
 
     fn release(&self, bytes: usize) {
@@ -344,14 +380,17 @@ impl ReadMemoryLimiter {
 }
 
 struct InFlightLimiter {
+    cap: usize,
     available: Mutex<usize>,
     ready: Condvar,
 }
 
 impl InFlightLimiter {
     fn new(cap: usize) -> Self {
+        let cap = cap.max(1);
         Self {
-            available: Mutex::new(cap.max(1)),
+            cap,
+            available: Mutex::new(cap),
             ready: Condvar::new(),
         }
     }
@@ -373,6 +412,11 @@ impl InFlightLimiter {
         *available += 1;
         self.ready.notify_one();
     }
+
+    fn stats(&self) -> (usize, usize) {
+        let available = *self.available.lock().unwrap();
+        (self.cap.saturating_sub(available), self.cap)
+    }
 }
 
 struct InFlightPermit {
@@ -385,24 +429,171 @@ impl Drop for InFlightPermit {
     }
 }
 
-struct ReadMemoryPermit {
+struct ByteLimiter {
+    cap: usize,
+    used: Mutex<usize>,
+    available: Condvar,
+    wait_count: AtomicUsize,
+    max_used: AtomicUsize,
+}
+
+impl ByteLimiter {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap: cap.max(1),
+            used: Mutex::new(0),
+            available: Condvar::new(),
+            wait_count: AtomicUsize::new(0),
+            max_used: AtomicUsize::new(0),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>, bytes: usize) -> BytePermit {
+        let charge = bytes.max(1).min(self.cap);
+        let mut used = self.used.lock().unwrap();
+        while *used + charge > self.cap {
+            self.wait_count.fetch_add(1, Ordering::Relaxed);
+            used = self.available.wait(used).unwrap();
+        }
+        *used += charge;
+        self.max_used.fetch_max(*used, Ordering::Relaxed);
+
+        BytePermit {
+            bytes: charge,
+            limiter: Arc::clone(self),
+        }
+    }
+
+    fn release(&self, bytes: usize) {
+        let mut used = self.used.lock().unwrap();
+        *used = used.saturating_sub(bytes);
+        self.available.notify_all();
+    }
+
+    fn stats(&self) -> (usize, usize, usize) {
+        let used = *self.used.lock().unwrap();
+        let max_used = self.max_used.load(Ordering::Relaxed);
+        let wait_count = self.wait_count.load(Ordering::Relaxed);
+        (used, max_used, wait_count)
+    }
+}
+
+struct BytePermit {
+    bytes: usize,
+    limiter: Arc<ByteLimiter>,
+}
+
+impl Drop for BytePermit {
+    fn drop(&mut self) {
+        self.limiter.release(self.bytes);
+    }
+}
+
+struct PipelineTicker {
+    last: Instant,
+    interval: Duration,
+}
+
+impl PipelineTicker {
+    fn new(interval: Duration) -> Self {
+        Self {
+            last: Instant::now(),
+            interval,
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        if self.last.elapsed() >= self.interval {
+            self.last = Instant::now();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn telemetry_interval() -> Duration {
+    Duration::from_secs(5)
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+struct MallocTrimGuard {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+impl MallocTrimGuard {
+    fn new() -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let handle = std::thread::Builder::new()
+            .name("getraw-malloc-trim@0".to_string())
+            .spawn(move || {
+                while !thread_stop.load(Ordering::Relaxed) {
+                    unsafe {
+                        libc::malloc_trim(0);
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                unsafe {
+                    libc::malloc_trim(0);
+                }
+            })
+            .unwrap();
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+impl Drop for MallocTrimGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+struct MallocTrimGuard;
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+impl MallocTrimGuard {
+    fn new() -> Self {
+        Self
+    }
+}
+
+struct ReadMemoryPermitInner {
     bytes: usize,
     limiter: Arc<ReadMemoryLimiter>,
 }
 
-impl ReadMemoryPermit {
-    fn merge(a: Self, b: Self) -> Self {
-        let limiter = Arc::clone(&a.limiter);
-        let bytes = a.bytes + b.bytes;
-        std::mem::forget(a);
-        std::mem::forget(b);
-        Self { bytes, limiter }
+impl Drop for ReadMemoryPermitInner {
+    fn drop(&mut self) {
+        self.limiter.release(self.bytes);
     }
 }
 
-impl Drop for ReadMemoryPermit {
-    fn drop(&mut self) {
-        self.limiter.release(self.bytes);
+#[derive(Clone)]
+struct ReadMemoryPermit {
+    permits: SmallVec<[Arc<ReadMemoryPermitInner>; 2]>,
+}
+
+impl ReadMemoryPermit {
+    fn new(bytes: usize, limiter: Arc<ReadMemoryLimiter>) -> Self {
+        Self {
+            permits: smallvec::smallvec![Arc::new(ReadMemoryPermitInner { bytes, limiter })],
+        }
+    }
+
+    fn merge(mut a: Self, mut b: Self) -> Self {
+        a.permits.append(&mut b.permits);
+        a
     }
 }
 
@@ -450,7 +641,21 @@ impl BudgetedReadPairBatch {
 }
 
 type BudgetedDebarcodedRecord = Budgeted<DebarcodedRecord>;
-type BudgetedDebarcodedRecordBatch = Vec<(u32, BudgetedDebarcodedRecord)>;
+type DebarcodedSortRecord = (u32, u32, BudgetedDebarcodedRecord);
+type BudgetedDebarcodedRecordBatch = Vec<DebarcodedSortRecord>;
+type SortRecordBatch = Vec<DebarcodedSortRecord>;
+type SortedRecordBatch = Vec<DebarcodedSortRecord>;
+
+struct SortChunk {
+    records: SortRecordBatch,
+    permit: BytePermit,
+}
+
+struct SortedChunk {
+    records: SortedRecordBatch,
+    permit: BytePermit,
+}
+
 type HistogramCounts = BTreeMap<Vec<u8>, u64>;
 
 struct ChunkWriterOutput {
@@ -593,27 +798,125 @@ fn estimate_fastq_record_bytes(record: &fastq::Record) -> usize {
     record.get_ref::<Id>().len() + record.get_ref::<R0>().len() + record.get_ref::<Q0>().len() + 64
 }
 
+fn budget_fastq_record_batch(
+    records: Vec<(fastq::Record, usize)>,
+    read_memory_limiter: &Arc<ReadMemoryLimiter>,
+) -> BudgetedFastqRecordBatch {
+    let mut current_permit = None;
+    let mut batch = Vec::with_capacity(records.len());
+
+    for (record, retained_bytes) in records {
+        if retained_bytes != 0 || current_permit.is_none() {
+            let bytes = if retained_bytes == 0 {
+                estimate_fastq_record_bytes(&record)
+            } else {
+                retained_bytes
+            };
+            current_permit = Some(read_memory_limiter.acquire(bytes));
+        }
+        let permit = current_permit
+            .as_ref()
+            .expect("read memory permit must be initialized")
+            .clone();
+        batch.push(Budgeted::new(record, permit));
+    }
+
+    batch
+}
+
 fn read_pair_batch_capacity(budget: &GetrawBudget) -> usize {
     let _ = budget;
-    10_000
+    50_000
+}
+
+fn debarcode_work_batch_capacity(budget: &GetrawBudget) -> usize {
+    let _ = budget;
+    50_000
 }
 
 fn default_working_stream_buffer(total_mem: u64) -> ByteSize {
-    ByteSize(((total_mem as f64 * 0.5) as u64).max(ByteSize::gib(5).as_u64()))
+    ByteSize((total_mem as f64 * 0.20) as u64)
 }
 
-fn default_working_sort_buffer(sort_threads: u64) -> ByteSize {
-    ByteSize(ByteSize::mib(512).as_u64() * sort_threads.max(1))
+fn default_working_sort_buffer(total_mem: u64) -> ByteSize {
+    ByteSize((total_mem as f64 * 0.60) as u64)
 }
 
 fn default_working_compress_buffer(total_mem: u64) -> ByteSize {
-    ByteSize(((total_mem as f64 * 0.25) as u64).max(ByteSize::gib(3).as_u64()))
+    ByteSize((total_mem as f64 * 0.10) as u64)
 }
 
 fn first_round_sort_chunk_size(budget: &GetrawBudget) -> ByteSize {
-    let sort_threads = (*budget.threads::<TSort>()).get().max(1);
-    let per_sort_worker = budget.mem::<MSortBuffer>().as_u64() / sort_threads;
-    ByteSize(per_sort_worker.clamp(ByteSize::mib(256).as_u64(), ByteSize::gib(2).as_u64()))
+    let rayon_threads = budget.threads.get().max(1);
+    let target_resident_chunks = (rayon_threads / 10).clamp(2, 4);
+    let per_sort_chunk = budget.mem::<MSortBuffer>().as_u64() / target_resident_chunks;
+    ByteSize(per_sort_chunk.clamp(ByteSize::mib(256).as_u64(), ByteSize::gib(8).as_u64()))
+}
+
+fn estimate_sort_chunk_charge(records: usize, payload_bytes: usize) -> usize {
+    let record_slot_bytes =
+        records.saturating_mul(std::mem::size_of::<DebarcodedSortRecord>() + 64);
+    payload_bytes
+        .saturating_div(4)
+        .saturating_add(record_slot_bytes)
+        .max(1)
+}
+
+fn radix_sort_debarcoded_records(records: &mut Vec<DebarcodedSortRecord>) {
+    const RADIX: usize = 256;
+    let len = records.len();
+    if len <= 1 {
+        return;
+    }
+
+    let mut from = Vec::with_capacity(len);
+    from.extend(records.drain(..).map(MaybeUninit::new));
+    let mut to: Vec<MaybeUninit<DebarcodedSortRecord>> = Vec::with_capacity(len);
+    unsafe {
+        to.set_len(len);
+    }
+
+    for shift in [0, 8, 16, 24] {
+        let mut counts = [0usize; RADIX];
+        for record in &from {
+            let (sort_key, _, _) = unsafe { record.assume_init_ref() };
+            counts[((sort_key >> shift) & 0xff) as usize] += 1;
+        }
+
+        let mut offsets = [0usize; RADIX];
+        let mut sum = 0usize;
+        for (offset, count) in offsets.iter_mut().zip(counts) {
+            *offset = sum;
+            sum += count;
+        }
+
+        for index in 0..len {
+            let record_ref = unsafe { from[index].assume_init_ref() };
+            let bucket = ((record_ref.0 >> shift) & 0xff) as usize;
+            let out_index = offsets[bucket];
+            offsets[bucket] += 1;
+
+            let record = unsafe { from.as_ptr().add(index).read().assume_init() };
+            unsafe {
+                to.as_mut_ptr()
+                    .add(out_index)
+                    .write(MaybeUninit::new(record));
+            }
+        }
+
+        unsafe {
+            from.set_len(0);
+        }
+        std::mem::swap(&mut from, &mut to);
+        unsafe {
+            to.set_len(len);
+        }
+    }
+
+    records.extend(
+        from.into_iter()
+            .map(|record| unsafe { record.assume_init() }),
+    );
 }
 
 impl GetRawCMD {
@@ -639,28 +942,16 @@ impl GetRawCMD {
                     6.try_into().unwrap()
                 })
         });
-        let sort_threads_for_default = self
-            .countof_threads_sort
-            .unwrap_or_else(|| {
-                bounded_integer::BoundedU64::new_saturating(
-                    (total_threads.get() as f64 * 0.2) as u64,
-                )
-            })
-            .get();
         let budget = GetrawBudget::builder()
             .threads(total_threads)
             .memory(self.total_mem)
-            .maybe_countof_threads_read(self.countof_threads_read)
-            .maybe_countof_threads_debarcode(self.countof_threads_debarcode)
-            .maybe_countof_threads_sort(self.countof_threads_sort)
-            .maybe_countof_threads_write(self.countof_threads_write)
             .sizeof_stream_buffer(
                 self.sizeof_stream_buffer
                     .unwrap_or_else(|| default_working_stream_buffer(self.total_mem.as_u64())),
             )
             .sizeof_sort_buffer(
                 self.sizeof_sort_buffer
-                    .unwrap_or_else(|| default_working_sort_buffer(sort_threads_for_default)),
+                    .unwrap_or_else(|| default_working_sort_buffer(self.total_mem.as_u64())),
             )
             .sizeof_compress_buffer(
                 self.sizeof_compress_buffer
@@ -676,6 +967,7 @@ impl GetRawCMD {
         if self.compression_level.level() == 0 {
             warn!("Compression level is 0 (uncompressed)")
         }
+        let _malloc_trim_guard = MallocTrimGuard::new();
         let read_memory_limiter = Arc::new(ReadMemoryLimiter::new(
             budget.mem::<MStreamBuffer>().as_u64() as usize,
         ));
@@ -687,12 +979,18 @@ impl GetRawCMD {
         );
         let rayon_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
-                .num_threads((*budget.threads::<Total>()).get() as usize)
+                .num_threads(budget.threads.get() as usize)
                 .thread_name(|idx| format!("getraw-rayon@{idx}"))
                 .build()?,
         );
+        let compression_limiter = Arc::new(BBGZCompressionLimiter::new(
+            rayon_pool.current_num_threads(),
+        ));
         let debarcode_inflight_limiter =
             Arc::new(InFlightLimiter::new(rayon_pool.current_num_threads()));
+        let sort_memory_limiter = Arc::new(ByteLimiter::new(
+            budget.mem::<MSortBuffer>().as_u64() as usize
+        ));
 
         let mut vec_input_debarcode_merge = self.skip_debarcode.clone().unwrap_or(Vec::new());
         let mut histogram_counts = if self.skip_debarcode.is_none() && self.paths_out.len() == 1 {
@@ -789,6 +1087,7 @@ impl GetRawCMD {
                     &budget,
                     self.sizeof_stream_arena,
                     Arc::clone(&read_memory_limiter),
+                    Arc::clone(&rayon_pool),
                     Arc::clone(&stage_timings),
                     self.max_read_pairs,
                 )
@@ -815,6 +1114,7 @@ impl GetRawCMD {
                     &budget,
                     self.sizeof_stream_arena,
                     Arc::clone(&read_memory_limiter),
+                    Arc::clone(&rayon_pool),
                     Arc::clone(&stage_timings),
                     self.max_read_pairs,
                 )
@@ -835,11 +1135,17 @@ impl GetRawCMD {
             let (ct_rx, ct_handle) = spawn_collector(
                 db_rx,
                 &budget,
+                Arc::clone(&sort_memory_limiter),
                 Arc::clone(&batch_stats),
                 Arc::clone(&stage_timings),
             );
-            let (st_rx, st_handles) =
-                spawn_sort_workers(ct_rx, chemistry, &budget, Arc::clone(&stage_timings));
+            let writer_chemistry = chemistry.clone();
+            let (st_rx, st_handles) = spawn_sort_workers(
+                ct_rx,
+                &budget,
+                Arc::clone(&rayon_pool),
+                Arc::clone(&stage_timings),
+            );
 
             let wt_handles = spawn_chunk_writers(
                 st_rx,
@@ -847,8 +1153,10 @@ impl GetRawCMD {
                 path_temp_dir.clone(),
                 &budget,
                 self.compression_level,
+                writer_chemistry,
                 &library,
                 Arc::clone(&rayon_pool),
+                Arc::clone(&compression_limiter),
                 Arc::clone(&stage_timings),
             );
 
@@ -925,6 +1233,14 @@ impl GetRawCMD {
             read_memory_wait_count,
             "Read memory limiter summary"
         );
+        let (sort_memory_used, sort_memory_max_used, sort_memory_wait_count) =
+            sort_memory_limiter.stats();
+        info!(
+            sort_memory_used = %ByteSize(sort_memory_used as u64),
+            sort_memory_max_used = %ByteSize(sort_memory_max_used as u64),
+            sort_memory_wait_count,
+            "Sort memory limiter summary"
+        );
 
         do_merging(
             &self,
@@ -933,6 +1249,7 @@ impl GetRawCMD {
             &timestamp_temp_files,
             &vec_input_debarcode_merge,
             histogram_counts,
+            Arc::clone(&rayon_pool),
             Arc::clone(&stage_timings),
         )?;
         stage_timings.log_summary();
@@ -974,7 +1291,7 @@ fn validate_fastq_input_paths(paths: &[InputPath], read_name: &str) -> anyhow::R
 fn validate_fastq_input_path(path: &Path, read_name: &str) -> anyhow::Result<()> {
     if !has_fastq_extension(path) {
         anyhow::bail!(
-            "{read_name} input '{}' must be a FASTQ file with one of these extensions: {}",
+            "{read_name} input '{}' must be a block-zipped FASTQ file with one of these extensions: {}",
             path.display(),
             FASTQ_INPUT_EXTENSIONS.join(", ")
         );
@@ -993,24 +1310,38 @@ fn validate_fastq_input_path(path: &Path, read_name: &str) -> anyhow::Result<()>
         anyhow::bail!("{read_name} input '{}' is empty", path.display());
     }
 
-    let mut header = [0; 2];
-    let count = file.read(&mut header).map_err(|err| {
+    let mut base = [0u8; 12];
+    file.read_exact(&mut base).map_err(|err| {
         anyhow::anyhow!(
-            "Cannot read header from {read_name} input '{}': {err}",
+            "Cannot read gzip header from {read_name} input '{}': {err}",
             path.display()
         )
     })?;
 
-    if is_gzip_path(path) {
-        if count < 2 || header != [0x1f, 0x8b] {
-            anyhow::bail!(
-                "{read_name} input '{}' has a gzip FASTQ extension but does not look gzip-compressed",
-                path.display()
-            );
-        }
-    } else if count == 0 || header[0] != b'@' {
+    if base[0] != 0x1f || base[1] != 0x8b || base[2] != 8 {
         anyhow::bail!(
-            "{read_name} input '{}' has a FASTQ extension but does not start with '@'",
+            "{read_name} input '{}' must be block-zipped FASTQ, but does not start with a gzip deflate header",
+            path.display()
+        );
+    }
+    if base[3] & 0x04 == 0 {
+        anyhow::bail!(
+            "{read_name} input '{}' must be block-zipped FASTQ, but the gzip header has no FEXTRA field",
+            path.display()
+        );
+    }
+
+    let xlen = u16::from_le_bytes([base[10], base[11]]) as usize;
+    let mut extra = vec![0u8; xlen];
+    file.read_exact(&mut extra).map_err(|err| {
+        anyhow::anyhow!(
+            "Cannot read gzip extra field from {read_name} input '{}': {err}",
+            path.display()
+        )
+    })?;
+    if !has_bgzf_bsize_extra(&extra) {
+        anyhow::bail!(
+            "{read_name} input '{}' must be block-zipped FASTQ, but the gzip extra field has no BGZF/BBGZ BC block-size entry",
             path.display()
         );
     }
@@ -1028,15 +1359,23 @@ fn has_fastq_extension(path: &Path) -> bool {
         .any(|extension| file_name.ends_with(extension))
 }
 
-fn is_gzip_path(path: &Path) -> bool {
-    path.file_name()
-        .map(|file_name| {
-            file_name
-                .to_string_lossy()
-                .to_ascii_lowercase()
-                .ends_with(".gz")
-        })
-        .unwrap_or(false)
+fn has_bgzf_bsize_extra(extra: &[u8]) -> bool {
+    let mut cursor = 0usize;
+    while cursor + 4 <= extra.len() {
+        let si1 = extra[cursor];
+        let si2 = extra[cursor + 1];
+        let slen = u16::from_le_bytes([extra[cursor + 2], extra[cursor + 3]]) as usize;
+        cursor += 4;
+
+        if cursor + slen > extra.len() {
+            return false;
+        }
+        if si1 == b'B' && si2 == b'C' && slen == 2 {
+            return true;
+        }
+        cursor += slen;
+    }
+    false
 }
 
 ///
@@ -1049,9 +1388,15 @@ fn do_merging(
     timestamp_temp_files: &String,
     vec_input_debarcode_merge: &Vec<InputPath>,
     histogram_counts: Option<HistogramCounts>,
+    rayon_pool: Arc<rayon::ThreadPool>,
     stage_timings: Arc<GetRawStageTimings>,
 ) -> anyhow::Result<()> {
-    let countof_merge_streams = (*budget.threads::<Total>()).get() as usize;
+    let max_streams_by_memory = (budget.mem::<MStreamBuffer>().as_u64()
+        / (s.sizeof_stream_arena.as_u64().saturating_mul(2)))
+    .max(2) as usize;
+    let countof_merge_streams = (budget.threads.get() as usize)
+        .min(max_streams_by_memory)
+        .max(2);
     let vec_input_debarcode_merge = vec_input_debarcode_merge.clone();
 
     let mergeround_target_count = s.paths_out.len();
@@ -1189,8 +1534,12 @@ fn do_merging(
         stage_timings.add_histogram(histogram_started.elapsed());
     } else {
         let histogram_started = Instant::now();
-        let hist_handles =
-            spawn_histogram_workers(output_hist_pairs, &budget, s.sizeof_stream_arena);
+        let hist_handles = spawn_histogram_workers(
+            output_hist_pairs,
+            &budget,
+            s.sizeof_stream_arena,
+            rayon_pool,
+        );
 
         for (i, handle) in hist_handles.into_iter().enumerate() {
             handle
@@ -1241,6 +1590,7 @@ fn spawn_paired_readers(
     budget: &GetrawBudget,
     stream_arena: ByteSize,
     read_memory_limiter: Arc<ReadMemoryLimiter>,
+    rayon_pool: Arc<rayon::ThreadPool>,
     stage_timings: Arc<GetRawStageTimings>,
     max_read_pairs: Option<u64>,
 ) -> (
@@ -1255,21 +1605,21 @@ fn spawn_paired_readers(
     let (r1_tx, r1_rx) = crossbeam::channel::bounded(queue_capacity);
     let (r2_tx, r2_rx) = crossbeam::channel::bounded(queue_capacity);
     let arc_vec_input = Arc::new(vec_input);
-    let countof_threads_read = (*budget.threads::<TRead>()).get();
-    let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
     let sizeof_stream_each_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / 2);
     let r1_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
     let r2_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
 
     let input_r1 = Arc::clone(&arc_vec_input);
+    let r1_rayon_pool = Arc::clone(&rayon_pool);
     let r1_read_memory_limiter = Arc::clone(&read_memory_limiter);
     let r1_stage_timings = Arc::clone(&stage_timings);
-    let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
+    let handle_r1 = spawn_coordinator("getraw-read-r1", 0, move || {
         let read_started = Instant::now();
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
         debug!(thread = thread_name, "Starting R1 reader");
 
+        let mut ticker = PipelineTicker::new(telemetry_interval());
         let mut records_read = 0u64;
         for (input_r1, _) in &*input_r1 {
             if max_read_pairs.is_some_and(|limit| records_read >= limit) {
@@ -1277,7 +1627,7 @@ fn spawn_paired_readers(
             }
             let d1 = codec::BBGZDecoder::builder()
                 .with_path(&**input_r1.path())
-                .countof_threads(stream_each_n_threads)
+                .with_opt_rayon_pool(Arc::clone(&r1_rayon_pool))
                 .build();
             let p1 = parse::Fastq::builder().build();
 
@@ -1288,28 +1638,48 @@ fn spawn_paired_readers(
                 .build();
 
             let mut q1 = s1.query::<fastq::Record>();
-            let mut batch = Vec::with_capacity(batch_capacity);
             let mut stop_reading = false;
 
-            while let Ok(Some(record)) = q1.next() {
-                if max_read_pairs.is_some_and(|limit| records_read >= limit) {
+            while !stop_reading {
+                let remaining_capacity = max_read_pairs
+                    .map(|limit| limit.saturating_sub(records_read) as usize)
+                    .map(|remaining| remaining.min(batch_capacity))
+                    .unwrap_or(batch_capacity);
+                if remaining_capacity == 0 {
                     stop_reading = true;
                     break;
                 }
-                let permit = r1_read_memory_limiter.acquire(estimate_fastq_record_bytes(&record));
-                batch.push(Budgeted::new(record, permit));
-                records_read += 1;
-                if batch.len() >= batch_capacity {
-                    let send_batch =
-                        std::mem::replace(&mut batch, Vec::with_capacity(batch_capacity));
-                    if r1_tx.send(send_batch).is_err() {
+                let records = match q1.next_batch_with_retained_bytes(remaining_capacity) {
+                    Ok(records) => records,
+                    Err(err) => {
+                        error!(error = ?err, "R1 reader failed");
                         stop_reading = true;
                         break;
                     }
+                };
+                if records.is_empty() {
+                    break;
                 }
-            }
-            if !batch.is_empty() {
-                let _ = r1_tx.send(batch);
+
+                let batch = budget_fastq_record_batch(records, &r1_read_memory_limiter);
+                records_read += batch.len() as u64;
+                if r1_tx.send(batch).is_err() {
+                    stop_reading = true;
+                    break;
+                }
+                if ticker.tick() {
+                    let (read_used, read_max_used, read_waits) = r1_read_memory_limiter.stats();
+                    debug!(
+                        stage = "reader-r1",
+                        r1_queue_len = r1_tx.len(),
+                        r1_queue_cap = r1_tx.capacity().unwrap_or(0),
+                        records_read,
+                        read_memory_used = %ByteSize(read_used as u64),
+                        read_memory_max_used = %ByteSize(read_max_used as u64),
+                        read_memory_wait_count = read_waits,
+                        "getraw pipeline telemetry"
+                    );
+                }
             }
             if stop_reading {
                 unsafe {
@@ -1323,14 +1693,16 @@ fn spawn_paired_readers(
     });
 
     let input_r2 = Arc::clone(&arc_vec_input);
+    let r2_rayon_pool = Arc::clone(&rayon_pool);
     let r2_read_memory_limiter = Arc::clone(&read_memory_limiter);
     let r2_stage_timings = Arc::clone(&stage_timings);
-    let handle_r2 = budget.spawn::<TRead, _, _>(1, move || {
+    let handle_r2 = spawn_coordinator("getraw-read-r2", 1, move || {
         let read_started = Instant::now();
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
         debug!(thread = thread_name, "Starting R2 reader");
 
+        let mut ticker = PipelineTicker::new(telemetry_interval());
         let mut records_read = 0u64;
         for (_, input_r2) in &*input_r2 {
             if max_read_pairs.is_some_and(|limit| records_read >= limit) {
@@ -1338,7 +1710,7 @@ fn spawn_paired_readers(
             }
             let d2 = codec::BBGZDecoder::builder()
                 .with_path(&**input_r2.path())
-                .countof_threads(stream_each_n_threads)
+                .with_opt_rayon_pool(Arc::clone(&r2_rayon_pool))
                 .build();
             let p2 = parse::Fastq::builder().build();
 
@@ -1349,28 +1721,48 @@ fn spawn_paired_readers(
                 .build();
 
             let mut q2 = s2.query::<fastq::Record>();
-            let mut batch = Vec::with_capacity(batch_capacity);
             let mut stop_reading = false;
 
-            while let Ok(Some(record)) = q2.next() {
-                if max_read_pairs.is_some_and(|limit| records_read >= limit) {
+            while !stop_reading {
+                let remaining_capacity = max_read_pairs
+                    .map(|limit| limit.saturating_sub(records_read) as usize)
+                    .map(|remaining| remaining.min(batch_capacity))
+                    .unwrap_or(batch_capacity);
+                if remaining_capacity == 0 {
                     stop_reading = true;
                     break;
                 }
-                let permit = r2_read_memory_limiter.acquire(estimate_fastq_record_bytes(&record));
-                batch.push(Budgeted::new(record, permit));
-                records_read += 1;
-                if batch.len() >= batch_capacity {
-                    let send_batch =
-                        std::mem::replace(&mut batch, Vec::with_capacity(batch_capacity));
-                    if r2_tx.send(send_batch).is_err() {
+                let records = match q2.next_batch_with_retained_bytes(remaining_capacity) {
+                    Ok(records) => records,
+                    Err(err) => {
+                        error!(error = ?err, "R2 reader failed");
                         stop_reading = true;
                         break;
                     }
+                };
+                if records.is_empty() {
+                    break;
                 }
-            }
-            if !batch.is_empty() {
-                let _ = r2_tx.send(batch);
+
+                let batch = budget_fastq_record_batch(records, &r2_read_memory_limiter);
+                records_read += batch.len() as u64;
+                if r2_tx.send(batch).is_err() {
+                    stop_reading = true;
+                    break;
+                }
+                if ticker.tick() {
+                    let (read_used, read_max_used, read_waits) = r2_read_memory_limiter.stats();
+                    debug!(
+                        stage = "reader-r2",
+                        r2_queue_len = r2_tx.len(),
+                        r2_queue_cap = r2_tx.capacity().unwrap_or(0),
+                        records_read,
+                        read_memory_used = %ByteSize(read_used as u64),
+                        read_memory_max_used = %ByteSize(read_max_used as u64),
+                        read_memory_wait_count = read_waits,
+                        "getraw pipeline telemetry"
+                    );
+                }
             }
             if stop_reading {
                 unsafe {
@@ -1396,6 +1788,7 @@ fn spawn_single_readers(
     budget: &GetrawBudget,
     stream_arena: ByteSize,
     read_memory_limiter: Arc<ReadMemoryLimiter>,
+    rayon_pool: Arc<rayon::ThreadPool>,
     stage_timings: Arc<GetRawStageTimings>,
     max_read_pairs: Option<u64>,
 ) -> (
@@ -1410,21 +1803,21 @@ fn spawn_single_readers(
     let (r1_tx, r1_rx) = crossbeam::channel::bounded(queue_capacity);
     let (r2_tx, r2_rx) = crossbeam::channel::bounded(queue_capacity);
     let arc_vec_input = Arc::new(vec_input);
-    let countof_threads_read = (*budget.threads::<TRead>()).get();
-    let stream_each_n_threads = BoundedU64::new_saturating(countof_threads_read / 2);
     let sizeof_stream_each_buffer = ByteSize(budget.mem::<MStreamBuffer>().as_u64() / 2);
     let r1_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
     //let r2_shared_alloc = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
 
     let input_r1 = Arc::clone(&arc_vec_input);
+    let r1_rayon_pool = Arc::clone(&rayon_pool);
     let r1_read_memory_limiter = Arc::clone(&read_memory_limiter);
     let r1_stage_timings = Arc::clone(&stage_timings);
-    let handle_r1 = budget.spawn::<TRead, _, _>(0, move || {
+    let handle_r1 = spawn_coordinator("getraw-read-r1", 0, move || {
         let read_started = Instant::now();
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
         debug!(thread = thread_name, "Starting R1 reader");
 
+        let mut ticker = PipelineTicker::new(telemetry_interval());
         let mut records_read = 0u64;
         for input_r1 in &*input_r1 {
             if max_read_pairs.is_some_and(|limit| records_read >= limit) {
@@ -1432,7 +1825,7 @@ fn spawn_single_readers(
             }
             let d1 = codec::BBGZDecoder::builder()
                 .with_path(&**input_r1.path())
-                .countof_threads(stream_each_n_threads)
+                .with_opt_rayon_pool(Arc::clone(&r1_rayon_pool))
                 .build();
             let p1 = parse::Fastq::builder().build();
 
@@ -1468,6 +1861,21 @@ fn spawn_single_readers(
                         stop_reading = true;
                         break;
                     }
+                    if ticker.tick() {
+                        let (read_used, read_max_used, read_waits) = r1_read_memory_limiter.stats();
+                        debug!(
+                            stage = "reader-single",
+                            r1_queue_len = r1_tx.len(),
+                            r1_queue_cap = r1_tx.capacity().unwrap_or(0),
+                            r2_queue_len = r2_tx.len(),
+                            r2_queue_cap = r2_tx.capacity().unwrap_or(0),
+                            records_read,
+                            read_memory_used = %ByteSize(read_used as u64),
+                            read_memory_max_used = %ByteSize(read_max_used as u64),
+                            read_memory_wait_count = read_waits,
+                            "getraw pipeline telemetry"
+                        );
+                    }
                 }
             }
             if !r1_batch.is_empty() {
@@ -1485,7 +1893,7 @@ fn spawn_single_readers(
         r1_stage_timings.add_read(read_started.elapsed());
     });
 
-    let handle_r2 = budget.spawn::<TRead, _, _>(0, move || {});
+    let handle_r2 = spawn_coordinator("getraw-read-r2", 1, move || {});
 
     return ((r1_rx, r2_rx), (handle_r1, handle_r2));
 }
@@ -1501,11 +1909,12 @@ fn spawn_debarcode_router(
 ) -> (Receiver<BudgetedReadPairBatch>, JoinHandle<()>) {
     let queue_capacity = chunk_queue_capacity(budget);
     let (rp_tx, rp_rx) = crossbeam::channel::bounded(queue_capacity);
-    let rt_handle = budget.spawn::<Total, _, _>(0, move || {
+    let rt_handle = spawn_coordinator("getraw-router", 0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
         debug!(thread = thread_name, "Starting debarcode router");
 
+        let mut ticker = PipelineTicker::new(telemetry_interval());
         loop {
             match (r1_rx.recv(), r2_rx.recv()) {
                 (Ok(r1_batch), Ok(r2_batch)) => {
@@ -1526,6 +1935,18 @@ fn spawn_debarcode_router(
                         batch_stats.record_read_pair_batch(batch.len());
                         if rp_tx.send(batch).is_err() {
                             break;
+                        }
+                        if ticker.tick() {
+                            debug!(
+                                stage = "router",
+                                r1_queue_len = r1_rx.len(),
+                                r1_queue_cap = r1_rx.capacity().unwrap_or(0),
+                                r2_queue_len = r2_rx.len(),
+                                r2_queue_cap = r2_rx.capacity().unwrap_or(0),
+                                read_pair_queue_len = rp_tx.len(),
+                                read_pair_queue_cap = rp_tx.capacity().unwrap_or(0),
+                                "getraw pipeline telemetry"
+                            );
                         }
                     }
                 }
@@ -1559,13 +1980,10 @@ fn sample_reads(
     budget: &GetrawBudget,
     readname: &str,
 ) -> Vec<fastq::OwnedRecord> {
-    // NOTE fine to use all threads briefly. Nothing else does work yet.
-    let countof_threads_total = (*budget.threads::<Total>()).get();
-    // prepare chemistry using r2
+    let _ = budget;
     let decoder = codec::BBGZDecoder::builder()
         .with_path(input_path.path().path())
-        // SAFETY   budget.threads::<Total>() is 7..
-        .countof_threads(unsafe { BoundedU64::new_unchecked(countof_threads_total) })
+        .countof_threads(BoundedU64::new_saturating(1))
         .build();
 
     let p1 = parse::Fastq::builder().build();
@@ -1574,7 +1992,8 @@ fn sample_reads(
         .with_decoder(decoder)
         .with_parser(p1)
         .sizeof_decode_arena(s.sizeof_stream_arena)
-        .sizeof_decode_buffer(*budget.mem::<MStreamBuffer>())
+        .sizeof_decode_buffer(ByteSize::mib(64))
+        .countof_buffers(BoundedUsize::new_saturating(2))
         .build();
 
     let mut q1 = streamer.query::<fastq::Record>();
@@ -1612,33 +2031,66 @@ fn spawn_debarcode_workers(
     GetRawChemistry,
 ) {
     let (ct_tx, ct_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
-    let (result_tx, result_rx) = crossbeam::channel::unbounded();
+    let (result_tx, result_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
+    let work_batch_capacity = debarcode_work_batch_capacity(budget);
 
     let atomic_total_counter = Arc::new(AtomicUsize::new(0));
     let atomic_success_counter = Arc::new(AtomicUsize::new(0));
 
     let dispatcher_chemistry = chemistry.clone();
     let dispatcher_result_tx = result_tx.clone();
-    let dispatcher_handle = budget.spawn::<TDebarcode, _, _>(0, move || {
-        rayon_pool.scope(|scope| {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unknown thread");
-            debug!(thread = thread_name, "Starting debarcode dispatcher");
+    let dispatcher_handle = spawn_coordinator("getraw-debarcode-dispatch", 0, move || {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unknown thread");
+        debug!(thread = thread_name, "Starting debarcode dispatcher");
 
-            while let Ok(batch) = rp_rx.recv() {
+        let (done_tx, done_rx) = crossbeam::channel::unbounded();
+        let mut submitted = 0usize;
+        let mut ticker = PipelineTicker::new(telemetry_interval());
+        while let Ok(mut batch) = rp_rx.recv() {
+            while !batch.is_empty() {
+                let batch_len = batch.len();
+                let work_len = batch_len.min(work_batch_capacity);
+                let next_batch = if batch_len > work_len {
+                    Some(BudgetedReadPairBatch {
+                        r1: batch.r1.split_off(work_len),
+                        r2: batch.r2.split_off(work_len),
+                    })
+                } else {
+                    None
+                };
+
+                let work_batch = batch;
                 let permit = inflight_limiter.acquire();
+                if ticker.tick() {
+                    let (debarcode_inflight, debarcode_inflight_cap) = inflight_limiter.stats();
+                    debug!(
+                        stage = "debarcode-dispatch",
+                        read_pair_queue_len = rp_rx.len(),
+                        read_pair_queue_cap = rp_rx.capacity().unwrap_or(0),
+                        debarcode_result_queue_len = dispatcher_result_tx.len(),
+                        debarcode_result_queue_cap = dispatcher_result_tx.capacity().unwrap_or(0),
+                        debarcode_inflight,
+                        debarcode_inflight_cap,
+                        batch_records = batch_len,
+                        work_records = work_len,
+                        "getraw pipeline telemetry"
+                    );
+                }
                 let mut task_chemistry = dispatcher_chemistry.clone();
                 let task_result_tx = dispatcher_result_tx.clone();
                 let task_atomic_total_counter = Arc::clone(&atomic_total_counter);
                 let task_atomic_success_counter = Arc::clone(&atomic_success_counter);
                 let task_batch_stats = Arc::clone(&batch_stats);
                 let task_stage_timings = Arc::clone(&stage_timings);
+                let task_done_tx = done_tx.clone();
+                submitted += 1;
 
-                scope.spawn(move |_| {
+                rayon_pool.spawn(move || {
                     let debarcode_started = Instant::now();
                     let _permit = permit;
-                    let mut debarcoded_batch = Vec::with_capacity(batch.len());
-                    for (r1, r2) in batch.r1.into_iter().zip(batch.r2.into_iter()) {
+                    let mut debarcoded_batch = Vec::with_capacity(work_batch.len());
+                    for (r1, r2) in work_batch.r1.into_iter().zip(work_batch.r2.into_iter()) {
                         // TODO: optimisation: barcodes are fixed-size if represented in a non-string way (e.g as u64)
                         let (bc_index, rp) = task_chemistry.detect_barcode_and_trim(
                             r1.get_ref::<R0>(),
@@ -1652,6 +2104,7 @@ fn spawn_debarcode_workers(
 
                         //Keep read if ok
                         if bc_index != u32::MAX {
+                            let sort_key = task_chemistry.bcindexu32_to_sort_key(&bc_index);
                             let thread_success_counter =
                                 task_atomic_success_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -1684,7 +2137,11 @@ fn spawn_debarcode_workers(
                                 r2.value.take_backing(),
                             );
                             let permit = ReadMemoryPermit::merge(r1.permit, r2.permit);
-                            debarcoded_batch.push((bc_index, Budgeted::new(db_record, permit)));
+                            debarcoded_batch.push((
+                                sort_key,
+                                bc_index,
+                                Budgeted::new(db_record, permit),
+                            ));
                         }
                     }
 
@@ -1693,16 +2150,39 @@ fn spawn_debarcode_workers(
                         let _ = task_result_tx.send(debarcoded_batch);
                     }
                     task_stage_timings.add_debarcode(debarcode_started.elapsed());
+                    let _ = task_done_tx.send(());
                 });
+
+                match next_batch {
+                    Some(next_batch) => batch = next_batch,
+                    None => break,
+                }
             }
-        });
+        }
+        drop(done_tx);
+        for _ in 0..submitted {
+            if done_rx.recv().is_err() {
+                break;
+            }
+        }
     });
 
     drop(result_tx);
-    let forwarder_handle = budget.spawn::<TDebarcode, _, _>(1, move || {
+    let forwarder_handle = spawn_coordinator("getraw-debarcode-forward", 1, move || {
+        let mut ticker = PipelineTicker::new(telemetry_interval());
         while let Ok(batch) = result_rx.recv() {
             if ct_tx.send(batch).is_err() {
                 break;
+            }
+            if ticker.tick() {
+                debug!(
+                    stage = "debarcode-forward",
+                    debarcode_result_queue_len = result_rx.len(),
+                    debarcode_result_queue_cap = result_rx.capacity().unwrap_or(0),
+                    collector_queue_len = ct_tx.len(),
+                    collector_queue_cap = ct_tx.capacity().unwrap_or(0),
+                    "getraw pipeline telemetry"
+                );
             }
         }
     });
@@ -1716,12 +2196,10 @@ fn spawn_debarcode_workers(
 fn spawn_collector(
     db_rx: Receiver<BudgetedDebarcodedRecordBatch>,
     budget: &GetrawBudget,
+    sort_memory_limiter: Arc<ByteLimiter>,
     batch_stats: Arc<GetRawBatchStats>,
     stage_timings: Arc<GetRawStageTimings>,
-) -> (
-    Receiver<Vec<(u32, BudgetedDebarcodedRecord)>>,
-    JoinHandle<()>,
-) {
+) -> (Receiver<SortChunk>, JoinHandle<()>) {
     let (ct_tx, ct_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
     let sizeof_each_sort_alloc = first_round_sort_chunk_size(budget);
     let mut countof_each_sort_alloc = 0;
@@ -1729,19 +2207,19 @@ fn spawn_collector(
     info!(
         first_round_sort_chunk_size = %sizeof_each_sort_alloc,
         sort_buffer = %budget.mem::<MSortBuffer>(),
-        sort_threads = (*budget.threads::<TSort>()).get(),
         "Configured first-round sort chunking"
     );
-    let ct_handle = budget.spawn::<Total, _, _>(0, move || {
+    let ct_handle = spawn_coordinator("getraw-collector", 0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
         debug!(thread = thread_name, "Starting collector");
 
-        let mut collection_buffer: Vec<(u32, BudgetedDebarcodedRecord)> =
+        let mut collection_buffer: Vec<DebarcodedSortRecord> =
             Vec::with_capacity(countof_each_sort_alloc);
         let mut sizeof_sort_alloc = ByteSize(0);
+        let mut ticker = PipelineTicker::new(telemetry_interval());
         let timeout = std::time::Duration::from_secs(4);
-        let flush_collection = |collection_buffer: &mut Vec<(u32, BudgetedDebarcodedRecord)>,
+        let flush_collection = |collection_buffer: &mut Vec<DebarcodedSortRecord>,
                                 sizeof_sort_alloc: &mut ByteSize,
                                 countof_each_sort_alloc: &mut usize|
          -> bool {
@@ -1757,9 +2235,15 @@ fn spawn_collector(
                 bytes = %*sizeof_sort_alloc,
                 "Flushing first-round sort chunk"
             );
+            let charge = estimate_sort_chunk_charge(len, sizeof_sort_alloc.as_u64() as usize);
+            let permit = sort_memory_limiter.acquire(charge);
             let send_buffer = std::mem::replace(collection_buffer, Vec::with_capacity(len.max(1)));
+            let send_chunk = SortChunk {
+                records: send_buffer,
+                permit,
+            };
             batch_stats.record_collector_flush(len);
-            if ct_tx.send(send_buffer).is_err() {
+            if ct_tx.send(send_chunk).is_err() {
                 return false;
             }
 
@@ -1777,7 +2261,7 @@ fn spawn_collector(
                     let batch_mem_size = ByteSize(
                         debarcoded_batch
                             .iter()
-                            .map(|(_, db_record)| {
+                            .map(|(_, _, db_record)| {
                                 db_record.get_ref::<Id>().len()
                                     + db_record.get_ref::<R1>().len()
                                     + db_record.get_ref::<R2>().len()
@@ -1803,7 +2287,7 @@ fn spawn_collector(
                         sizeof_sort_alloc += batch_mem_size;
                         collection_buffer.append(&mut debarcoded_batch);
                     } else {
-                        for (bc_index, db_record) in debarcoded_batch {
+                        for (sort_key, bc_index, db_record) in debarcoded_batch {
                             let cell_mem_size = ByteSize(
                                 (db_record.get_ref::<Id>().len()
                                     + db_record.get_ref::<R1>().len()
@@ -1823,7 +2307,7 @@ fn spawn_collector(
                             {
                                 break;
                             }
-                            collection_buffer.push((bc_index, db_record));
+                            collection_buffer.push((sort_key, bc_index, db_record));
                             sizeof_sort_alloc += cell_mem_size;
                         }
                     }
@@ -1838,6 +2322,22 @@ fn spawn_collector(
                         break;
                     }
                     stage_timings.add_collect(collect_started.elapsed());
+                    if ticker.tick() {
+                        let (sort_used, sort_max_used, sort_waits) = sort_memory_limiter.stats();
+                        debug!(
+                            stage = "collector",
+                            debarcode_queue_len = db_rx.len(),
+                            debarcode_queue_cap = db_rx.capacity().unwrap_or(0),
+                            sort_queue_len = ct_tx.len(),
+                            sort_queue_cap = ct_tx.capacity().unwrap_or(0),
+                            collection_records = collection_buffer.len(),
+                            collection_bytes = %sizeof_sort_alloc,
+                            sort_memory_used = %ByteSize(sort_used as u64),
+                            sort_memory_max_used = %ByteSize(sort_max_used as u64),
+                            sort_memory_wait_count = sort_waits,
+                            "getraw pipeline telemetry"
+                        );
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     let collect_started = Instant::now();
@@ -1872,76 +2372,90 @@ fn spawn_collector(
 /// Spawn sorters. By sorting chunks of reads while they are already in memory, the first major sort pass will already be done in the first write to disk
 ///
 fn spawn_sort_workers(
-    ct_rx: Receiver<Vec<(u32, BudgetedDebarcodedRecord)>>,
-    chemistry: GetRawChemistry,
+    ct_rx: Receiver<SortChunk>,
     budget: &GetrawBudget,
+    rayon_pool: Arc<rayon::ThreadPool>,
     stage_timings: Arc<GetRawStageTimings>,
-) -> (
-    Receiver<Vec<(Vec<u8>, BudgetedDebarcodedRecord)>>,
-    Vec<JoinHandle<()>>,
-) {
-    let countof_threads_sort = (*budget.threads::<TSort>()).get();
-    let mut thread_handles = Vec::with_capacity(countof_threads_sort as usize);
+) -> (Receiver<SortedChunk>, Vec<JoinHandle<()>>) {
     let (st_tx, st_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
+    let (result_tx, result_rx) = crossbeam::channel::unbounded::<SortedChunk>();
 
-    for thread_idx in 0..countof_threads_sort {
-        let ct_rx = ct_rx.clone();
-        let st_tx = st_tx.clone();
-        let thread_chemistry = chemistry.clone();
-        let thread_stage_timings = Arc::clone(&stage_timings);
+    let dispatcher_result_tx = result_tx.clone();
+    let thread_handle = spawn_coordinator("getraw-sort-dispatch", 0, move || {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("unknown thread");
+        debug!(thread = thread_name, "Starting sort dispatcher");
 
-        let thread_handle = budget.spawn::<TSort, _, _>(thread_idx, move || {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unknown thread");
-            debug!(thread = thread_name, "Starting sort worker");
+        rayon_pool.scope(|scope| {
+            let mut ticker = PipelineTicker::new(telemetry_interval());
+            while let Ok(sort_chunk) = ct_rx.recv() {
+                let records = sort_chunk.records.len();
+                if ticker.tick() {
+                    debug!(
+                        stage = "sort-dispatch",
+                        sort_queue_len = ct_rx.len(),
+                        sort_queue_cap = ct_rx.capacity().unwrap_or(0),
+                        sort_result_queue_len = dispatcher_result_tx.len(),
+                        records,
+                        "getraw pipeline telemetry"
+                    );
+                }
+                let task_result_tx = dispatcher_result_tx.clone();
+                let task_stage_timings = Arc::clone(&stage_timings);
 
-            while let Ok(vec_bc_indices_db_records) = ct_rx.recv() {
-                let records = vec_bc_indices_db_records.len();
-                let started = Instant::now();
-                debug!(
-                    sort_worker = thread_idx,
-                    records, "Sorting first-round chunk"
-                );
-                // HACK: Convert barcode before sorting for correct ordering
-                // NOTE: sort in descending order to be able to pop off the end (O(1) rather than O(n))
-                // NOTE: to save memory conversion to owned cells is NOT done via map but rather by popping
-                let mut records_with_bc: Vec<(Vec<u8>, BudgetedDebarcodedRecord)> =
-                    IntoIterator::into_iter(vec_bc_indices_db_records)
-                        .map(|(bc_index, db_record)| {
-                            let id_as_bc = thread_chemistry.bcindexu32_to_bcu8(&bc_index).to_vec();
-                            (id_as_bc, db_record)
-                        })
-                        .collect();
+                scope.spawn(move |_| {
+                    let started = Instant::now();
+                    debug!(records, "Sorting first-round chunk");
+                    let mut records_with_bc = sort_chunk.records;
+                    radix_sort_debarcoded_records(&mut records_with_bc);
 
-                glidesort::sort_by(&mut records_with_bc, |(bc_a, _), (bc_b, _)| {
-                    Ord::cmp(bc_a, bc_b)
+                    debug!(
+                        records,
+                        elapsed = ?started.elapsed(),
+                        "Sorted first-round chunk"
+                    );
+                    task_stage_timings.add_sort(started.elapsed());
+                    let _ = task_result_tx.send(SortedChunk {
+                        records: records_with_bc,
+                        permit: sort_chunk.permit,
+                    });
                 });
-
-                debug!(
-                    sort_worker = thread_idx,
-                    records,
-                    elapsed = ?started.elapsed(),
-                    "Sorted first-round chunk"
-                );
-                thread_stage_timings.add_sort(started.elapsed());
-                let _ = st_tx.send(records_with_bc);
             }
         });
-        thread_handles.push(thread_handle);
-    }
+    });
 
-    drop(st_tx);
-    return (st_rx, thread_handles);
+    drop(result_tx);
+    let forwarder_handle = spawn_coordinator("getraw-sort-forward", 1, move || {
+        let mut ticker = PipelineTicker::new(telemetry_interval());
+        while let Ok(sorted_chunk) = result_rx.recv() {
+            if st_tx.send(sorted_chunk).is_err() {
+                break;
+            }
+            if ticker.tick() {
+                debug!(
+                    stage = "sort-forward",
+                    sort_result_queue_len = result_rx.len(),
+                    writer_queue_len = st_tx.len(),
+                    writer_queue_cap = st_tx.capacity().unwrap_or(0),
+                    "getraw pipeline telemetry"
+                );
+            }
+        }
+    });
+
+    return (st_rx, vec![thread_handle, forwarder_handle]);
 }
 
 fn spawn_chunk_writers(
-    st_rx: Receiver<Vec<(Vec<u8>, BudgetedDebarcodedRecord)>>,
+    st_rx: Receiver<SortedChunk>,
     timestamp_temp_files: String,
     path_temp_dir: PathBuf,
     budget: &GetrawBudget,
     compression_level: Compression,
+    chemistry: GetRawChemistry,
     library: &str,
     rayon_pool: Arc<rayon::ThreadPool>,
+    compression_limiter: Arc<BBGZCompressionLimiter>,
     stage_timings: Arc<GetRawStageTimings>,
 ) -> Vec<JoinHandle<ChunkWriterOutput>> {
     let atomic_counter = Arc::new(AtomicUsize::new(0));
@@ -1960,26 +2474,42 @@ fn spawn_chunk_writers(
     ));
     let timestamp_temp_files = Arc::new(timestamp_temp_files);
     let library: Arc<str> = Arc::from(library);
+    let chemistry = Arc::new(chemistry);
 
-    let thread_handle = budget.spawn::<TWrite, _, _>(0, move || {
+    let thread_handle = spawn_coordinator("getraw-write-dispatch", 0, move || {
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("unknown thread");
-        debug!(thread = thread_name, "Starting Rayon chunk writer dispatcher");
+        debug!(
+            thread = thread_name,
+            "Starting Rayon chunk writer dispatcher"
+        );
 
-        rayon_pool.scope(|scope| {
-            while let Ok(sorted_record_list) = st_rx.recv() {
-                let chunk_index = atomic_counter.fetch_add(1, Ordering::Relaxed);
-                let chunk_records = sorted_record_list.len();
-                let task_timestamp_temp_files = Arc::clone(&timestamp_temp_files);
-                let task_path_temp_dir = path_temp_dir.clone();
-                let task_library = Arc::clone(&library);
-                let task_raw_arena = Arc::clone(&shared_raw_arena);
-                let task_compression_arena = Arc::clone(&shared_compression_arena);
-                let task_output = Arc::clone(&shared_output);
-                let task_stage_timings = Arc::clone(&stage_timings);
-                let task_rayon_pool = Arc::clone(&rayon_pool);
+        let writer_inflight_limiter =
+            Arc::new(InFlightLimiter::new(rayon_pool.current_num_threads()));
+        let mut writer_handles = Vec::new();
+        while let Ok(sorted_chunk) = st_rx.recv() {
+            let sorted_record_list = sorted_chunk.records;
+            let _sort_memory_permit = sorted_chunk.permit;
+            let chunk_index = atomic_counter.fetch_add(1, Ordering::Relaxed);
+            let chunk_records = sorted_record_list.len();
+            let task_timestamp_temp_files = Arc::clone(&timestamp_temp_files);
+            let task_path_temp_dir = path_temp_dir.clone();
+            let task_library = Arc::clone(&library);
+            let task_chemistry = Arc::clone(&chemistry);
+            let task_raw_arena = Arc::clone(&shared_raw_arena);
+            let task_compression_arena = Arc::clone(&shared_compression_arena);
+            let task_output = Arc::clone(&shared_output);
+            let task_stage_timings = Arc::clone(&stage_timings);
+            let task_rayon_pool = Arc::clone(&rayon_pool);
+            let task_compression_limiter = Arc::clone(&compression_limiter);
+            let task_st_rx = st_rx.clone();
+            let writer_permit = writer_inflight_limiter.acquire();
 
-                scope.spawn(move |_| {
+            let writer_handle = spawn_coordinator(
+                "getraw-chunk-writer",
+                chunk_index as u64,
+                move || {
+                    let _writer_permit = writer_permit;
                     let chunk_started = Instant::now();
                     let temp_fname =
                         format!("{}_merge_0_{chunk_index}", *task_timestamp_temp_files);
@@ -2013,11 +2543,13 @@ fn spawn_chunk_writers(
                         .compression_level(compression_level)
                         .with_opt_raw_arena_pool(Arc::clone(&task_raw_arena))
                         .with_opt_compression_arena_pool(Arc::clone(&task_compression_arena))
+                        .with_opt_compression_limiter(Arc::clone(&task_compression_limiter))
                         .with_opt_rayon_pool(task_rayon_pool)
                         .with_writer(temp_output_file)
                         .build();
 
                     let mut records_writen = 0;
+                    let mut last_bc_index: Option<u32> = None;
                     let mut last_id: SmallVec<[u8; 16]> = SmallVec::new();
                     let mut current_hist_id: Vec<u8> = Vec::new();
                     let mut current_hist_count = 0u64;
@@ -2028,8 +2560,8 @@ fn spawn_chunk_writers(
                     let library_sep = if task_library.is_empty() { "" } else { "_" };
                     let library_sep_bytes = library_sep.as_bytes();
 
-                    for (id, mut record) in sorted_record_list {
-                        if *id != *last_id {
+                    for (_, bc_index, mut record) in sorted_record_list {
+                        if last_bc_index != Some(bc_index) {
                             if let Some(ref mut blockwriter) = blockwriter_opt {
                                 blockwriter.flush().unwrap();
                             }
@@ -2039,7 +2571,9 @@ fn spawn_chunk_writers(
                                     .or_insert(0) += current_hist_count;
                                 current_hist_count = 0;
                             }
-                            last_id = id.to_smallvec();
+                            let id = task_chemistry.bcindexu32_to_bcu8(&bc_index);
+                            last_bc_index = Some(bc_index);
+                            last_id = id.as_slice().into();
 
                             let mut prefixed_id = Vec::with_capacity(
                                 library_bytes.len() + library_sep_bytes.len() + id.len(),
@@ -2069,14 +2603,14 @@ fn spawn_chunk_writers(
 
                             // Reserve space for entire record to prevent splitting across blocks
                             let record_size = 11 + // 8x '\t' + '1' + '1' + '\n'
-                                library_bytes.len() +
-                                library_sep_bytes.len() +
-                                id_bytes.len() +
-                                r1_bytes.len() +
-                                r2_bytes.len() +
-                                q1_bytes.len() +
-                                q2_bytes.len() +
-                                umi_bytes.len();
+                                    library_bytes.len() +
+                                    library_sep_bytes.len() +
+                                    id_bytes.len() +
+                                    r1_bytes.len() +
+                                    r2_bytes.len() +
+                                    q1_bytes.len() +
+                                    q2_bytes.len() +
+                                    umi_bytes.len();
                             blockwriter.reserve(record_size);
 
                             let _ = blockwriter.write_all(library_bytes);
@@ -2124,14 +2658,34 @@ fn spawn_chunk_writers(
                         "Wrote first-round chunk"
                     );
                     task_stage_timings.add_write(chunk_started.elapsed());
+                    let (compression_inflight, compression_inflight_cap) =
+                        task_compression_limiter.stats();
+                    debug!(
+                        stage = "chunk-writer",
+                        writer_queue_len = task_st_rx.len(),
+                        writer_queue_cap = task_st_rx.capacity().unwrap_or(0),
+                        chunk_index,
+                        chunk_records,
+                        records_written = records_writen,
+                        compression_inflight,
+                        compression_inflight_cap,
+                        "getraw pipeline telemetry"
+                    );
 
                     let mut output = task_output.lock().unwrap();
                     output.paths.push(temp_input_path);
                     output.finish_handles.push(finish_handle);
                     merge_histogram_counts(&mut output.histogram_counts, chunk_histogram_counts);
-                });
-            }
-        });
+                },
+            );
+            writer_handles.push(writer_handle);
+        }
+
+        for handle in writer_handles {
+            handle
+                .join()
+                .expect("getraw chunk writer coordinator panicked");
+        }
 
         let mut output = shared_output.lock().unwrap();
         ChunkWriterOutput {
@@ -2156,12 +2710,10 @@ fn spawn_mergesort_workers(
         paths_out: vec![path_out],
         path_include: None,
         path_temp: Some(path_temp),
-        total_threads: Some(BoundedU64::new_saturating(
-            (*budget.threads::<Total>()).get(),
-        )),
+        total_threads: Some(BoundedU64::new_saturating(budget.threads.get())),
         numof_threads_write: None,
         total_mem: *budget.mem::<Total>(),
-        sizeof_stream_buffer: None,
+        sizeof_stream_buffer: Some(*budget.mem::<MStreamBuffer>()),
         sizeof_stream_arena,
 
         show_filter_warning: false,
@@ -2181,39 +2733,30 @@ fn spawn_histogram_workers(
     output_hist_pairs: Vec<(OutputPath, OutputPath)>,
     budget: &GetrawBudget,
     stream_arena: ByteSize,
+    rayon_pool: Arc<rayon::ThreadPool>,
 ) -> Vec<JoinHandle<()>> {
     let countof_histograms = output_hist_pairs.len();
     if countof_histograms == 0 {
         return Vec::new();
     }
 
-    let countof_threads_total: u64 = (*budget.threads::<Total>()).get();
-    let countof_worker_threads = (countof_histograms as u64).min(countof_threads_total);
-    let countof_threads_per_worker_base = countof_threads_total / countof_worker_threads;
-    let countof_threads_remainder = countof_threads_total % countof_worker_threads;
-
+    let countof_worker_threads = countof_histograms as u64;
     let sizeof_stream_each_buffer =
         ByteSize(budget.mem::<MStreamBuffer>().as_u64() / countof_worker_threads);
     let mut thread_handles = Vec::with_capacity(countof_worker_threads as usize);
 
     for (thread_idx, (output_path, hist_path)) in output_hist_pairs.into_iter().enumerate() {
         let thread_shared_arena = Arc::new(ArenaPool::new(sizeof_stream_each_buffer, stream_arena));
-        let extra = if (thread_idx as u64) < countof_threads_remainder {
-            1
-        } else {
-            0
-        };
-        let thread_countof_threads =
-            BoundedU64::new_saturating(countof_threads_per_worker_base + extra);
+        let thread_rayon_pool = Arc::clone(&rayon_pool);
 
-        let worker_handle = budget.spawn::<Total, _, _>(thread_idx as u64, move || {
+        let worker_handle = spawn_coordinator("getraw-histogram", thread_idx as u64, move || {
             let thread = std::thread::current();
             let thread_name = thread.name().unwrap_or("unknown thread");
             debug!(thread = thread_name, processing_histogram_for = %output_path, "Starting histogram worker");
 
             let decoder = codec::BBGZDecoder::builder()
                 .with_path(&**output_path.path())
-                .countof_threads(thread_countof_threads)
+                .with_opt_rayon_pool(thread_rayon_pool)
                 .build();
             let parser = parse::Tirp::builder().build();
 
@@ -2254,7 +2797,9 @@ fn spawn_histogram_workers(
                     if !current_id.is_empty() {
                         bufwriter.write_all(&current_id).unwrap();
                         bufwriter.write_all(b"\t").unwrap();
-                        bufwriter.write_all(current_count.to_string().as_bytes()).unwrap();
+                        bufwriter
+                            .write_all(current_count.to_string().as_bytes())
+                            .unwrap();
                         bufwriter.write_all(b"\n").unwrap();
                     }
                     current_id = id.to_smallvec();
@@ -2264,7 +2809,9 @@ fn spawn_histogram_workers(
             if !current_id.is_empty() {
                 bufwriter.write_all(&current_id).unwrap();
                 bufwriter.write_all(b"\t").unwrap();
-                bufwriter.write_all(current_count.to_string().as_bytes()).unwrap();
+                bufwriter
+                    .write_all(current_count.to_string().as_bytes())
+                    .unwrap();
                 bufwriter.write_all(b"\n").unwrap();
             }
 

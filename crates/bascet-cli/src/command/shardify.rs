@@ -7,7 +7,7 @@ use bascet_core::{
 };
 use bascet_derive::Budget;
 use bascet_io::{BBGZHeader, BBGZTrailer, MAX_SIZEOF_BLOCKusize, codec, parse};
-use bounded_integer::BoundedU64;
+use bounded_integer::{BoundedU64, BoundedUsize};
 use bytesize::ByteSize;
 use clap::Args;
 use clio::{InputPath, OutputPath};
@@ -169,9 +169,13 @@ impl ShardifyCMD {
             );
         }
 
+        let block_queue_capacity =
+            ((budget.threads.get() as usize).saturating_mul(4)).clamp(16, 256);
         let pairs: Vec<(Sender<parse::BBGZBlock>, PeekableReceiver<parse::BBGZBlock>)> = (0
             ..countof_streams_input)
-            .map(|_| bascet_core::channel::peekable::<parse::BBGZBlock>())
+            .map(|_| {
+                bascet_core::channel::peekable_bounded::<parse::BBGZBlock>(block_queue_capacity)
+            })
             .collect();
         let (vec_coordinator_tx, mut vec_coordinator_rx): (
             Vec<Sender<parse::BBGZBlock>>,
@@ -213,6 +217,7 @@ impl ShardifyCMD {
 
                 let thread_decoder = codec::plain::PlaintextDecoder::builder()
                     .with_reader(thread_file)
+                    .sizeof_target_alloc(ByteSize::mib(1))
                     .build();
                 let thread_parser = parse::bbgz_parser();
 
@@ -221,6 +226,7 @@ impl ShardifyCMD {
                     .with_parser(thread_parser)
                     .sizeof_decode_arena(thread_stream_arena_size)
                     .sizeof_decode_buffer(thread_stream_buffer_size)
+                    .countof_buffers(BoundedUsize::new_saturating(4))
                     .build();
 
                 let mut query = thread_stream
@@ -284,7 +290,7 @@ impl ShardifyCMD {
             Sender<Vec<parse::BBGZBlock>>,
             Receiver<Vec<parse::BBGZBlock>>,
         )> = (0..countof_writers_output)
-            .map(|_| crossbeam::channel::unbounded::<Vec<parse::BBGZBlock>>())
+            .map(|_| crossbeam::channel::bounded::<Vec<parse::BBGZBlock>>(block_queue_capacity))
             .collect();
         let (vec_write_tx, vec_write_rx): (Vec<_>, Vec<_>) = shard_channels.into_iter().unzip();
 

@@ -7,11 +7,13 @@ use crate::{barcode::CombinatorialBarcode8bp, common::ReadPair};
 #[derive(Clone)]
 pub struct DebarcodeAtrandiWGSChemistryLongread {
     barcode: CombinatorialBarcode8bp,
+    barcode_sort_ranks: Vec<[u8; 256]>,
 }
 impl DebarcodeAtrandiWGSChemistryLongread {
     pub fn new() -> Self {
         let mut result = DebarcodeAtrandiWGSChemistryLongread {
             barcode: CombinatorialBarcode8bp::new(),
+            barcode_sort_ranks: Vec::new(),
         };
 
         let reader = Cursor::new(include_bytes!("../barcode/atrandi_barcodes.tsv"));
@@ -38,6 +40,7 @@ impl DebarcodeAtrandiWGSChemistryLongread {
         result.barcode.pools[0].pos_rel_anchor = vec![0, 1];
 
         //result.barcode.trim_bcread_len=8+4+8+4+8+4+8+1; //8 barcodes, 3 spacers, and 1 to account for ligation
+        result.barcode_sort_ranks = result.barcode.barcode_name_sort_ranks();
 
         result
     }
@@ -195,6 +198,14 @@ impl crate::barcode::Chemistry for DebarcodeAtrandiWGSChemistryLongread {
             self.barcode.pools[3].barcode_name_list[bytes[0] as usize].as_bytes(),
         );
         return result;
+    }
+
+    fn bcindexu32_to_sort_key(&self, index32: &u32) -> u32 {
+        let bytes = index32.as_bytes();
+        ((self.barcode_sort_ranks[0][bytes[3] as usize] as u32) << 24)
+            | ((self.barcode_sort_ranks[1][bytes[2] as usize] as u32) << 16)
+            | ((self.barcode_sort_ranks[2][bytes[1] as usize] as u32) << 8)
+            | (self.barcode_sort_ranks[3][bytes[0] as usize] as u32)
     }
 }
 

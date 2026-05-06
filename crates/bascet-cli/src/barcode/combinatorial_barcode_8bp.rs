@@ -86,6 +86,30 @@ impl CombinatorialBarcode8bp {
         pool.add_bc(name, sequence);
     }
 
+    pub fn barcode_name_sort_ranks(&self) -> Vec<[u8; 256]> {
+        self.pools
+            .iter()
+            .map(|pool| {
+                assert!(
+                    pool.barcode_name_list.len() <= 256,
+                    "u32 barcode packing supports at most 256 barcodes per pool"
+                );
+                let mut order: Vec<usize> = (0..pool.barcode_name_list.len()).collect();
+                order.sort_unstable_by(|&a, &b| {
+                    pool.barcode_name_list[a]
+                        .as_bytes()
+                        .cmp(pool.barcode_name_list[b].as_bytes())
+                });
+
+                let mut ranks = [0u8; 256];
+                for (rank, original_index) in order.into_iter().enumerate() {
+                    ranks[original_index] = rank as u8;
+                }
+                ranks
+            })
+            .collect()
+    }
+
     ///////////////////////////////
     /// Detect barcode only
     #[inline(always)]

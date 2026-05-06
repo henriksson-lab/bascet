@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{self, BufReader, Read},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     sync::{
         Arc, Condvar, Mutex,
@@ -11,7 +12,6 @@ use std::{
 };
 
 use bounded_integer::BoundedU64;
-use bytesize::ByteSize;
 use crossbeam::channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender};
 use libdeflater::Decompressor;
 
@@ -20,7 +20,10 @@ use bascet_core::{
     channel::{OrderedDenseReceiver, OrderedDenseSender},
 };
 
-use crate::{BBGZExtra, BBGZHeaderBase, BBGZTrailer, codec::bbgz::MARKER_EOF};
+use crate::{
+    BBGZExtra, BBGZHeaderBase, BBGZTrailer,
+    codec::bbgz::{MARKER_EOF, MAX_SIZEOF_BLOCKusize},
+};
 
 pub struct BBGZDecoder {
     inner_reader_handle: Option<JoinHandle<()>>,
@@ -65,9 +68,7 @@ impl BBGZDecoder {
             .map(|pool| pool.current_num_threads())
             .unwrap_or_else(|| countof_threads.get() as usize)
             .max(1);
-        let sizeof_block = ByteSize::kib(64);
-        let sizeof_alloc =
-            ((worker_count as u64 * sizeof_block.as_u64()) / (size_of::<u8>() as u64)) as usize;
+        let sizeof_alloc = MAX_SIZEOF_BLOCKusize;
         let cancel = Arc::new(AtomicBool::new(false));
         let job_queue_capacity = worker_count.saturating_mul(2).max(1);
         let (job_tx, job_rx) = crossbeam::channel::bounded(job_queue_capacity);
@@ -76,7 +77,13 @@ impl BBGZDecoder {
         let reader_handle =
             spawn_reader(file, job_tx.clone(), result_tx.clone(), Arc::clone(&cancel));
         let worker_handles = if let Some(rayon_pool) = with_opt_rayon_pool {
-            spawn_rayon_workers(job_rx, result_tx, Arc::clone(&cancel), rayon_pool)
+            spawn_rayon_workers(
+                job_rx,
+                result_tx,
+                Arc::clone(&cancel),
+                rayon_pool,
+                worker_count,
+            )
         } else {
             spawn_workers(worker_count, job_rx, result_tx, Arc::clone(&cancel))
         };
@@ -141,6 +148,7 @@ impl Decode for BBGZDecoder {
 impl Drop for BBGZDecoder {
     fn drop(&mut self) {
         self.inner_cancel.store(true, Ordering::Release);
+        self.inner_result_rx.close();
 
         if let Some(handle) = self.inner_reader_handle.take() {
             let _ = handle.join();
@@ -225,7 +233,7 @@ fn spawn_workers(
                         };
 
                         let seq = job.seq;
-                        let result = decode_job(&mut decompressor, job);
+                        let result = decode_job_catching_panics(&mut decompressor, job);
                         thread_result_tx.send(seq, result);
                     }
                 })
@@ -239,11 +247,12 @@ fn spawn_rayon_workers(
     result_tx: OrderedDenseSender<BBGZDecodeResult, 4096>,
     cancel: Arc<AtomicBool>,
     rayon_pool: Arc<rayon::ThreadPool>,
+    max_inflight: usize,
 ) -> Vec<JoinHandle<()>> {
     let handle = std::thread::Builder::new()
         .name("BBGZDecodeDispatch@0".to_string())
         .spawn(move || {
-            let inflight_limiter = Arc::new(InFlightLimiter::new(rayon_pool.current_num_threads()));
+            let inflight_limiter = Arc::new(InFlightLimiter::new(max_inflight));
             rayon_pool.scope(|scope| {
                 loop {
                     let job = match job_rx.recv_timeout(Duration::from_millis(100)) {
@@ -257,13 +266,17 @@ fn spawn_rayon_workers(
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
 
+                    if !result_tx.wait_until_sendable(job.seq) {
+                        break;
+                    }
+
                     let permit = inflight_limiter.acquire();
                     let task_result_tx = result_tx.clone();
                     scope.spawn(move |_| {
                         let _permit = permit;
                         let seq = job.seq;
                         let mut decompressor = Decompressor::new();
-                        let result = decode_job(&mut decompressor, job);
+                        let result = decode_job_catching_panics(&mut decompressor, job);
                         task_result_tx.send(seq, result);
                     });
                 }
@@ -382,6 +395,29 @@ fn decode_job(decompressor: &mut Decompressor, job: BBGZDecodeJob) -> anyhow::Re
     }
 
     Ok(decoded)
+}
+
+fn decode_job_catching_panics(
+    decompressor: &mut Decompressor,
+    job: BBGZDecodeJob,
+) -> anyhow::Result<Vec<u8>> {
+    match catch_unwind(AssertUnwindSafe(|| decode_job(decompressor, job))) {
+        Ok(result) => result,
+        Err(payload) => Err(anyhow::anyhow!(
+            "BBGZ decode worker panicked: {}",
+            panic_payload_to_string(payload)
+        )),
+    }
+}
+
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
 }
 
 enum ReadStatus {

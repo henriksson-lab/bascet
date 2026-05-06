@@ -42,4 +42,8 @@ pub trait Chemistry {
     fn bcindexu32_to_bcu8(&self, _index32: &u32) -> Vec<u8> {
         unimplemented!()
     }
+
+    fn bcindexu32_to_sort_key(&self, index32: &u32) -> u32 {
+        *index32
+    }
 }

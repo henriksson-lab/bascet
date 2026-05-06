@@ -42,6 +42,14 @@ fn from_compact(bc: u32) -> Vec<u8> {
     out
 }
 
+#[inline(always)]
+fn reverse_2bit_lanes(mut x: u32) -> u32 {
+    x = x.swap_bytes();
+    x = ((x & 0x0F0F_0F0F) << 4) | ((x & 0xF0F0_F0F0) >> 4);
+    x = ((x & 0x3333_3333) << 2) | ((x & 0xCCCC_CCCC) >> 2);
+    x
+}
+
 #[derive(Clone)]
 pub struct TenxRNAChemistry {
     barcode: CombinatorialBarcode,
@@ -173,6 +181,10 @@ impl Chemistry for TenxRNAChemistry {
 
     fn bcindexu32_to_bcu8(&self, index32: &u32) -> Vec<u8> {
         from_compact(*index32)
+    }
+
+    fn bcindexu32_to_sort_key(&self, index32: &u32) -> u32 {
+        reverse_2bit_lanes(*index32)
     }
 }
 
