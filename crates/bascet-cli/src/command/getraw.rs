@@ -303,6 +303,12 @@ impl ReadMemoryLimiter {
     }
 
     fn acquire(self: &Arc<Self>, bytes: usize) -> ReadMemoryPermit {
+        // DISABLED FOR TESTING
+        {
+            let _ = bytes;
+            return ReadMemoryPermit { bytes: 0, limiter: Arc::clone(self) };
+        }
+
         if bytes == 0 {
             return ReadMemoryPermit {
                 bytes,
@@ -595,7 +601,7 @@ fn estimate_fastq_record_bytes(record: &fastq::Record) -> usize {
 
 fn read_pair_batch_capacity(budget: &GetrawBudget) -> usize {
     let _ = budget;
-    1
+    10_000
 }
 
 fn default_working_stream_buffer(total_mem: u64) -> ByteSize {
