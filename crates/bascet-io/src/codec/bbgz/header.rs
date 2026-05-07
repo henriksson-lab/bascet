@@ -100,9 +100,17 @@ impl BBGZHeader {
         // }
         self.BASE.MTIME = self.BASE.MTIME.max(other.BASE.MTIME);
         for fmerge in other.FEXTRA {
-            // NOTE I do not think checking if xlen > usize_MAX_SIZEOF_FEXTRA is neccessary
-            //      because BSIZE is total blocksize
-            // NOTE add_extra only returns if it added the field successfully
+            if let Some(existing) = self
+                .FEXTRA
+                .iter()
+                .find(|extra| extra.SI1 == fmerge.SI1 && extra.SI2 == fmerge.SI2)
+            {
+                if existing.DATA != fmerge.DATA {
+                    return Err(());
+                }
+                continue;
+            }
+
             let _ = self.add_extra(&[fmerge.SI1, fmerge.SI2], fmerge.DATA);
         }
 

@@ -174,6 +174,9 @@ impl Record {
     pub fn ref_id(&self) -> i32 {
         i32::from_le_bytes(self.data[0..4].try_into().unwrap())
     }
+    pub fn set_ref_id(&mut self, ref_id: i32) {
+        self.data[0..4].copy_from_slice(&ref_id.to_le_bytes());
+    }
     pub fn pos(&self) -> i32 {
         i32::from_le_bytes(self.data[4..8].try_into().unwrap())
     }
@@ -197,6 +200,9 @@ impl Record {
     }
     pub fn next_ref_id(&self) -> i32 {
         i32::from_le_bytes(self.data[20..24].try_into().unwrap())
+    }
+    pub fn set_next_ref_id(&mut self, ref_id: i32) {
+        self.data[20..24].copy_from_slice(&ref_id.to_le_bytes());
     }
     pub fn next_pos(&self) -> i32 {
         i32::from_le_bytes(self.data[24..28].try_into().unwrap())
@@ -250,8 +256,8 @@ fn write_i32<W: Write>(w: &mut W, v: i32) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::bgzf;
     use super::*;
+    use crate::command::samtools_rs::bgzf;
     use std::io::{Cursor, Read};
 
     fn read_test_bam_decompressed() -> Vec<u8> {

@@ -290,8 +290,8 @@ fn write_u64_le<W: Write>(w: &mut W, v: u64) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::bam::RefInfo;
     use super::*;
+    use crate::command::samtools_rs::bam::RefInfo;
 
     fn header_with(n: usize) -> Header {
         let mut text = Vec::new();

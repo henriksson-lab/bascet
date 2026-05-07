@@ -29,6 +29,9 @@ star-rs-align = ["dep:star-rs"]
 [dependencies]
 ahash = "0.8"
 anyhow.workspace = true
+arrow-array.workspace = true
+arrow-ipc.workspace = true
+arrow-schema.workspace = true
 bascet-core.workspace = true
 bascet-derive.workspace = true
 bascet-io.workspace = true

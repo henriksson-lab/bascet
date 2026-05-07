@@ -11,6 +11,9 @@ homepage = "https://henriksson-lab.github.io/zorn/"
 
 [workspace.dependencies]
 anyhow = "1.0.93"
+arrow-array = "58.2.0"
+arrow-ipc = "58.2.0"
+arrow-schema = "58.2.0"
 bitflags = "2.10.0"
 branches = "0.4.4"
 bytemuck = "1.24.0"

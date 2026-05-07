@@ -9,12 +9,14 @@ use bascet_derive::Budget;
 use bascet_io::{codec, parse, tirp};
 
 use anyhow::Result;
+use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray, UInt64Array};
+use arrow_ipc::writer::FileWriter as ArrowFileWriter;
+use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use bounded_integer::BoundedU64;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use crossbeam::channel::TryRecvError;
-use serde::Serialize;
 use std::{
     fs::File,
     io::BufWriter,
@@ -42,7 +44,7 @@ pub struct CountsketchCMD {
     #[arg(
         short = 'o',
         long = "out",
-        help = "Output directory for countsketch files"
+        help = "Output Feather file for the wide countsketch matrix"
     )]
     pub path_out: PathBuf,
 
@@ -183,21 +185,10 @@ impl CountsketchCMD {
         };
 
         let (write_tx, write_rx) = crossbeam::channel::unbounded::<CountsketchRow>();
+        let countsketch_size = self.countsketch_size;
         let thread_writer = budget.spawn::<TWrite, _, _>(0, move || {
-            let bufwriter = BufWriter::new(output_file);
-            let mut csvwriter = csv::WriterBuilder::new()
-                .has_headers(false)
-                .from_writer(bufwriter);
-
-            while let Ok(countsketch_row) = write_rx.recv() {
-                let id = countsketch_row.get_ref::<Id>();
-                if id.is_empty() {
-                    continue;
-                }
-                csvwriter.serialize(&countsketch_row).unwrap();
-            }
-
-            csvwriter.flush().expect("Failed to flush CSV");
+            write_countsketch_feather(output_file, write_rx, countsketch_size)
+                .expect("Failed to write countsketch Feather file");
         });
 
         let k = self.kmer_size;
@@ -428,13 +419,117 @@ pub struct CountsketchRecord {
     arena_backing: smallvec::SmallVec<[ArenaView<u8>; 2]>,
 }
 
-#[derive(Composite, Default, Serialize)]
+const FEATHER_ROWS_PER_BATCH: usize = 256;
+
+fn write_countsketch_feather(
+    output_file: File,
+    write_rx: crossbeam::channel::Receiver<CountsketchRow>,
+    countsketch_size: usize,
+) -> Result<()> {
+    let schema = countsketch_schema(countsketch_size);
+    let bufwriter = BufWriter::new(output_file);
+    let mut writer = ArrowFileWriter::try_new(bufwriter, schema.as_ref())?;
+    let mut buffer = CountsketchFeatherBatch::new(Arc::clone(&schema), countsketch_size);
+
+    while let Ok(countsketch_row) = write_rx.recv() {
+        let id = countsketch_row.get_ref::<Id>();
+        if id.is_empty() {
+            continue;
+        }
+        buffer.push(countsketch_row)?;
+        if buffer.len() >= FEATHER_ROWS_PER_BATCH {
+            buffer.flush(&mut writer)?;
+        }
+    }
+
+    buffer.flush(&mut writer)?;
+    writer.finish()?;
+    Ok(())
+}
+
+fn countsketch_schema(countsketch_size: usize) -> SchemaRef {
+    let mut fields = Vec::with_capacity(countsketch_size + 2);
+    fields.push(Field::new("cell_id", DataType::Utf8, false));
+    fields.push(Field::new("depth", DataType::UInt64, false));
+    for i in 0..countsketch_size {
+        fields.push(Field::new(format!("cs_{i}"), DataType::Int64, false));
+    }
+    Arc::new(Schema::new(fields))
+}
+
+struct CountsketchFeatherBatch {
+    schema: SchemaRef,
+    ids: Vec<String>,
+    depths: Vec<u64>,
+    sketch_columns: Vec<Vec<i64>>,
+}
+
+impl CountsketchFeatherBatch {
+    fn new(schema: SchemaRef, countsketch_size: usize) -> Self {
+        Self {
+            schema,
+            ids: Vec::with_capacity(FEATHER_ROWS_PER_BATCH),
+            depths: Vec::with_capacity(FEATHER_ROWS_PER_BATCH),
+            sketch_columns: (0..countsketch_size)
+                .map(|_| Vec::with_capacity(FEATHER_ROWS_PER_BATCH))
+                .collect(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    fn push(&mut self, row: CountsketchRow) -> Result<()> {
+        if row.countsketch.len() != self.sketch_columns.len() {
+            anyhow::bail!(
+                "countsketch row has {} dimensions, expected {}",
+                row.countsketch.len(),
+                self.sketch_columns.len()
+            );
+        }
+
+        self.ids.push(row.id);
+        self.depths.push(row.depth);
+        for (column, value) in self.sketch_columns.iter_mut().zip(row.countsketch) {
+            column.push(value);
+        }
+        Ok(())
+    }
+
+    fn flush<W: std::io::Write>(&mut self, writer: &mut ArrowFileWriter<W>) -> Result<()> {
+        if self.ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(self.sketch_columns.len() + 2);
+        arrays.push(Arc::new(StringArray::from(std::mem::take(&mut self.ids))) as ArrayRef);
+        arrays.push(Arc::new(UInt64Array::from(std::mem::take(&mut self.depths))) as ArrayRef);
+
+        for column in &mut self.sketch_columns {
+            let values = std::mem::take(column);
+            arrays.push(Arc::new(Int64Array::from(values)) as ArrayRef);
+        }
+
+        let batch = RecordBatch::try_new(Arc::clone(&self.schema), arrays)?;
+        writer.write(&batch)?;
+
+        self.ids = Vec::with_capacity(FEATHER_ROWS_PER_BATCH);
+        self.depths = Vec::with_capacity(FEATHER_ROWS_PER_BATCH);
+        for column in &mut self.sketch_columns {
+            *column = Vec::with_capacity(FEATHER_ROWS_PER_BATCH);
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Composite, Default)]
 #[bascet(attrs = (Id, Depth, Countsketch), backing = OwnedBacking, marker = AsRecord)]
 pub struct CountsketchRow {
     id: String,
     depth: u64,
     countsketch: Vec<i64>,
 
-    #[serde(skip)]
     owned_backing: (),
 }

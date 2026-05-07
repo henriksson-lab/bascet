@@ -344,6 +344,7 @@ impl ShardifyCMD {
                     for block in vec_blocks {
                         let header_bytes = block.as_bytes::<Header>();
                         let compressed_bytes = block.as_bytes::<Compressed>();
+                        let block_id = block.as_bytes::<Id>();
 
                         let csize = compressed_bytes.len();
                         let hsize = header_bytes.len() + csize;
@@ -417,6 +418,15 @@ impl ShardifyCMD {
                                 merge_hsize = hsize;
                             }
                             1.. => {
+                                let merge_id =
+                                    unsafe { merge_blocks.get_unchecked(0) }.as_bytes::<Id>();
+                                assert_eq!(
+                                    block_id,
+                                    merge_id,
+                                    "attempted to merge BBGZ blocks with different IDs: {} != {}",
+                                    String::from_utf8_lossy(block_id),
+                                    String::from_utf8_lossy(merge_id)
+                                );
                                 merge_blocks.push(block);
                                 merge_csize += csize - 2;
                                 merge_hsize += hsize;

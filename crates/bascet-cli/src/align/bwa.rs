@@ -8,7 +8,7 @@ use bytesize::ByteSize;
 use tracing::info;
 
 use super::bwa_stock_driver::{StockDriverState, run_stock_driver_tirp_to_bam};
-use crate::command::bamsort::sort_and_index_bam;
+use crate::command::{bamsort::sort_and_index_bam, samtools_rs::sort::ReferenceOrder};
 
 /// Drive the BWAMEM2 stock driver end-to-end: TIRP → pipelined BAM (reader → aligner →
 /// compressor pool → writer with bounded memory + in-flight limiters) → sort → index.
@@ -60,6 +60,7 @@ pub fn try_execute_bwa_mem2(
         path_temp,
         total_memory,
         total_threads as usize,
+        ReferenceOrder::Lexicographic,
     )?;
 
     info!("BWAMEM2 alignment complete");

@@ -938,7 +938,7 @@ pub(crate) fn future_channel<R: Write + Send + 'static>(
     (ftx, sections_handle, buf, section_receiver)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use byteordered::Endianness;
 

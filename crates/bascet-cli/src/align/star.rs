@@ -19,7 +19,7 @@ use super::output::{
     SamRecordSink, TaggedBamSamSink, create_tagged_bam_writer, finish_tagged_bam_writer,
     make_bascet_read_name,
 };
-use crate::command::bamsort::sort_and_index_bam;
+use crate::command::{bamsort::sort_and_index_bam, samtools_rs::sort::ReferenceOrder};
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 use star_rs::{
     direct::{DirectReadPair, DirectStarRun},
@@ -101,6 +101,7 @@ pub fn try_execute_star_rs(
         path_temp,
         total_memory,
         total_threads as usize,
+        ReferenceOrder::Lexicographic,
     )?;
 
     info!("All alignment steps complete");

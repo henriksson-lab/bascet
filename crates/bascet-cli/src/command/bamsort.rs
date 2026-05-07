@@ -15,7 +15,9 @@ use clap::Args;
 use tracing::info;
 
 use super::determine_thread_counts_1;
-use super::samtools_rs::sort::{IndexFormat, Order, SortOptions, sort_streaming_parallel};
+use super::samtools_rs::sort::{
+    IndexFormat, Order, ReferenceOrder, SortOptions, sort_streaming_parallel,
+};
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
@@ -42,6 +44,10 @@ pub struct BamSortCMD {
     /// Total threads.
     #[arg(short = '@', long = "threads", value_parser = clap::value_parser!(usize))]
     pub num_threads: Option<usize>,
+
+    /// Preserve the input BAM reference order instead of sorting @SQ/reference IDs by name.
+    #[arg(long = "preserve-reference-order")]
+    pub preserve_reference_order: bool,
 }
 
 impl BamSortCMD {
@@ -53,6 +59,11 @@ impl BamSortCMD {
             &self.path_temp,
             self.memory,
             num_threads,
+            if self.preserve_reference_order {
+                ReferenceOrder::Preserve
+            } else {
+                ReferenceOrder::Lexicographic
+            },
         )
     }
 }
@@ -70,6 +81,7 @@ pub fn sort_and_index_bam(
     path_temp: &Path,
     memory: ByteSize,
     num_threads: usize,
+    reference_order: ReferenceOrder,
 ) -> Result<()> {
     info!(
         input = %path_in.display(),
@@ -99,6 +111,7 @@ pub fn sort_and_index_bam(
 
     let opts = SortOptions {
         order: Order::Coordinate,
+        reference_order,
         level: 6,
         arg_list: None,
         no_pg: true, // we don't have a stable @PG line to add

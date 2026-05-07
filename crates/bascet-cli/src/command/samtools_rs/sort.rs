@@ -34,6 +34,12 @@ pub enum Order {
     Coordinate,
 }
 
+#[derive(Clone, Copy)]
+pub enum ReferenceOrder {
+    Lexicographic,
+    Preserve,
+}
+
 /// Coordinate comparator matching `bam1_cmp_core` for `Coordinate` in
 /// samtools/bam_sort.c:2023. Key is (tid sign-extended to u64, pos+1, is_rev).
 /// Sign-extending tid causes unmapped reads (tid = -1) to sort last.
@@ -55,6 +61,7 @@ pub fn coord_cmp(a: &Record, b: &Record) -> Ordering {
 
 pub struct SortOptions<'a> {
     pub order: Order,
+    pub reference_order: ReferenceOrder,
     pub level: u8,
     /// Command line text written into the @PG CL field. None = omit CL.
     pub arg_list: Option<&'a str>,
@@ -115,9 +122,11 @@ pub fn sort_in_memory_parallel<R: Read + Send + 'static, W: Write + Send + 'stat
 }
 
 fn collect_in_memory<R: Read>(mut bgz_in: R, opts: &SortOptions<'_>) -> io::Result<StagedSort> {
-    let mut header = Header::read(&mut bgz_in)?;
+    let original_header = Header::read(&mut bgz_in)?;
+    let (mut header, ref_id_map) = prepare_output_header(&original_header, opts.reference_order)?;
     let mut records = Vec::new();
-    while let Some(r) = Record::read(&mut bgz_in)? {
+    while let Some(mut r) = Record::read(&mut bgz_in)? {
+        remap_record_refs(&mut r, ref_id_map.as_deref())?;
         records.push(r);
     }
     sort_records(&mut records, opts.order);
@@ -213,8 +222,10 @@ fn collect_and_spill_parallel<R: Read + Send + 'static>(
 ) -> io::Result<StagedSort> {
     let mut bgz_in = bgzf::ParallelReader::new(input, opts.threads);
     let original_header = Header::read(&mut bgz_in)?;
+    let (mut out_header, ref_id_map) =
+        prepare_output_header(&original_header, opts.reference_order)?;
 
-    let header_arc = Arc::new(original_header.clone());
+    let header_arc = Arc::new(out_header.clone());
     let order = opts.order;
     let prefix = opts.tmp_prefix.clone();
 
@@ -263,9 +274,10 @@ fn collect_and_spill_parallel<R: Read + Send + 'static>(
                 buf_pool.extend(batch);
             }
             let scratch = buf_pool.pop().unwrap_or_default();
-            let Some(r) = Record::read_into(&mut bgz_in, scratch)? else {
+            let Some(mut r) = Record::read_into(&mut bgz_in, scratch)? else {
                 break;
             };
+            remap_record_refs(&mut r, ref_id_map.as_deref())?;
             buf_bytes += record_mem(&r);
             buf.push(r);
             total_records += 1;
@@ -346,7 +358,6 @@ fn collect_and_spill_parallel<R: Read + Send + 'static>(
         return Err(e);
     }
 
-    let mut out_header = original_header;
     update_header(&mut out_header, opts);
 
     if !spill_started {
@@ -464,18 +475,21 @@ fn collect_and_spill_with_reader<R: Read>(
     opts: &SortOptions<'_>,
 ) -> io::Result<StagedSort> {
     let original_header = Header::read(&mut bgz_in)?;
+    let (mut out_header, ref_id_map) =
+        prepare_output_header(&original_header, opts.reference_order)?;
 
     let mut buf: Vec<Record> = Vec::new();
     let mut buf_bytes: usize = 0;
     let mut chunk_paths: Vec<PathBuf> = Vec::new();
 
-    while let Some(r) = Record::read(&mut bgz_in)? {
+    while let Some(mut r) = Record::read(&mut bgz_in)? {
+        remap_record_refs(&mut r, ref_id_map.as_deref())?;
         buf_bytes += record_mem(&r);
         buf.push(r);
         if buf_bytes >= opts.max_mem {
             spill_chunk(
                 &mut buf,
-                &original_header,
+                &out_header,
                 opts.order,
                 &opts.tmp_prefix,
                 &mut chunk_paths,
@@ -484,7 +498,6 @@ fn collect_and_spill_with_reader<R: Read>(
         }
     }
 
-    let mut out_header = original_header.clone();
     update_header(&mut out_header, opts);
 
     let chunks = if chunk_paths.is_empty() {
@@ -494,7 +507,7 @@ fn collect_and_spill_with_reader<R: Read>(
         if !buf.is_empty() {
             spill_chunk(
                 &mut buf,
-                &original_header,
+                &out_header,
                 opts.order,
                 &opts.tmp_prefix,
                 &mut chunk_paths,
@@ -789,6 +802,112 @@ fn update_header(h: &mut Header, opts: &SortOptions<'_>) {
     }
 }
 
+fn prepare_output_header(
+    header: &Header,
+    reference_order: ReferenceOrder,
+) -> io::Result<(Header, Option<Vec<i32>>)> {
+    match reference_order {
+        ReferenceOrder::Preserve => Ok((header.clone(), None)),
+        ReferenceOrder::Lexicographic => {
+            let mut order: Vec<usize> = (0..header.refs.len()).collect();
+            order.sort_by(|&a, &b| header.refs[a].name.cmp(&header.refs[b].name));
+            if order.iter().copied().eq(0..header.refs.len()) {
+                return Ok((header.clone(), None));
+            }
+
+            let mut old_to_new = vec![0i32; header.refs.len()];
+            let mut refs = Vec::with_capacity(header.refs.len());
+            for (new_idx, old_idx) in order.iter().copied().enumerate() {
+                old_to_new[old_idx] = i32::try_from(new_idx).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "too many BAM references")
+                })?;
+                refs.push(header.refs[old_idx].clone());
+            }
+
+            let text = reorder_sq_lines(&header.text, &refs);
+            Ok((Header { text, refs }, Some(old_to_new)))
+        }
+    }
+}
+
+fn remap_record_refs(record: &mut Record, ref_id_map: Option<&[i32]>) -> io::Result<()> {
+    let Some(map) = ref_id_map else {
+        return Ok(());
+    };
+    let ref_id = record.ref_id();
+    if ref_id >= 0 {
+        record.set_ref_id(remap_ref_id(ref_id, map)?);
+    }
+    let next_ref_id = record.next_ref_id();
+    if next_ref_id >= 0 {
+        record.set_next_ref_id(remap_ref_id(next_ref_id, map)?);
+    }
+    Ok(())
+}
+
+fn remap_ref_id(ref_id: i32, map: &[i32]) -> io::Result<i32> {
+    let idx = usize::try_from(ref_id)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "negative reference id"))?;
+    map.get(idx).copied().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("reference id {ref_id} exceeds BAM header references"),
+        )
+    })
+}
+
+fn reorder_sq_lines(text: &[u8], refs: &[super::bam::RefInfo]) -> Vec<u8> {
+    let lines = split_lines_keep_terminator(text);
+    let mut sq_by_name: Vec<(&[u8], &[u8])> = Vec::new();
+    for line in &lines {
+        if line.starts_with(b"@SQ") {
+            if let Some(name) = field_value(line, b"SN") {
+                sq_by_name.push((name, *line));
+            }
+        }
+    }
+
+    let mut sorted_sq = Vec::new();
+    for r in refs {
+        match sq_by_name
+            .iter()
+            .find_map(|(name, line)| (*name == r.name.as_slice()).then_some(*line))
+        {
+            Some(line) => sorted_sq.extend_from_slice(line),
+            None => {
+                sorted_sq.extend_from_slice(b"@SQ\tSN:");
+                sorted_sq.extend_from_slice(&r.name);
+                sorted_sq.extend_from_slice(b"\tLN:");
+                sorted_sq.extend_from_slice(r.length.to_string().as_bytes());
+                sorted_sq.push(b'\n');
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(text.len());
+    let mut emitted_sq = false;
+    for line in &lines {
+        if line.starts_with(b"@SQ") {
+            if !emitted_sq {
+                out.extend_from_slice(&sorted_sq);
+                emitted_sq = true;
+            }
+            continue;
+        }
+        out.extend_from_slice(line);
+        if !emitted_sq && line.starts_with(b"@HD") {
+            out.extend_from_slice(&sorted_sq);
+            emitted_sq = true;
+        }
+    }
+    if !emitted_sq {
+        let mut with_sq = sorted_sq;
+        with_sq.extend_from_slice(&out);
+        return with_sq;
+    }
+    out
+}
+
 /// Update the SO: field on the @HD line, or insert an @HD line if absent.
 /// SAM header text is a sequence of lines, each starting with `@<TAG>` and
 /// ending with `\n`. Fields within a line are tab-separated.
@@ -1019,6 +1138,7 @@ mod tests {
             &mut out,
             &SortOptions {
                 order: Order::Coordinate,
+                reference_order: ReferenceOrder::Lexicographic,
                 level: 6,
                 arg_list: Some("sort tests/data/small_unsorted.bam"),
                 no_pg: false,
@@ -1105,6 +1225,37 @@ mod tests {
     }
 
     #[test]
+    fn lexicographic_reference_order_rewrites_header_and_mapping() {
+        let header = Header {
+            text: b"@HD\tVN:1.6\n@SQ\tSN:OPD_9\tLN:9\tM5:keep9\n@SQ\tSN:OPD_10\tLN:10\tM5:keep10\n@PG\tID:x\n".to_vec(),
+            refs: vec![
+                super::super::bam::RefInfo {
+                    name: b"OPD_9".to_vec(),
+                    length: 9,
+                },
+                super::super::bam::RefInfo {
+                    name: b"OPD_10".to_vec(),
+                    length: 10,
+                },
+            ],
+        };
+
+        let (out, map) = prepare_output_header(&header, ReferenceOrder::Lexicographic).unwrap();
+        assert_eq!(
+            out.refs
+                .iter()
+                .map(|r| r.name.as_slice())
+                .collect::<Vec<_>>(),
+            vec![b"OPD_10".as_slice(), b"OPD_9".as_slice()]
+        );
+        assert_eq!(map.unwrap(), vec![1, 0]);
+        assert_eq!(
+            std::str::from_utf8(&out.text).unwrap(),
+            "@HD\tVN:1.6\n@SQ\tSN:OPD_10\tLN:10\tM5:keep10\n@SQ\tSN:OPD_9\tLN:9\tM5:keep9\n@PG\tID:x\n"
+        );
+    }
+
+    #[test]
     fn streaming_sort_with_forced_spill_matches_in_memory() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/small_unsorted.bam");
         let bytes = std::fs::read(path).unwrap();
@@ -1116,6 +1267,7 @@ mod tests {
             &mut ref_out,
             &SortOptions {
                 order: Order::Coordinate,
+                reference_order: ReferenceOrder::Lexicographic,
                 level: 6,
                 arg_list: Some("sort small.bam"),
                 no_pg: false,
@@ -1143,6 +1295,7 @@ mod tests {
             &mut spill_out,
             &SortOptions {
                 order: Order::Coordinate,
+                reference_order: ReferenceOrder::Lexicographic,
                 level: 6,
                 arg_list: Some("sort small.bam"),
                 no_pg: false,

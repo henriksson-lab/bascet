@@ -246,7 +246,16 @@ fn coverage_values(
     scale_factor: f32,
 ) -> Vec<(String, Value)> {
     let mut values = Vec::new();
-    for (reference, chrom_coverage) in header.refs.iter().zip(coverage.iter()) {
+    let mut reference_order: Vec<usize> = (0..header.refs.len()).collect();
+    // The BAM is coordinate-sorted by numeric reference id, i.e. by @SQ/header order.
+    // The vendored BigWig writer validates its bedGraph-like input by chromosome
+    // name order, so emit chromosome groups lexicographically while preserving
+    // per-chromosome coordinate order.
+    reference_order.sort_by(|&a, &b| header.refs[a].name.cmp(&header.refs[b].name));
+
+    for ref_idx in reference_order {
+        let reference = &header.refs[ref_idx];
+        let chrom_coverage = &coverage[ref_idx];
         let chrom = String::from_utf8_lossy(&reference.name).into_owned();
         let chrom_len = reference.length.max(0) as u32;
         let mut run_start: Option<u32> = None;

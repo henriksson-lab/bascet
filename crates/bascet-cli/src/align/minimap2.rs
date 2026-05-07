@@ -20,7 +20,7 @@ use super::output::{
     SamRecordSink, TaggedBamSamSink, TaggedBamWriter, create_tagged_bam_writer,
     finish_tagged_bam_writer,
 };
-use crate::command::bamsort::sort_and_index_bam;
+use crate::command::{bamsort::sort_and_index_bam, samtools_rs::sort::ReferenceOrder};
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 // Outer batch scales with thread count so each parallel mapping scope amortizes spawn/join +
@@ -123,6 +123,7 @@ pub fn try_execute_minimap2(
         path_temp,
         total_memory,
         total_threads as usize,
+        ReferenceOrder::Lexicographic,
     )?;
 
     info!("All alignment steps complete");
