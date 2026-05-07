@@ -9,10 +9,11 @@ use bascet_derive::Budget;
 use bascet_io::{codec, parse, tirp};
 
 use anyhow::Result;
-use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray, UInt64Array};
-use arrow_ipc::writer::FileWriter as ArrowFileWriter;
-use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use bounded_integer::BoundedU64;
+use polars_arrow::array::{Array, Int64Array, UInt64Array, Utf8Array};
+use polars_arrow::datatypes::{ArrowDataType, ArrowSchema, ArrowSchemaRef, Field};
+use polars_arrow::io::ipc::write::{FileWriter as ArrowFileWriter, WriteOptions};
+use polars_arrow::record_batch::RecordBatch;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
@@ -428,7 +429,13 @@ fn write_countsketch_feather(
 ) -> Result<()> {
     let schema = countsketch_schema(countsketch_size);
     let bufwriter = BufWriter::new(output_file);
-    let mut writer = ArrowFileWriter::try_new(bufwriter, schema.as_ref())?;
+    let mut writer = ArrowFileWriter::new(
+        bufwriter,
+        Arc::clone(&schema),
+        None,
+        WriteOptions { compression: None },
+    );
+    writer.start()?;
     let mut buffer = CountsketchFeatherBatch::new(Arc::clone(&schema), countsketch_size);
 
     while let Ok(countsketch_row) = write_rx.recv() {
@@ -447,25 +454,29 @@ fn write_countsketch_feather(
     Ok(())
 }
 
-fn countsketch_schema(countsketch_size: usize) -> SchemaRef {
+fn countsketch_schema(countsketch_size: usize) -> ArrowSchemaRef {
     let mut fields = Vec::with_capacity(countsketch_size + 2);
-    fields.push(Field::new("cell_id", DataType::Utf8, false));
-    fields.push(Field::new("depth", DataType::UInt64, false));
+    fields.push(Field::new("cell_id".into(), ArrowDataType::Utf8, false));
+    fields.push(Field::new("depth".into(), ArrowDataType::UInt64, false));
     for i in 0..countsketch_size {
-        fields.push(Field::new(format!("cs_{i}"), DataType::Int64, false));
+        fields.push(Field::new(
+            format!("cs_{i}").into(),
+            ArrowDataType::Int64,
+            false,
+        ));
     }
-    Arc::new(Schema::new(fields))
+    Arc::new(ArrowSchema::from_iter(fields))
 }
 
 struct CountsketchFeatherBatch {
-    schema: SchemaRef,
+    schema: ArrowSchemaRef,
     ids: Vec<String>,
     depths: Vec<u64>,
     sketch_columns: Vec<Vec<i64>>,
 }
 
 impl CountsketchFeatherBatch {
-    fn new(schema: SchemaRef, countsketch_size: usize) -> Self {
+    fn new(schema: ArrowSchemaRef, countsketch_size: usize) -> Self {
         Self {
             schema,
             ids: Vec::with_capacity(FEATHER_ROWS_PER_BATCH),
@@ -502,17 +513,22 @@ impl CountsketchFeatherBatch {
             return Ok(());
         }
 
-        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(self.sketch_columns.len() + 2);
-        arrays.push(Arc::new(StringArray::from(std::mem::take(&mut self.ids))) as ArrayRef);
-        arrays.push(Arc::new(UInt64Array::from(std::mem::take(&mut self.depths))) as ArrayRef);
+        let height = self.ids.len();
+        let mut arrays: Vec<Box<dyn Array>> = Vec::with_capacity(self.sketch_columns.len() + 2);
+        arrays.push(Box::new(Utf8Array::<i32>::from_slice(std::mem::take(
+            &mut self.ids,
+        ))));
+        arrays.push(Box::new(UInt64Array::from_vec(std::mem::take(
+            &mut self.depths,
+        ))));
 
         for column in &mut self.sketch_columns {
             let values = std::mem::take(column);
-            arrays.push(Arc::new(Int64Array::from(values)) as ArrayRef);
+            arrays.push(Box::new(Int64Array::from_vec(values)));
         }
 
-        let batch = RecordBatch::try_new(Arc::clone(&self.schema), arrays)?;
-        writer.write(&batch)?;
+        let batch = RecordBatch::try_new(height, Arc::clone(&self.schema), arrays)?;
+        writer.write(&batch, None)?;
 
         self.ids = Vec::with_capacity(FEATHER_ROWS_PER_BATCH);
         self.depths = Vec::with_capacity(FEATHER_ROWS_PER_BATCH);

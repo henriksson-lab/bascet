@@ -720,14 +720,48 @@ impl KrakenCMD {
             "Loading KRAKEN2 database"
         );
         let started = Instant::now();
+        let rss_before_load = Self::current_rss();
         let db = ClassifyDb::from_files(&hash_path, &taxonomy_path, &opts_path, false)?;
-        info!(
-            db = %path_db.display(),
-            elapsed = ?started.elapsed(),
-            "KRAKEN2 database loaded"
-        );
+        let rss_after_load = Self::current_rss();
+        let rss_delta = match (rss_before_load, rss_after_load) {
+            (Some(before), Some(after)) => {
+                Some(ByteSize(after.as_u64().saturating_sub(before.as_u64())))
+            }
+            _ => None,
+        };
+        match (rss_after_load, rss_delta) {
+            (Some(rss_after_load), Some(rss_delta)) => {
+                info!(
+                    db = %path_db.display(),
+                    elapsed = ?started.elapsed(),
+                    rss_after_load = %rss_after_load,
+                    rss_delta = %rss_delta,
+                    "KRAKEN2 database loaded"
+                );
+            }
+            (Some(rss_after_load), None) => {
+                info!(
+                    db = %path_db.display(),
+                    elapsed = ?started.elapsed(),
+                    rss_after_load = %rss_after_load,
+                    "KRAKEN2 database loaded"
+                );
+            }
+            (None, _) => {
+                info!(
+                    db = %path_db.display(),
+                    elapsed = ?started.elapsed(),
+                    "KRAKEN2 database loaded"
+                );
+                warn!("Could not read current RSS after KRAKEN2 database load");
+            }
+        }
 
         Ok(db)
+    }
+
+    fn current_rss() -> Option<ByteSize> {
+        memory_stats::memory_stats().map(|memory| ByteSize(memory.physical_mem as u64))
     }
 
     fn kraken_stream_buffer_after_db_load(requested_stream_buffer: ByteSize) -> ByteSize {
