@@ -21,6 +21,7 @@ crc32fast.workspace = true
 crossbeam.workspace = true
 flate2.workspace = true
 libdeflater.workspace = true
+libc = "0.2"
 memchr.workspace = true
 rayon.workspace = true
 serde.workspace = true

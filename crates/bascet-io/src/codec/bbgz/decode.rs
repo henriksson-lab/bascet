@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::{
     fs::File,
     io::{self, BufReader, Read},
@@ -24,6 +26,10 @@ use crate::{
     BBGZExtra, BBGZHeaderBase, BBGZTrailer,
     codec::bbgz::{MARKER_EOF, MAX_SIZEOF_BLOCKusize},
 };
+
+const BBGZ_READER_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+const BBGZ_JOB_QUEUE_MIN_CAPACITY: usize = 256;
+const BBGZ_JOB_QUEUE_PER_WORKER: usize = 16;
 
 pub struct BBGZDecoder {
     inner_reader_handle: Option<JoinHandle<()>>,
@@ -62,6 +68,7 @@ impl BBGZDecoder {
                 with_path.as_ref().display()
             )
         });
+        advise_sequential(&file);
 
         let worker_count = with_opt_rayon_pool
             .as_ref()
@@ -70,7 +77,9 @@ impl BBGZDecoder {
             .max(1);
         let sizeof_alloc = MAX_SIZEOF_BLOCKusize;
         let cancel = Arc::new(AtomicBool::new(false));
-        let job_queue_capacity = worker_count.saturating_mul(2).max(1);
+        let job_queue_capacity = worker_count
+            .saturating_mul(BBGZ_JOB_QUEUE_PER_WORKER)
+            .max(BBGZ_JOB_QUEUE_MIN_CAPACITY);
         let (job_tx, job_rx) = crossbeam::channel::bounded(job_queue_capacity);
         let (result_tx, result_rx) = bascet_core::channel::ordered_dense::<_, 4096>();
 
@@ -169,7 +178,7 @@ fn spawn_reader(
     std::thread::Builder::new()
         .name("BBGZRead@0".to_string())
         .spawn(move || {
-            let mut reader = BufReader::new(file);
+            let mut reader = BufReader::with_capacity(BBGZ_READER_BUFFER_SIZE, file);
             let mut seq = 0;
 
             while !cancel.load(Ordering::Acquire) {
@@ -205,6 +214,19 @@ fn spawn_reader(
         })
         .unwrap()
 }
+
+#[cfg(target_os = "linux")]
+fn advise_sequential(file: &File) {
+    // Best-effort kernel hint for large sequential FASTQ/BBGZ reads, especially
+    // useful on high-latency shared filesystems.
+    let rc = unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+    if rc != 0 {
+        tracing::debug!(errno = rc, "posix_fadvise sequential hint failed");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn advise_sequential(_file: &File) {}
 
 fn spawn_workers(
     count: usize,
