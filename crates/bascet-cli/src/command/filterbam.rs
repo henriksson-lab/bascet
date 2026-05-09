@@ -3,12 +3,16 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use bytesize::ByteSize;
 use clap::{Args, ValueEnum};
 use tracing::info;
 
 use super::determine_thread_counts_1;
 use super::samtools_rs::{bam, bgzf};
-use crate::utils::{atomic_temp_path, publish_atomic_output};
+use crate::command::bamsort::DEFAULT_PATH_TEMP;
+use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
+
+const FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum BamFilterMode {
@@ -38,6 +42,10 @@ pub struct FilterBamCMD {
     #[arg(short = 'o', long = "out", value_parser)]
     pub path_out: PathBuf,
 
+    /// Temp directory for incomplete output.
+    #[arg(short = 't', long = "temp", value_parser, default_value = DEFAULT_PATH_TEMP)]
+    pub path_temp: PathBuf,
+
     /// Which record class to keep.
     #[arg(long = "keep", value_enum, default_value_t = BamFilterMode::Mapped)]
     pub keep: BamFilterMode,
@@ -49,6 +57,15 @@ pub struct FilterBamCMD {
     /// BGZF worker threads used by each input reader and by the output writer.
     #[arg(short = '@', long = "threads", value_parser = clap::value_parser!(usize))]
     pub num_threads: Option<usize>,
+
+    /// Total memory budget. `filterbam` is streaming, but this is accepted for consistency
+    /// with other Bascet commands generated from runner memory settings.
+    #[arg(
+        short = 'm',
+        long = "memory",
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    pub total_mem: Option<ByteSize>,
 }
 
 impl FilterBamCMD {
@@ -57,9 +74,11 @@ impl FilterBamCMD {
         filter_bam(
             &self.path_in,
             &self.path_out,
+            &self.path_temp,
             self.keep,
             self.pairing,
             num_threads,
+            self.total_mem,
         )
     }
 }
@@ -67,13 +86,17 @@ impl FilterBamCMD {
 pub fn filter_bam(
     paths_in: &[PathBuf],
     path_out: &Path,
+    path_temp: &Path,
     keep: BamFilterMode,
     pairing: BamPairingMode,
     num_threads: usize,
+    total_mem: Option<ByteSize>,
 ) -> Result<()> {
     if paths_in.is_empty() || paths_in.len() > 2 {
         bail!("filterbam expects one or two input BAM files");
     }
+    std::fs::create_dir_all(path_temp)
+        .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
 
     let paired = match pairing {
         BamPairingMode::Auto => detect_paired_alignment(&paths_in[0])?,
@@ -86,17 +109,19 @@ pub fn filter_bam(
     info!(
         inputs = paths_in.len(),
         output = %path_out.display(),
+        temp_dir = %path_temp.display(),
         paired_alignment = paired,
         keep = ?keep,
         flag_mask = flag_mask,
         threads = num_threads,
+        memory = ?total_mem,
         "FilterBam: starting"
     );
 
-    let path_tmp = atomic_temp_path(path_out);
+    let path_tmp = atomic_temp_path_in_dir(path_out, path_temp);
     let output = File::create(&path_tmp)
         .with_context(|| format!("create output BAM tmp {}", path_tmp.display()))?;
-    let output = BufWriter::with_capacity(1 << 20, output);
+    let output = BufWriter::with_capacity(FILTERBAM_OUTPUT_BUFFER_SIZE, output);
     let mut writer = bgzf::ParallelWriter::new(output, 6, num_threads);
 
     let mut expected_header: Option<bam::Header> = None;
@@ -184,7 +209,7 @@ fn filter_one_bam(
 fn detect_paired_alignment(path_in: &Path) -> Result<bool> {
     let input =
         File::open(path_in).with_context(|| format!("open input BAM {}", path_in.display()))?;
-    let mut reader = bgzf::ParallelReader::new(input, 1);
+    let mut reader = bgzf::Reader::new(input);
     let _header = bam::Header::read(&mut reader)
         .with_context(|| format!("read BAM header {}", path_in.display()))?;
     let record = bam::Record::read(&mut reader)

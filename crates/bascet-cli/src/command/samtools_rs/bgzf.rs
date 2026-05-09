@@ -20,6 +20,7 @@ pub const BLOCK_SIZE: usize = 0xff00;
 const HEADER_LEN: usize = 18; // 12-byte gzip header + 6-byte BC extra subfield.
 const TRAILER_LEN: usize = 8; // CRC32 + ISIZE.
 const MAX_BLOCK_SIZE: usize = 0x10000;
+const PARALLEL_IO_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
 /// The 28-byte BGZF EOF marker: an empty block. htslib writes this on close.
 const EOF_BLOCK: [u8; 28] = [
@@ -345,9 +346,14 @@ impl Read for ParallelReader {
 
 impl Drop for ParallelReader {
     fn drop(&mut self) {
-        // Dropping `decoded_rx` signals workers (their next send fails);
-        // they then drop `block_rx`, signalling the reader. Threads exit
-        // on their own — we just join.
+        // Drop the consumer side before joining workers. This matters when a caller reads only
+        // a prefix of the stream: workers may already be blocked sending decoded blocks into a
+        // full channel, and joining while `decoded_rx` is still alive would deadlock.
+        let (_tx, rx) = bounded::<(u64, Vec<u8>)>(0);
+        drop(std::mem::replace(&mut self.decoded_rx, rx));
+
+        // Workers exit once their send fails, then drop their `block_rx` handles. That lets the
+        // reader thread stop if it is blocked sending raw blocks.
         for h in self.workers.drain(..) {
             let _ = h.join();
         }
@@ -357,7 +363,8 @@ impl Drop for ParallelReader {
     }
 }
 
-fn run_inflate_reader<R: Read>(mut inner: R, tx: Sender<(u64, RawBlock)>) -> io::Result<()> {
+fn run_inflate_reader<R: Read>(inner: R, tx: Sender<(u64, RawBlock)>) -> io::Result<()> {
+    let mut inner = BufReader::with_capacity(PARALLEL_IO_BUFFER_SIZE, inner);
     let mut seq: u64 = 0;
     let mut saw_eof_block = false;
     loop {
@@ -763,6 +770,25 @@ mod tests {
             .read_to_end(&mut Vec::new())
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn dropping_parallel_reader_after_prefix_does_not_deadlock() {
+        let payload: Vec<u8> = (0u32..1_000_000)
+            .map(|i| (i.wrapping_mul(2654435761) >> 16) as u8)
+            .collect();
+        let mut encoded = Vec::new();
+        {
+            let mut w = Writer::new(&mut encoded, 1);
+            w.write_all(&payload).unwrap();
+            w.finish().unwrap();
+        }
+
+        let mut r = ParallelReader::new(Cursor::new(encoded), 4);
+        let mut prefix = vec![0; 1024];
+        r.read_exact(&mut prefix).unwrap();
+        assert_eq!(&prefix, &payload[..1024]);
+        drop(r);
     }
 
     #[test]
