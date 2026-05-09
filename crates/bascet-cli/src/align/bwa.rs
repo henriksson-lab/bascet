@@ -44,6 +44,7 @@ pub fn try_execute_bwa_mem2(
         &mut state,
         path_in,
         path_out_unsorted,
+        path_temp,
         total_memory,
         total_threads,
         worker_pool,

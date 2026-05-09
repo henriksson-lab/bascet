@@ -20,7 +20,7 @@ use super::output::{
     make_bascet_read_name,
 };
 use crate::command::{bamsort::sort_and_index_bam, samtools_rs::sort::ReferenceOrder};
-use crate::utils::{atomic_temp_path, publish_atomic_output};
+use crate::utils::{atomic_temp_path, atomic_temp_path_in_dir, publish_atomic_output};
 use star_rs::{
     direct::{DirectReadPair, DirectStarRun},
     generated::structs::{ReadAlignChunkProcessChunksResult, StarMainResult},
@@ -82,7 +82,7 @@ pub fn try_execute_star_rs(
         }
     };
 
-    let path_out_unsorted_tmp = atomic_temp_path(path_out_unsorted);
+    let path_out_unsorted_tmp = atomic_temp_path_in_dir(path_out_unsorted, path_temp);
     if let Err(err) =
         write_star_sam_chunks_to_tagged_bam(&result, &path_out_unsorted_tmp, numof_threads_writebam)
     {

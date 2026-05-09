@@ -1,8 +1,8 @@
 //! `bam-sort` subcommand and reusable `sort_and_index_bam` API. Both delegate to the
 //! vendored `samtools_rs` module (pure-Rust port of `samtools sort` + `samtools index`).
 //!
-//! Atomic publish: writes the sorted BAM to `<path>.tmp.<pid>.<nanos>` and renames on
-//! success. The `.bai` is published the same way. Spill chunks live under `path_temp` and
+//! Publish flow: writes the sorted BAM and `.bai` to hidden files under `path_temp`, then
+//! publishes them to their final paths on success. Spill chunks also live under `path_temp` and
 //! are deleted after a successful sort (samtools-rs handles spill-file cleanup internally).
 
 use std::fs::File;
@@ -18,10 +18,12 @@ use super::determine_thread_counts_1;
 use super::samtools_rs::sort::{
     IndexFormat, Order, ReferenceOrder, SortOptions, sort_streaming_parallel,
 };
-use crate::utils::{atomic_temp_path, publish_atomic_output};
+use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_MEMORY: &str = "8GB";
+const SORT_MEMORY_FRACTION: f64 = 0.60;
+const SORT_EXTRA_IN_FLIGHT_BUFFERS: usize = 2;
 
 #[derive(Args)]
 pub struct BamSortCMD {
@@ -95,16 +97,30 @@ pub fn sort_and_index_bam(
     std::fs::create_dir_all(path_temp)
         .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
 
-    // samtools-rs's `SortOptions::max_mem` is the *per-chunk* budget; their CLI computes it
-    // as `total_mem / threads`. Mirror that here so our `--memory` flag matches their `-m`.
+    // samtools-rs's `SortOptions::max_mem` is the per-chunk budget. The parallel spill
+    // implementation can hold roughly `threads + 1` chunks concurrently, plus BGZF buffers,
+    // recycled record data, and allocator-retained pages. Keep a deliberate reserve so
+    // `--memory` remains a process-level budget instead of just the sum of worker chunks.
     let total_mem = usize::try_from(memory.as_u64())
         .map_err(|_| anyhow::anyhow!("memory cap exceeds usize"))?;
-    let max_mem_per_chunk = (total_mem / num_threads.max(1)).max(64 * 1024 * 1024);
+    let sort_mem = ((total_mem as f64) * SORT_MEMORY_FRACTION) as usize;
+    let in_flight_buffers = num_threads
+        .max(1)
+        .saturating_add(SORT_EXTRA_IN_FLIGHT_BUFFERS);
+    let max_mem_per_chunk = (sort_mem / in_flight_buffers.max(1)).max(64 * 1024 * 1024);
+    info!(
+        sort_memory_fraction = SORT_MEMORY_FRACTION,
+        sort_mem_bytes = sort_mem,
+        max_mem_per_chunk,
+        in_flight_buffers,
+        "BamSort: memory budget"
+    );
 
-    // Atomic-publish paths for both BAM and BAI.
-    let path_out_tmp = atomic_temp_path(path_out_sorted);
+    // Publish paths for both BAM and BAI. Keep these under the job temp dir so concurrent
+    // jobs do not leave partial output in the final output directory.
+    let path_out_tmp = atomic_temp_path_in_dir(path_out_sorted, path_temp);
     let path_bai = bai_path(path_out_sorted);
-    let path_bai_tmp = atomic_temp_path(&path_bai);
+    let path_bai_tmp = atomic_temp_path_in_dir(&path_bai, path_temp);
 
     // samtools-rs uses `<tmp_prefix>.NNNN.bam` for spill chunks; deletes them on success.
     let tmp_prefix = path_temp.join("bascet-bamsort");

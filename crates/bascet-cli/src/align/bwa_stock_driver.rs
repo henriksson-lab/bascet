@@ -36,7 +36,7 @@ use crate::fileformat::bam::readname_to_cell_umi;
 use sam::alignment::record_buf::data::field::Value;
 use sam::alignment::{RecordBuf, io::Write as _, record::data::field::Tag};
 
-use crate::utils::{atomic_temp_path, publish_atomic_output};
+use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
 const MEM_F_PE: i32 = 0x2;
 
@@ -518,6 +518,7 @@ pub fn run_stock_driver_tirp_to_bam(
     state: &mut StockDriverState,
     path_in: &Path,
     out_path_unsorted: &Path,
+    path_temp: &Path,
     total_memory: ByteSize,
     total_threads: u64,
     worker_pool: Arc<rayon::ThreadPool>,
@@ -535,8 +536,12 @@ pub fn run_stock_driver_tirp_to_bam(
     let header: Arc<sam::Header> =
         Arc::new(header_text.parse().context("parse generated SAM header")?);
 
-    // Output file (atomic publish on success).
-    let out_tmp = atomic_temp_path(out_path_unsorted);
+    std::fs::create_dir_all(path_temp)
+        .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
+
+    // Output file (publish on success). Stage it under --temp so partial output stays in the
+    // per-job temp directory until the BAM is complete.
+    let out_tmp = atomic_temp_path_in_dir(out_path_unsorted, path_temp);
     let file = std::fs::File::create(&out_tmp)
         .with_context(|| format!("failed to create BAM output {out_tmp:?}"))?;
     let mut out_file = std::io::BufWriter::with_capacity(1 << 20, file);

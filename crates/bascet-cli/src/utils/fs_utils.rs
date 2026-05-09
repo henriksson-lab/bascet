@@ -12,6 +12,19 @@ use std::{
 pub fn atomic_temp_path(final_path: impl AsRef<Path>) -> PathBuf {
     let final_path = final_path.as_ref();
     let parent = final_path.parent().unwrap_or_else(|| Path::new("."));
+    atomic_temp_path_in_dir(final_path, parent)
+}
+
+/// Return a hidden temp path under `temp_dir` for writing `final_path`.
+///
+/// This is useful for commands where per-job temporary output must stay out of
+/// the final output directory until publish time.
+pub fn atomic_temp_path_in_dir(
+    final_path: impl AsRef<Path>,
+    temp_dir: impl AsRef<Path>,
+) -> PathBuf {
+    let final_path = final_path.as_ref();
+    let temp_dir = temp_dir.as_ref();
     let file_name = final_path
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("output"))
@@ -21,7 +34,7 @@ pub fn atomic_temp_path(final_path: impl AsRef<Path>) -> PathBuf {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
 
-    parent.join(format!(
+    temp_dir.join(format!(
         ".{file_name}.{}.{}.tmp",
         std::process::id(),
         timestamp

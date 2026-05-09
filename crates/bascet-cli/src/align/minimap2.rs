@@ -21,7 +21,7 @@ use super::output::{
     finish_tagged_bam_writer,
 };
 use crate::command::{bamsort::sort_and_index_bam, samtools_rs::sort::ReferenceOrder};
-use crate::utils::{atomic_temp_path, publish_atomic_output};
+use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
 // Outer batch scales with thread count so each parallel mapping scope amortizes spawn/join +
 // serial SAM/BAM write between scopes — same rationale as the bwa-mem2 path.
@@ -94,7 +94,9 @@ pub fn try_execute_minimap2(
 
     let sam_header = minimap_sam::write_sam_hdr(&aligner.idx, None, &[]);
     let bam_header = sam_header.parse::<sam::Header>()?;
-    let path_out_unsorted_tmp = atomic_temp_path(path_out_unsorted);
+    std::fs::create_dir_all(path_temp)
+        .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
+    let path_out_unsorted_tmp = atomic_temp_path_in_dir(path_out_unsorted, path_temp);
     let mut writer_bam =
         create_tagged_bam_writer(&path_out_unsorted_tmp, &bam_header, numof_threads_writebam)?;
 
