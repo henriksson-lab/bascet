@@ -28,6 +28,7 @@ use crate::fileformat::paired_fastq::BascetPairedFastqWriterFactory;
 use crate::fileformat::single_fastq::BascetSingleFastqWriterFactory;
 use crate::fileformat::tirp::BascetTIRPWriterFactory;
 use crate::fileformat::tirp::TirpBascetShardReaderFactory;
+use crate::fileformat::tirp::get_tbi_path_for_tirp;
 use crate::fileformat::try_get_cells_in_file;
 use crate::fileformat::{CellID, ReadPair};
 use crate::utils::{atomic_temp_path, publish_atomic_output};
@@ -193,6 +194,12 @@ impl TransformFile {
                     let p_tmp_r2 = paired_r2_by_last_r1(&p_tmp)?;
                     let p_final_r2 = paired_r2_by_last_r1(&p_final)?;
                     publish_atomic_output(p_tmp_r2, p_final_r2)?;
+                }
+                DetectedFileformat::TIRP => {
+                    publish_atomic_output(
+                        get_tbi_path_for_tirp(&p_tmp),
+                        get_tbi_path_for_tirp(&p_final),
+                    )?;
                 }
                 _ => {}
             }

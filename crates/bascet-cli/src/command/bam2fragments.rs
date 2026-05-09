@@ -1,17 +1,16 @@
-use anyhow::Result;
-use bgzip::Compression;
+use anyhow::{Context, Result};
 use clap::Args;
 use std::fs::File;
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::process::Command;
 
 use noodles::sam::alignment::RecordBuf as BamRecord;
+use noodles::{bgzf, csi::binning_index::index::reference_sequence::bin::Chunk};
 use tracing::info;
 
 use super::determine_thread_counts_1;
-use crate::utils::{atomic_temp_path, publish_atomic_output};
+use crate::utils::{BedTabixIndexer, atomic_temp_path, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_THREADS: usize = 5;
@@ -85,11 +84,13 @@ impl Bam2Fragments {
             })
             .collect();
 
-        //Save a "Fragments.tsv", bgzip-format. Writer is multithreaded
+        //Save a "Fragments.tsv", bgzip-format and build the tabix index from
+        //the exact BGZF virtual offsets as each BED record is written.
         let path_tmp = atomic_temp_path(&params.path_output);
-        let mut outfile = File::create(&path_tmp).expect("Could not open output file");
-        let mut writer =
-            bgzip::write::BGZFMultiThreadWriter::new(&mut outfile, Compression::default());
+        let outfile = File::create(&path_tmp)
+            .with_context(|| format!("could not open output file {}", path_tmp.display()))?;
+        let mut writer = bgzf::io::Writer::new(outfile);
+        let mut indexer = BedTabixIndexer::new();
         writer.write_all(b"#CHR\tFROM\tTO\tCELLID\tCNT\tUMI\n")?; // UMI is optional; what works with Signac?
 
         //Transfer all records
@@ -139,16 +140,32 @@ impl Bam2Fragments {
                 //Note that resorting is then needed. but the local nature suggests that a priority queue can be used along with other tricks
 
                 //Write the BED record
-                writer.write_all(chr).unwrap();
-                write!(&mut writer, "\t{}\t{}\t", startpos, endpos).unwrap();
-                writer.write(cell_id).unwrap();
-                write!(&mut writer, "\t1\t\n").unwrap(); //Leaving space for a future UMI here
+                let record_start_position = writer.virtual_position();
+                writer.write_all(chr)?;
+                write!(&mut writer, "\t{}\t{}\t", startpos, endpos)?;
+                writer.write_all(cell_id)?;
+                write!(&mut writer, "\t1\t\n")?; //Leaving space for a future UMI here
+                let record_end_position = writer.virtual_position();
+
+                let chr = std::str::from_utf8(chr).with_context(|| {
+                    format!(
+                        "reference sequence name for tid {tid} is not UTF-8 and cannot be tabix-indexed"
+                    )
+                })?;
+                indexer.add_record(
+                    chr,
+                    startpos,
+                    endpos,
+                    Chunk::new(record_start_position, record_end_position),
+                )?;
             }
         }
-        writer.close()?;
+        writer.finish()?;
         //Tabix-index the output file to prepare it for loading
         info!("Indexing final output file");
-        index_fragments(&path_tmp).expect("Failed to tabix index output file");
+        indexer
+            .write_to_path(tabix_index_path(&path_tmp))
+            .with_context(|| format!("failed to write tabix index for {}", path_tmp.display()))?;
         publish_atomic_output(&path_tmp, &params.path_output)?;
         publish_atomic_output(
             tabix_index_path(&path_tmp),
@@ -169,15 +186,6 @@ fn open_bam_reader(
     let mut reader = noodles::bam::io::Reader::from(bgzf_reader);
     let header = reader.read_header()?;
     Ok((reader, header))
-}
-
-pub fn index_fragments(p: &PathBuf) -> anyhow::Result<()> {
-    let p = p.to_str().expect("could not form path").to_string();
-    let mut process = Command::new("tabix");
-    let process = process.arg("-p").arg("bed").arg(p);
-
-    let _ = process.output().expect("Failed to run tabix");
-    Ok(())
 }
 
 fn tabix_index_path(p: &PathBuf) -> PathBuf {

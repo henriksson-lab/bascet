@@ -9,11 +9,8 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info};
-
-use bgzip::{Compression, write::BGZFMultiThreadWriter};
 
 use super::CellID;
 use super::ConstructFromPath;
@@ -25,7 +22,9 @@ use super::ShardFileExtractor;
 use super::ShardRandomFileExtractor;
 use super::ShardStreamingFileExtractor;
 use super::shard::StreamingReadPairReader;
+use crate::utils::BedTabixIndexer;
 
+use noodles::csi::binning_index::index::reference_sequence::bin::Chunk;
 use noodles::fastq::Record as FastqRecord;
 use noodles::fastq::Writer as FastqWriter;
 use noodles::fastq::record::Definition;
@@ -220,7 +219,11 @@ impl ShardFileExtractor for TirpBascetShardReader {
 ///
 /// Write a pair of reads to TIRP file
 ///
-pub fn write_records_pair_to_tirp(writer: &mut impl Write, cell_id: &CellID, read: &ReadPair) {
+pub fn write_records_pair_to_tirp(
+    writer: &mut impl Write,
+    cell_id: &CellID,
+    read: &ReadPair,
+) -> std::io::Result<()> {
     //Structure of each line:
     //cell_id  1   1   r1  r2  q1  q2 umi
 
@@ -230,25 +233,25 @@ pub fn write_records_pair_to_tirp(writer: &mut impl Write, cell_id: &CellID, rea
     let one = "1".as_bytes();
     let newline = "\n".as_bytes();
 
-    _ = writer.write_all(cell_id.as_bytes());
-    _ = writer.write_all(tab);
+    writer.write_all(cell_id.as_bytes())?;
+    writer.write_all(tab)?;
 
-    _ = writer.write_all(one);
-    _ = writer.write_all(tab);
+    writer.write_all(one)?;
+    writer.write_all(tab)?;
 
-    _ = writer.write_all(one);
-    _ = writer.write_all(tab);
+    writer.write_all(one)?;
+    writer.write_all(tab)?;
 
-    _ = writer.write_all(&read.r1);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.r2);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.q1);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.q2);
-    _ = writer.write_all(tab);
-    _ = writer.write_all(&read.umi);
-    _ = writer.write_all(newline);
+    writer.write_all(&read.r1)?;
+    writer.write_all(tab)?;
+    writer.write_all(&read.r2)?;
+    writer.write_all(tab)?;
+    writer.write_all(&read.q1)?;
+    writer.write_all(tab)?;
+    writer.write_all(&read.q2)?;
+    writer.write_all(tab)?;
+    writer.write_all(&read.umi)?;
+    writer.write_all(newline)
 }
 
 ///////////////////////////////
@@ -312,29 +315,6 @@ where
     output.push(&input[(*indices.last().unwrap() + 1)..]);
 
     output
-}
-
-///////////////////////////////
-/// TABIX-index TIRP file
-pub fn index_tirp(p: &PathBuf) -> anyhow::Result<()> {
-    let p = p
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("could not form TIRP path as UTF-8: {}", p.display()))?
-        .to_string();
-    let mut process = Command::new("tabix");
-    let process = process.arg("-p").arg("bed").arg(p);
-
-    let output = process
-        .output()
-        .with_context(|| "failed to run tabix; is it installed and on PATH?")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "tabix failed with status {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
 }
 
 ///////////////////////////////
@@ -605,31 +585,93 @@ impl ConstructFromPath<BascetTIRPWriter> for BascetTIRPWriterFactory {
 
 pub struct BascetTIRPWriter {
     pub path: PathBuf,
-    //    pub writer: BufWriter<File>
-    pub writer: BGZFMultiThreadWriter<BufWriter<File>>,
+    pub writer: Option<noodles::bgzf::io::Writer<BufWriter<File>>>,
+    indexer: Option<BedTabixIndexer>,
+    write_error: Option<anyhow::Error>,
 }
 impl BascetTIRPWriter {
     fn new(path: &PathBuf) -> anyhow::Result<BascetTIRPWriter> {
         info!("starting writer for TIRP {}", path.display());
 
-        let f = File::create(path).unwrap();
+        let f = File::create(path)
+            .with_context(|| format!("failed to create TIRP output {}", path.display()))?;
         let bw = BufWriter::new(f); //TODO  put in a buffered writer in loop. no need to do twice
-        let writer = BGZFMultiThreadWriter::new(bw, Compression::default());
+        // Keep this on noodles BGZF: the older bgzip crate writer emits TIRP
+        // files that noodles' BGZF/tabix reader rejects, and the tabix indexer
+        // needs noodles' exact virtual positions while records are written.
+        let writer = noodles::bgzf::io::Writer::new(bw);
 
         Ok(BascetTIRPWriter {
             path: path.clone(),
-            writer: writer,
+            writer: Some(writer),
+            indexer: Some(BedTabixIndexer::new()),
+            write_error: None,
         })
+    }
+
+    fn write_read_pair(&mut self, cell_id: &CellID, read: &ReadPair) -> anyhow::Result<()> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("TIRP writer already finalized"))?;
+        let indexer = self
+            .indexer
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("TIRP tabix indexer already finalized"))?;
+
+        let record_start_position = writer.virtual_position();
+        write_records_pair_to_tirp(writer, cell_id, read)?;
+        let record_end_position = writer.virtual_position();
+
+        // TIRP uses fixed dummy BED coordinates for cell-based lookup. Preserve
+        // the same raw columns that `tabix -p bed` indexed previously.
+        indexer.add_record(
+            cell_id,
+            1,
+            1,
+            Chunk::new(record_start_position, record_end_position),
+        )?;
+
+        Ok(())
     }
 }
 impl ReadPairWriter for BascetTIRPWriter {
     fn write_reads_for_cell(&mut self, cell_id: &CellID, list_reads: &Arc<Vec<ReadPair>>) {
+        if self.write_error.is_some() {
+            return;
+        }
+
         for rp in list_reads.iter() {
-            write_records_pair_to_tirp(&mut self.writer, &cell_id, &rp);
+            if let Err(e) = self.write_read_pair(cell_id, rp) {
+                self.write_error = Some(e);
+                return;
+            }
         }
     }
 
     fn writing_done(&mut self) -> anyhow::Result<()> {
+        if let Some(e) = self.write_error.take() {
+            return Err(e);
+        }
+
+        let writer = self
+            .writer
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("TIRP writer already finalized"))?;
+        writer
+            .finish()
+            .with_context(|| format!("failed to finish TIRP output {}", self.path.display()))?;
+
+        info!("Indexing final TIRP output file");
+        let indexer = self
+            .indexer
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("TIRP tabix indexer already finalized"))?;
+        let index_path = get_tbi_path_for_tirp(&self.path);
+        indexer.write_to_path(&index_path).with_context(|| {
+            format!("failed to write TIRP tabix index {}", index_path.display())
+        })?;
+
         info!("Finished writing TIRP {}", self.path.display());
         Ok(())
     }
