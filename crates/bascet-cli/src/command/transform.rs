@@ -1,7 +1,7 @@
 use crate::fileformat::paired_fastq::PairedFastqStreamingReadPairReaderFactory;
 use crate::fileformat::read_cell_list_file;
 use crate::fileformat::zip::ZipStreamingReadPairReaderFactory;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bascet_core::DEFAULT_SIZEOF_ARENA;
 use bytesize::ByteSize;
 use clap::Args;
@@ -73,7 +73,7 @@ impl TransformCMD {
             include_cells: include_cells,
         };
 
-        let _ = TransformFile::run(&Arc::new(params)).expect("tofastq failed");
+        TransformFile::run(&Arc::new(params))?;
 
         info!("Transform has finished succesfully");
         Ok(())
@@ -110,6 +110,8 @@ impl TransformFile {
         let (tx_data, rx_data) =
             crossbeam::channel::bounded::<Option<ListReadWithBarcode>>(n_output * 2);
         let (tx_data, rx_data) = (Arc::new(tx_data), Arc::new(rx_data));
+        let (tx_writer_result, rx_writer_result) =
+            crossbeam::channel::bounded::<anyhow::Result<()>>(n_output);
 
         /////////////////////////////////////////////// Start writer threads
         let output_path_pairs: Vec<(PathBuf, PathBuf)> = params
@@ -131,6 +133,7 @@ impl TransformFile {
                     &p_tmp,
                     &thread_pool_write,
                     &rx_data,
+                    &tx_writer_result,
                     &Arc::new(BascetTIRPWriterFactory::new()),
                 )
                 .unwrap(),
@@ -138,6 +141,7 @@ impl TransformFile {
                     &p_tmp,
                     &thread_pool_write,
                     &rx_data,
+                    &tx_writer_result,
                     &Arc::new(BascetSingleFastqWriterFactory::new()),
                 )
                 .unwrap(),
@@ -145,6 +149,7 @@ impl TransformFile {
                     &p_tmp,
                     &thread_pool_write,
                     &rx_data,
+                    &tx_writer_result,
                     &Arc::new(BascetPairedFastqWriterFactory::new()),
                 )
                 .unwrap(),
@@ -177,6 +182,10 @@ impl TransformFile {
         //Wait for writer threads to be done
         thread_pool_write.join();
 
+        for result in rx_writer_result.try_iter() {
+            result?;
+        }
+
         for (p_final, p_tmp) in output_path_pairs {
             publish_atomic_output(&p_tmp, &p_final)?;
             match crate::fileformat::detect_shard_format(&p_final) {
@@ -184,9 +193,6 @@ impl TransformFile {
                     let p_tmp_r2 = paired_r2_by_last_r1(&p_tmp)?;
                     let p_final_r2 = paired_r2_by_last_r1(&p_final)?;
                     publish_atomic_output(p_tmp_r2, p_final_r2)?;
-                }
-                DetectedFileformat::TIRP => {
-                    publish_atomic_output(tabix_index_path(&p_tmp), tabix_index_path(&p_final))?;
                 }
                 _ => {}
             }
@@ -204,10 +210,6 @@ fn paired_r2_by_last_r1(path: &PathBuf) -> anyhow::Result<PathBuf> {
     let mut bytes = path_string.as_bytes().to_vec();
     bytes[last_pos + 1] = b'2';
     Ok(PathBuf::from(String::from_utf8(bytes)?))
-}
-
-fn tabix_index_path(path: &PathBuf) -> PathBuf {
-    PathBuf::from(format!("{}.tbi", path.display()))
 }
 
 pub fn create_random_readers(
@@ -331,6 +333,7 @@ fn create_writer_thread<W>(
     outfile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     rx_data: &Receiver<Option<ListReadWithBarcode>>,
+    tx_result: &Sender<anyhow::Result<()>>,
     constructor: &Arc<impl ConstructFromPath<W> + Send + 'static + Sync>,
 ) -> anyhow::Result<()>
 where
@@ -338,25 +341,33 @@ where
 {
     let outfile = outfile.clone();
     let rx_data = rx_data.clone();
+    let tx_result = tx_result.clone();
     let constructor = Arc::clone(&constructor);
 
     thread_pool.execute(move || {
-        // Open output file
+        let result = (|| -> anyhow::Result<()> {
+            // Open output file
 
-        info!("Starting writer for {}", outfile.display());
-        let mut writer = constructor
-            .new_from_path(&outfile)
-            .expect(format!("Failed to create output file {}", outfile.display()).as_str());
+            info!("Starting writer for {}", outfile.display());
+            let mut writer = constructor
+                .new_from_path(&outfile)
+                .with_context(|| format!("failed to create output file {}", outfile.display()))?;
 
-        while let Ok(Some(dat)) = rx_data.recv() {
-            let cell_id = &dat.0;
-            let list_reads = &dat.1;
+            while let Ok(Some(dat)) = rx_data.recv() {
+                let cell_id = &dat.0;
+                let list_reads = &dat.1;
 
-            writer.write_reads_for_cell(&cell_id, &Arc::clone(list_reads));
-        }
-        writer.writing_done().unwrap();
+                writer.write_reads_for_cell(&cell_id, &Arc::clone(list_reads));
+            }
+            writer
+                .writing_done()
+                .with_context(|| format!("failed to finalize output {}", outfile.display()))?;
 
-        info!("Shutting down writer for {}", outfile.display());
+            info!("Shutting down writer for {}", outfile.display());
+            Ok(())
+        })();
+
+        let _ = tx_result.send(result);
     });
     Ok(())
 }

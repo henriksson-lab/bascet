@@ -1,6 +1,6 @@
 // HTSlib version - does not work with our version of TIRP so taken out of the pipeline for now
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufRead;
@@ -317,11 +317,23 @@ where
 ///////////////////////////////
 /// TABIX-index TIRP file
 pub fn index_tirp(p: &PathBuf) -> anyhow::Result<()> {
-    let p = p.to_str().expect("could not form path").to_string();
+    let p = p
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("could not form TIRP path as UTF-8: {}", p.display()))?
+        .to_string();
     let mut process = Command::new("tabix");
     let process = process.arg("-p").arg("bed").arg(p);
 
-    let _ = process.output().expect("Failed to run tabix");
+    let output = process
+        .output()
+        .with_context(|| "failed to run tabix; is it installed and on PATH?")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "tabix failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     Ok(())
 }
 
@@ -618,10 +630,7 @@ impl ReadPairWriter for BascetTIRPWriter {
     }
 
     fn writing_done(&mut self) -> anyhow::Result<()> {
-        //// Index the final file with tabix
-        info!("Indexing final output file");
-        index_tirp(&self.path).expect("Failed to index file");
-
+        info!("Finished writing TIRP {}", self.path.display());
         Ok(())
     }
 }
