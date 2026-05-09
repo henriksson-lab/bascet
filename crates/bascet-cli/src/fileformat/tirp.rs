@@ -33,6 +33,15 @@ use noodles::{core::Region, csi::BinningIndex};
 
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
+fn warn_legacy_noodles_tirp_reader(reader: &str, path: &PathBuf) {
+    let message = format!(
+        "WARNING: using legacy TIRP {reader} for {}; this requires canonical BGZF/tabix headers and will not work with current Bascet BBGZ TIRP/shardify output because noodles rejects the header extras/flags",
+        path.display()
+    );
+    eprintln!("{message}");
+    tracing::warn!("{message}");
+}
+
 ///////////////////////////////
 /// A factory of TIRP readers, given paths
 #[derive(Debug, Clone)]
@@ -58,7 +67,11 @@ pub struct TirpBascetShardReader {
 }
 impl TirpBascetShardReader {
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpBascetShardReader> {
-        //Check that the index .tbi-file is present; give better error message
+        // Legacy random-access TIRP support uses tabix/noodles and therefore
+        // requires canonical BGZF headers. Current Bascet BBGZ TIRP files can
+        // carry extra fields before BC and use gzip flags noodles rejects, so
+        // this path will not work for shardify/current TIRP output.
+        warn_legacy_noodles_tirp_reader("random-access tabix reader", fname);
         let index_path = get_tbi_path_for_tirp(&fname);
         if !index_path.exists() {
             bail!(
@@ -344,6 +357,10 @@ impl TirpStreamingReadPairReader {
     ///////////////////////////////
     /// Create a new TIRP file reader
     pub fn new(fname: &PathBuf) -> anyhow::Result<TirpStreamingReadPairReader> {
+        // Legacy streaming TIRP support reads through noodles BGZF. Current
+        // Bascet BBGZ TIRP headers are accepted by Bascet's decoder, but not by
+        // noodles' stricter BGZF header validator.
+        warn_legacy_noodles_tirp_reader("streaming BGZF reader", fname);
         let file = File::open(fname).expect(&format!("Could not open {:?}", fname));
         let worker_count = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
         let reader = noodles::bgzf::io::MultithreadedReader::with_worker_count(worker_count, file);
@@ -351,7 +368,7 @@ impl TirpStreamingReadPairReader {
 
         //Read the first read right away
         let mut record = String::new();
-        let read_size = reader.read_line(&mut record).unwrap(); //////////////////////////////////// Fails for new TIRP files
+        let read_size = reader.read_line(&mut record).unwrap();
 
         if read_size > 0 {
             //Remove newline and everything after
@@ -396,19 +413,14 @@ impl StreamingReadPairReader for TirpStreamingReadPairReader {
                 let trimmed_line = &record.as_bytes()[0..(size - 1)];
 
                 let (cell_id, rp) = parse_tirp_readpair_with_cellid(trimmed_line);
-                //println!("reading line {} {:?} {:?}", size, String::from_utf8_lossy(cell_id.as_slice()), String::from_utf8_lossy(current_cell.as_slice()));
-                //println!("{}",&record[0..size]);
-                //println!("{}", rp);
                 if cell_id == current_cell {
                     //This read belongs to this cell, so add to the list and continue
-                    //println!("one more read");
                     reads.push(rp);
                 } else {
                     //This read belongs to the next cell, so stop reading for now
                     self.last_rp = Some((cell_id.to_vec(), rp));
                     break;
                 }
-                //print!("");
             }
 
             //Package and return data

@@ -10,14 +10,14 @@ use bascet_io::{codec, parse, tirp};
 
 use anyhow::Result;
 use bounded_integer::BoundedU64;
-use polars_arrow::array::{Array, Int64Array, UInt64Array, Utf8Array};
-use polars_arrow::datatypes::{ArrowDataType, ArrowSchema, ArrowSchemaRef, Field};
-use polars_arrow::io::ipc::write::{FileWriter as ArrowFileWriter, WriteOptions};
-use polars_arrow::record_batch::RecordBatch;
 use bytesize::*;
 use clap::Args;
 use clio::InputPath;
 use crossbeam::channel::TryRecvError;
+use polars_arrow::array::{Array, Int64Array, UInt64Array, Utf8Array};
+use polars_arrow::datatypes::{ArrowDataType, ArrowSchema, ArrowSchemaRef, Field};
+use polars_arrow::io::ipc::write::{FileWriter as ArrowFileWriter, WriteOptions};
+use polars_arrow::record_batch::RecordBatch;
 use std::{
     fs::File,
     io::BufWriter,

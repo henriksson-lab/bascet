@@ -12,13 +12,15 @@
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
 };
 
 use anyhow::{Context, Result};
+use bascet_core::{Decode, DecodeResult};
+use bascet_io::codec;
 use bwa_mem2_rs::generated::{
     bwa_h::bseq1_t,
     bwamem_cpp::{mem_opt_init, mem_process_seqs, with_current_rayon_pool},
@@ -41,6 +43,39 @@ const MEM_F_PE: i32 = 0x2;
 /// Mirror of the private `BATCH_SIZE` const in bwa-mem2-rs (= 512). Used by the per-tid `lim`
 /// vec inside `mem_cache`, which is sized at `BATCH_SIZE + 32` per thread.
 const BATCH_SIZE: usize = 512;
+
+struct DecodeRead<D> {
+    decoder: D,
+    eof: bool,
+}
+
+impl<D> DecodeRead<D> {
+    fn new(decoder: D) -> Self {
+        Self {
+            decoder,
+            eof: false,
+        }
+    }
+}
+
+impl<D: Decode> Read for DecodeRead<D> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.eof || buf.is_empty() {
+            return Ok(0);
+        }
+
+        match self.decoder.decode_into(buf) {
+            DecodeResult::Decoded(n) => Ok(n),
+            DecodeResult::Eof => {
+                self.eof = true;
+                Ok(0)
+            }
+            DecodeResult::Error(err) => {
+                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+            }
+        }
+    }
+}
 
 /// Build the forward-plus-reverse-complement reference layout used by `mem_kernel2_core`.
 /// Mirrors private `pac_to_reference_layout` in bwa-mem2-rs.
@@ -703,10 +738,8 @@ fn bam_reader_loop(
     mem_limiter: Arc<ReadMemoryLimiter>,
     tx: channel::Sender<AlignBatch>,
 ) -> Result<u64> {
-    let bgzf_inner =
-        File::open(&path_in).with_context(|| format!("failed to open TIRP input {path_in:?}"))?;
-    let bgzf_reader = bgzf::io::Reader::new(bgzf_inner);
-    let mut tirp_lines = BufReader::with_capacity(1 << 20, bgzf_reader);
+    let decoder = codec::BBGZDecoder::builder().with_path(&path_in).build();
+    let mut tirp_lines = BufReader::with_capacity(1 << 20, DecodeRead::new(decoder));
     let mut line_buf: Vec<u8> = Vec::with_capacity(8 * 1024);
     let mut name_buf = String::new();
     let mut num_read_counter: u64 = 0;

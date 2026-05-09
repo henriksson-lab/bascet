@@ -289,14 +289,6 @@ pub fn create_stream_readers(
                 &tx_data,
                 &Arc::new(PairedFastqStreamingReadPairReaderFactory::new()),
             ),
-            /*
-            DetectedFileformat::TIRP => create_stream_reader_thread( ////////////////////////////////////////////////////////// Not working with new TIRP files. but we can make a special reader!
-                &p,
-                &thread_pool_read,
-                &tx_data,
-                &Arc::new(TirpStreamingReadPairReaderFactory::new()),
-            ),
-            */
             DetectedFileformat::TIRP => create_stream_reader_thread_newtirp(
                 ////////////////////////////////////////////////////////// Not working with new TIRP files. but we can make a special reader!
                 &p,
