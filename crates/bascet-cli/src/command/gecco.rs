@@ -17,6 +17,8 @@ use zip::{ZipWriter, read::ZipArchive};
 
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
+const DEFAULT_GECCO_THREADS_PER_WORKER: usize = 5;
+
 #[derive(Args)]
 pub struct GeccoCMD {
     /// Input zip file containing CELLID/contigs.fa entries.
@@ -31,7 +33,7 @@ pub struct GeccoCMD {
     #[arg(short = 't', long = "threads")]
     pub threads: Option<usize>,
 
-    /// Number of cells to process concurrently.
+    /// Number of cells to process concurrently. Defaults to ceil(--threads / 5).
     #[arg(short = '@', long = "gecco-workers")]
     pub gecco_workers: Option<usize>,
 
@@ -56,10 +58,15 @@ impl GeccoCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         self.validate()?;
         let threads = self.threads.unwrap_or_else(available_threads);
-        let gecco_workers = self.gecco_workers.unwrap_or(threads);
-        let gecco_threads = (threads / gecco_workers).max(1);
+        let gecco_workers = self
+            .gecco_workers
+            .unwrap_or_else(|| threads.div_ceil(DEFAULT_GECCO_THREADS_PER_WORKER).max(1));
+        let gecco_threads = self
+            .gecco_workers
+            .map(|_| threads.div_ceil(gecco_workers).max(1))
+            .unwrap_or_else(|| DEFAULT_GECCO_THREADS_PER_WORKER.min(threads).max(1));
         info!(
-            "GECCO scheduling: {} worker(s), {} GECCO thread(s) per worker, {} total requested thread(s)",
+            "GECCO scheduling: {} worker(s), {} GECCO thread(s) per worker, {} total thread budget",
             gecco_workers, gecco_threads, threads
         );
 
@@ -118,6 +125,12 @@ fn available_threads() -> usize {
 struct CellContigs {
     cell_id: String,
     contigs: Vec<u8>,
+}
+
+struct CellContigEntry {
+    index: usize,
+    cell_id: String,
+    uncompressed_size: u64,
 }
 
 struct CellGecco {
@@ -303,28 +316,48 @@ fn read_zip_cells(
     let mut archive = ZipArchive::new(BufReader::new(input))
         .with_context(|| format!("failed to read input zip {}", path_in.display()))?;
 
-    let mut num_cells = 0_u64;
+    let mut entries = Vec::new();
     for index in 0..archive.len() {
         if cancel.load(Ordering::Acquire) {
             bail!("stopping GECCO input reader because a worker failed");
         }
-        let mut file = archive.by_index(index)?;
+        let file = archive.by_index(index)?;
         let Some(cell_id) = contigs_cell_id(file.name()).map(str::to_owned) else {
             continue;
         };
         validate_zip_cell_id(&cell_id)?;
 
+        entries.push(CellContigEntry {
+            index,
+            cell_id,
+            uncompressed_size: file.size(),
+        });
+        if entries.len() % 1000 == 0 {
+            info!("indexed {} cells for GECCO", entries.len());
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        b.uncompressed_size
+            .cmp(&a.uncompressed_size)
+            .then_with(|| a.cell_id.cmp(&b.cell_id))
+    });
+
+    let num_cells = entries.len();
+    for entry in entries {
+        if cancel.load(Ordering::Acquire) {
+            bail!("stopping GECCO input reader because a worker failed");
+        }
+        let mut file = archive.by_index(entry.index)?;
         let mut contigs = Vec::new();
         file.read_to_end(&mut contigs)
-            .with_context(|| format!("failed to read {}/contigs.fa", cell_id))?;
-
-        num_cells += 1;
+            .with_context(|| format!("failed to read {}/contigs.fa", entry.cell_id))?;
         tx_cells
-            .send(Ok(CellContigs { cell_id, contigs }))
+            .send(Ok(CellContigs {
+                cell_id: entry.cell_id,
+                contigs,
+            }))
             .context("failed to send contigs to gecco workers")?;
-        if num_cells % 1000 == 0 {
-            info!("queued {} cells for GECCO", num_cells);
-        }
     }
 
     info!("queued final total of {} cells for GECCO", num_cells);
