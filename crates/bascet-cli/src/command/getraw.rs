@@ -849,10 +849,27 @@ fn default_working_compress_buffer(total_mem: u64) -> ByteSize {
 }
 
 fn first_round_sort_chunk_size(budget: &GetrawBudget) -> ByteSize {
+    let stream_limited = budget.mem::<MStreamBuffer>().as_u64() / 5;
+    ByteSize(
+        first_round_sort_chunk_max_size(budget)
+            .min(stream_limited)
+            .clamp(
+                first_round_sort_chunk_min_size(budget),
+                ByteSize::gib(8).as_u64(),
+            ),
+    )
+}
+
+fn first_round_sort_chunk_min_size(budget: &GetrawBudget) -> u64 {
+    (budget.mem::<MStreamBuffer>().as_u64() / 8).max(ByteSize::mib(256).as_u64())
+}
+
+fn first_round_sort_chunk_max_size(budget: &GetrawBudget) -> u64 {
     let rayon_threads = budget.threads.get().max(1);
     let target_resident_chunks = (rayon_threads / 10).clamp(2, 4);
-    let per_sort_chunk = budget.mem::<MSortBuffer>().as_u64() / target_resident_chunks;
-    ByteSize(per_sort_chunk.clamp(ByteSize::mib(256).as_u64(), ByteSize::gib(8).as_u64()))
+    (budget.mem::<MSortBuffer>().as_u64() / target_resident_chunks)
+        .min(budget.mem::<MStreamBuffer>().as_u64() / 3)
+        .max(first_round_sort_chunk_min_size(budget))
 }
 
 fn estimate_sort_chunk_charge(records: usize, payload_bytes: usize) -> usize {
@@ -1137,6 +1154,7 @@ impl GetRawCMD {
             let (ct_rx, ct_handle) = spawn_collector(
                 db_rx,
                 &budget,
+                Arc::clone(&read_memory_limiter),
                 Arc::clone(&sort_memory_limiter),
                 Arc::clone(&batch_stats),
                 Arc::clone(&stage_timings),
@@ -2198,16 +2216,22 @@ fn spawn_debarcode_workers(
 fn spawn_collector(
     db_rx: Receiver<BudgetedDebarcodedRecordBatch>,
     budget: &GetrawBudget,
+    read_memory_limiter: Arc<ReadMemoryLimiter>,
     sort_memory_limiter: Arc<ByteLimiter>,
     batch_stats: Arc<GetRawBatchStats>,
     stage_timings: Arc<GetRawStageTimings>,
 ) -> (Receiver<SortChunk>, JoinHandle<()>) {
     let (ct_tx, ct_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
-    let sizeof_each_sort_alloc = first_round_sort_chunk_size(budget);
+    let mut sizeof_each_sort_alloc = first_round_sort_chunk_size(budget);
+    let min_sort_chunk_size = first_round_sort_chunk_min_size(budget);
+    let max_sort_chunk_size = first_round_sort_chunk_max_size(budget);
     let mut countof_each_sort_alloc = 0;
+    let (_, _, mut last_read_memory_wait_count) = read_memory_limiter.stats();
 
     info!(
         first_round_sort_chunk_size = %sizeof_each_sort_alloc,
+        min_first_round_sort_chunk_size = %ByteSize(min_sort_chunk_size),
+        max_first_round_sort_chunk_size = %ByteSize(max_sort_chunk_size),
         sort_buffer = %budget.mem::<MSortBuffer>(),
         "Configured first-round sort chunking"
     );
@@ -2223,7 +2247,9 @@ fn spawn_collector(
         let timeout = std::time::Duration::from_secs(4);
         let flush_collection = |collection_buffer: &mut Vec<DebarcodedSortRecord>,
                                 sizeof_sort_alloc: &mut ByteSize,
-                                countof_each_sort_alloc: &mut usize|
+                                countof_each_sort_alloc: &mut usize,
+                                sizeof_each_sort_alloc: &mut ByteSize,
+                                last_read_memory_wait_count: &mut usize|
          -> bool {
             if collection_buffer.is_empty() {
                 return true;
@@ -2247,6 +2273,33 @@ fn spawn_collector(
             batch_stats.record_collector_flush(len);
             if ct_tx.send(send_chunk).is_err() {
                 return false;
+            }
+
+            let (read_memory_used, _, read_memory_wait_count) = read_memory_limiter.stats();
+            let read_wait_delta =
+                read_memory_wait_count.saturating_sub(*last_read_memory_wait_count);
+            *last_read_memory_wait_count = read_memory_wait_count;
+
+            let old_sort_chunk_size = sizeof_each_sort_alloc.as_u64();
+            let mut new_sort_chunk_size = old_sort_chunk_size;
+            let read_memory_high =
+                read_memory_used.saturating_mul(5) >= read_memory_limiter.cap.saturating_mul(4);
+            if read_wait_delta >= 16 && read_memory_high {
+                new_sort_chunk_size = old_sort_chunk_size.saturating_mul(85) / 100;
+            } else if read_wait_delta == 0 && !read_memory_high {
+                new_sort_chunk_size = old_sort_chunk_size.saturating_mul(110) / 100;
+            }
+            new_sort_chunk_size =
+                new_sort_chunk_size.clamp(min_sort_chunk_size, max_sort_chunk_size);
+            if new_sort_chunk_size != old_sort_chunk_size {
+                debug!(
+                    old_first_round_sort_chunk_size = %ByteSize(old_sort_chunk_size),
+                    new_first_round_sort_chunk_size = %ByteSize(new_sort_chunk_size),
+                    read_memory_used = %ByteSize(read_memory_used as u64),
+                    read_memory_wait_delta = read_wait_delta,
+                    "Autotuned first-round sort chunking"
+                );
+                *sizeof_each_sort_alloc = ByteSize(new_sort_chunk_size);
             }
 
             *countof_each_sort_alloc =
@@ -2280,6 +2333,8 @@ fn spawn_collector(
                             &mut collection_buffer,
                             &mut sizeof_sort_alloc,
                             &mut countof_each_sort_alloc,
+                            &mut sizeof_each_sort_alloc,
+                            &mut last_read_memory_wait_count,
                         )
                     {
                         break;
@@ -2305,6 +2360,8 @@ fn spawn_collector(
                                     &mut collection_buffer,
                                     &mut sizeof_sort_alloc,
                                     &mut countof_each_sort_alloc,
+                                    &mut sizeof_each_sort_alloc,
+                                    &mut last_read_memory_wait_count,
                                 )
                             {
                                 break;
@@ -2319,6 +2376,8 @@ fn spawn_collector(
                             &mut collection_buffer,
                             &mut sizeof_sort_alloc,
                             &mut countof_each_sort_alloc,
+                            &mut sizeof_each_sort_alloc,
+                            &mut last_read_memory_wait_count,
                         )
                     {
                         break;
@@ -2347,6 +2406,8 @@ fn spawn_collector(
                         &mut collection_buffer,
                         &mut sizeof_sort_alloc,
                         &mut countof_each_sort_alloc,
+                        &mut sizeof_each_sort_alloc,
+                        &mut last_read_memory_wait_count,
                     ) {
                         break;
                     }
@@ -2363,6 +2424,8 @@ fn spawn_collector(
             &mut collection_buffer,
             &mut sizeof_sort_alloc,
             &mut countof_each_sort_alloc,
+            &mut sizeof_each_sort_alloc,
+            &mut last_read_memory_wait_count,
         );
         stage_timings.add_collect(collect_started.elapsed());
     });
