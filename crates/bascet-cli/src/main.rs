@@ -148,10 +148,10 @@ fn main() -> std::process::ExitCode {
         Commands::Featurise(mut cmd) => cmd.try_execute(),
         #[cfg(feature = "gecco")]
         Commands::Gecco(mut cmd) => cmd.try_execute(),
-        Commands::GetRaw(mut cmd) => {
+        Commands::Debarcode(mut cmd) => {
             // #[cfg(all(target_os = "linux", target_env = "gnu"))]
             // unsafe {
-            //     // glibc otherwise creates many per-thread malloc arenas. On getraw's
+            //     // glibc otherwise creates many per-thread malloc arenas. On debarcode's
             //     // Rayon-heavy path those arenas showed up as dozens of resident 64 MiB
             //     // anonymous mappings, bypassing the command's own memory budget.
             //     libc::mallopt(libc::M_ARENA_MAX, 2);

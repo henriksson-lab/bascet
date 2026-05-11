@@ -103,7 +103,7 @@ pub enum Commands {
     Featurise(FeaturiseKmcCMD),
     #[cfg(feature = "gecco")]
     Gecco(GeccoCMD),
-    GetRaw(GetRawCMD),
+    Debarcode(GetRawCMD),
     //KmcReads(KmcReadsCMD),
     Kraken(KrakenCMD),
     Mapcell(MapCellCMD),
