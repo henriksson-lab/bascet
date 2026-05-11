@@ -1141,6 +1141,8 @@ impl GetRawCMD {
 
             let (rp_rx, rt_handle) =
                 spawn_debarcode_router(r1_rx, r2_rx, &budget, Arc::clone(&batch_stats));
+            let first_round_sort_chunk_target =
+                Arc::new(AtomicU64::new(first_round_sort_chunk_size(&budget).as_u64()));
             let (db_rx, db_handles, chemistry) = spawn_debarcode_workers(
                 rp_rx,
                 chemistry,
@@ -1149,6 +1151,7 @@ impl GetRawCMD {
                 Arc::clone(&debarcode_inflight_limiter),
                 Arc::clone(&batch_stats),
                 Arc::clone(&stage_timings),
+                Arc::clone(&first_round_sort_chunk_target),
             );
 
             let (ct_rx, ct_handle) = spawn_collector(
@@ -1158,6 +1161,7 @@ impl GetRawCMD {
                 Arc::clone(&sort_memory_limiter),
                 Arc::clone(&batch_stats),
                 Arc::clone(&stage_timings),
+                Arc::clone(&first_round_sort_chunk_target),
             );
             let writer_chemistry = chemistry.clone();
             let (st_rx, st_handles) = spawn_sort_workers(
@@ -2045,6 +2049,7 @@ fn spawn_debarcode_workers(
     inflight_limiter: Arc<InFlightLimiter>,
     batch_stats: Arc<GetRawBatchStats>,
     stage_timings: Arc<GetRawStageTimings>,
+    first_round_sort_chunk_target: Arc<AtomicU64>,
 ) -> (
     Receiver<BudgetedDebarcodedRecordBatch>,
     Vec<JoinHandle<()>>,
@@ -2103,6 +2108,8 @@ fn spawn_debarcode_workers(
                 let task_atomic_success_counter = Arc::clone(&atomic_success_counter);
                 let task_batch_stats = Arc::clone(&batch_stats);
                 let task_stage_timings = Arc::clone(&stage_timings);
+                let task_first_round_sort_chunk_target =
+                    Arc::clone(&first_round_sort_chunk_target);
                 let task_done_tx = done_tx.clone();
                 submitted += 1;
 
@@ -2129,10 +2136,14 @@ fn spawn_debarcode_workers(
                                 task_atomic_success_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
                             if thread_success_counter % 1_000_000 == 0 {
+                                let first_round_sort_chunk_size = ByteSize(
+                                    task_first_round_sort_chunk_target.load(Ordering::Relaxed),
+                                );
                                 info!(
-                                    "{:.2}M/{:.2}M reads successfully debarcoded",
+                                    "{:.2}M/{:.2}M reads successfully debarcoded; targeting ~{} first-round sorted chunks",
                                     thread_success_counter as f64 / 1_000_000.0,
-                                    thread_total_counter as f64 / 1_000_000.0
+                                    thread_total_counter as f64 / 1_000_000.0,
+                                    first_round_sort_chunk_size
                                 );
                             }
 
@@ -2220,6 +2231,7 @@ fn spawn_collector(
     sort_memory_limiter: Arc<ByteLimiter>,
     batch_stats: Arc<GetRawBatchStats>,
     stage_timings: Arc<GetRawStageTimings>,
+    first_round_sort_chunk_target: Arc<AtomicU64>,
 ) -> (Receiver<SortChunk>, JoinHandle<()>) {
     let (ct_tx, ct_rx) = crossbeam::channel::bounded(chunk_queue_capacity(budget));
     let mut sizeof_each_sort_alloc = first_round_sort_chunk_size(budget);
@@ -2227,6 +2239,7 @@ fn spawn_collector(
     let max_sort_chunk_size = first_round_sort_chunk_max_size(budget);
     let mut countof_each_sort_alloc = 0;
     let (_, _, mut last_read_memory_wait_count) = read_memory_limiter.stats();
+    first_round_sort_chunk_target.store(sizeof_each_sort_alloc.as_u64(), Ordering::Relaxed);
 
     info!(
         first_round_sort_chunk_size = %sizeof_each_sort_alloc,
@@ -2300,6 +2313,7 @@ fn spawn_collector(
                     "Autotuned first-round sort chunking"
                 );
                 *sizeof_each_sort_alloc = ByteSize(new_sort_chunk_size);
+                first_round_sort_chunk_target.store(new_sort_chunk_size, Ordering::Relaxed);
             }
 
             *countof_each_sort_alloc =
@@ -2393,6 +2407,7 @@ fn spawn_collector(
                             sort_queue_cap = ct_tx.capacity().unwrap_or(0),
                             collection_records = collection_buffer.len(),
                             collection_bytes = %sizeof_sort_alloc,
+                            target_first_round_sort_chunk_size = %sizeof_each_sort_alloc,
                             sort_memory_used = %ByteSize(sort_used as u64),
                             sort_memory_max_used = %ByteSize(sort_max_used as u64),
                             sort_memory_wait_count = sort_waits,
