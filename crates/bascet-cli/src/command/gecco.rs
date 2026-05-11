@@ -2,14 +2,15 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor, Read};
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::{Receiver, RecvTimeoutError, Sender};
 use gecco::{Gecco, orf::SeqRecord};
 use tracing::info;
 use zip::{ZipWriter, read::ZipArchive};
@@ -57,6 +58,10 @@ impl GeccoCMD {
         let threads = self.threads.unwrap_or_else(available_threads);
         let gecco_workers = self.gecco_workers.unwrap_or(threads);
         let gecco_threads = (threads / gecco_workers).max(1);
+        info!(
+            "GECCO scheduling: {} worker(s), {} GECCO thread(s) per worker, {} total requested thread(s)",
+            gecco_workers, gecco_threads, threads
+        );
 
         let mut builder = Gecco::builder()
             .jobs(gecco_threads)
@@ -120,6 +125,13 @@ struct CellGecco {
     reports: GeccoReports,
 }
 
+struct ActiveGeccoCell {
+    cell_id: String,
+    started_at: Instant,
+    records: usize,
+    bases: usize,
+}
+
 fn run_gecco_zip(
     path_in: PathBuf,
     path_out: PathBuf,
@@ -129,9 +141,19 @@ fn run_gecco_zip(
     let queue_size = gecco_workers * 2;
     let (tx_cells, rx_cells) = crossbeam::channel::bounded::<Result<CellContigs>>(queue_size);
     let (tx_reports, rx_reports) = crossbeam::channel::bounded::<Result<CellGecco>>(queue_size);
+    let (tx_heartbeat_done, rx_heartbeat_done) = crossbeam::channel::bounded::<()>(1);
     let cancel = Arc::new(AtomicBool::new(false));
+    let active_cells = Arc::new(
+        (0..gecco_workers)
+            .map(|_| Mutex::new(None))
+            .collect::<Vec<OptionActiveGeccoCell>>(),
+    );
 
     let writer = thread::spawn(move || write_zip(path_out, rx_reports));
+    let heartbeat = {
+        let active_cells = Arc::clone(&active_cells);
+        thread::spawn(move || gecco_heartbeat(active_cells, rx_heartbeat_done))
+    };
 
     let mut workers = Vec::with_capacity(gecco_workers);
     for worker_id in 0..gecco_workers {
@@ -139,6 +161,7 @@ fn run_gecco_zip(
         let tx_reports = tx_reports.clone();
         let pipeline = Arc::clone(&pipeline);
         let cancel = Arc::clone(&cancel);
+        let active_cells = Arc::clone(&active_cells);
         workers.push(thread::spawn(move || {
             while let Ok(cell) = rx_cells.recv() {
                 if cancel.load(Ordering::Acquire) {
@@ -147,14 +170,47 @@ fn run_gecco_zip(
                 let result = cell.and_then(|cell| {
                     info!("gecco worker {} processing {}", worker_id, cell.cell_id);
                     let records = read_fasta_records(&cell.contigs, &cell.cell_id)?;
+                    let record_count = records.len();
+                    let base_count = records.iter().map(|record| record.seq.len()).sum();
+                    {
+                        let mut active_cell = active_cells[worker_id]
+                            .lock()
+                            .expect("active GECCO cell lock poisoned");
+                        *active_cell = Some(ActiveGeccoCell {
+                            cell_id: cell.cell_id.clone(),
+                            started_at: Instant::now(),
+                            records: record_count,
+                            bases: base_count,
+                        });
+                    }
+                    let started_at = Instant::now();
                     let reports = run_gecco_cell(&pipeline, &records).with_context(|| {
                         format!("GECCO worker {worker_id} failed for cell {}", cell.cell_id)
                     })?;
+                    {
+                        let mut active_cell = active_cells[worker_id]
+                            .lock()
+                            .expect("active GECCO cell lock poisoned");
+                        *active_cell = None;
+                    }
+                    info!(
+                        "gecco worker {} finished {} in {:.1}s ({} contigs, {} bp)",
+                        worker_id,
+                        cell.cell_id,
+                        started_at.elapsed().as_secs_f64(),
+                        record_count,
+                        base_count
+                    );
                     Ok(CellGecco {
                         cell_id: cell.cell_id,
                         reports,
                     })
                 });
+                if result.is_err() {
+                    if let Ok(mut active_cell) = active_cells[worker_id].lock() {
+                        *active_cell = None;
+                    }
+                }
                 if result.is_err() {
                     cancel.store(true, Ordering::Release);
                 }
@@ -176,17 +232,64 @@ fn run_gecco_zip(
     }
     drop(tx_cells);
 
+    let mut worker_result = Ok(());
     for worker in workers {
-        worker
+        if let Err(error) = worker
             .join()
-            .map_err(|_| anyhow::anyhow!("gecco worker thread panicked"))?;
+            .map_err(|_| anyhow::anyhow!("gecco worker thread panicked"))
+        {
+            worker_result = Err(error);
+        }
     }
 
-    writer
+    let writer_result = writer
         .join()
-        .map_err(|_| anyhow::anyhow!("zip writer thread panicked"))??;
+        .map_err(|_| anyhow::anyhow!("zip writer thread panicked"))
+        .and_then(|result| result);
 
-    Ok(())
+    let _ = tx_heartbeat_done.send(());
+    heartbeat
+        .join()
+        .map_err(|_| anyhow::anyhow!("gecco heartbeat thread panicked"))?;
+
+    worker_result?;
+    writer_result
+}
+
+type OptionActiveGeccoCell = Mutex<Option<ActiveGeccoCell>>;
+
+fn gecco_heartbeat(active_cells: Arc<Vec<OptionActiveGeccoCell>>, rx_done: Receiver<()>) {
+    let interval = Duration::from_secs(300);
+    loop {
+        match rx_done.recv_timeout(interval) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        if rx_done.try_recv().is_ok() {
+            break;
+        }
+        let mut active = Vec::new();
+        for (worker_id, active_cell) in active_cells.iter().enumerate() {
+            let Ok(active_cell) = active_cell.lock() else {
+                continue;
+            };
+            if let Some(cell) = active_cell.as_ref() {
+                active.push(format!(
+                    "worker {} {} for {:.1} min ({} contigs, {} bp)",
+                    worker_id,
+                    cell.cell_id,
+                    cell.started_at.elapsed().as_secs_f64() / 60.0,
+                    cell.records,
+                    cell.bases
+                ));
+            }
+        }
+        if active.is_empty() {
+            info!("GECCO heartbeat: no cells currently scanning");
+        } else {
+            info!("GECCO heartbeat: {}", active.join("; "));
+        }
+    }
 }
 
 fn read_zip_cells(
