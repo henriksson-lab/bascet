@@ -29,6 +29,9 @@ LINUX_CFLAGS ?= -mno-avx512f -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI 
 all:
 	cargo +nightly build --profile=release
 
+run:
+	cargo run --profile=release
+
 test:
 	cargo +nightly test
 

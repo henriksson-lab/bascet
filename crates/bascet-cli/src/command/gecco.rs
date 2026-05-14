@@ -17,8 +17,6 @@ use zip::{ZipWriter, read::ZipArchive};
 
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
-const DEFAULT_GECCO_THREADS_PER_WORKER: usize = 5;
-
 #[derive(Args)]
 pub struct GeccoCMD {
     /// Input zip file containing CELLID/contigs.fa entries.
@@ -29,11 +27,11 @@ pub struct GeccoCMD {
     #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf))]
     pub path_out: PathBuf,
 
-    /// Total GECCO thread budget. Defaults to all available threads.
+    /// Number of threads each GECCO scan may use. Defaults to all available threads.
     #[arg(short = 't', long = "threads")]
     pub threads: Option<usize>,
 
-    /// Number of cells to process concurrently. Defaults to ceil(--threads / 5).
+    /// Number of cells to process concurrently. Defaults to 1.
     #[arg(short = '@', long = "gecco-workers")]
     pub gecco_workers: Option<usize>,
 
@@ -57,17 +55,12 @@ pub struct GeccoCMD {
 impl GeccoCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         self.validate()?;
-        let threads = self.threads.unwrap_or_else(available_threads);
-        let gecco_workers = self
-            .gecco_workers
-            .unwrap_or_else(|| threads.div_ceil(DEFAULT_GECCO_THREADS_PER_WORKER).max(1));
-        let gecco_threads = self
-            .gecco_workers
-            .map(|_| threads.div_ceil(gecco_workers).max(1))
-            .unwrap_or_else(|| DEFAULT_GECCO_THREADS_PER_WORKER.min(threads).max(1));
+        let gecco_threads = self.threads.unwrap_or_else(available_threads);
+        let gecco_workers = self.gecco_workers.unwrap_or(1);
+        let rayon_threads = gecco_threads.saturating_mul(gecco_workers).max(1);
         info!(
-            "GECCO scheduling: {} worker(s), {} GECCO thread(s) per worker, {} total thread budget",
-            gecco_workers, gecco_threads, threads
+            "GECCO scheduling: {} worker(s), {} GECCO thread(s) per worker, {} Rayon thread(s)",
+            gecco_workers, gecco_threads, rayon_threads
         );
 
         let mut builder = Gecco::builder()
@@ -78,7 +71,7 @@ impl GeccoCMD {
         if gecco_threads > 1 {
             let thread_pool = Arc::new(
                 rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
+                    .num_threads(rayon_threads)
                     .build()
                     .context("failed to initialize GECCO Rayon thread pool")?,
             );
@@ -457,20 +450,22 @@ fn write_cell_reports(
         "features.tsv",
         &reports.features,
     )?;
-    write_zip_entry(
-        zip_writer,
-        options,
-        cell_id,
-        "clusters.tsv",
-        &reports.clusters,
-    )?;
-    write_zip_entry(
-        zip_writer,
-        options,
-        cell_id,
-        "clusters.gbk",
-        &reports.clusters_gbk,
-    )?;
+    if !reports.clusters.is_empty() || !reports.clusters_gbk.is_empty() {
+        write_zip_entry(
+            zip_writer,
+            options,
+            cell_id,
+            "clusters.tsv",
+            &reports.clusters,
+        )?;
+        write_zip_entry(
+            zip_writer,
+            options,
+            cell_id,
+            "clusters.gbk",
+            &reports.clusters_gbk,
+        )?;
+    }
     write_zip_entry(zip_writer, options, cell_id, "gecco.log", &reports.log)?;
     Ok(())
 }

@@ -18,7 +18,7 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["bwa-mem2-rs-align", "skesa", "fastqc", "gecco"]
+default = ["bwa-mem2-rs-align", "skesa", "fastqc", "gecco", "star-rs-align"]
 bwa-mem2-rs-align = ["dep:bwa-mem2-rs"]
 fastqc = ["dep:fastqc-rs"]
 gecco = ["dep:gecco"]

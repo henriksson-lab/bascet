@@ -1141,8 +1141,9 @@ impl GetRawCMD {
 
             let (rp_rx, rt_handle) =
                 spawn_debarcode_router(r1_rx, r2_rx, &budget, Arc::clone(&batch_stats));
-            let first_round_sort_chunk_target =
-                Arc::new(AtomicU64::new(first_round_sort_chunk_size(&budget).as_u64()));
+            let first_round_sort_chunk_target = Arc::new(AtomicU64::new(
+                first_round_sort_chunk_size(&budget).as_u64(),
+            ));
             let (db_rx, db_handles, chemistry) = spawn_debarcode_workers(
                 rp_rx,
                 chemistry,
@@ -2108,8 +2109,7 @@ fn spawn_debarcode_workers(
                 let task_atomic_success_counter = Arc::clone(&atomic_success_counter);
                 let task_batch_stats = Arc::clone(&batch_stats);
                 let task_stage_timings = Arc::clone(&stage_timings);
-                let task_first_round_sort_chunk_target =
-                    Arc::clone(&first_round_sort_chunk_target);
+                let task_first_round_sort_chunk_target = Arc::clone(&first_round_sort_chunk_target);
                 let task_done_tx = done_tx.clone();
                 submitted += 1;
 
