@@ -84,7 +84,7 @@ impl ExttoolCMD {
 #[cfg(feature = "bwa-mem2-rs-align")]
 fn run_bwa_mem2(args: &[String]) -> Result<ExitCode> {
     let argv = native_argv("bwa-mem2", args);
-    let code = bwa_mem2_rs::generated::main_cpp::main(&argv);
+    let code = bwa_mem2_rs::bwa_mem2::main::main(&argv);
     Ok(exit_code_from_i32(code))
 }
 

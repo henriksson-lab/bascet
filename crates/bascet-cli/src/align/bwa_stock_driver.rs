@@ -21,11 +21,12 @@ use std::{
 use anyhow::{Context, Result};
 use bascet_core::{Decode, DecodeResult};
 use bascet_io::codec;
-use bwa_mem2_rs::generated::{
-    bwa_h::bseq1_t,
-    bwamem_cpp::{mem_opt_init, mem_process_seqs, with_current_rayon_pool},
-    bwamem_h::{mem_opt_t, mem_pestat_t, worker_t},
-    fmi_search_cpp::FMI_search,
+use bwa_mem2_rs::bwa_mem2::{
+    bwa::bseq1_t,
+    bwamem::{
+        mem_opt_init, mem_opt_t, mem_pestat_t, mem_process_seqs, with_current_rayon_pool, worker_t,
+    },
+    fmi_search::FMI_search,
 };
 use bytesize::ByteSize;
 use crossbeam::channel;
@@ -95,7 +96,7 @@ fn build_ref_string(l_pac: i64, pac: &[u8]) -> Vec<u8> {
 /// initialize the worker mmc without going through `memoryAlloc` (which wants a full
 /// `ktp_aux_t` and is more than we need).
 fn ensure_mem_cache_thread_slots(w: &mut worker_t, nthreads: usize, nreads: usize) {
-    use bwa_mem2_rs::generated::bwamem_h::{mem_alnreg_v, mem_chain_v};
+    use bwa_mem2_rs::bwa_mem2::bwamem::{mem_alnreg_v, mem_chain_v};
 
     w.regs = vec![mem_alnreg_v::default(); nreads];
     w.chain_ar = vec![mem_chain_v::default(); nreads];

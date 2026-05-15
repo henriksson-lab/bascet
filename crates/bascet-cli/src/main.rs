@@ -1,5 +1,8 @@
 use std::sync::atomic::Ordering;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use bascet_cli::command::{self, Commands};
 use bascet_runtime::logging::{
     LogConfig, LogGuard, LogLevel, LogMode, LogOrdered, LogStrictness, LogStrictnessLayer,

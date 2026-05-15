@@ -69,6 +69,7 @@ libc = "0.2"
 libdeflater.workspace = true
 memchr.workspace = true
 memory-stats.workspace = true
+mimalloc = { version = "0.1", default-features = false }
 min-max-heap.workspace = true
 miniz_oxide.workspace = true
 minimap2 = { package = "minimap2-pure-rs", git = "https://github.com/henriksson-lab/minimap2-pure-rs", optional = true }
