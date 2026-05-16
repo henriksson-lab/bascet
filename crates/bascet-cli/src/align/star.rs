@@ -22,8 +22,8 @@ use super::output::{
 use crate::command::{bamsort::sort_and_index_bam, samtools_rs::sort::ReferenceOrder};
 use crate::utils::{atomic_temp_path, atomic_temp_path_in_dir, publish_atomic_output};
 use star_rs::{
+    ReadAlignChunkProcessChunksResult, StarMainResult,
     direct::{DirectReadPair, DirectStarRun},
-    generated::structs::{ReadAlignChunkProcessChunksResult, StarMainResult},
 };
 
 pub fn try_execute_star_rs(
