@@ -295,22 +295,48 @@ fn run_star_rs_with_tirp(
         let mut chunk_has_reads = false;
 
         loop {
-            let record = if let Some(record) = pending.take() {
-                record
+            if let Some(record) = pending.take() {
+                if chunk_has_reads && runner.read_pair_would_exceed_chunk(&record.as_direct_read())
+                {
+                    pending = Some(record);
+                    break;
+                }
+
+                runner.append_read_pair(&record.as_direct_read());
             } else {
-                match query.next_into::<tirp::Record>() {
-                    Ok(Some(record)) => owned_star_read_from_record(&record, num_read),
+                let record = match query.next_into::<tirp::Record>() {
+                    Ok(Some(record)) => record,
                     Ok(None) => break,
                     Err(err) => return Err(format!("{err:?}")),
+                };
+                let record_id = *record.get_ref::<Id>();
+                let record_r1 = *record.get_ref::<R1>();
+                let record_r2 = *record.get_ref::<R2>();
+                let record_q1 = *record.get_ref::<Q1>();
+                let record_q2 = *record.get_ref::<Q2>();
+                let record_umi = *record.get_ref::<Umi>();
+                let name = make_bascet_read_name(record_id, record_umi, num_read);
+                let direct_read = DirectReadPair {
+                    name: &name,
+                    r1: record_r1,
+                    q1: record_q1,
+                    r2: record_r2,
+                    q2: record_q2,
+                };
+
+                if chunk_has_reads && runner.read_pair_would_exceed_chunk(&direct_read) {
+                    pending = Some(OwnedStarReadPair {
+                        name,
+                        r1: record_r1.to_vec(),
+                        q1: record_q1.to_vec(),
+                        r2: record_r2.to_vec(),
+                        q2: record_q2.to_vec(),
+                    });
+                    break;
                 }
-            };
 
-            if chunk_has_reads && runner.read_pair_would_exceed_chunk(&record.as_direct_read()) {
-                pending = Some(record);
-                break;
+                runner.append_read_pair(&direct_read);
             }
-
-            runner.append_read_pair(&record.as_direct_read());
             num_read += 1;
             chunk_has_reads = true;
             if num_read % 1_000_000 == 0 {
@@ -351,21 +377,5 @@ impl OwnedStarReadPair {
             r2: &self.r2,
             q2: &self.q2,
         }
-    }
-}
-
-fn owned_star_read_from_record(record: &tirp::Record, num_read: u64) -> OwnedStarReadPair {
-    let record_id = *record.get_ref::<Id>();
-    let record_r1 = *record.get_ref::<R1>();
-    let record_r2 = *record.get_ref::<R2>();
-    let record_q1 = *record.get_ref::<Q1>();
-    let record_q2 = *record.get_ref::<Q2>();
-    let record_umi = *record.get_ref::<Umi>();
-    OwnedStarReadPair {
-        name: make_bascet_read_name(record_id, record_umi, num_read),
-        r1: record_r1.to_vec(),
-        q1: record_q1.to_vec(),
-        r2: record_r2.to_vec(),
-        q2: record_q2.to_vec(),
     }
 }
