@@ -20,7 +20,9 @@ use super::samtools_rs::sort::{
     sort_encoded_record_chunk_receiver_parallel, sort_encoded_record_chunks_parallel,
     sort_streaming_parallel,
 };
-use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
+use crate::utils::{
+    atomic_temp_path_in_dir, current_rss_display, max_rss_display, publish_atomic_output,
+};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_MEMORY: &str = "8GB";
@@ -325,29 +327,6 @@ pub fn sort_and_index_encoded_bam_chunk_receiver(
         "BamSort: complete"
     );
     Ok(())
-}
-
-fn current_rss_display() -> String {
-    memory_stats::memory_stats()
-        .map(|memory| ByteSize(memory.physical_mem as u64).to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn max_rss_display() -> String {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
-    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    if rc != 0 {
-        return "unknown".to_string();
-    }
-    let usage = unsafe { usage.assume_init() };
-    #[cfg(target_os = "linux")]
-    {
-        ByteSize((usage.ru_maxrss as u64).saturating_mul(1024)).to_string()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        ByteSize(usage.ru_maxrss as u64).to_string()
-    }
 }
 
 fn bai_path(bam_path: &Path) -> PathBuf {

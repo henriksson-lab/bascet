@@ -4,6 +4,7 @@ mod detect_software;
 mod fs_utils;
 mod merge_archives;
 mod path_utils;
+mod resource_usage;
 mod tabix_bed;
 
 pub use merge_archives::merge_archives;
@@ -16,6 +17,10 @@ pub use fs_utils::{
     rename_or_copy_across_filesystems,
 };
 pub use path_utils::expand_and_resolve;
+pub use resource_usage::{
+    current_rss_bytes, current_rss_display, max_rss_bytes, max_rss_display, process_cpu_seconds,
+    thread_cpu_seconds,
+};
 pub use tabix_bed::BedTabixIndexer;
 
 pub use command_to_string::command_to_string;

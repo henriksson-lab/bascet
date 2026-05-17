@@ -28,7 +28,10 @@ use crate::command::{
     bamsort::sort_and_index_encoded_bam_chunk_receiver,
     samtools_rs::sort::{EncodedBamChunk, ReferenceOrder},
 };
-use crate::utils::{atomic_temp_path, atomic_temp_path_in_dir, publish_atomic_output};
+use crate::utils::{
+    atomic_temp_path, atomic_temp_path_in_dir, current_rss_display, max_rss_display,
+    process_cpu_seconds, publish_atomic_output, thread_cpu_seconds,
+};
 use star_rs::{
     ReadAlignChunkMapChunkResult, ReadAlignChunkProcessChunksResult, Stats,
     direct::{
@@ -431,29 +434,6 @@ fn streaming_sort_memory_budget(total_memory: ByteSize) -> ByteSize {
     ByteSize(budget.clamp(ByteSize::gib(1).as_u64(), ByteSize::gib(4).as_u64()))
 }
 
-fn current_rss_display() -> String {
-    memory_stats::memory_stats()
-        .map(|memory| ByteSize(memory.physical_mem as u64).to_string())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn max_rss_display() -> String {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
-    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    if rc != 0 {
-        return "unknown".to_string();
-    }
-    let usage = unsafe { usage.assume_init() };
-    #[cfg(target_os = "linux")]
-    {
-        return ByteSize((usage.ru_maxrss as u64).saturating_mul(1024)).to_string();
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        ByteSize(usage.ru_maxrss as u64).to_string()
-    }
-}
-
 fn run_star_rs(
     path_genome: &Path,
     path_in: &Path,
@@ -782,7 +762,10 @@ fn run_star_rs_with_tirp(
             let map_cpu_start = thread_cpu_seconds();
             let result = context.map_read_chunk(worker, chunk);
             let map_wall_seconds = map_start.elapsed().as_secs_f64();
-            let map_cpu_seconds = thread_cpu_seconds() - map_cpu_start;
+            let map_cpu_seconds = thread_cpu_seconds()
+                .zip(map_cpu_start)
+                .map(|(end, start)| end - start)
+                .unwrap_or(0.0);
             let result = result.map(|mapped| TimedMappedStarChunk {
                 mapped,
                 map_wall_seconds,
@@ -1193,13 +1176,13 @@ impl CpuSnapshot {
     fn now() -> Self {
         Self {
             wall: Instant::now(),
-            cpu_seconds: process_cpu_seconds(),
+            cpu_seconds: process_cpu_seconds().unwrap_or(0.0),
         }
     }
 
     fn stage(&self) -> CpuStage {
         let wall_seconds = self.wall.elapsed().as_secs_f64();
-        let cpu_seconds = process_cpu_seconds() - self.cpu_seconds;
+        let cpu_seconds = process_cpu_seconds().unwrap_or(0.0) - self.cpu_seconds;
         CpuStage {
             wall_seconds,
             cpu_seconds,
@@ -1210,30 +1193,6 @@ impl CpuSnapshot {
             },
         }
     }
-}
-
-fn process_cpu_seconds() -> f64 {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
-    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    if rc != 0 {
-        return 0.0;
-    }
-    let usage = unsafe { usage.assume_init() };
-    timeval_seconds(usage.ru_utime) + timeval_seconds(usage.ru_stime)
-}
-
-fn thread_cpu_seconds() -> f64 {
-    let mut time = std::mem::MaybeUninit::<libc::timespec>::uninit();
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, time.as_mut_ptr()) };
-    if rc != 0 {
-        return 0.0;
-    }
-    let time = unsafe { time.assume_init() };
-    time.tv_sec as f64 + time.tv_nsec as f64 / 1_000_000_000.0
-}
-
-fn timeval_seconds(value: libc::timeval) -> f64 {
-    value.tv_sec as f64 + value.tv_usec as f64 / 1_000_000.0
 }
 
 #[derive(Clone, Copy)]
