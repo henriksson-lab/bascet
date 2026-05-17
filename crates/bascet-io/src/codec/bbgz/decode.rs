@@ -61,6 +61,7 @@ impl BBGZDecoder {
             { u64::MAX },
         >,
         with_opt_rayon_pool: Option<Arc<rayon::ThreadPool>>,
+        with_opt_rayon_pool_max_inflight: Option<BoundedU64<1, { u64::MAX }>>,
     ) -> Self {
         let file = File::open(with_path.as_ref()).unwrap_or_else(|err| {
             panic!(
@@ -70,11 +71,15 @@ impl BBGZDecoder {
         });
         advise_sequential(&file);
 
-        let worker_count = with_opt_rayon_pool
-            .as_ref()
-            .map(|pool| pool.current_num_threads())
-            .unwrap_or_else(|| countof_threads.get() as usize)
-            .max(1);
+        let worker_count = if let Some(pool) = with_opt_rayon_pool.as_ref() {
+            with_opt_rayon_pool_max_inflight
+                .map(|max_inflight| max_inflight.get() as usize)
+                .unwrap_or_else(|| pool.current_num_threads())
+                .clamp(1, pool.current_num_threads().max(1))
+        } else {
+            countof_threads.get() as usize
+        }
+        .max(1);
         let sizeof_alloc = MAX_SIZEOF_BLOCKusize;
         let cancel = Arc::new(AtomicBool::new(false));
         let job_queue_capacity = worker_count

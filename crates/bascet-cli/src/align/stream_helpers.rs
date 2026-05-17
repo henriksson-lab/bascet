@@ -18,8 +18,8 @@ pub(super) fn stream_buffer_after_index_load(
     total_memory: ByteSize,
     requested_stream_buffer: ByteSize,
     sizeof_stream_arena: ByteSize,
+    max_stream_buffer: ByteSize,
 ) -> ByteSize {
-    const MAX_STREAM_BUFFER: ByteSize = ByteSize(256 * 1024 * 1024);
     let minimum_stream_buffer = ByteSize(
         (sizeof_stream_arena.as_u64() * 2)
             .max(ByteSize::mib(64).as_u64())
@@ -45,7 +45,7 @@ pub(super) fn stream_buffer_after_index_load(
         return ByteSize(
             requested_stream_buffer
                 .as_u64()
-                .min(MAX_STREAM_BUFFER.as_u64()),
+                .min(max_stream_buffer.as_u64()),
         );
     };
 
@@ -55,11 +55,16 @@ pub(super) fn stream_buffer_after_index_load(
         .saturating_sub(index_loaded_rss.as_u64())
         .saturating_sub(memory_headroom.as_u64())
         .saturating_sub(future_reading_reserve.as_u64());
+    let available_after_index = ByteSize(
+        total_memory
+            .as_u64()
+            .saturating_sub(index_loaded_rss.as_u64()),
+    );
     let adjusted = ByteSize(
         available_for_stream
             .max(minimum_stream_buffer.as_u64())
             .min(requested_stream_buffer.as_u64())
-            .min(MAX_STREAM_BUFFER.as_u64()),
+            .min(max_stream_buffer.as_u64()),
     );
 
     if adjusted == minimum_stream_buffer && adjusted < requested_stream_buffer {
@@ -67,9 +72,11 @@ pub(super) fn stream_buffer_after_index_load(
             aligner = aligner_name,
             index_loaded_rss = %index_loaded_rss,
             total_memory = %total_memory,
+            available_after_index = %available_after_index,
             requested_stream_buffer = %requested_stream_buffer,
             memory_headroom = %memory_headroom,
             future_reading_reserve = %future_reading_reserve,
+            max_stream_buffer = %max_stream_buffer,
             adjusted_stream_buffer = %adjusted,
             "Aligner index leaves little budget for stream buffers; using minimum stream buffer"
         );
@@ -78,9 +85,12 @@ pub(super) fn stream_buffer_after_index_load(
             aligner = aligner_name,
             index_loaded_rss = %index_loaded_rss,
             total_memory = %total_memory,
+            available_after_index = %available_after_index,
+            available_for_stream = %ByteSize(available_for_stream),
             requested_stream_buffer = %requested_stream_buffer,
             memory_headroom = %memory_headroom,
             future_reading_reserve = %future_reading_reserve,
+            max_stream_buffer = %max_stream_buffer,
             adjusted_stream_buffer = %adjusted,
             "Adjusted aligner stream buffer after index load"
         );

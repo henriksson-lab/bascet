@@ -69,7 +69,6 @@ libc = "0.2"
 libdeflater.workspace = true
 memchr.workspace = true
 memory-stats.workspace = true
-mimalloc = { version = "0.1", default-features = false }
 min-max-heap.workspace = true
 miniz_oxide.workspace = true
 minimap2 = { package = "minimap2-pure-rs", git = "https://github.com/henriksson-lab/minimap2-pure-rs", optional = true }
@@ -87,7 +86,7 @@ shellexpand.workspace = true
 skesa-rs = { version = "0.2.1", default-features = false, optional = true }
 smallvec.workspace = true
 sprs.workspace = true
-star-rs = { git = "https://github.com/henriksson-lab/star-rs.git", optional = true }
+star-rs = { git = "https://github.com/henriksson-lab/star-rs", optional = true }
 strum.workspace = true
 strum_macros.workspace = true
 threadpool.workspace = true
@@ -101,3 +100,6 @@ zune-inflate.workspace = true
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 sysinfo.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+mimalloc = { version = "0.1", default-features = false }

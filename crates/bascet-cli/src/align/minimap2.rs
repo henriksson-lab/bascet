@@ -90,6 +90,7 @@ pub fn try_execute_minimap2(
         total_memory,
         sizeof_stream_buffer,
         sizeof_stream_arena,
+        ByteSize::mib(256),
     );
 
     let sam_header = minimap_sam::write_sam_hdr(&aligner.idx, None, &[]);

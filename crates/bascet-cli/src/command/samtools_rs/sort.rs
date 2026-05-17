@@ -6,7 +6,7 @@ use super::bgzf;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -92,6 +92,12 @@ pub enum IndexFormat {
     Csi,
 }
 
+pub struct EncodedBamChunk {
+    pub chunk_idx: usize,
+    pub data: Vec<u8>,
+    pub records: u64,
+}
+
 const TMP_LEVEL: u8 = 1;
 const PER_RECORD_OVERHEAD: usize = std::mem::size_of::<Record>();
 
@@ -170,6 +176,68 @@ pub fn sort_streaming_parallel<R: Read + Send + 'static, W: Write + Send + 'stat
     info!("BamSort: phase 1/2 — reading input and spilling sorted chunks");
     let phase1_start = Instant::now();
     let staged = collect_and_spill_parallel(input, opts)?;
+    let phase1_elapsed = phase1_start.elapsed();
+    match &staged.chunks {
+        ChunkSource::InMemory(records) => info!(
+            records = records.len(),
+            elapsed_secs = phase1_elapsed.as_secs(),
+            "BamSort: phase 1 done — sort fits in memory, no spill"
+        ),
+        ChunkSource::Files(paths) => info!(
+            chunks = paths.len(),
+            elapsed_secs = phase1_elapsed.as_secs(),
+            "BamSort: phase 1 done — spilled chunks; phase 2/2 starting (k-way merge + write)"
+        ),
+    }
+    let phase2_start = Instant::now();
+    write_with_parallel_writer(output, staged, opts)?;
+    info!(
+        elapsed_secs = phase2_start.elapsed().as_secs(),
+        "BamSort: phase 2 done — merge + write complete"
+    );
+    Ok(())
+}
+
+pub fn sort_encoded_record_chunks_parallel<W: Write + Send + 'static>(
+    header_bytes: Vec<u8>,
+    chunks: Vec<EncodedBamChunk>,
+    output: W,
+    opts: &SortOptions<'_>,
+) -> io::Result<()> {
+    info!("BamSort: phase 1/2 — consuming encoded in-process BAM chunks");
+    let phase1_start = Instant::now();
+    let staged = collect_and_spill_encoded_chunks(header_bytes, chunks, opts)?;
+    let phase1_elapsed = phase1_start.elapsed();
+    match &staged.chunks {
+        ChunkSource::InMemory(records) => info!(
+            records = records.len(),
+            elapsed_secs = phase1_elapsed.as_secs(),
+            "BamSort: phase 1 done — sort fits in memory, no spill"
+        ),
+        ChunkSource::Files(paths) => info!(
+            chunks = paths.len(),
+            elapsed_secs = phase1_elapsed.as_secs(),
+            "BamSort: phase 1 done — spilled chunks; phase 2/2 starting (k-way merge + write)"
+        ),
+    }
+    let phase2_start = Instant::now();
+    write_with_parallel_writer(output, staged, opts)?;
+    info!(
+        elapsed_secs = phase2_start.elapsed().as_secs(),
+        "BamSort: phase 2 done — merge + write complete"
+    );
+    Ok(())
+}
+
+pub fn sort_encoded_record_chunk_receiver_parallel<W: Write + Send + 'static>(
+    header_bytes: Vec<u8>,
+    chunk_rx: crossbeam_channel::Receiver<EncodedBamChunk>,
+    output: W,
+    opts: &SortOptions<'_>,
+) -> io::Result<()> {
+    info!("BamSort: phase 1/2 — consuming streamed in-process BAM chunks");
+    let phase1_start = Instant::now();
+    let staged = collect_and_spill_encoded_chunk_receiver(header_bytes, chunk_rx, opts)?;
     let phase1_elapsed = phase1_start.elapsed();
     match &staged.chunks {
         ChunkSource::InMemory(records) => info!(
@@ -371,6 +439,302 @@ fn collect_and_spill_parallel<R: Read + Send + 'static>(
 
     // Order chunk paths by chunk_idx so file_idx in the merge heap matches
     // the order chunks were created — this preserves samtools' tie-break.
+    chunk_results.sort_by_key(|r| r.chunk_idx);
+    let chunk_paths: Vec<PathBuf> = chunk_results.into_iter().map(|r| r.path).collect();
+
+    Ok(StagedSort {
+        out_header,
+        chunks: ChunkSource::Files(chunk_paths),
+    })
+}
+
+fn collect_and_spill_encoded_chunks(
+    header_bytes: Vec<u8>,
+    mut chunks: Vec<EncodedBamChunk>,
+    opts: &SortOptions<'_>,
+) -> io::Result<StagedSort> {
+    let original_header = Header::read(&mut Cursor::new(header_bytes))?;
+    let (mut out_header, ref_id_map) =
+        prepare_output_header(&original_header, opts.reference_order)?;
+
+    let header_arc = Arc::new(out_header.clone());
+    let order = opts.order;
+    let prefix = opts.tmp_prefix.clone();
+
+    let (job_tx, job_rx) = bounded::<SpillJob>(0);
+    let (result_tx, result_rx) = unbounded::<SpillResult>();
+    let n_workers = opts.threads.clamp(1, 8);
+    let mut workers = Vec::with_capacity(n_workers);
+    for _ in 0..n_workers {
+        let rx = job_rx.clone();
+        let tx = result_tx.clone();
+        let h = Arc::clone(&header_arc);
+        let pfx = prefix.clone();
+        let (_recycle_tx, recycle_rx) = bounded::<Vec<Vec<u8>>>(0);
+        drop(recycle_rx);
+        workers.push(std::thread::spawn(move || {
+            spill_worker(rx, tx, _recycle_tx, h, order, pfx);
+        }));
+    }
+    drop(result_tx);
+    drop(job_rx);
+
+    chunks.sort_by_key(|chunk| chunk.chunk_idx);
+
+    let mut buf: Vec<Record> = Vec::new();
+    let mut buf_bytes: usize = 0;
+    let mut next_chunk_idx: usize = 0;
+    let mut spill_started = false;
+    let mut total_records: u64 = 0;
+    let mut next_spill_progress_at = SPILL_PROGRESS_STEP_RECORDS;
+
+    let read_result: io::Result<()> = (|| {
+        for chunk in chunks {
+            let mut cursor = bgzf::Reader::new(Cursor::new(chunk.data));
+            while let Some(mut r) = Record::read(&mut cursor)? {
+                remap_record_refs(&mut r, ref_id_map.as_deref())?;
+                buf_bytes += record_mem(&r);
+                buf.push(r);
+                total_records += 1;
+                if buf_bytes >= opts.max_mem {
+                    spill_started = true;
+                    let chunk_records = buf.len();
+                    let chunk_bytes = buf_bytes;
+                    let job = SpillJob {
+                        records: std::mem::take(&mut buf),
+                        chunk_idx: next_chunk_idx,
+                    };
+                    debug!(
+                        chunk_idx = next_chunk_idx,
+                        records = %fmt_count(chunk_records as u64),
+                        bytes = %fmt_count(chunk_bytes as u64),
+                        total = %fmt_count(total_records),
+                        "BamSort: dispatched spill chunk"
+                    );
+                    if total_records >= next_spill_progress_at {
+                        info!(
+                            reads = %fmt_count(total_records),
+                            chunks = %fmt_count((next_chunk_idx + 1) as u64),
+                            "BamSort: spilled"
+                        );
+                        while next_spill_progress_at <= total_records {
+                            next_spill_progress_at =
+                                next_spill_progress_at.saturating_add(SPILL_PROGRESS_STEP_RECORDS);
+                        }
+                    }
+                    next_chunk_idx += 1;
+                    buf_bytes = 0;
+                    if job_tx.send(job).is_err() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "spill worker channel closed unexpectedly",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    info!(
+        reads = %fmt_count(total_records),
+        chunks = %fmt_count(next_chunk_idx as u64),
+        "BamSort: read input"
+    );
+
+    if read_result.is_ok() && spill_started && !buf.is_empty() {
+        let job = SpillJob {
+            records: std::mem::take(&mut buf),
+            chunk_idx: next_chunk_idx,
+        };
+        let _ = job_tx.send(job);
+    }
+    drop(job_tx);
+
+    for w in workers {
+        let _ = w.join();
+    }
+
+    let mut chunk_results: Vec<SpillResult> = result_rx.iter().collect();
+    let mut first_err: Option<io::Error> = read_result.err();
+    for r in &mut chunk_results {
+        if first_err.is_none() {
+            if let Some(e) = r.error.take() {
+                first_err = Some(e);
+            }
+        }
+    }
+    if let Some(e) = first_err {
+        for r in &chunk_results {
+            let _ = std::fs::remove_file(&r.path);
+        }
+        return Err(e);
+    }
+
+    update_header(&mut out_header, opts);
+
+    if !spill_started {
+        sort_records(&mut buf, opts.order);
+        return Ok(StagedSort {
+            out_header,
+            chunks: ChunkSource::InMemory(buf),
+        });
+    }
+
+    chunk_results.sort_by_key(|r| r.chunk_idx);
+    let chunk_paths: Vec<PathBuf> = chunk_results.into_iter().map(|r| r.path).collect();
+
+    Ok(StagedSort {
+        out_header,
+        chunks: ChunkSource::Files(chunk_paths),
+    })
+}
+
+fn collect_and_spill_encoded_chunk_receiver(
+    header_bytes: Vec<u8>,
+    chunk_rx: crossbeam_channel::Receiver<EncodedBamChunk>,
+    opts: &SortOptions<'_>,
+) -> io::Result<StagedSort> {
+    let original_header = Header::read(&mut Cursor::new(header_bytes))?;
+    let (mut out_header, ref_id_map) =
+        prepare_output_header(&original_header, opts.reference_order)?;
+
+    let header_arc = Arc::new(out_header.clone());
+    let order = opts.order;
+    let prefix = opts.tmp_prefix.clone();
+
+    let (job_tx, job_rx) = bounded::<SpillJob>(0);
+    let (result_tx, result_rx) = unbounded::<SpillResult>();
+    let (recycle_tx, recycle_rx) = bounded::<Vec<Vec<u8>>>(1);
+
+    let n_workers = opts.threads.max(1);
+    let mut workers = Vec::with_capacity(n_workers);
+    for _ in 0..n_workers {
+        let rx = job_rx.clone();
+        let tx = result_tx.clone();
+        let recycle = recycle_tx.clone();
+        let h = Arc::clone(&header_arc);
+        let pfx = prefix.clone();
+        workers.push(std::thread::spawn(move || {
+            spill_worker(rx, tx, recycle, h, order, pfx);
+        }));
+    }
+    drop(result_tx);
+    drop(job_rx);
+    drop(recycle_tx);
+
+    let mut buf: Vec<Record> = Vec::new();
+    let mut buf_bytes: usize = 0;
+    let mut next_chunk_idx: usize = 0;
+    let mut spill_started = false;
+    let mut buf_pool: Vec<Vec<u8>> = Vec::new();
+    let mut total_records: u64 = 0;
+    let mut encoded_chunks: u64 = 0;
+    let mut encoded_bytes: u64 = 0;
+    let mut next_spill_progress_at = SPILL_PROGRESS_STEP_RECORDS;
+
+    let read_result: io::Result<()> = (|| {
+        while let Ok(chunk) = chunk_rx.recv() {
+            encoded_chunks += 1;
+            encoded_bytes = encoded_bytes.saturating_add(chunk.data.len() as u64);
+            let mut cursor = Cursor::new(chunk.data);
+            loop {
+                while let Ok(batch) = recycle_rx.try_recv() {
+                    buf_pool.extend(batch);
+                }
+                let scratch = buf_pool.pop().unwrap_or_default();
+                let Some(mut r) = Record::read_into(&mut cursor, scratch)? else {
+                    break;
+                };
+                remap_record_refs(&mut r, ref_id_map.as_deref())?;
+                buf_bytes += record_mem(&r);
+                buf.push(r);
+                total_records += 1;
+                if buf_bytes >= opts.max_mem {
+                    spill_started = true;
+                    let chunk_records = buf.len();
+                    let chunk_bytes = buf_bytes;
+                    let job = SpillJob {
+                        records: std::mem::take(&mut buf),
+                        chunk_idx: next_chunk_idx,
+                    };
+                    debug!(
+                        chunk_idx = next_chunk_idx,
+                        records = %fmt_count(chunk_records as u64),
+                        bytes = %fmt_count(chunk_bytes as u64),
+                        total = %fmt_count(total_records),
+                        "BamSort: dispatched spill chunk"
+                    );
+                    if total_records >= next_spill_progress_at {
+                        info!(
+                            reads = %fmt_count(total_records),
+                            chunks = %fmt_count((next_chunk_idx + 1) as u64),
+                            "BamSort: spilled"
+                        );
+                        while next_spill_progress_at <= total_records {
+                            next_spill_progress_at =
+                                next_spill_progress_at.saturating_add(SPILL_PROGRESS_STEP_RECORDS);
+                        }
+                    }
+                    next_chunk_idx += 1;
+                    buf_bytes = 0;
+                    if job_tx.send(job).is_err() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "spill worker channel closed unexpectedly",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    info!(
+        reads = %fmt_count(total_records),
+        chunks = %fmt_count(next_chunk_idx as u64),
+        encoded_chunks,
+        encoded_bytes,
+        "BamSort: read input"
+    );
+
+    if read_result.is_ok() && spill_started && !buf.is_empty() {
+        let job = SpillJob {
+            records: std::mem::take(&mut buf),
+            chunk_idx: next_chunk_idx,
+        };
+        let _ = job_tx.send(job);
+    }
+    drop(job_tx);
+
+    for w in workers {
+        let _ = w.join();
+    }
+
+    let mut chunk_results: Vec<SpillResult> = result_rx.iter().collect();
+    let mut first_err: Option<io::Error> = read_result.err();
+    for r in &mut chunk_results {
+        if first_err.is_none() {
+            if let Some(e) = r.error.take() {
+                first_err = Some(e);
+            }
+        }
+    }
+    if let Some(e) = first_err {
+        for r in &chunk_results {
+            let _ = std::fs::remove_file(&r.path);
+        }
+        return Err(e);
+    }
+
+    update_header(&mut out_header, opts);
+
+    if !spill_started {
+        sort_records(&mut buf, opts.order);
+        return Ok(StagedSort {
+            out_header,
+            chunks: ChunkSource::InMemory(buf),
+        });
+    }
+
     chunk_results.sort_by_key(|r| r.chunk_idx);
     let chunk_paths: Vec<PathBuf> = chunk_results.into_iter().map(|r| r.path).collect();
 

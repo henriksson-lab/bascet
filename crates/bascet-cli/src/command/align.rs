@@ -101,6 +101,14 @@ pub struct AlignCMD {
         hide_short_help = true
     )]
     minimap2_preset: String,
+
+    #[arg(
+        long = "max-read-pairs",
+        help = "Stop after this many input read pairs [advanced/testing]",
+        hide_short_help = true,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    max_read_pairs: Option<u64>,
 }
 
 #[derive(Budget, Debug)]
@@ -123,13 +131,13 @@ struct AlignBudget {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
+#[cfg(feature = "minimap2-rs-align")]
 struct AlignThreadAllocation {
     read: BoundedU64<1, { u64::MAX }>,
     write_bam: usize,
 }
 
-#[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
+#[cfg(feature = "minimap2-rs-align")]
 impl AlignThreadAllocation {
     fn from_budget(budget: &AlignBudget) -> Self {
         let total_threads = budget.threads.get();
@@ -169,7 +177,7 @@ impl AlignCMD {
             .build();
 
         budget.validate();
-        #[cfg(any(feature = "star-rs-align", feature = "minimap2-rs-align"))]
+        #[cfg(feature = "minimap2-rs-align")]
         let thread_allocation = AlignThreadAllocation::from_budget(&budget);
         // Shared by aligners that can run their internal parallel regions and helper work on a
         // common fixed-size worker pool.
@@ -210,20 +218,21 @@ impl AlignCMD {
         #[cfg(feature = "star-rs-align")]
         if self.aligner == "STAR" {
             let star_threads = budget.threads.get() as usize;
+            let star_bam_writer_threads = star_threads.div_ceil(2).clamp(1, 16);
             return crate::align::star::try_execute_star_rs(
                 self.path_in.path().path(),
                 &self.path_genome,
                 &self.path_out_unsorted,
                 &self.path_out_sorted,
                 &self.path_temp,
-                thread_allocation.write_bam,
+                star_bam_writer_threads,
                 star_threads,
-                thread_allocation.read,
                 self.sizeof_stream_arena,
                 budget.sizeof_stream_buffer,
                 budget.memory,
                 budget.threads.get(),
                 Arc::clone(&rayon_pool),
+                self.max_read_pairs,
             );
         }
 

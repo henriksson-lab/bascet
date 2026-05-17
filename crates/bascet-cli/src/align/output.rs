@@ -223,6 +223,15 @@ pub fn parse_tagged_record_with_cell_umi(
     Ok(record)
 }
 
+pub fn parse_tagged_record(
+    line: &str,
+    header: &sam::Header,
+    source_name: &str,
+) -> Result<RecordBuf> {
+    let (cell_id, umi) = cell_umi_from_sam_qname(line, source_name)?;
+    parse_tagged_record_with_cell_umi(line, header, source_name, &cell_id, umi.as_deref())
+}
+
 fn parse_sam_line_with_cell_umi(
     line: &str,
     header: &sam::Header,

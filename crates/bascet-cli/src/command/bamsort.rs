@@ -16,13 +16,15 @@ use tracing::info;
 
 use super::determine_thread_counts_1;
 use super::samtools_rs::sort::{
-    IndexFormat, Order, ReferenceOrder, SortOptions, sort_streaming_parallel,
+    EncodedBamChunk, IndexFormat, Order, ReferenceOrder, SortOptions,
+    sort_encoded_record_chunk_receiver_parallel, sort_encoded_record_chunks_parallel,
+    sort_streaming_parallel,
 };
 use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
 pub const DEFAULT_PATH_TEMP: &str = "temp";
 pub const DEFAULT_MEMORY: &str = "8GB";
-const SORT_MEMORY_FRACTION: f64 = 0.60;
+const SORT_MEMORY_FRACTION: f64 = 0.35;
 const SORT_EXTRA_IN_FLIGHT_BUFFERS: usize = 2;
 
 #[derive(Args)]
@@ -97,10 +99,10 @@ pub fn sort_and_index_bam(
     std::fs::create_dir_all(path_temp)
         .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
 
-    // samtools-rs's `SortOptions::max_mem` is the per-chunk budget. The parallel spill
-    // implementation can hold roughly `threads + 1` chunks concurrently, plus BGZF buffers,
-    // recycled record data, and allocator-retained pages. Keep a deliberate reserve so
-    // `--memory` remains a process-level budget instead of just the sum of worker chunks.
+    // samtools-rs's `SortOptions::max_mem` is the per-chunk payload budget, not a
+    // process RSS limit. The Rust record/container overhead is substantial while
+    // spilling many chunks in parallel, so keep this fraction conservative enough
+    // that `--memory` remains a process-level budget.
     let total_mem = usize::try_from(memory.as_u64())
         .map_err(|_| anyhow::anyhow!("memory cap exceeds usize"))?;
     let sort_mem = ((total_mem as f64) * SORT_MEMORY_FRACTION) as usize;
@@ -113,6 +115,8 @@ pub fn sort_and_index_bam(
         sort_mem_bytes = sort_mem,
         max_mem_per_chunk,
         in_flight_buffers,
+        current_rss = current_rss_display().as_str(),
+        max_rss = max_rss_display().as_str(),
         "BamSort: memory budget"
     );
 
@@ -147,6 +151,12 @@ pub fn sort_and_index_bam(
     sort_streaming_parallel(input_file, output_file, &opts)
         .with_context(|| format!("samtools-rs sort failed for {}", path_in.display()))?;
 
+    info!(
+        current_rss = current_rss_display().as_str(),
+        max_rss = max_rss_display().as_str(),
+        "BamSort: sort_streaming_parallel returned"
+    );
+
     // Both files exist at their `.tmp` paths now; publish atomically.
     publish_atomic_output(&path_out_tmp, &path_out_sorted.to_path_buf())?;
     publish_atomic_output(&path_bai_tmp, &path_bai)?;
@@ -156,6 +166,188 @@ pub fn sort_and_index_bam(
         "BamSort: complete"
     );
     Ok(())
+}
+
+pub fn sort_and_index_encoded_bam_chunks(
+    header_bytes: Vec<u8>,
+    chunks: Vec<EncodedBamChunk>,
+    path_out_sorted: &Path,
+    path_temp: &Path,
+    memory: ByteSize,
+    num_threads: usize,
+    reference_order: ReferenceOrder,
+) -> Result<()> {
+    let encoded_records: u64 = chunks.iter().map(|chunk| chunk.records).sum();
+    let encoded_bytes: usize = chunks.iter().map(|chunk| chunk.data.len()).sum();
+    info!(
+        output = %path_out_sorted.display(),
+        temp_dir = %path_temp.display(),
+        memory = %memory,
+        threads = num_threads,
+        chunks = chunks.len(),
+        encoded_records,
+        encoded_bytes,
+        "BamSort: starting from in-process encoded BAM chunks"
+    );
+
+    std::fs::create_dir_all(path_temp)
+        .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
+
+    let total_mem = usize::try_from(memory.as_u64())
+        .map_err(|_| anyhow::anyhow!("memory cap exceeds usize"))?;
+    let sort_mem = ((total_mem as f64) * SORT_MEMORY_FRACTION) as usize;
+    let in_flight_buffers = num_threads
+        .max(1)
+        .saturating_add(SORT_EXTRA_IN_FLIGHT_BUFFERS);
+    let max_mem_per_chunk = (sort_mem / in_flight_buffers.max(1)).max(64 * 1024 * 1024);
+    info!(
+        sort_memory_fraction = SORT_MEMORY_FRACTION,
+        sort_mem_bytes = sort_mem,
+        max_mem_per_chunk,
+        in_flight_buffers,
+        current_rss = current_rss_display().as_str(),
+        max_rss = max_rss_display().as_str(),
+        "BamSort: memory budget"
+    );
+
+    let path_out_tmp = atomic_temp_path_in_dir(path_out_sorted, path_temp);
+    let path_bai = bai_path(path_out_sorted);
+    let path_bai_tmp = atomic_temp_path_in_dir(&path_bai, path_temp);
+    let tmp_prefix = path_temp.join("bascet-bamsort");
+
+    let opts = SortOptions {
+        order: Order::Coordinate,
+        reference_order,
+        level: 6,
+        arg_list: None,
+        no_pg: true,
+        max_mem: max_mem_per_chunk,
+        tmp_prefix,
+        threads: num_threads.max(1),
+        write_index: Some((path_bai_tmp.clone(), IndexFormat::Bai)),
+    };
+
+    let output_file = File::create(&path_out_tmp)
+        .with_context(|| format!("create output BAM tmp {}", path_out_tmp.display()))?;
+    let output_file = BufWriter::with_capacity(1 << 20, output_file);
+
+    sort_encoded_record_chunks_parallel(header_bytes, chunks, output_file, &opts)
+        .with_context(|| "samtools-rs sort failed for in-process encoded BAM chunks")?;
+
+    info!(
+        current_rss = current_rss_display().as_str(),
+        max_rss = max_rss_display().as_str(),
+        "BamSort: sort_encoded_record_chunks_parallel returned"
+    );
+
+    publish_atomic_output(&path_out_tmp, &path_out_sorted.to_path_buf())?;
+    publish_atomic_output(&path_bai_tmp, &path_bai)?;
+    info!(
+        output = %path_out_sorted.display(),
+        index = %path_bai.display(),
+        "BamSort: complete"
+    );
+    Ok(())
+}
+
+pub fn sort_and_index_encoded_bam_chunk_receiver(
+    header_bytes: Vec<u8>,
+    chunk_rx: crossbeam_channel::Receiver<EncodedBamChunk>,
+    path_out_sorted: &Path,
+    path_temp: &Path,
+    memory: ByteSize,
+    num_threads: usize,
+    reference_order: ReferenceOrder,
+) -> Result<()> {
+    info!(
+        output = %path_out_sorted.display(),
+        temp_dir = %path_temp.display(),
+        memory = %memory,
+        threads = num_threads,
+        "BamSort: starting from streamed in-process encoded BAM chunks"
+    );
+
+    std::fs::create_dir_all(path_temp)
+        .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
+
+    let total_mem = usize::try_from(memory.as_u64())
+        .map_err(|_| anyhow::anyhow!("memory cap exceeds usize"))?;
+    let sort_mem = ((total_mem as f64) * SORT_MEMORY_FRACTION) as usize;
+    let spill_workers = num_threads.clamp(1, 8);
+    let in_flight_buffers = spill_workers.saturating_add(SORT_EXTRA_IN_FLIGHT_BUFFERS);
+    let max_mem_per_chunk = (sort_mem / in_flight_buffers.max(1)).max(64 * 1024 * 1024);
+    info!(
+        sort_memory_fraction = SORT_MEMORY_FRACTION,
+        sort_mem_bytes = sort_mem,
+        max_mem_per_chunk,
+        spill_workers,
+        in_flight_buffers,
+        current_rss = current_rss_display().as_str(),
+        max_rss = max_rss_display().as_str(),
+        "BamSort: memory budget"
+    );
+
+    let path_out_tmp = atomic_temp_path_in_dir(path_out_sorted, path_temp);
+    let path_bai = bai_path(path_out_sorted);
+    let path_bai_tmp = atomic_temp_path_in_dir(&path_bai, path_temp);
+    let tmp_prefix = path_temp.join("bascet-bamsort");
+
+    let opts = SortOptions {
+        order: Order::Coordinate,
+        reference_order,
+        level: 6,
+        arg_list: None,
+        no_pg: true,
+        max_mem: max_mem_per_chunk,
+        tmp_prefix,
+        threads: num_threads.max(1),
+        write_index: Some((path_bai_tmp.clone(), IndexFormat::Bai)),
+    };
+
+    let output_file = File::create(&path_out_tmp)
+        .with_context(|| format!("create output BAM tmp {}", path_out_tmp.display()))?;
+    let output_file = BufWriter::with_capacity(1 << 20, output_file);
+
+    sort_encoded_record_chunk_receiver_parallel(header_bytes, chunk_rx, output_file, &opts)
+        .with_context(|| "samtools-rs sort failed for streamed encoded BAM chunks")?;
+
+    info!(
+        current_rss = current_rss_display().as_str(),
+        max_rss = max_rss_display().as_str(),
+        "BamSort: sort_encoded_record_chunk_receiver_parallel returned"
+    );
+
+    publish_atomic_output(&path_out_tmp, &path_out_sorted.to_path_buf())?;
+    publish_atomic_output(&path_bai_tmp, &path_bai)?;
+    info!(
+        output = %path_out_sorted.display(),
+        index = %path_bai.display(),
+        "BamSort: complete"
+    );
+    Ok(())
+}
+
+fn current_rss_display() -> String {
+    memory_stats::memory_stats()
+        .map(|memory| ByteSize(memory.physical_mem as u64).to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn max_rss_display() -> String {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if rc != 0 {
+        return "unknown".to_string();
+    }
+    let usage = unsafe { usage.assume_init() };
+    #[cfg(target_os = "linux")]
+    {
+        ByteSize((usage.ru_maxrss as u64).saturating_mul(1024)).to_string()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        ByteSize(usage.ru_maxrss as u64).to_string()
+    }
 }
 
 fn bai_path(bam_path: &Path) -> PathBuf {

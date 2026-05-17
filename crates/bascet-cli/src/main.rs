@@ -1,7 +1,8 @@
-use std::sync::atomic::Ordering;
-
+#[cfg(not(windows))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+use std::sync::atomic::Ordering;
 
 use bascet_cli::command::{self, Commands};
 use bascet_runtime::logging::{
