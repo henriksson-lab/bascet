@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use ahash::AHashMap;
 use tracing::info;
 
+use hdf5::hl::writable_file::WritableGroup;
 use hdf5::WritableFile as H5File;
 
 type Cellid = Vec<u8>;
@@ -293,7 +294,9 @@ impl SparseMatrixAnnDataWriter {
         if p.exists() {
             std::fs::remove_file(&p).expect("Failed to delete previous output file");
         }
-        let file = H5File::create(p)?; // open for writing
+        let mut file = H5File::create(p)?; // open for writing
+        file.add_fixed_utf8_attr("encoding-type", "anndata", "anndata".len())?;
+        file.add_fixed_utf8_attr("encoding-version", "0.1.0", "0.1.0".len())?;
 
         Ok(SparseMatrixAnnDataWriter { file: file })
     }
@@ -308,9 +311,12 @@ impl SparseMatrixAnnDataWriter {
     ///
     pub fn store_feature_names(&mut self, list_feature_names: &Vec<String>) -> anyhow::Result<()> {
         let mut group = self.file.create_group("var")?;
+        Self::add_dataframe_attrs(&mut group, &[])?;
         let list_feature_names = strings_as_strs(list_feature_names);
         group
             .new_dataset_builder("_index")
+            .fixed_utf8_attr("encoding-type", "string-array", "string-array".len())?
+            .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
             .write_vlen_utf8_strings(&list_feature_names)?;
         Ok(())
     }
@@ -324,17 +330,27 @@ impl SparseMatrixAnnDataWriter {
         list_cell_unmapped: Option<&Vec<u32>>,
     ) -> anyhow::Result<()> {
         let mut group = self.file.create_group("obs")?;
+        let columns = if list_cell_unmapped.is_some() {
+            ["_unmapped"].as_slice()
+        } else {
+            [].as_slice()
+        };
+        Self::add_dataframe_attrs(&mut group, columns)?;
 
         //Store names of cells
         let list_cell_names = strings_as_strs(list_cell_names);
         group
             .new_dataset_builder("_index")
+            .fixed_utf8_attr("encoding-type", "string-array", "string-array".len())?
+            .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
             .write_vlen_utf8_strings(&list_cell_names)?;
 
         //Optional: Store count of unmapped reads (property of cell, rather than in count matrix)
         if let Some(list_cell_unmapped) = list_cell_unmapped {
             group
                 .new_dataset_builder("_unmapped")
+                .fixed_utf8_attr("encoding-type", "array", "array".len())?
+                .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
                 .write(list_cell_unmapped.as_slice())?;
         }
 
@@ -438,15 +454,36 @@ impl SparseMatrixAnnDataWriter {
 
         //Store the sparse matrix here
         let mut group = self.file.create_group("X")?;
-        group.new_dataset_builder("data").write(mat_data)?; //Data
-        group.new_dataset_builder("indices").write(&mat_indices)?; // Columns
-        group.new_dataset_builder("indptr").write(&mat_indptr)?; // Rows
+        group.add_fixed_utf8_attr("encoding-type", "csr_matrix", "csr_matrix".len())?;
+        group.add_fixed_utf8_attr("encoding-version", "0.1.0", "0.1.0".len())?;
+        group.add_attr_array("shape", &[i64::from(n_rows), i64::from(n_cols)])?;
+        group
+            .new_dataset_builder("data")
+            .fixed_utf8_attr("encoding-type", "array", "array".len())?
+            .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
+            .write(mat_data)?; //Data
+        group
+            .new_dataset_builder("indices")
+            .fixed_utf8_attr("encoding-type", "array", "array".len())?
+            .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
+            .write(&mat_indices)?; // Columns
+        group
+            .new_dataset_builder("indptr")
+            .fixed_utf8_attr("encoding-type", "array", "array".len())?
+            .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
+            .write(&mat_indptr)?; // Rows
 
-        //Store the matrix size
-        group.new_dataset_builder("shape").write(&[
-            n_rows, //num cells
-            n_cols, //num features
-        ])?;
+        Ok(())
+    }
+
+    fn add_dataframe_attrs(
+        group: &mut WritableGroup<'_>,
+        column_order: &[&str],
+    ) -> anyhow::Result<()> {
+        group.add_fixed_utf8_attr("encoding-type", "dataframe", "dataframe".len())?;
+        group.add_fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?;
+        group.add_fixed_utf8_attr("_index", "_index", "_index".len())?;
+        group.add_fixed_utf8_attr_array("column-order", column_order, max_str_len(column_order))?;
         Ok(())
     }
 
@@ -467,4 +504,8 @@ impl SparseMatrixAnnDataWriter {
 
 fn strings_as_strs(values: &[String]) -> Vec<&str> {
     values.iter().map(String::as_str).collect()
+}
+
+fn max_str_len(values: &[&str]) -> usize {
+    values.iter().map(|value| value.len()).max().unwrap_or(1)
 }

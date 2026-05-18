@@ -28,6 +28,7 @@ pub mod detect_kmer_fq;
 pub mod detect_kmer_kmc;
 pub mod mapcell;
 pub mod minhash_hist;
+pub mod ncbi_genome_download;
 pub mod qc;
 pub mod sam_add_barcode_tag_cmd;
 pub mod samtools_rs;
@@ -66,6 +67,7 @@ pub use getraw::GetRawCMD;
 pub use import_sra::ImportSraCMD;
 pub use mapcell::{MapCell, MapCellCMD};
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
+pub use ncbi_genome_download::NcbiGenomeDownloadCMD;
 pub use qc::QcCMD;
 
 // Taxonomic classification
@@ -111,6 +113,7 @@ pub enum Commands {
     Kraken(KrakenCMD),
     Mapcell(MapCellCMD),
     MinhashHist(MinhashHistCMD),
+    NcbiGenomeDownload(NcbiGenomeDownloadCMD),
     PipeSamAddTags(PipeSamAddTagsCMD), //Not needed for bascet anymore, but useful if anyone needs to use a non-standard aligner
     Shardify(ShardifyCMD),
     #[cfg(feature = "skesa")]
