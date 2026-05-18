@@ -17,6 +17,7 @@ pub mod filterbam;
 #[cfg(feature = "gecco")]
 pub mod gecco;
 pub mod getraw;
+pub mod import_sra;
 // Disabled until the pipe-based KMC path is replaced with a Rust KMC implementation.
 // pub mod kmc_reads;
 pub mod kraken;
@@ -62,6 +63,7 @@ pub use filterbam::FilterBamCMD;
 #[cfg(feature = "gecco")]
 pub use gecco::GeccoCMD;
 pub use getraw::GetRawCMD;
+pub use import_sra::ImportSraCMD;
 pub use mapcell::{MapCell, MapCellCMD};
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
 pub use qc::QcCMD;
@@ -104,6 +106,7 @@ pub enum Commands {
     #[cfg(feature = "gecco")]
     Gecco(GeccoCMD),
     Debarcode(GetRawCMD),
+    ImportSra(ImportSraCMD),
     //KmcReads(KmcReadsCMD),
     Kraken(KrakenCMD),
     Mapcell(MapCellCMD),
