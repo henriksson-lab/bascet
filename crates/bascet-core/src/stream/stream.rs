@@ -81,59 +81,63 @@ where
     ) -> (JoinHandle<D>, rtrb::Consumer<ArenaSlice<u8>>) {
         let (mut tx, rx) = rtrb::RingBuffer::new(n_buffers.get());
 
-        let handle = std::thread::spawn(move || {
-            while likely_unlikely::likely(flag_shutdown.load(Ordering::Relaxed) == false) {
-                let size = decoder.sizeof_target_alloc();
-                let mut buffer = arena_pool.alloc(size);
-                let decode_result = decoder.decode_into(buffer.as_mut_slice());
+        let handle = std::thread::Builder::new()
+            .name("StreamDecode@0".to_string())
+            .spawn(move || {
+                while likely_unlikely::likely(flag_shutdown.load(Ordering::Relaxed) == false) {
+                    let size = decoder.sizeof_target_alloc();
+                    let mut buffer = arena_pool.alloc(size);
+                    let decode_result = decoder.decode_into(buffer.as_mut_slice());
 
-                let mut buffer = match decode_result {
-                    DecodeResult::Decoded(bytes_written) => {
-                        let buffer = unsafe { buffer.truncate(bytes_written) };
-                        buffer
-                    }
-                    DecodeResult::Eof => {
-                        flag_shutdown.store(true, Ordering::Relaxed);
-                        continue;
-                    }
-                    DecodeResult::Error(e) => {
-                        match e {
-                            _ => error!(error = ?e, "Unhandled error"),
+                    let mut buffer = match decode_result {
+                        DecodeResult::Decoded(bytes_written) => {
+                            let buffer = unsafe { buffer.truncate(bytes_written) };
+                            buffer
                         }
-                        flag_shutdown.store(true, Ordering::Relaxed);
-                        continue;
-                    }
-                };
-
-                let mut spinpark_counter = 0;
-                loop {
-                    match tx.push(buffer) {
-                        Ok(()) => break,
-                        Err(PushError::Full(b)) => {
-                            buffer = b;
-
-                            if likely_unlikely::unlikely(
-                                flag_shutdown.load(Ordering::Relaxed) == true,
-                            ) {
-                                break;
+                        DecodeResult::Eof => {
+                            flag_shutdown.store(true, Ordering::Relaxed);
+                            continue;
+                        }
+                        DecodeResult::Error(e) => {
+                            match e {
+                                _ => error!(error = ?e, "Unhandled error"),
                             }
+                            flag_shutdown.store(true, Ordering::Relaxed);
+                            continue;
+                        }
+                    };
 
-                            match spinpark_loop::spinpark_loop::<
-                                100,
-                                SPINPARK_COUNTOF_PARKS_BEFORE_WARN,
-                            >(&mut spinpark_counter)
-                            {
-                                SpinPark::Warn => {
-                                    warn!(source = "Stream::decode", "buffer full, consumer slow")
+                    let mut spinpark_counter = 0;
+                    loop {
+                        match tx.push(buffer) {
+                            Ok(()) => break,
+                            Err(PushError::Full(b)) => {
+                                buffer = b;
+
+                                if likely_unlikely::unlikely(
+                                    flag_shutdown.load(Ordering::Relaxed) == true,
+                                ) {
+                                    break;
                                 }
-                                _ => {}
+
+                                match spinpark_loop::spinpark_loop::<
+                                    100,
+                                    SPINPARK_COUNTOF_PARKS_BEFORE_WARN,
+                                >(&mut spinpark_counter)
+                                {
+                                    SpinPark::Warn => warn!(
+                                        source = "Stream::decode",
+                                        "buffer full, consumer slow"
+                                    ),
+                                    _ => {}
+                                }
                             }
                         }
                     }
                 }
-            }
-            decoder
-        });
+                decoder
+            })
+            .unwrap();
 
         (handle, rx)
     }

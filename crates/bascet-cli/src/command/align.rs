@@ -189,6 +189,7 @@ impl AlignCMD {
         let rayon_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
                 .num_threads(budget.threads.get() as usize)
+                .thread_name(|idx| format!("align-rayon@{idx}"))
                 .build()?,
         );
 

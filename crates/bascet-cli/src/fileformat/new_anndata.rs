@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use ahash::AHashMap;
 use tracing::info;
 
-use hdf5::hl::writable_file::WritableGroup;
 use hdf5::WritableFile as H5File;
+use hdf5::hl::writable_file::WritableGroup;
 
 type Cellid = Vec<u8>;
 type Featureid = Vec<u8>;

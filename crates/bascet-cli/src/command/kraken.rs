@@ -319,6 +319,7 @@ impl KrakenCMD {
         };
         let classify_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(classify_threads)
+            .thread_name(|idx| format!("KrakenClassify@{idx}"))
             .build()?;
         let write_raw_output = path_out_raw.is_some();
         let mut writer = path_out_raw

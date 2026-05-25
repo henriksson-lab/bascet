@@ -72,6 +72,7 @@ impl GeccoCMD {
             let thread_pool = Arc::new(
                 rayon::ThreadPoolBuilder::new()
                     .num_threads(rayon_threads)
+                    .thread_name(|idx| format!("gecco-rayon@{idx}"))
                     .build()
                     .context("failed to initialize GECCO Rayon thread pool")?,
             );
