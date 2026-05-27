@@ -1,0 +1,6 @@
+[package]
+name = "bascet-io"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]

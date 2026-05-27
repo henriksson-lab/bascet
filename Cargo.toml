@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "crates/bascet-core",
+    "crates/bascet-cli",
+    "crates/bascet-io",
+    "crates/bascet-derive",
+    "crates/bascet-variadic",
+]
+workspace.resolver = "3"
+
+[workspace.dependencies]
+bascet-core = { path = "crates/bascet-core" }
+bascet-derive = { path = "crates/bascet-derive" }
+bascet-variadic = { path = "crates/bascet-variadic" }
