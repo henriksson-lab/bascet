@@ -1,58 +1,43 @@
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use std::collections::HashMap;
-use syn::parse::{Parse, ParseStream};
+use syn::parse::ParseStream;
 use syn::{Ident, Token};
 
 mod ast;
 mod emit;
-mod iter;
 
-use ast::{parse_iterable, Value};
-use emit::{emit, Pattern};
-use iter::IterExpr;
+use ast::{IterExpr, Pattern, parse_iterable};
+use emit::emit;
 
-struct ExpandArgs { name: String, values: Vec<Value> }
-
-impl Parse for ExpandArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let name = input.parse::<Ident>()?.to_string();
-        input.parse::<Token![in]>()?;
-        Ok(Self { name, values: parse_iterable(input)? })
-    }
-}
-
-struct IterArgs { env: HashMap<String, Vec<Value>>, pattern: Pattern, expr: IterExpr }
-
-impl Parse for IterArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut env = HashMap::new();
-        while input.peek(Ident) && input.peek2(Token![=]) {
-            let name = input.parse::<Ident>()?.to_string();
-            input.parse::<Token![=]>()?;
-            let values = parse_iterable(input)?;
-            env.insert(name, values);
-            if input.peek(Token![;]) { break; }
-            input.parse::<Token![,]>()?;
-        }
-        if !env.is_empty() {
-            input.parse::<Token![;]>()?;
-        }
-        input.parse::<Token![for]>()?;
-        let pattern = input.parse()?;
-        input.parse::<Token![in]>()?;
-        Ok(Self { env, pattern, expr: input.parse()? })
-    }
-}
-
-#[proc_macro_attribute]
-pub fn expand(args: TokenStream, item: TokenStream) -> TokenStream {
-    let ExpandArgs { name, values } = syn::parse_macro_input!(args as ExpandArgs);
-    let env = HashMap::from([(name.clone(), values.clone())]);
-    emit(item.into(), &Pattern::Ident(name), values, &env).into()
-}
-
-#[proc_macro_attribute]
-pub fn iter(args: TokenStream, item: TokenStream) -> TokenStream {
-    let IterArgs { env, pattern, expr } = syn::parse_macro_input!(args as IterArgs);
-    emit(item.into(), &pattern, expr.eval(&env), &env).into()
+#[proc_macro]
+pub fn variadic(input: TokenStream) -> TokenStream {
+    let input2: TokenStream2 = input.into();
+    syn::parse::Parser::parse2(
+        |input: ParseStream| -> syn::Result<TokenStream2> {
+            let mut env = HashMap::new();
+            while input.peek(Ident) && input.peek2(Token![=]) {
+                let name = input.parse::<Ident>()?.to_string();
+                input.parse::<Token![=]>()?;
+                let values = parse_iterable(input)?;
+                env.insert(name, values);
+                if input.peek(Token![for]) {
+                    break;
+                }
+                input.parse::<Token![,]>()?;
+            }
+            input.parse::<Token![for]>()?;
+            let pattern = input.parse::<Pattern>()?;
+            input.parse::<Token![in]>()?;
+            let expr = input.parse::<IterExpr>()?;
+            input.parse::<Token![=>]>()?;
+            let content;
+            syn::braced!(content in input);
+            let item: TokenStream2 = content.parse()?;
+            emit(item, &pattern, expr.eval(&env)?, &env)
+        },
+        input2,
+    )
+    .unwrap_or_else(|e| e.to_compile_error())
+    .into()
 }
