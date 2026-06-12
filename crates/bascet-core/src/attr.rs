@@ -1,56 +1,99 @@
-use bascet_variadic::iter;
-use std::any::TypeId;
-use std::fmt;
+pub mod backing;
+pub mod block;
+pub mod ext;
+pub mod meta;
+pub mod phred;
+pub mod reads;
+
+pub use backing::*;
+pub use ext::*;
+pub use phred::*;
+pub use reads::*;
 
 pub trait Attr: 'static {
-    const ID: TypeId;
+    const ID: u64;
 }
 
-pub struct Reads<const N: usize>;
-impl<const N: usize> Attr for Reads<N> {
-    const ID: TypeId = TypeId::of::<Reads<N>>();
+#[derive(Debug)]
+pub struct AttrEntry {
+    pub id: u64,
+    pub name: &'static str,
 }
-impl<const N: usize> fmt::Display for Reads<N> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "reads[{N}]")
+inventory::collect!(AttrEntry);
+
+#[test]
+pub fn assert_unique_attr_ids() {
+    let mut seen = std::collections::HashMap::new();
+    for entry in inventory::iter::<AttrEntry> {
+        let prev = seen.insert(entry.id, entry.name);
+        assert!(
+            prev.is_none(),
+            "Attr ID collision: {:?} and {:?} both have id {:#018x}",
+            prev.unwrap(),
+            entry.name,
+            entry.id
+        );
     }
 }
 
-pub struct Read<const N: usize>;
-impl<const N: usize> Attr for Read<N> {
-    const ID: TypeId = TypeId::of::<Read<N>>();
+pub trait Represents<A: Attr> {}
+
+pub trait Coerce<A: Attr, B: Attr> {
+    type Output;
+    fn coerce(self) -> Self::Output;
 }
 
-pub trait Implies<T> {}
-
-#[iter(N=2..=16, M=1..=15; for (N, M) in N.zip(M))]
-impl Implies<Reads<M>> for Reads<N> {}
-
-#[iter(N=2..=16, M=1..=15; for (N, M) in N.zip(M))]
-impl From<Reads<N>> for Reads<M> {
-    fn from(_: Reads<N>) -> Self { Self }
-}
-
-pub trait Get<T> {
-    type Value<'a> where Self: 'a;
-    fn get<'a>(&'a self) -> Self::Value<'a>;
-}
-
-#[iter(N=1..=16; for N in N)]
-impl<S> Get<Reads<N>> for S
+impl<A: Attr, B: Attr, V> Coerce<A, B> for V
 where
-    @N[S: Get<Read<#>>](sep=" , "),
+    V: Represents<A> + Represents<B>,
 {
-    type Value<'a> = (@N[<S as Get<Read<#>>>::Value<'a>](sep=", "),) where S: 'a;
-    fn get<'a>(&'a self) -> Self::Value<'a> {
-        (@N[Get::<Read<#>>::get(self)](sep=", "),)
+    type Output = V;
+    fn coerce(self) -> V {
+        self
     }
 }
 
-// pub mod meta {
-//     bascet_derive::define_attr!(Id, Umi, Depth, Countsketch);
-// }
+pub trait Ref<T> {
+    type Value<'a>
+    where
+        Self: 'a;
+    fn get_ref<'a>(&'a self) -> Self::Value<'a>;
+    fn get_as<'a, B: Attr>(&'a self) -> <Self::Value<'a> as Coerce<T, B>>::Output
+    where
+        T: Attr,
+        Self::Value<'a>: Coerce<T, B>,
+    {
+        self.get_ref().coerce()
+    }
+}
 
-// pub mod block {
-//     bascet_derive::define_attr!(Offset, Header, Compressed, Trailer);
-// }
+pub trait Mut<T> {
+    type Stored;
+    fn get_mut(&mut self) -> &mut Self::Stored;
+}
+
+pub trait Put<A: Attr, V> {
+    fn put(&mut self, value: V);
+}
+
+impl<A: Attr, S, V> Put<A, V> for S
+where
+    S: Mut<A>,
+    V: Represents<A> + Into<S::Stored>,
+{
+    fn put(&mut self, value: V) {
+        *self.get_mut() = value.into();
+    }
+}
+
+bascet_variadic::variadic!(N = 2..=16, for N in N => {
+    impl<S, @N[A~#](sep=",")> Ref<(@N[A~#](sep=","),)> for S
+    where
+        @N[S: Ref<A~#>](sep=","),
+    {
+        type Value<'a> = (@N[<S as Ref<A~#>>::Value<'a>](sep=", "),) where S: 'a;
+        fn get_ref<'a>(&'a self) -> Self::Value<'a> {
+            (@N[Ref::<A~#>::get_ref(self)](sep=", "),)
+        }
+    }
+});
