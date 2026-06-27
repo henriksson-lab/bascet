@@ -71,7 +71,7 @@ memchr.workspace = true
 memory-stats.workspace = true
 min-max-heap.workspace = true
 miniz_oxide.workspace = true
-minimap2 = { package = "minimap2-pure-rs", git = "https://github.com/henriksson-lab/minimap2-pure-rs", optional = true }
+minimap2 = { package = "minimap2-pure-rs", version = "0.5", optional = true }
 niffler.workspace = true
 noodles.workspace = true
 nthash-rs.workspace = true
