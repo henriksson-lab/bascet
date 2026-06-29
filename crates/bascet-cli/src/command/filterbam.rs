@@ -13,23 +13,14 @@ use crate::command::bamsort::DEFAULT_PATH_TEMP;
 use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
 const FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+const BAM_FLAG_UNMAPPED: u16 = 0x4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum BamFilterMode {
-    /// Keep records matching the "mapped" branch of the legacy samtools flag logic.
+    /// Keep records where BAM flag 0x4 (read unmapped) is not set.
     Mapped,
-    /// Keep records matching the "unmapped" branch of the legacy samtools flag logic.
+    /// Keep records where BAM flag 0x4 (read unmapped) is set.
     Unmapped,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum BamPairingMode {
-    /// Detect from the first record of the first BAM.
-    Auto,
-    /// Treat the input as paired alignment and filter on BAM flag 0x2.
-    Paired,
-    /// Treat the input as single-end alignment and filter on BAM flag 0x4.
-    Single,
 }
 
 #[derive(Args)]
@@ -49,10 +40,6 @@ pub struct FilterBamCMD {
     /// Which record class to keep.
     #[arg(long = "keep", value_enum, default_value_t = BamFilterMode::Mapped)]
     pub keep: BamFilterMode,
-
-    /// Paired/single-end interpretation of the input.
-    #[arg(long = "pairing", value_enum, default_value_t = BamPairingMode::Auto)]
-    pub pairing: BamPairingMode,
 
     /// BGZF worker threads used by each input reader and by the output writer.
     #[arg(short = '@', long = "threads", value_parser = clap::value_parser!(usize))]
@@ -76,7 +63,6 @@ impl FilterBamCMD {
             &self.path_out,
             &self.path_temp,
             self.keep,
-            self.pairing,
             num_threads,
             self.total_mem,
         )
@@ -88,7 +74,6 @@ pub fn filter_bam(
     path_out: &Path,
     path_temp: &Path,
     keep: BamFilterMode,
-    pairing: BamPairingMode,
     num_threads: usize,
     total_mem: Option<ByteSize>,
 ) -> Result<()> {
@@ -98,21 +83,12 @@ pub fn filter_bam(
     std::fs::create_dir_all(path_temp)
         .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
 
-    let paired = match pairing {
-        BamPairingMode::Auto => detect_paired_alignment(&paths_in[0])?,
-        BamPairingMode::Paired => true,
-        BamPairingMode::Single => false,
-    };
-    let flag_mask = if paired { 0x2 } else { 0x4 };
-    let keep_set_flag = matches!(keep, BamFilterMode::Unmapped);
-
     info!(
         inputs = paths_in.len(),
         output = %path_out.display(),
         temp_dir = %path_temp.display(),
-        paired_alignment = paired,
         keep = ?keep,
-        flag_mask = flag_mask,
+        flag_mask = BAM_FLAG_UNMAPPED,
         threads = num_threads,
         memory = ?total_mem,
         "FilterBam: starting"
@@ -133,8 +109,7 @@ pub fn filter_bam(
             path_in,
             &mut writer,
             expected_header.as_ref(),
-            flag_mask,
-            keep_set_flag,
+            keep,
             num_threads,
         )?;
         if expected_header.is_none() {
@@ -162,8 +137,7 @@ fn filter_one_bam(
     path_in: &Path,
     writer: &mut bgzf::ParallelWriter,
     expected_header: Option<&bam::Header>,
-    flag_mask: u16,
-    keep_set_flag: bool,
+    keep: BamFilterMode,
     num_threads: usize,
 ) -> Result<(bam::Header, u64, u64)> {
     let input =
@@ -187,8 +161,7 @@ fn filter_one_bam(
         .with_context(|| format!("read BAM record {}", path_in.display()))?
     {
         records_read += 1;
-        let has_flag = record.flag() & flag_mask != 0;
-        if has_flag == keep_set_flag {
+        if should_keep_record_flag(record.flag(), keep) {
             record
                 .write(writer)
                 .with_context(|| format!("write filtered BAM record from {}", path_in.display()))?;
@@ -206,21 +179,12 @@ fn filter_one_bam(
     Ok((header, records_read, records_written))
 }
 
-fn detect_paired_alignment(path_in: &Path) -> Result<bool> {
-    let input =
-        File::open(path_in).with_context(|| format!("open input BAM {}", path_in.display()))?;
-    let mut reader = bgzf::Reader::new(input);
-    let _header = bam::Header::read(&mut reader)
-        .with_context(|| format!("read BAM header {}", path_in.display()))?;
-    let record = bam::Record::read(&mut reader)
-        .with_context(|| format!("read first BAM record {}", path_in.display()))?;
-    let Some(record) = record else {
-        bail!(
-            "cannot detect paired alignment from empty BAM {}",
-            path_in.display()
-        );
-    };
-    Ok(record.flag() & 0x1 != 0)
+fn should_keep_record_flag(flag: u16, keep: BamFilterMode) -> bool {
+    let is_unmapped = flag & BAM_FLAG_UNMAPPED != 0;
+    match keep {
+        BamFilterMode::Mapped => !is_unmapped,
+        BamFilterMode::Unmapped => is_unmapped,
+    }
 }
 
 fn ensure_compatible_headers(
@@ -246,4 +210,25 @@ fn ensure_compatible_headers(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BamFilterMode, should_keep_record_flag};
+
+    #[test]
+    fn keep_mapped_uses_unmapped_flag_not_proper_pair_flag() {
+        assert!(should_keep_record_flag(0x0, BamFilterMode::Mapped));
+        assert!(should_keep_record_flag(0x2, BamFilterMode::Mapped));
+        assert!(!should_keep_record_flag(0x4, BamFilterMode::Mapped));
+        assert!(!should_keep_record_flag(0x6, BamFilterMode::Mapped));
+    }
+
+    #[test]
+    fn keep_unmapped_uses_unmapped_flag_not_proper_pair_flag() {
+        assert!(!should_keep_record_flag(0x0, BamFilterMode::Unmapped));
+        assert!(!should_keep_record_flag(0x2, BamFilterMode::Unmapped));
+        assert!(should_keep_record_flag(0x4, BamFilterMode::Unmapped));
+        assert!(should_keep_record_flag(0x6, BamFilterMode::Unmapped));
+    }
 }

@@ -35,7 +35,7 @@ pub struct CountChromCMD {
     /// Remove reads for a cell if they are duplicates
     pub remove_duplicates: bool,
 
-    #[arg(long = "remove-multimapper", value_parser, default_value = "true")]
+    #[arg(long = "remove-multimapper", value_parser, default_value = "false")]
     /// Remove reads for a cell if they map to multiple places. BWA support so far
     pub remove_multimapper: bool,
 
