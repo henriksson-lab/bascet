@@ -7,7 +7,6 @@ use anyhow::Result;
 use clap::Args;
 use noodles::sam::alignment::RecordBuf as BamRecord;
 use noodles::sam::alignment::record::cigar::op::Kind as CigarKind;
-use noodles::sam::alignment::record::data::field::Tag;
 use tracing::info;
 
 use crate::fileformat::new_anndata::SparseMatrixAnnDataBuilder;
@@ -36,7 +35,8 @@ pub struct CountChromCMD {
     pub remove_duplicates: bool,
 
     #[arg(long = "remove-multimapper", value_parser, default_value = "false")]
-    /// Remove reads for a cell if they map to multiple places. BWA support so far
+    /// Remove reads for a cell if they map to multiple places. This skips secondary and
+    /// supplementary alignments and keeps only records with MAPQ > 0.
     pub remove_multimapper: bool,
 
     // Temp file directory
@@ -116,6 +116,15 @@ impl CountChrom {
         while bam.read_record_buf(&header, &mut record)? > 0 {
             // https://samtools.github.io/hts-specs/SAMv1.pdf
 
+            let flags = record.flags();
+            if params.remove_multimapper && is_secondary_or_supplementary(&flags) {
+                num_reads += 1;
+                if num_reads % PROGRESS_INTERVAL_READS == 0 {
+                    info!("Processed {}M reads", num_reads / 1_000_000);
+                }
+                continue;
+            }
+
             //Figure out the cell barcode. In one format, this is before the first :
             //TODO support read name as a TAG
             let read_name: &[u8] = record.name().expect("missing read name").as_ref();
@@ -126,7 +135,6 @@ impl CountChrom {
             let cell_index = cnt_mat.get_or_create_cell(cell_id);
 
             //Check if the read mapped
-            let flags = record.flags();
             if !flags.is_unmapped() {
                 //Count this as a mapping read
 
@@ -172,20 +180,11 @@ impl CountChrom {
                     true
                 };
 
-                //Remove multimapper
-                //TODO tons of if's; can we reduce somehow?
-                let map_uniquely = if params.remove_multimapper {
-                    let tag_xa = record.data().get(&Tag::new(b'X', b'A'));
-                    if tag_xa.is_some() {
-                        //For BWA: XA-tag is produced for multimappers
-                        false
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                };
-                let count_read = count_read && map_uniquely;
+                let count_read = count_read
+                    && should_count_by_mapping_quality(
+                        params.remove_multimapper,
+                        record.mapping_quality().map(|mapq| mapq.get()),
+                    );
 
                 if count_read {
                     //Update position of last read for this cell
@@ -246,6 +245,14 @@ impl CountChrom {
     }
 }
 
+fn should_count_by_mapping_quality(remove_multimapper: bool, mapq: Option<u8>) -> bool {
+    !remove_multimapper || mapq.is_some_and(|mapq| mapq > 0)
+}
+
+fn is_secondary_or_supplementary(flags: &noodles::sam::alignment::record::Flags) -> bool {
+    flags.is_secondary() || flags.is_supplementary()
+}
+
 fn open_bam_reader(
     path: &PathBuf,
     num_threads: usize,
@@ -265,3 +272,23 @@ fn open_bam_reader(
  * Speed optimization: need to read chunks and count in separate threads. should study how their reader is implemented
  *
  */
+
+#[cfg(test)]
+mod tests {
+    use super::should_count_by_mapping_quality;
+
+    #[test]
+    fn mapping_quality_is_ignored_when_multimapper_filter_is_disabled() {
+        assert!(should_count_by_mapping_quality(false, None));
+        assert!(should_count_by_mapping_quality(false, Some(0)));
+        assert!(should_count_by_mapping_quality(false, Some(1)));
+    }
+
+    #[test]
+    fn remove_multimapper_requires_mapq_above_zero() {
+        assert!(!should_count_by_mapping_quality(true, None));
+        assert!(!should_count_by_mapping_quality(true, Some(0)));
+        assert!(should_count_by_mapping_quality(true, Some(1)));
+        assert!(should_count_by_mapping_quality(true, Some(60)));
+    }
+}

@@ -13,7 +13,10 @@ use crate::command::bamsort::DEFAULT_PATH_TEMP;
 use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
 const FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+const BAM_FLAG_SEGMENTED: u16 = 0x1;
 const BAM_FLAG_UNMAPPED: u16 = 0x4;
+const BAM_FLAG_FIRST_SEGMENT: u16 = 0x40;
+const BAM_FLAG_LAST_SEGMENT: u16 = 0x80;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum BamFilterMode {
@@ -37,7 +40,9 @@ pub struct FilterBamCMD {
     #[arg(short = 't', long = "temp", value_parser, default_value = DEFAULT_PATH_TEMP)]
     pub path_temp: PathBuf,
 
-    /// Which record class to keep.
+    /// Which alignment class to keep. For adjacent paired-end R1/R2 records, the pair is
+    /// retained if either mate matches, and both mates are written so downstream paired readers
+    /// still see complete pairs.
     #[arg(long = "keep", value_enum, default_value_t = BamFilterMode::Mapped)]
     pub keep: BamFilterMode,
 
@@ -156,18 +161,44 @@ fn filter_one_bam(
 
     let mut records_read = 0_u64;
     let mut records_written = 0_u64;
-    let mut scratch = Vec::new();
-    while let Some(record) = bam::Record::read_into(&mut reader, scratch)
-        .with_context(|| format!("read BAM record {}", path_in.display()))?
-    {
+    let mut pushback: Option<bam::Record> = None;
+    while let Some(record) = match pushback.take() {
+        Some(record) => Some(record),
+        None => bam::Record::read(&mut reader)
+            .with_context(|| format!("read BAM record {}", path_in.display()))?,
+    } {
         records_read += 1;
+
+        if is_first_segment(&record) {
+            let next = bam::Record::read(&mut reader)
+                .with_context(|| format!("read BAM record {}", path_in.display()))?;
+            if let Some(next) = next {
+                records_read += 1;
+                if is_adjacent_second_mate(&record, &next) {
+                    if should_keep_record_flag(record.flag(), keep)
+                        || should_keep_record_flag(next.flag(), keep)
+                    {
+                        record.write(writer).with_context(|| {
+                            format!("write filtered BAM record from {}", path_in.display())
+                        })?;
+                        next.write(writer).with_context(|| {
+                            format!("write filtered BAM record from {}", path_in.display())
+                        })?;
+                        records_written += 2;
+                    }
+                    continue;
+                }
+                pushback = Some(next);
+                records_read -= 1;
+            }
+        }
+
         if should_keep_record_flag(record.flag(), keep) {
             record
                 .write(writer)
                 .with_context(|| format!("write filtered BAM record from {}", path_in.display()))?;
             records_written += 1;
         }
-        scratch = record.data;
     }
 
     info!(
@@ -185,6 +216,18 @@ fn should_keep_record_flag(flag: u16, keep: BamFilterMode) -> bool {
         BamFilterMode::Mapped => !is_unmapped,
         BamFilterMode::Unmapped => is_unmapped,
     }
+}
+
+fn is_first_segment(record: &bam::Record) -> bool {
+    let flag = record.flag();
+    flag & BAM_FLAG_SEGMENTED != 0 && flag & BAM_FLAG_FIRST_SEGMENT != 0
+}
+
+fn is_adjacent_second_mate(first: &bam::Record, second: &bam::Record) -> bool {
+    let second_flag = second.flag();
+    second_flag & BAM_FLAG_SEGMENTED != 0
+        && second_flag & BAM_FLAG_LAST_SEGMENT != 0
+        && first.read_name() == second.read_name()
 }
 
 fn ensure_compatible_headers(
@@ -214,7 +257,11 @@ fn ensure_compatible_headers(
 
 #[cfg(test)]
 mod tests {
-    use super::{BamFilterMode, should_keep_record_flag};
+    use super::{
+        BAM_FLAG_FIRST_SEGMENT, BAM_FLAG_LAST_SEGMENT, BAM_FLAG_SEGMENTED, BAM_FLAG_UNMAPPED,
+        BamFilterMode, is_adjacent_second_mate, should_keep_record_flag,
+    };
+    use crate::command::samtools_rs::bam::Record;
 
     #[test]
     fn keep_mapped_uses_unmapped_flag_not_proper_pair_flag() {
@@ -230,5 +277,44 @@ mod tests {
         assert!(!should_keep_record_flag(0x2, BamFilterMode::Unmapped));
         assert!(should_keep_record_flag(0x4, BamFilterMode::Unmapped));
         assert!(should_keep_record_flag(0x6, BamFilterMode::Unmapped));
+    }
+
+    #[test]
+    fn adjacent_r1_r2_with_same_name_is_detected_as_pair() {
+        let r1 = test_record(b"cell:umi", BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT);
+        let r2 = test_record(b"cell:umi", BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT);
+
+        assert!(is_adjacent_second_mate(&r1, &r2));
+    }
+
+    #[test]
+    fn different_read_name_is_not_detected_as_pair() {
+        let r1 = test_record(b"cell:umi1", BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT);
+        let r2 = test_record(b"cell:umi2", BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT);
+
+        assert!(!is_adjacent_second_mate(&r1, &r2));
+    }
+
+    #[test]
+    fn pair_is_retained_when_either_mate_matches_filter() {
+        let r1 = test_record(b"cell:umi", BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT);
+        let r2 = test_record(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT | BAM_FLAG_UNMAPPED,
+        );
+
+        assert!(
+            should_keep_record_flag(r1.flag(), BamFilterMode::Mapped)
+                || should_keep_record_flag(r2.flag(), BamFilterMode::Mapped)
+        );
+    }
+
+    fn test_record(read_name: &[u8], flag: u16) -> Record {
+        let l_read_name = read_name.len() + 1;
+        let mut data = vec![0_u8; 32 + l_read_name];
+        data[8] = l_read_name as u8;
+        data[14..16].copy_from_slice(&flag.to_le_bytes());
+        data[32..32 + read_name.len()].copy_from_slice(read_name);
+        Record { data }
     }
 }
