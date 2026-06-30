@@ -53,9 +53,8 @@ impl CountSketch {
     /// Add a single hash value to the sketch.
     #[inline(always)]
     pub fn add_hash(&mut self, hash: u64) {
-        let g = hash.rotate_right(32);
-        let s = PLUSMIN_LOOKUP[(g & 1) as usize];
-
+        // let g = hash.rotate_right(32);
+        let s = [-1, 1][rand::thread_rng().gen_range(0..2)];
         let pos = (hash as usize) & self.size_mask;
 
         self.sketch[pos] += s;
