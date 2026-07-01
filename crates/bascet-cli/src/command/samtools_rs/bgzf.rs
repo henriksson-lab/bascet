@@ -19,14 +19,22 @@ pub const BLOCK_SIZE: usize = 0xff00;
 
 const HEADER_LEN: usize = 18; // 12-byte gzip header + 6-byte BC extra subfield.
 const TRAILER_LEN: usize = 8; // CRC32 + ISIZE.
-const MAX_BLOCK_SIZE: usize = 0x10000;
+pub const MAX_BLOCK_SIZE: usize = 0x10000;
 const PARALLEL_IO_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
 /// The 28-byte BGZF EOF marker: an empty block. htslib writes this on close.
-const EOF_BLOCK: [u8; 28] = [
+pub const EOF_BLOCK: [u8; 28] = [
     0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02, 0x00,
     0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompressedBlockMetadata {
+    pub uncompressed_start: usize,
+    pub uncompressed_len: usize,
+    pub compressed_start: usize,
+    pub compressed_len: usize,
+}
 
 pub struct Reader<R: Read> {
     inner: BufReader<R>,
@@ -251,11 +259,20 @@ struct RawBlock {
 
 impl ParallelReader {
     pub fn new<R: Read + Send + 'static>(inner: R, threads: usize) -> Self {
+        Self::new_with_queue_capacity(inner, threads, threads.max(1) * 2)
+    }
+
+    pub fn new_with_queue_capacity<R: Read + Send + 'static>(
+        inner: R,
+        threads: usize,
+        queue_capacity: usize,
+    ) -> Self {
         let threads = threads.max(1);
+        let queue_capacity = queue_capacity.max(1);
         // crossbeam-channel is MPMC and lock-free in the fast path — no
         // Mutex<Receiver> contention even with dozens of workers.
-        let (block_tx, block_rx) = bounded::<(u64, RawBlock)>(threads * 2);
-        let (decoded_tx, decoded_rx) = bounded::<(u64, Vec<u8>)>(threads * 2);
+        let (block_tx, block_rx) = bounded::<(u64, RawBlock)>(queue_capacity);
+        let (decoded_tx, decoded_rx) = bounded::<(u64, Vec<u8>)>(queue_capacity);
         let shared_err = Arc::new(Mutex::new(None::<io::Error>));
 
         let reader_err = Arc::clone(&shared_err);
@@ -494,11 +511,21 @@ impl ParallelWriter {
     /// Spawn `threads` compression workers + 1 writer thread.
     /// `threads` < 1 is treated as 1.
     pub fn new<W: Write + Send + 'static>(inner: W, level: u8, threads: usize) -> Self {
+        Self::new_with_queue_capacity(inner, level, threads, threads.max(1) * 2)
+    }
+
+    pub fn new_with_queue_capacity<W: Write + Send + 'static>(
+        inner: W,
+        level: u8,
+        threads: usize,
+        queue_capacity: usize,
+    ) -> Self {
         let threads = threads.max(1);
-        // Bound channels to keep memory under control: at most ~threads blocks
-        // in flight on each side, so peak memory ≈ 4 * threads * BLOCK_SIZE.
-        let (block_tx, block_rx) = bounded::<(u64, Vec<u8>)>(threads * 2);
-        let (out_tx, out_rx) = bounded::<(u64, Vec<u8>)>(threads * 2);
+        let queue_capacity = queue_capacity.max(1);
+        // Bound channels to keep memory under control: at most ~queue_capacity
+        // blocks in flight on each side.
+        let (block_tx, block_rx) = bounded::<(u64, Vec<u8>)>(queue_capacity);
+        let (out_tx, out_rx) = bounded::<(u64, Vec<u8>)>(queue_capacity);
 
         let mut workers = Vec::with_capacity(threads);
         for _ in 0..threads {
@@ -638,6 +665,31 @@ fn ordering_writer<W: Write>(mut inner: W, rx: Receiver<(u64, Vec<u8>)>) -> io::
     Ok(block_offsets)
 }
 
+pub fn compress_chunk_with_block_metadata(
+    payload: &[u8],
+    level: u8,
+) -> io::Result<(Vec<u8>, Vec<CompressedBlockMetadata>)> {
+    let mut compressed_chunk = Vec::new();
+    let mut blocks = Vec::new();
+
+    for (uncompressed_start, block_payload) in payload.chunks(BLOCK_SIZE).enumerate() {
+        let uncompressed_start = uncompressed_start * BLOCK_SIZE;
+        let compressed_start = compressed_chunk.len();
+        let mut encoded = Vec::with_capacity(MAX_BLOCK_SIZE);
+        encode_block(block_payload, level, &mut encoded)?;
+        let compressed_len = encoded.len();
+        compressed_chunk.extend_from_slice(&encoded);
+        blocks.push(CompressedBlockMetadata {
+            uncompressed_start,
+            uncompressed_len: block_payload.len(),
+            compressed_start,
+            compressed_len,
+        });
+    }
+
+    Ok((compressed_chunk, blocks))
+}
+
 fn encode_block(payload: &[u8], level: u8, out: &mut Vec<u8>) -> io::Result<()> {
     debug_assert!(payload.len() <= BLOCK_SIZE);
     let compressed = miniz_oxide::deflate::compress_to_vec(payload, level);
@@ -718,6 +770,25 @@ mod tests {
         for level in [0u8, 1, 6, 9] {
             assert_eq!(roundtrip(&p, level), p, "level {level}");
         }
+    }
+
+    #[test]
+    fn compress_chunk_with_metadata_roundtrips() {
+        let p: Vec<u8> = (0u32..150_000)
+            .map(|i| (i.wrapping_mul(1664525).wrapping_add(1013904223) >> 16) as u8)
+            .collect();
+        let (mut compressed, blocks) = compress_chunk_with_block_metadata(&p, 6).unwrap();
+
+        assert_eq!(blocks.len(), p.len().div_ceil(BLOCK_SIZE));
+        assert_eq!(blocks[0].uncompressed_start, 0);
+        assert_eq!(blocks[0].compressed_start, 0);
+
+        compressed.extend_from_slice(&EOF_BLOCK);
+        let mut decompressed = Vec::new();
+        Reader::new(Cursor::new(compressed))
+            .read_to_end(&mut decompressed)
+            .unwrap();
+        assert_eq!(decompressed, p);
     }
 
     #[test]

@@ -40,6 +40,8 @@ pub mod threadcount;
 pub mod tobigwig;
 pub mod tofq;
 pub mod transform;
+pub mod transform_bam2tirp;
+pub mod transform_tirp2fq;
 
 // BAM/SAM operations
 pub use align::AlignCMD;

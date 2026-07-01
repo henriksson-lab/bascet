@@ -80,7 +80,7 @@ pub struct AlignCMD {
     #[arg(
         long = "bwamem2-mem-overhead-per-input-byte",
         help = "BWAMEM2 in-flight memory charge per uncompressed input sequence byte",
-        default_value_t = 10,
+        default_value_t = 32,
         hide_short_help = true,
         value_parser = clap::value_parser!(u64).range(1..),
     )]

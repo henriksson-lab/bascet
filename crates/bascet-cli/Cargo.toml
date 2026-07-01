@@ -40,7 +40,7 @@ bincode.workspace = true
 blart.workspace = true
 bon.workspace = true
 bounded-integer.workspace = true
-bwa-mem2-rs = { package = "bwa-mem2-pure-rs", git = "https://github.com/henriksson-lab/bwa-mem2-pure-rs", optional = true }
+bwa-mem2-rs = { package = "bwa-mem2-pure-rs", git = "https://github.com/henriksson-lab/bwa-mem2-rs", optional = true }
 byteorder.workspace = true
 byteordered.workspace = true
 bytesize.workspace = true

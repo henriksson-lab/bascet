@@ -1,6 +1,5 @@
 use nthash_rs::{NtHash, canonical};
-
-const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
+use rand::Rng;
 
 /// Requires power-of-2 sketch sizes for optimal performance.
 /// Uses nthash for efficient rolling hash computation on DNA sequences.
