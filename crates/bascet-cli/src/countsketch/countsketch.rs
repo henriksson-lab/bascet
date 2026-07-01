@@ -1,5 +1,7 @@
+<use gxhash::gxhash64;
 use nthash_rs::{NtHash, canonical};
 use rand::Rng;
+const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
 
 /// Requires power-of-2 sketch sizes for optimal performance.
 /// Uses nthash for efficient rolling hash computation on DNA sequences.
@@ -33,27 +35,47 @@ impl CountSketch {
     /// Processes canonical k-mer hashes.
     /// Returns Err(()) if the sequence is shorter than k.
     pub fn add_sequence(&mut self, sequence: &[u8], k: u16) -> Result<(), ()> {
-        if sequence.len() < k as usize {
+        let k = k as usize;
+        if sequence.len() < k {
             return Err(());
         }
 
-        let mut hasher = match NtHash::new(sequence, k, 1, 0) {
-            Ok(h) => h,
-            Err(_) => return Err(()),
-        };
+        let mut revcomp_buf = vec![0u8; k];
 
-        while hasher.roll() {
-            let canonical_hash = canonical(hasher.forward_hash(), hasher.reverse_hash());
-            self.add_hash(canonical_hash);
+        for window in sequence.windows(k) {
+            let fwd_hash = gxhash64(window, 0);
+
+            for (i, &b) in window.iter().rev().enumerate() {
+                revcomp_buf[i] = Self::complement(b);
+            }
+            let rev_hash = gxhash64(&revcomp_buf, 0);
+
+            self.add_hash(canonical(fwd_hash, rev_hash));
         }
+
         Ok(())
+    }
+
+    #[inline]
+    fn complement(b: u8) -> u8 {
+        match b {
+            b'A' => b'T',
+            b'T' => b'A',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'a' => b't',
+            b't' => b'a',
+            b'c' => b'g',
+            b'g' => b'c',
+            _ => b'N',
+        }
     }
 
     /// Add a single hash value to the sketch.
     #[inline(always)]
     pub fn add_hash(&mut self, hash: u64) {
         // let g = hash.rotate_right(32);
-        let s = [-1, 1][rand::thread_rng().gen_range(0..2)];
+        let s = PLUSMIN_LOOKUP[rand::thread_rng().gen_range(0..2)];
         let pos = (hash as usize) & self.size_mask;
 
         self.sketch[pos] += s;
