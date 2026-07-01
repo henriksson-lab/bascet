@@ -1,4 +1,4 @@
-<use gxhash::gxhash64;
+use gxhash::gxhash64;
 use nthash_rs::{NtHash, canonical};
 use rand::Rng;
 const PLUSMIN_LOOKUP: [i64; 2] = [1, -1];
