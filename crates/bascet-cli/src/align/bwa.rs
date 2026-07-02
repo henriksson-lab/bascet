@@ -33,11 +33,8 @@ pub fn try_execute_bwa_mem2(
         total_memory,
     );
 
-    let prefix = path_genome
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("BWAMEM2 genome path is not UTF-8: {path_genome:?}"))?;
-    info!(index_prefix = prefix, "Loading BWAMEM2 index");
-    let mut state = StockDriverState::new(prefix, align_threads)?;
+    info!(index_prefix = %path_genome.display(), "Loading BWAMEM2 index");
+    let mut state = StockDriverState::new(path_genome, align_threads, Arc::clone(&worker_pool))?;
     info!("BWAMEM2 index loaded");
 
     run_stock_driver_tirp_to_bam(
@@ -50,8 +47,8 @@ pub fn try_execute_bwa_mem2(
         worker_pool,
         mem_overhead_per_input_byte,
     )?;
-    // Free the FMI index + worker_t before the sort phase so the in-process sort gets the
-    // full memory budget.
+    // Free the BWA aligner before the sort phase so the in-process sort gets the full memory
+    // budget.
     drop(state);
 
     info!("Sorting + indexing BAM file (in-process)");
