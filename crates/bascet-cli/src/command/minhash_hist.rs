@@ -26,7 +26,7 @@ pub const DEFAULT_PATH_TEMP: &str = "temp";
 #[derive(Args)]
 pub struct MinhashHistCMD {
     // Input bascet or gascet
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    #[arg(short = 'i', value_parser = clap::value_parser!(PathBuf), value_delimiter = ',')]
     //
     pub path_in: Vec<PathBuf>,
 

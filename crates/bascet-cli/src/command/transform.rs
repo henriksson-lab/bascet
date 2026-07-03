@@ -39,10 +39,10 @@ type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
 #[derive(Args)]
 pub struct TransformCMD {
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    #[arg(short = 'i', value_parser = clap::value_parser!(PathBuf), value_delimiter = ',')]
     pub path_in: Vec<PathBuf>,
 
-    #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf), value_delimiter = ',')]
     pub path_out: Vec<PathBuf>,
 
     // File with a list of cells to include
