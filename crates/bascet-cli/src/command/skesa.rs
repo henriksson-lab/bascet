@@ -12,7 +12,7 @@ use bascet_core::{
 use bytesize::ByteSize;
 use clap::Args;
 use crossbeam::channel::{Receiver, Sender};
-use tracing::info;
+use tracing::{info, warn};
 use zip::ZipWriter;
 
 use crate::{
@@ -21,6 +21,9 @@ use crate::{
 };
 
 const DEFAULT_SIZEOF_STREAM_BUFFER: ByteSize = ByteSize::gib(4);
+const SKESA_MIN_MEMORY_PER_WORKER_GIB: usize = 4;
+const SKESA_MIN_MEMORY_HEADROOM: ByteSize = ByteSize::gib(4);
+const SKESA_MEMORY_HEADROOM_FRACTION: f64 = 0.15;
 
 #[derive(Args)]
 pub struct SkesaCMD {
@@ -101,8 +104,9 @@ pub struct SkesaCMD {
     #[arg(long = "force-single-ends")]
     pub force_single_ends: bool,
 
-    /// Use the legacy single-pass k-mer counter.
-    #[arg(long = "single-pass-counter", default_value_t = true)]
+    /// Use the legacy single-pass k-mer counter. This is faster for small cells but can exceed
+    /// the memory budget for high-coverage cells.
+    #[arg(long = "single-pass-counter", default_value_t = false)]
     pub single_pass_counter: bool,
 
     #[arg(
@@ -129,6 +133,18 @@ impl SkesaCMD {
         skesa_rs::sorted_counter::set_single_pass_counter(self.single_pass_counter);
 
         let memory_gb_per_worker = self.memory_gb_per_worker();
+        if self.single_pass_counter {
+            warn!(
+                "SKESA single-pass counter is enabled; this legacy path can exceed the memory budget for high-coverage cells"
+            );
+        }
+        info!(
+            total_memory = %self.total_memory,
+            sizeof_stream_buffer = %self.sizeof_stream_buffer,
+            skesa_workers = self.skesa_workers,
+            skesa_memory_gb_per_worker = memory_gb_per_worker,
+            "SKESA memory budget"
+        );
         let params = SkesaParams {
             memory_gb: memory_gb_per_worker,
             kmer: self.kmer,
@@ -168,8 +184,10 @@ impl SkesaCMD {
         if self.num_threads_read == 0 {
             bail!("--num-threads-read must be > 0");
         }
-        if self.memory_gb_per_worker() < 4 {
-            bail!("--memory must provide at least 4 GiB per skesa worker");
+        if self.memory_gb_per_worker() < SKESA_MIN_MEMORY_PER_WORKER_GIB {
+            bail!(
+                "--memory must leave at least {SKESA_MIN_MEMORY_PER_WORKER_GIB} GiB per skesa worker after stream and runtime reserves"
+            );
         }
         if self.kmer < 21 || self.kmer % 2 == 0 {
             bail!("--kmer must be an odd number >= 21");
@@ -199,8 +217,30 @@ impl SkesaCMD {
     }
 
     fn memory_gb_per_worker(&self) -> usize {
-        (self.total_memory.0 / self.skesa_workers as u64 / ByteSize::gib(1).0) as usize
+        skesa_memory_gb_per_worker(
+            self.total_memory,
+            self.skesa_workers,
+            self.sizeof_stream_buffer,
+        )
     }
+}
+
+fn skesa_memory_gb_per_worker(
+    total_memory: ByteSize,
+    skesa_workers: usize,
+    sizeof_stream_buffer: ByteSize,
+) -> usize {
+    let fractional_headroom =
+        ByteSize((total_memory.as_u64() as f64 * SKESA_MEMORY_HEADROOM_FRACTION) as u64);
+    let runtime_headroom = SKESA_MIN_MEMORY_HEADROOM
+        .as_u64()
+        .max(fractional_headroom.as_u64());
+    let available = total_memory
+        .as_u64()
+        .saturating_sub(sizeof_stream_buffer.as_u64())
+        .saturating_sub(runtime_headroom);
+
+    (available / skesa_workers.max(1) as u64 / ByteSize::gib(1).as_u64()) as usize
 }
 
 #[derive(Clone)]
@@ -242,7 +282,7 @@ fn run_skesa_cells(
     sizeof_stream_buffer: ByteSize,
     params: SkesaParams,
 ) -> Result<()> {
-    let queue_size = skesa_workers * 2;
+    let queue_size = skesa_workers.max(1);
     let (tx_cells, rx_cells) = crossbeam::channel::bounded::<Result<CellReads>>(queue_size);
     let (tx_assemblies, rx_assemblies) =
         crossbeam::channel::bounded::<Result<CellAssembly>>(queue_size);
@@ -493,4 +533,24 @@ fn validate_zip_cell_id(cell_id: &str) -> Result<()> {
         bail!("cell id {:?} cannot be used as a zip directory", cell_id);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skesa_worker_memory_reserves_stream_and_runtime_headroom() {
+        let memory_gb =
+            skesa_memory_gb_per_worker(ByteSize::gb(33), 1, DEFAULT_SIZEOF_STREAM_BUFFER);
+
+        assert_eq!(memory_gb, 22);
+    }
+
+    #[test]
+    fn skesa_worker_memory_is_split_across_workers_after_reserves() {
+        let memory_gb = skesa_memory_gb_per_worker(ByteSize::gib(64), 4, ByteSize::gib(4));
+
+        assert_eq!(memory_gb, 12);
+    }
 }
