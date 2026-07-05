@@ -121,7 +121,6 @@ pub struct GetRawCMD {
     #[arg(
         short = '1',
         long = "r1",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of input R1 FASTQ files (comma-separated)"
     )]
@@ -130,7 +129,6 @@ pub struct GetRawCMD {
     #[arg(
         short = '2',
         long = "r2",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of input R2 FASTQ files (comma-separated)"
     )]
@@ -139,7 +137,6 @@ pub struct GetRawCMD {
     #[arg(
         short = 'o',
         long = "out",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of output file paths (comma-separated)"
     )]
@@ -147,6 +144,7 @@ pub struct GetRawCMD {
 
     #[arg(
         long = "hist",
+        value_delimiter = ',',
         help = "Histogram file paths. Defaults to <path_out>.hist"
     )]
     pub paths_hist: Option<Vec<OutputPath>>,
@@ -240,7 +238,6 @@ pub struct GetRawCMD {
 
     #[arg(
         long = "skip-debarcode",
-        num_args = 1..,
         value_delimiter = ',',
         help = "Skip debarcoding phase and merge existing chunk files (comma-separated list of chunk files)"
     )]

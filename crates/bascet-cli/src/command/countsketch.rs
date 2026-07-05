@@ -40,7 +40,6 @@ pub struct CountsketchCMD {
     #[arg(
         short = 'i',
         long = "in",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of input files (comma-separated). Assumed to be sorted by cell id in descending order."
     )]

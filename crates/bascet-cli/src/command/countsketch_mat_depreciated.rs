@@ -22,7 +22,7 @@ pub const DEFAULT_THREADS_READ: usize = 1;
 #[derive(Args)]
 pub struct CountsketchMatCMD {
     // Input bascets
-    #[arg(short = 'i', value_parser = clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    #[arg(short = 'i', value_parser = clap::value_parser!(PathBuf), value_delimiter = ',')]
     pub path_in: Vec<PathBuf>,
 
     // Temp file directory
