@@ -166,6 +166,7 @@ fn main() -> std::process::ExitCode {
         }
         Commands::ImportSra(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
+        Commands::MinhashFq(mut cmd) => cmd.try_execute(),
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),
         Commands::NcbiGenomeDownload(mut cmd) => cmd.try_execute(),
         //Commands::KmcReads(mut cmd) => cmd.try_execute(),

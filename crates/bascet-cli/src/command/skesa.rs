@@ -6,7 +6,7 @@ use std::thread;
 use anyhow::{Context, Result, bail};
 use bascet_core::DEFAULT_SIZEOF_ARENA;
 use bascet_core::{
-    attr::{meta::*, quality::*, sequence::*},
+    attr::{meta::*, sequence::*},
     *,
 };
 use bytesize::ByteSize;
@@ -15,10 +15,7 @@ use crossbeam::channel::{Receiver, Sender};
 use tracing::{info, warn};
 use zip::ZipWriter;
 
-use crate::{
-    fileformat::ReadPair,
-    utils::{atomic_temp_path, publish_atomic_output},
-};
+use crate::utils::{atomic_temp_path, publish_atomic_output};
 
 const DEFAULT_SIZEOF_STREAM_BUFFER: ByteSize = ByteSize::gib(4);
 const SKESA_MIN_MEMORY_PER_WORKER_GIB: usize = 4;
@@ -264,7 +261,7 @@ struct SkesaParams {
 
 struct CellReads {
     cell_id: String,
-    reads: Vec<ReadPair>,
+    read_set: skesa_rs::api::ReadSet,
 }
 
 struct CellAssembly {
@@ -364,7 +361,7 @@ fn stream_tirp_cells(
 
     let mut query = stream.query::<bascet_io::tirp::Record>();
     let mut current_cell_id = Vec::new();
-    let mut current_reads = Vec::new();
+    let mut current_read_set = skesa_rs::api::ReadSet::new();
     let mut num_cells_queued = 0_u64;
 
     while let Some(record) = query
@@ -373,7 +370,7 @@ fn stream_tirp_cells(
     {
         let record_id = *record.get_ref::<Id>();
         if record_id != current_cell_id.as_slice() {
-            if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_reads)? {
+            if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_read_set)? {
                 num_cells_queued += 1;
             }
             current_cell_id = record_id.to_vec();
@@ -382,16 +379,13 @@ fn stream_tirp_cells(
             }
         }
 
-        current_reads.push(ReadPair {
-            r1: (*record.get_ref::<R1>()).to_vec(),
-            r2: (*record.get_ref::<R2>()).to_vec(),
-            q1: (*record.get_ref::<Q1>()).to_vec(),
-            q2: (*record.get_ref::<Q2>()).to_vec(),
-            umi: (*record.get_ref::<Umi>()).to_vec(),
-        });
+        // Only r1/r2 are used by assembly; quality/UMI are skipped. Adding straight
+        // into the skesa ReadSet avoids materializing an intermediate Vec<ReadPair>
+        // and stores the reads 2-bit packed.
+        current_read_set.add_pair_bytes(record.get_ref::<R1>(), record.get_ref::<R2>());
     }
 
-    if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_reads)? {
+    if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_read_set)? {
         num_cells_queued += 1;
     }
     info!("queued final total of {} cells", num_cells_queued);
@@ -401,27 +395,24 @@ fn stream_tirp_cells(
 fn send_current_cell(
     tx_cells: &Sender<Result<CellReads>>,
     current_cell_id: &mut Vec<u8>,
-    current_reads: &mut Vec<ReadPair>,
+    current_read_set: &mut skesa_rs::api::ReadSet,
 ) -> Result<bool> {
-    if current_reads.is_empty() {
+    if current_read_set.read_count() == 0 {
         return Ok(false);
     }
 
     let cell_id = String::from_utf8(std::mem::take(current_cell_id))
         .context("cell id in TIRP is not valid UTF-8")?;
     validate_zip_cell_id(&cell_id)?;
-    let reads = std::mem::take(current_reads);
+    let read_set = std::mem::take(current_read_set);
     tx_cells
-        .send(Ok(CellReads { cell_id, reads }))
+        .send(Ok(CellReads { cell_id, read_set }))
         .context("failed to send cell reads to skesa workers")?;
     Ok(true)
 }
 
 fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> {
-    let mut read_set = skesa_rs::api::ReadSet::new();
-    for read in &cell.reads {
-        read_set.add_pair_bytes(&read.r1, &read.r2);
-    }
+    let CellReads { cell_id, read_set } = cell;
     let mut reads = read_set.into_pairs();
 
     let output = skesa_rs::output::SharedWriterOutput::with_stream_labels(Vec::new());
@@ -444,7 +435,7 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
         params.kmer,
         params.memory_gb,
     )
-    .map_err(|e| anyhow::anyhow!("skesa memory plan failed for cell {}: {}", cell.cell_id, e))?;
+    .map_err(|e| anyhow::anyhow!("skesa memory plan failed for cell {}: {}", cell_id, e))?;
 
     let assembler_params = skesa_rs::assembler::AssemblerParams {
         min_kmer: params.kmer,
@@ -467,10 +458,7 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
     let result =
         skesa_rs::assembler::run_assembly_with_output(&reads, &assembler_params, &[], &output);
     let log = output.into_inner().map_err(|_| {
-        anyhow::anyhow!(
-            "skesa output log writer lock poisoned for cell {}",
-            cell.cell_id
-        )
+        anyhow::anyhow!("skesa output log writer lock poisoned for cell {}", cell_id)
     })?;
     let mut contigs = Vec::new();
     if let Some((kmer_len, kmers)) = result.graphs.first() {
@@ -486,7 +474,7 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
     }
 
     Ok(CellAssembly {
-        cell_id: cell.cell_id,
+        cell_id,
         contigs,
         log,
     })

@@ -27,6 +27,7 @@ pub mod sysinfo;
 pub mod detect_kmer_fq;
 pub mod detect_kmer_kmc;
 pub mod mapcell;
+pub mod minhash_fq;
 pub mod minhash_hist;
 pub mod ncbi_genome_download;
 pub mod qc;
@@ -68,6 +69,7 @@ pub use gecco::GeccoCMD;
 pub use getraw::GetRawCMD;
 pub use import_sra::ImportSraCMD;
 pub use mapcell::{MapCell, MapCellCMD};
+pub use minhash_fq::MinhashFqCMD;
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
 pub use ncbi_genome_download::NcbiGenomeDownloadCMD;
 pub use qc::QcCMD;
@@ -114,6 +116,7 @@ pub enum Commands {
     //KmcReads(KmcReadsCMD),
     Kraken(KrakenCMD),
     Mapcell(MapCellCMD),
+    MinhashFq(MinhashFqCMD),
     MinhashHist(MinhashHistCMD),
     NcbiGenomeDownload(NcbiGenomeDownloadCMD),
     PipeSamAddTags(PipeSamAddTagsCMD), //Not needed for bascet anymore, but useful if anyone needs to use a non-standard aligner
