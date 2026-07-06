@@ -31,12 +31,15 @@ use tracing::{debug, info, warn};
 
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
+const COUNTSKETCH_MIN_STREAM_BUFFER: ByteSize = ByteSize::mib(64);
+const COUNTSKETCH_MIN_MEMORY_HEADROOM: ByteSize = ByteSize::mib(512);
+const COUNTSKETCH_STREAM_BUFFER_FRACTION: f64 = 0.50;
+
 #[derive(Args)]
 pub struct CountsketchCMD {
     #[arg(
         short = 'i',
         long = "in",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of input files (comma-separated). Assumed to be sorted by cell id in descending order."
     )]
@@ -86,7 +89,7 @@ pub struct CountsketchCMD {
     #[arg(
         long = "sizeof-stream-buffer",
         help = "Total stream buffer size.",
-        value_name = "100%",
+        value_name = "50%",
         value_parser = clap::value_parser!(ByteSize),
     )]
     sizeof_stream_buffer: Option<ByteSize>,
@@ -136,8 +139,20 @@ struct CountsketchBudget {
     #[threads(TWrite, |_, _| bounded_integer::BoundedU64::new(1).unwrap())]
     numof_threads_write: BoundedU64<1, 1>,
 
-    #[mem(MBuffer, |_, total_mem| bytesize::ByteSize(total_mem))]
+    #[mem(MBuffer, |_, total_mem| default_countsketch_stream_buffer(total_mem))]
     sizeof_stream_buffer: ByteSize,
+}
+
+fn default_countsketch_stream_buffer(total_mem: u64) -> ByteSize {
+    let fractional_cap = (total_mem as f64 * COUNTSKETCH_STREAM_BUFFER_FRACTION) as u64;
+    let fraction_headroom = total_mem.saturating_sub(fractional_cap);
+    let headroom = COUNTSKETCH_MIN_MEMORY_HEADROOM
+        .as_u64()
+        .max(fraction_headroom);
+    let available = total_mem.saturating_sub(headroom);
+    let floor = COUNTSKETCH_MIN_STREAM_BUFFER.as_u64().min(total_mem);
+
+    ByteSize(available.max(floor).min(fractional_cap).min(total_mem))
 }
 
 impl CountsketchCMD {
@@ -548,4 +563,27 @@ pub struct CountsketchRow {
     countsketch: Vec<i64>,
 
     owned_backing: (),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_stream_buffer_leaves_headroom_for_runtime_allocations() {
+        let total = ByteSize::gb(33);
+        let stream_buffer = default_countsketch_stream_buffer(total.as_u64());
+
+        assert_eq!(stream_buffer, ByteSize(total.as_u64() / 2));
+        assert!(total.as_u64() - stream_buffer.as_u64() >= ByteSize::gb(16).as_u64());
+    }
+
+    #[test]
+    fn default_stream_buffer_keeps_small_memory_runs_usable() {
+        let total = ByteSize::mib(128);
+        let stream_buffer = default_countsketch_stream_buffer(total.as_u64());
+
+        assert_eq!(stream_buffer, COUNTSKETCH_MIN_STREAM_BUFFER);
+        assert!(stream_buffer.as_u64() <= total.as_u64());
+    }
 }

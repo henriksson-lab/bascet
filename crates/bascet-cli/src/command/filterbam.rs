@@ -12,11 +12,21 @@ use super::samtools_rs::{bam, bgzf};
 use crate::command::bamsort::DEFAULT_PATH_TEMP;
 use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
 
-const FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+const DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+const MIN_FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024;
+const MIN_FILTERBAM_MEMORY: ByteSize = ByteSize::mib(32);
+const FILTERBAM_MEMORY_RESERVE: ByteSize = ByteSize::mib(16);
+const FILTERBAM_ESTIMATED_BYTES_PER_BGZF_QUEUE_BLOCK: u64 = (bgzf::BLOCK_SIZE as u64 + 0x10000) * 3;
 const BAM_FLAG_SEGMENTED: u16 = 0x1;
 const BAM_FLAG_UNMAPPED: u16 = 0x4;
 const BAM_FLAG_FIRST_SEGMENT: u16 = 0x40;
 const BAM_FLAG_LAST_SEGMENT: u16 = 0x80;
+
+#[derive(Clone, Copy, Debug)]
+struct FilterBamMemoryPlan {
+    output_buffer_size: usize,
+    bgzf_queue_capacity: usize,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum BamFilterMode {
@@ -85,6 +95,7 @@ pub fn filter_bam(
     if paths_in.is_empty() || paths_in.len() > 2 {
         bail!("filterbam expects one or two input BAM files");
     }
+    let memory_plan = filterbam_memory_plan(total_mem, num_threads)?;
     std::fs::create_dir_all(path_temp)
         .with_context(|| format!("failed to create temp dir {}", path_temp.display()))?;
 
@@ -96,14 +107,21 @@ pub fn filter_bam(
         flag_mask = BAM_FLAG_UNMAPPED,
         threads = num_threads,
         memory = ?total_mem,
+        output_buffer_size = memory_plan.output_buffer_size,
+        bgzf_queue_capacity = memory_plan.bgzf_queue_capacity,
         "FilterBam: starting"
     );
 
     let path_tmp = atomic_temp_path_in_dir(path_out, path_temp);
     let output = File::create(&path_tmp)
         .with_context(|| format!("create output BAM tmp {}", path_tmp.display()))?;
-    let output = BufWriter::with_capacity(FILTERBAM_OUTPUT_BUFFER_SIZE, output);
-    let mut writer = bgzf::ParallelWriter::new(output, 6, num_threads);
+    let output = BufWriter::with_capacity(memory_plan.output_buffer_size, output);
+    let mut writer = bgzf::ParallelWriter::new_with_queue_capacity(
+        output,
+        6,
+        num_threads,
+        memory_plan.bgzf_queue_capacity,
+    );
 
     let mut expected_header: Option<bam::Header> = None;
     let mut total_read = 0_u64;
@@ -116,6 +134,7 @@ pub fn filter_bam(
             expected_header.as_ref(),
             keep,
             num_threads,
+            memory_plan.bgzf_queue_capacity,
         )?;
         if expected_header.is_none() {
             expected_header = Some(header);
@@ -144,10 +163,12 @@ fn filter_one_bam(
     expected_header: Option<&bam::Header>,
     keep: BamFilterMode,
     num_threads: usize,
+    bgzf_queue_capacity: usize,
 ) -> Result<(bam::Header, u64, u64)> {
     let input =
         File::open(path_in).with_context(|| format!("open input BAM {}", path_in.display()))?;
-    let mut reader = bgzf::ParallelReader::new(input, num_threads);
+    let mut reader =
+        bgzf::ParallelReader::new_with_queue_capacity(input, num_threads, bgzf_queue_capacity);
     let header = bam::Header::read(&mut reader)
         .with_context(|| format!("read BAM header {}", path_in.display()))?;
 
@@ -210,6 +231,40 @@ fn filter_one_bam(
     Ok((header, records_read, records_written))
 }
 
+fn filterbam_memory_plan(
+    total_mem: Option<ByteSize>,
+    num_threads: usize,
+) -> Result<FilterBamMemoryPlan> {
+    let default_queue_capacity = num_threads.max(1) * 2;
+    let Some(total_mem) = total_mem else {
+        return Ok(FilterBamMemoryPlan {
+            output_buffer_size: DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE,
+            bgzf_queue_capacity: default_queue_capacity,
+        });
+    };
+
+    if total_mem < MIN_FILTERBAM_MEMORY {
+        bail!("filterbam --memory must be at least {MIN_FILTERBAM_MEMORY}; got {total_mem}");
+    }
+
+    let usable = total_mem
+        .as_u64()
+        .saturating_sub(FILTERBAM_MEMORY_RESERVE.as_u64());
+    let output_buffer_size = (usable / 8).clamp(
+        MIN_FILTERBAM_OUTPUT_BUFFER_SIZE as u64,
+        DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE as u64,
+    ) as usize;
+    let queue_budget = usable.saturating_sub(output_buffer_size as u64);
+    let queue_capacity = (queue_budget / FILTERBAM_ESTIMATED_BYTES_PER_BGZF_QUEUE_BLOCK)
+        .max(1)
+        .min(default_queue_capacity as u64) as usize;
+
+    Ok(FilterBamMemoryPlan {
+        output_buffer_size,
+        bgzf_queue_capacity: queue_capacity,
+    })
+}
+
 fn should_keep_record_flag(flag: u16, keep: BamFilterMode) -> bool {
     let is_unmapped = flag & BAM_FLAG_UNMAPPED != 0;
     match keep {
@@ -259,9 +314,11 @@ fn ensure_compatible_headers(
 mod tests {
     use super::{
         BAM_FLAG_FIRST_SEGMENT, BAM_FLAG_LAST_SEGMENT, BAM_FLAG_SEGMENTED, BAM_FLAG_UNMAPPED,
-        BamFilterMode, is_adjacent_second_mate, should_keep_record_flag,
+        BamFilterMode, DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE, MIN_FILTERBAM_MEMORY,
+        filterbam_memory_plan, is_adjacent_second_mate, should_keep_record_flag,
     };
     use crate::command::samtools_rs::bam::Record;
+    use bytesize::ByteSize;
 
     #[test]
     fn keep_mapped_uses_unmapped_flag_not_proper_pair_flag() {
@@ -307,6 +364,33 @@ mod tests {
             should_keep_record_flag(r1.flag(), BamFilterMode::Mapped)
                 || should_keep_record_flag(r2.flag(), BamFilterMode::Mapped)
         );
+    }
+
+    #[test]
+    fn memory_plan_without_budget_preserves_default_queue_depth() {
+        let plan = filterbam_memory_plan(None, 5).unwrap();
+
+        assert_eq!(
+            plan.output_buffer_size,
+            DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE
+        );
+        assert_eq!(plan.bgzf_queue_capacity, 10);
+    }
+
+    #[test]
+    fn memory_plan_with_generous_budget_preserves_default_queue_depth() {
+        let plan = filterbam_memory_plan(Some(ByteSize::gib(10)), 5).unwrap();
+
+        assert_eq!(
+            plan.output_buffer_size,
+            DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE
+        );
+        assert_eq!(plan.bgzf_queue_capacity, 10);
+    }
+
+    #[test]
+    fn memory_plan_rejects_too_small_budget() {
+        assert!(filterbam_memory_plan(Some(MIN_FILTERBAM_MEMORY - ByteSize(1)), 5).is_err());
     }
 
     fn test_record(read_name: &[u8], flag: u16) -> Record {

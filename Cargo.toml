@@ -54,7 +54,7 @@ flate2 = { version = "1.1.9", features = [
 ], default-features = false }
 fraction = "0.15.3"
 futures = { version = "0.3.28", features = ["thread-pool"] }
-gecco = { version = "0.5.3", default-features = false }
+gecco = { version = "0.5.4", default-features = false }
 glidesort = "0.1.2"
 gxhash = "3.5.0"
 hdf5 = { package = "hdf5-pure-rust", version = "0.3" }

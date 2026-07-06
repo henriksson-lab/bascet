@@ -108,19 +108,21 @@ where
     }
 
     fn push(&mut self, value: T) -> Result<(), HeapError> {
-        if self.len() == self.capacity {
-            // if the element would be lower priority than the last element, dont push
-            if let Some(last) = self.peek_last() {
-                if last.cmp(&value) == Self::ORDERING {
-                    return Ok(());
-                }
-            }
-
-            self.push_pop_last(value);
+        // Fill until at capacity.
+        if self.len() < self.capacity {
+            self.mimxheap.push(value);
             return Ok(());
         }
 
-        self.mimxheap.push(value);
+        // At capacity: `peek_last` is the worst kept element (the one first evicted).
+        // Keep `value` only if it is "better" than that worst element, i.e. the worst
+        // is more extreme toward the kept end than `value` (`last.cmp(value) == ORDERING`).
+        // For a BoundedMinHeap this keeps the K smallest elements.
+        if let Some(last) = self.peek_last() {
+            if last.cmp(&value) == Self::ORDERING {
+                self.push_pop_last(value);
+            }
+        }
         return Ok(());
     }
 }

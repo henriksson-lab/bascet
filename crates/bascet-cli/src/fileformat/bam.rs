@@ -44,8 +44,23 @@ pub struct BAMStreamingReadPairReader {
 impl BAMStreamingReadPairReader {
     /// Create a new reader from a BAM file
     pub fn new(fname: &PathBuf) -> anyhow::Result<BAMStreamingReadPairReader> {
-        let file = File::open(fname)?;
         let worker_count = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        Self::new_with_worker_count(fname, worker_count)
+    }
+
+    pub fn new_with_threads(
+        fname: &PathBuf,
+        threads: usize,
+    ) -> anyhow::Result<BAMStreamingReadPairReader> {
+        let worker_count = NonZeroUsize::new(threads.max(1)).unwrap();
+        Self::new_with_worker_count(fname, worker_count)
+    }
+
+    fn new_with_worker_count(
+        fname: &PathBuf,
+        worker_count: NonZeroUsize,
+    ) -> anyhow::Result<BAMStreamingReadPairReader> {
+        let file = File::open(fname)?;
         let bgzf_reader =
             noodles::bgzf::io::MultithreadedReader::with_worker_count(worker_count, file);
         let mut reader = noodles::bam::io::Reader::from(bgzf_reader);
@@ -66,6 +81,14 @@ impl BAMStreamingReadPairReader {
         }
 
         Ok(me)
+    }
+
+    pub fn next_readpair_for_transform(&mut self) -> anyhow::Result<Option<(Vec<u8>, ReadPair)>> {
+        if let Some(rp) = self.last_rp.take() {
+            Ok(Some(rp))
+        } else {
+            self.next_readpair()
+        }
     }
 
     /// Read the next BAM record, decoded into a `BamHalf`. Skips secondary/supplementary

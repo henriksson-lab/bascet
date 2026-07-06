@@ -33,19 +33,33 @@ use crate::fileformat::try_get_cells_in_file;
 use crate::fileformat::{CellID, ReadPair};
 use crate::utils::{atomic_temp_path, publish_atomic_output};
 
+use super::determine_thread_counts_1;
+
 type ListReadWithBarcode = Arc<(CellID, Arc<Vec<ReadPair>>)>;
 
 #[derive(Args)]
 pub struct TransformCMD {
-    #[arg(short = 'i', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    #[arg(short = 'i', value_parser = clap::value_parser!(PathBuf), value_delimiter = ',')]
     pub path_in: Vec<PathBuf>,
 
-    #[arg(short = 'o', value_parser= clap::value_parser!(PathBuf), num_args = 1.., value_delimiter = ',')]
+    #[arg(short = 'o', value_parser = clap::value_parser!(PathBuf), value_delimiter = ',')]
     pub path_out: Vec<PathBuf>,
 
     // File with a list of cells to include
     #[arg(long = "cells")]
     pub include_cells: Option<PathBuf>,
+
+    /// Total thread budget.
+    #[arg(short = '@', long = "threads", value_parser = clap::value_parser!(usize))]
+    pub num_threads: Option<usize>,
+
+    /// Total memory budget.
+    #[arg(
+        short = 'm',
+        long = "memory",
+        value_parser = clap::value_parser!(ByteSize),
+    )]
+    pub total_mem: Option<ByteSize>,
 }
 impl TransformCMD {
     /// Run the commandline option
@@ -65,6 +79,8 @@ impl TransformCMD {
             None
         };
 
+        let num_threads = determine_thread_counts_1(self.num_threads)?;
+
         //Set up parameters and run the function
         let params = TransformFile {
             path_in: self.path_in.clone(),
@@ -72,6 +88,8 @@ impl TransformCMD {
             path_out: self.path_out.clone(),
 
             include_cells: include_cells,
+            num_threads,
+            total_mem: self.total_mem,
         };
 
         TransformFile::run(&Arc::new(params))?;
@@ -94,10 +112,58 @@ pub struct TransformFile {
     pub path_out: Vec<std::path::PathBuf>,
 
     pub include_cells: Option<Vec<CellID>>,
+    pub num_threads: usize,
+    pub total_mem: Option<ByteSize>,
 }
 impl TransformFile {
     /// Run the algorithm
     pub fn run(params: &Arc<TransformFile>) -> anyhow::Result<()> {
+        info!(
+            threads = params.num_threads,
+            memory = ?params.total_mem,
+            "Transform: starting"
+        );
+
+        if params.include_cells.is_none()
+            && params.path_in.len() == 1
+            && params.path_out.len() == 1
+            && matches!(
+                crate::fileformat::detect_shard_format(&params.path_in[0]),
+                DetectedFileformat::BAM
+            )
+            && matches!(
+                crate::fileformat::detect_shard_format(&params.path_out[0]),
+                DetectedFileformat::TIRP
+            )
+        {
+            return super::transform_bam2tirp::try_bam_to_tirp_fast_path(
+                &params.path_in[0],
+                &params.path_out[0],
+                params.num_threads,
+                params.total_mem,
+            );
+        }
+
+        if params.include_cells.is_none()
+            && params.path_in.len() == 1
+            && params.path_out.len() == 1
+            && matches!(
+                crate::fileformat::detect_shard_format(&params.path_in[0]),
+                DetectedFileformat::TIRP
+            )
+            && matches!(
+                crate::fileformat::detect_shard_format(&params.path_out[0]),
+                DetectedFileformat::SingleFASTQ | DetectedFileformat::PairedFASTQ
+            )
+        {
+            return super::transform_tirp2fq::try_tirp_to_fastq_fast_path(
+                &params.path_in[0],
+                &params.path_out[0],
+                params.num_threads,
+                params.total_mem,
+            );
+        }
+
         //Set up writer thread pools
         let n_output = params.path_in.len();
         let thread_pool_write = threadpool::ThreadPool::new(n_output);
@@ -172,7 +238,7 @@ impl TransformFile {
         if let Some(_p) = &params.include_cells {
             create_random_readers(&params, &params.path_in, &tx_data)?;
         } else {
-            create_stream_readers(&params.path_in, &tx_data)?;
+            create_stream_readers_with_options(&params.path_in, &tx_data, params.num_threads)?;
         }
 
         //Tell all writers to shut down
@@ -285,6 +351,15 @@ pub fn create_stream_readers(
     path_in: &Vec<std::path::PathBuf>,
     tx_data: &Sender<Option<ListReadWithBarcode>>,
 ) -> anyhow::Result<()> {
+    let num_threads = determine_thread_counts_1(None)?;
+    create_stream_readers_with_options(path_in, tx_data, num_threads)
+}
+
+pub fn create_stream_readers_with_options(
+    path_in: &Vec<std::path::PathBuf>,
+    tx_data: &Sender<Option<ListReadWithBarcode>>,
+    num_threads: usize,
+) -> anyhow::Result<()> {
     //Set up thread pools
     let n_input = path_in.len();
     let thread_pool_read = threadpool::ThreadPool::new(n_input);
@@ -303,6 +378,7 @@ pub fn create_stream_readers(
                 &p,
                 &thread_pool_read,
                 &tx_data,
+                num_threads,
             ),
 
             DetectedFileformat::ZIP => create_stream_reader_thread(
@@ -500,13 +576,14 @@ pub fn create_stream_reader_thread_newtirp(
     infile: &PathBuf,
     thread_pool: &threadpool::ThreadPool,
     tx_data: &Sender<Option<ListReadWithBarcode>>,
+    num_threads: usize,
 ) -> anyhow::Result<()> {
     let infile = infile.clone();
     let tx_data = tx_data.clone();
 
     thread_pool.execute(move || {
         // Streamer from input TIRP
-        let num_threads = bounded_integer::BoundedU64::new(5).unwrap(); //////////////////////////// parameter is made up TODO
+        let num_threads = bounded_integer::BoundedU64::new(num_threads.max(1) as u64).unwrap();
         let sizeof_stream_arena = DEFAULT_SIZEOF_ARENA;
         let sizeof_stream_buffer: ByteSize = ByteSize::gib(4); //////////////////////////// parameter is made up TODO
         let decoder: bascet_io::BBGZDecoder = bascet_io::codec::BBGZDecoder::builder()

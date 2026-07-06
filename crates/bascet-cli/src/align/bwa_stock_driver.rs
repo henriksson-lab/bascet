@@ -1,7 +1,5 @@
-//! BWAMEM2 driver. Replicates the inner loop of
-//! `bwa_mem2_rs::generated::fastmap_cpp::process` (the `_pipe_threads <= 1` branch) but
-//! reads TIRP records (instead of kseq FASTQ) and emits BAM (with `CB:Z` / `UB:Z` cell-barcode
-//! tags injected from the embedded read-names).
+//! BWAMEM2 driver. Reads TIRP records and emits BAM with `CB:Z` / `UB:Z`
+//! cell-barcode tags injected from the embedded read names.
 //!
 //! Pipeline: reader → aligner → compressor pool → writer, connected by bounded queues with
 //! `ReadMemoryLimiter` (input-byte × multiplier) and `InFlightLimiter` (chunk count). BGZF
@@ -21,13 +19,7 @@ use std::{
 use anyhow::{Context, Result};
 use bascet_core::{Decode, DecodeResult};
 use bascet_io::codec;
-use bwa_mem2_rs::bwa_mem2::{
-    bwa::bseq1_t,
-    bwamem::{
-        mem_opt_init, mem_opt_t, mem_pestat_t, mem_process_seqs, with_current_rayon_pool, worker_t,
-    },
-    fmi_search::FMI_search,
-};
+use bwa_mem2_rs::mem_api::{MemAligner, MemReadPair};
 use bytesize::ByteSize;
 use crossbeam::channel;
 use noodles::{bam, bgzf, sam};
@@ -38,12 +30,6 @@ use sam::alignment::record_buf::data::field::Value;
 use sam::alignment::{RecordBuf, io::Write as _, record::data::field::Tag};
 
 use crate::utils::{atomic_temp_path_in_dir, publish_atomic_output};
-
-const MEM_F_PE: i32 = 0x2;
-
-/// Mirror of the private `BATCH_SIZE` const in bwa-mem2-rs (= 512). Used by the per-tid `lim`
-/// vec inside `mem_cache`, which is sized at `BATCH_SIZE + 32` per thread.
-const BATCH_SIZE: usize = 512;
 
 struct DecodeRead<D> {
     decoder: D,
@@ -78,153 +64,92 @@ impl<D: Decode> Read for DecodeRead<D> {
     }
 }
 
-/// Build the forward-plus-reverse-complement reference layout used by `mem_kernel2_core`.
-/// Mirrors private `pac_to_reference_layout` in bwa-mem2-rs.
-fn build_ref_string(l_pac: i64, pac: &[u8]) -> Vec<u8> {
-    let l_pac_usize = usize::try_from(l_pac).expect("l_pac fits in usize");
-    let mut forward = vec![0_u8; l_pac_usize];
-    for (i, base) in forward.iter_mut().enumerate() {
-        let shift = (((!(i as i64)) & 3) << 1) as u8;
-        *base = (pac[i >> 2] >> shift) & 3;
-    }
-    let mut ref_string = forward.clone();
-    ref_string.extend(forward.iter().rev().map(|&b| if b < 4 { 3 - b } else { b }));
-    ref_string
-}
-
-/// Mirror of private `ensure_mem_cache_thread_slots` in bwa-mem2-rs, exposed so we can
-/// initialize the worker mmc without going through `memoryAlloc` (which wants a full
-/// `ktp_aux_t` and is more than we need).
-fn ensure_mem_cache_thread_slots(w: &mut worker_t, nthreads: usize, nreads: usize) {
-    use bwa_mem2_rs::bwa_mem2::bwamem::{mem_alnreg_v, mem_chain_v};
-
-    w.regs = vec![mem_alnreg_v::default(); nreads];
-    w.chain_ar = vec![mem_chain_v::default(); nreads];
-    w.seedBufSize = 0;
-    w.seedBuf.clear();
-
-    w.mmc.seqBufLeftRef.resize_with(nthreads, Vec::new);
-    w.mmc.seqBufLeftQer.resize_with(nthreads, Vec::new);
-    w.mmc.seqBufRightRef.resize_with(nthreads, Vec::new);
-    w.mmc.seqBufRightQer.resize_with(nthreads, Vec::new);
-    w.mmc.wsize_buf_ref.resize(nthreads, 0);
-    w.mmc.wsize_buf_qer.resize(nthreads, 0);
-
-    w.mmc.seqPairArrayAux.resize_with(nthreads, Vec::new);
-    w.mmc.seqPairArrayLeft128.resize_with(nthreads, Vec::new);
-    w.mmc.seqPairArrayRight128.resize_with(nthreads, Vec::new);
-    w.mmc.wsize.resize(nthreads, 0);
-
-    w.mmc.wsize_mem.resize(nthreads, 0);
-    w.mmc.wsize_mem_s.resize(nthreads, 0);
-    w.mmc.wsize_mem_r.resize(nthreads, 0);
-    w.mmc.matchArray.resize_with(nthreads, Vec::new);
-    w.mmc.min_intv_ar.resize_with(nthreads, Vec::new);
-    w.mmc.query_pos_ar.resize_with(nthreads, Vec::new);
-    w.mmc.enc_qdb.resize_with(nthreads, Vec::new);
-    w.mmc.rid.resize_with(nthreads, Vec::new);
-    w.mmc.lim.resize_with(nthreads, || vec![0; BATCH_SIZE + 32]);
-}
-
-/// Owns everything that lives across batches in stock's `process()`.
+/// Owns the BWAMEM2 aligner across batches.
 pub struct StockDriverState {
-    pub opt: mem_opt_t,
-    /// Worker holds the persistent mmc + n_processed counter + fmi reference. Same lifetime
-    /// pattern as stock's `worker_t`.
-    pub worker: worker_t,
+    aligner: MemAligner,
+    align_threads: usize,
     pub n_processed: i64,
 }
 
 impl StockDriverState {
-    pub fn new(prefix: &str, n_threads: usize) -> Result<Self> {
-        // Load index.
-        let mut fmi = FMI_search::ctor(prefix);
-        fmi.load_index();
-        if fmi.base.idx.bns.is_none() {
-            anyhow::bail!("failed to load bwa-mem2 index from {prefix}");
-        }
-
-        // Build opt with PE + thread count.
-        let mut opt = *mem_opt_init();
-        opt.n_threads = i32::try_from(n_threads.max(1))
-            .map_err(|_| anyhow::anyhow!("thread count too large: {n_threads}"))?;
-        opt.flag |= MEM_F_PE;
-
-        // Build ref_string once, attach to worker.
-        let bns = fmi.base.idx.bns.as_ref().expect("bns loaded");
-        let pac = fmi.base.idx.pac.as_slice();
-        let ref_string = build_ref_string(bns.l_pac, pac);
-
-        // Worker: fmi by value (matches stock's worker_t.fmi: Option<FMI_search>).
-        let mut worker = worker_t {
-            fmi: Some(fmi),
-            nthreads: i16::try_from(opt.n_threads).expect("nthreads"),
-            ref_string,
-            ..Default::default()
-        };
-
-        // Pre-init per-tid slots so SAM-PE batch kernels don't panic on first call.
-        // nreads is just an initial guess for regs/chain_ar capacity; mem_process_seqs
-        // resizes on demand.
-        ensure_mem_cache_thread_slots(&mut worker, n_threads.max(1), 0);
+    pub fn new(
+        prefix: &Path,
+        n_threads: usize,
+        worker_pool: Arc<rayon::ThreadPool>,
+    ) -> Result<Self> {
+        let aligner = MemAligner::new_with_thread_pool(prefix, n_threads.max(1), worker_pool)
+            .map_err(|err| anyhow::anyhow!(err))?;
 
         Ok(Self {
-            opt,
-            worker,
+            aligner,
+            align_threads: n_threads.max(1),
             n_processed: 0,
         })
     }
 
-    pub fn sam_header(&self) -> String {
-        let bns = self
-            .worker
-            .fmi
-            .as_ref()
-            .expect("fmi loaded")
-            .base
-            .idx
-            .bns
-            .as_ref()
-            .expect("bns loaded");
-        let mut out = String::new();
-        for ann in &bns.anns {
-            out.push_str("@SQ\tSN:");
-            out.push_str(&ann.name);
-            out.push_str("\tLN:");
-            out.push_str(&ann.len.to_string());
-            if ann.is_alt != 0 {
-                out.push_str("\tAH:*");
-            }
-            out.push('\n');
-        }
-        out.push_str("@PG\tID:bwa-mem2-rs\tPN:bwa-mem2-rs\n");
-        out
+    pub fn sam_header(&self) -> Result<String> {
+        self.aligner
+            .sam_header()
+            .map_err(|err| anyhow::anyhow!(err))
+    }
+
+    fn stock_chunk_size(&self) -> usize {
+        let opt = self.aligner.opt();
+        let chunk_size = usize::try_from(opt.chunk_size.max(1)).unwrap_or(usize::MAX);
+        chunk_size.saturating_mul(self.align_threads.max(1))
     }
 }
 
-fn make_bseq(id: i32, name: &str, seq: &[u8], qual: &[u8]) -> Result<bseq1_t> {
-    if seq.len() != qual.len() {
+struct OwnedReadPair {
+    name: String,
+    r1: Vec<u8>,
+    q1: Vec<u8>,
+    r2: Vec<u8>,
+    q2: Vec<u8>,
+}
+
+impl OwnedReadPair {
+    fn as_mem_pair(&self) -> MemReadPair<'_> {
+        MemReadPair {
+            name: &self.name,
+            r1: &self.r1,
+            q1: &self.q1,
+            r2: &self.r2,
+            q2: &self.q2,
+        }
+    }
+}
+
+fn make_read_pair(name: &str, fields: &TirpFields<'_>) -> Result<OwnedReadPair> {
+    if fields.r1.len() != fields.q1.len() {
         anyhow::bail!(
-            "sequence/quality length mismatch for {name}: {} != {}",
-            seq.len(),
-            qual.len()
+            "R1 sequence/quality length mismatch for {name}: {} != {}",
+            fields.r1.len(),
+            fields.q1.len()
         );
     }
-    let seq = std::str::from_utf8(seq)
-        .with_context(|| format!("read sequence for {name} is not valid UTF-8"))?;
-    let qual = std::str::from_utf8(qual)
-        .with_context(|| format!("read qualities for {name} are not valid UTF-8"))?;
-    let l_seq =
-        i32::try_from(seq.len()).map_err(|_| anyhow::anyhow!("read too long: {}", seq.len()))?;
-    Ok(bseq1_t {
-        l_seq,
-        id,
-        name: Some(name.to_string()),
-        comment: None,
-        seq: Some(seq.to_string()),
-        qual: Some(qual.to_string()),
-        sam: None,
-        seq_nt4: Vec::new(),
+    if fields.r2.len() != fields.q2.len() {
+        anyhow::bail!(
+            "R2 sequence/quality length mismatch for {name}: {} != {}",
+            fields.r2.len(),
+            fields.q2.len()
+        );
+    }
+    std::str::from_utf8(fields.r1)
+        .with_context(|| format!("R1 sequence for {name} is not valid UTF-8"))?;
+    std::str::from_utf8(fields.r2)
+        .with_context(|| format!("R2 sequence for {name} is not valid UTF-8"))?;
+    std::str::from_utf8(fields.q1)
+        .with_context(|| format!("R1 qualities for {name} are not valid UTF-8"))?;
+    std::str::from_utf8(fields.q2)
+        .with_context(|| format!("R2 qualities for {name} are not valid UTF-8"))?;
+
+    Ok(OwnedReadPair {
+        name: name.to_owned(),
+        r1: fields.r1.to_vec(),
+        q1: fields.q1.to_vec(),
+        r2: fields.r2.to_vec(),
+        q2: fields.q2.to_vec(),
     })
 }
 
@@ -290,39 +215,19 @@ fn write_bascet_read_name(dst: &mut String, record_id: &[u8], record_umi: &[u8],
     let _ = write!(dst, "{num_read}");
 }
 
-/// Local copy of stock's private `process_batch` body (PE branch only — no MEM_F_SMARTPE).
-/// After alignment, drain SAM strings out of `seqs[i].sam` into a `Vec<Box<str>>`. Each entry
-/// may contain multiple newline-separated SAM records (primary + secondaries).
 fn process_batch_into_sam_lines(
-    seqs: &mut Vec<bseq1_t>,
-    opt: &mut mem_opt_t,
-    n_processed: i64,
-    pes0: Option<&[mem_pestat_t; 4]>,
-    worker: &mut worker_t,
-    worker_pool: &rayon::ThreadPool,
-) -> Vec<Box<str>> {
-    let n_seqs = i32::try_from(seqs.len()).expect("n_seqs fits in i32");
-    worker_pool.install(|| {
-        with_current_rayon_pool(|| {
-            mem_process_seqs(opt, n_processed, n_seqs, seqs, pes0, worker);
-        });
-    });
-
-    let mut sam_lines: Vec<Box<str>> = Vec::with_capacity(seqs.len());
-    for seq in seqs.iter_mut() {
-        if let Some(sam) = seq.sam.take() {
-            sam_lines.push(sam.into_boxed_str());
-        }
-        // Match stock's cleanup — frees per-read owned strings before next batch starts.
-        seq.name = None;
-        seq.comment = None;
-        seq.seq = None;
-        seq.qual = None;
-        seq.seq_nt4.clear();
-    }
-    seqs.clear();
-    seqs.shrink_to(0);
-    sam_lines
+    aligner: &mut MemAligner,
+    pairs: &[OwnedReadPair],
+) -> Result<Vec<Box<str>>> {
+    let mem_pairs: Vec<_> = pairs.iter().map(OwnedReadPair::as_mem_pair).collect();
+    let mut sam_lines: Vec<Box<str>> = Vec::with_capacity(pairs.len() * 2);
+    aligner
+        .align_pairs_into(&mem_pairs, |line| {
+            sam_lines.push(line.to_owned().into_boxed_str());
+            Ok(())
+        })
+        .map_err(|err| anyhow::anyhow!(err))?;
+    Ok(sam_lines)
 }
 
 /// How many records to encode+compress per parallel chunk. Each chunk produces one Vec<u8>
@@ -464,7 +369,7 @@ use crate::command::limiters::{
 /// One alignment-input batch flowing reader → aligner.
 struct AlignBatch {
     batch_idx: u64,
-    seqs: Vec<bseq1_t>,
+    pairs: Vec<OwnedReadPair>,
     /// Charge for the input bytes; held for the entire pipeline lifetime of this batch (it
     /// is moved into an `Arc` after alignment so all chunks of this batch share it, and the
     /// memory is released only when the last chunk has been written to disk).
@@ -497,8 +402,8 @@ struct ChunkWork {
     _inflight: InFlightPermit,
 }
 
-/// Approximate target number of blocks (= input read pairs from `mem_process_seqs`) per
-/// compressor work item. ~2048 blocks ≈ 4-6K records ≈ ~1 MiB compressed output, which
+/// Approximate target number of input read pairs per compressor work item. ~2048 blocks
+/// is roughly 4-6K records and around 1 MiB compressed output, which
 /// matches `ENCODE_CHUNK_RECORDS` from the sync path's chunk sizing.
 const BLOCKS_PER_CHUNK: usize = 2048;
 
@@ -533,7 +438,7 @@ pub fn run_stock_driver_tirp_to_bam(
 
     // Build the SAM header up front (used both by the writer thread and by every compressor
     // worker for tag injection / record encoding).
-    let header_text = state.sam_header();
+    let header_text = state.sam_header()?;
     let header: Arc<sam::Header> =
         Arc::new(header_text.parse().context("parse generated SAM header")?);
 
@@ -562,7 +467,7 @@ pub fn run_stock_driver_tirp_to_bam(
     drop(header_compressed);
 
     // ---------- Budgets ----------
-    let align_threads = state.opt.n_threads.max(1) as usize;
+    let align_threads = state.align_threads;
     let total_threads_usize = total_threads.max(1) as usize;
     let requested_mem_cap = ((total_memory.as_u64() as f64) * MEMORY_BUDGET_FRACTION) as usize;
     let memory_headroom = ByteSize(
@@ -587,11 +492,11 @@ pub fn run_stock_driver_tirp_to_bam(
         }
         None => (requested_mem_cap, None),
     };
-    let stock_chunk_size = i64::from(state.opt.chunk_size) * i64::from(state.opt.n_threads);
+    let stock_chunk_size = state.stock_chunk_size();
     let mem_overhead_per_input_byte = mem_overhead_per_input_byte.max(1);
     let memory_capped_chunk_size = (mem_cap / mem_overhead_per_input_byte as usize)
         .max(1 << 20)
-        .min(stock_chunk_size as usize);
+        .min(stock_chunk_size);
     let chunk_size = i64::try_from(memory_capped_chunk_size)
         .map_err(|_| anyhow::anyhow!("BWAMEM2 chunk size too large: {memory_capped_chunk_size}"))?;
     let max_batch_charge =
@@ -659,22 +564,16 @@ pub fn run_stock_driver_tirp_to_bam(
         })
         .expect("spawn reader");
 
-    // ---------- Aligner thread (owns state.worker exclusively) ----------
-    // We move state into the closure as a raw pointer so the worker (which is `!Send` due to
-    // its FFI fields) can be borrowed mutably across the pipeline. Safe because the aligner
-    // thread is joined before this function returns, so the borrow lifetime is bounded.
-    let header_aligner = Arc::clone(&header);
-    // SAFETY: state is borrowed exclusively by the aligner thread which is joined before
-    // returning. We use a raw pointer to dodge the !Send bound on worker_t (which contains
-    // FFI types). No other thread touches state during the pipeline.
+    // ---------- Aligner thread ----------
+    // SAFETY: state is borrowed exclusively by the aligner thread, which is joined before
+    // returning. No other thread touches state during the pipeline.
     let state_ptr = state as *mut StockDriverState as usize;
-    let aligner_pool = Arc::clone(&worker_pool);
     let aligner_handle: JoinHandle<Result<u64>> = thread::Builder::new()
         .name("BWAMEM2StockAligner".to_owned())
         .spawn(move || -> Result<u64> {
             // SAFETY: see comment above where state_ptr is captured.
             let state = unsafe { &mut *(state_ptr as *mut StockDriverState) };
-            bam_aligner_loop(state, q1_rx, q2_tx, header_aligner, aligner_pool)
+            bam_aligner_loop(state, q1_rx, q2_tx)
         })
         .expect("spawn aligner");
 
@@ -758,7 +657,7 @@ fn bam_reader_loop(
         let max_batch_charge =
             (chunk_size as usize).saturating_mul(mem_overhead_per_input_byte as usize);
         let permit = mem_limiter.acquire(max_batch_charge);
-        let mut seqs: Vec<bseq1_t> = Vec::new();
+        let mut pairs: Vec<OwnedReadPair> = Vec::new();
         let mut size = 0_i64;
         while !eof && size < chunk_size {
             line_buf.clear();
@@ -781,26 +680,20 @@ fn bam_reader_loop(
             name_buf.clear();
             write_bascet_read_name(&mut name_buf, fields.id, fields.umi, num_read_counter);
 
-            let id_r1 = i32::try_from(seqs.len()).expect("id fits in i32");
-            let r1 = make_bseq(id_r1, &name_buf, fields.r1, fields.q1)?;
-            size += i64::from(r1.l_seq);
-            seqs.push(r1);
-
-            let id_r2 = i32::try_from(seqs.len()).expect("id fits in i32");
-            let r2 = make_bseq(id_r2, &name_buf, fields.r2, fields.q2)?;
-            size += i64::from(r2.l_seq);
-            seqs.push(r2);
+            size += i64::try_from(fields.r1.len() + fields.r2.len())
+                .map_err(|_| anyhow::anyhow!("read pair too large for {name_buf}"))?;
+            pairs.push(make_read_pair(&name_buf, &fields)?);
 
             num_read_counter += 1;
         }
-        if seqs.is_empty() {
+        if pairs.is_empty() {
             break;
         }
 
         if tx
             .send(AlignBatch {
                 batch_idx,
-                seqs,
+                pairs,
                 permit,
             })
             .is_err()
@@ -818,36 +711,25 @@ fn bam_aligner_loop(
     state: &mut StockDriverState,
     rx: channel::Receiver<AlignBatch>,
     tx: channel::Sender<SamBatch>,
-    _header: Arc<sam::Header>,
-    worker_pool: Arc<rayon::ThreadPool>,
 ) -> Result<u64> {
     let mut n_aligned: u64 = 0;
     while let Ok(batch) = rx.recv() {
         let AlignBatch {
             batch_idx,
-            mut seqs,
+            pairs,
             permit,
         } = batch;
 
-        let n_seqs = seqs.len();
+        let n_pairs = pairs.len();
         debug!(
             batch_idx,
-            n_seqs,
+            n_pairs,
             n_processed_so_far = %comma(state.n_processed),
             "BWAMEM2 stock-driver BAM: aligning batch"
         );
 
-        let mut opt_clone = state.opt.clone();
-        let pes0 = None;
-        let sam_lines = process_batch_into_sam_lines(
-            &mut seqs,
-            &mut opt_clone,
-            state.n_processed,
-            pes0,
-            &mut state.worker,
-            &worker_pool,
-        );
-        state.n_processed += n_seqs as i64;
+        let sam_lines = process_batch_into_sam_lines(&mut state.aligner, &pairs)?;
+        state.n_processed += (n_pairs * 2) as i64;
 
         if tx
             .send(SamBatch {

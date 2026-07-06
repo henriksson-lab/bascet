@@ -166,6 +166,7 @@ fn main() -> std::process::ExitCode {
         }
         Commands::ImportSra(mut cmd) => cmd.try_execute(),
         Commands::Mapcell(mut cmd) => cmd.try_execute(),
+        Commands::MinhashFq(mut cmd) => cmd.try_execute(),
         Commands::MinhashHist(mut cmd) => cmd.try_execute(),
         Commands::NcbiGenomeDownload(mut cmd) => cmd.try_execute(),
         //Commands::KmcReads(mut cmd) => cmd.try_execute(),
@@ -198,4 +199,112 @@ fn main() -> std::process::ExitCode {
     LogGuard::flush();
 
     return std::process::ExitCode::SUCCESS;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bascet_cli::command::getraw::GetRawChemistryCMD;
+    use clap::Parser;
+    use std::fs::File;
+
+    fn fastq_path(dir: &tempfile::TempDir, name: &str) -> String {
+        let path = dir.path().join(name);
+        File::create(&path).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn debarcode_command(argv: Vec<String>) -> command::getraw::GetRawCMD {
+        let cli = Cli::try_parse_from(argv).unwrap();
+        match cli.command {
+            Commands::Debarcode(cmd) => cmd,
+            _ => panic!("expected debarcode command"),
+        }
+    }
+
+    #[test]
+    fn debarcode_accepts_space_separated_fastq_options_before_chemistry() {
+        let dir = tempfile::tempdir().unwrap();
+        let r1 = fastq_path(&dir, "reads_R1.fastq.gz");
+        let r2 = fastq_path(&dir, "reads_R2.fastq.gz");
+
+        let cmd = debarcode_command(vec![
+            "bascet".into(),
+            "debarcode".into(),
+            "-1".into(),
+            r1,
+            "-2".into(),
+            r2,
+            "atrandi-wgs".into(),
+        ]);
+
+        assert_eq!(cmd.paths_r1.len(), 1);
+        assert_eq!(cmd.paths_r2.len(), 1);
+        assert!(matches!(cmd.chemistry, GetRawChemistryCMD::AtrandiWGS));
+    }
+
+    #[test]
+    fn debarcode_accepts_equals_separated_fastq_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let r1 = fastq_path(&dir, "reads_R1.fastq.gz");
+        let r2 = fastq_path(&dir, "reads_R2.fastq.gz");
+
+        let cmd = debarcode_command(vec![
+            "bascet".into(),
+            "debarcode".into(),
+            format!("--r1={r1}"),
+            format!("--r2={r2}"),
+            "atrandi-wgs".into(),
+        ]);
+
+        assert_eq!(cmd.paths_r1.len(), 1);
+        assert_eq!(cmd.paths_r2.len(), 1);
+        assert!(matches!(cmd.chemistry, GetRawChemistryCMD::AtrandiWGS));
+    }
+
+    #[test]
+    fn debarcode_accepts_comma_separated_fastq_lists_without_swallowing_chemistry() {
+        let dir = tempfile::tempdir().unwrap();
+        let r1_a = fastq_path(&dir, "sample_a_R1.fastq.gz");
+        let r1_b = fastq_path(&dir, "sample_b_R1.fastq.gz");
+        let r2_a = fastq_path(&dir, "sample_a_R2.fastq.gz");
+        let r2_b = fastq_path(&dir, "sample_b_R2.fastq.gz");
+
+        let cmd = debarcode_command(vec![
+            "bascet".into(),
+            "debarcode".into(),
+            "--r1".into(),
+            format!("{r1_a},{r1_b}"),
+            "--r2".into(),
+            format!("{r2_a},{r2_b}"),
+            "atrandi-wgs".into(),
+        ]);
+
+        assert_eq!(cmd.paths_r1.len(), 2);
+        assert_eq!(cmd.paths_r2.len(), 2);
+        assert!(matches!(cmd.chemistry, GetRawChemistryCMD::AtrandiWGS));
+    }
+
+    #[test]
+    fn debarcode_rejects_chemistry_before_debarcode_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let r1 = fastq_path(&dir, "reads_R1.fastq.gz");
+        let r2 = fastq_path(&dir, "reads_R2.fastq.gz");
+
+        let result = Cli::try_parse_from(vec![
+            "bascet".into(),
+            "debarcode".into(),
+            "atrandi-wgs".into(),
+            "-1".into(),
+            r1,
+            "-2".into(),
+            r2,
+        ]);
+
+        let err = match result {
+            Ok(_) => panic!("expected parser error"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
 }

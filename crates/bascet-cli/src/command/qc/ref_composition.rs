@@ -28,7 +28,6 @@ pub struct QcRefCompositionCMD {
     #[arg(
         short = 'i',
         long = "in",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of BAM input files (comma-separated). Assumed sorted by cell (qname)."
     )]

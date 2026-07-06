@@ -32,7 +32,6 @@ pub struct ShardifyCMD {
     #[arg(
         short = 'i',
         long = "in",
-        num_args = 1..,
         value_delimiter = ',',
         help = "List of input files (comma-separated)"
     )]
@@ -41,10 +40,9 @@ pub struct ShardifyCMD {
     #[arg(
         short = 'o',
         long = "out",
-        num_args = 1..,
         value_delimiter = ',',
-        help = "List of output files (comma-separated)")
-    ]
+        help = "List of output files (comma-separated)"
+    )]
     pub paths_out: Vec<OutputPath>,
 
     #[arg(
