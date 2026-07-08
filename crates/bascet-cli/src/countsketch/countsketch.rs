@@ -1,3 +1,4 @@
+use blart::AsBytes;
 use gxhash::gxhash64;
 use nthash_rs::{NtHash, canonical};
 use rand::Rng;
@@ -50,8 +51,10 @@ impl CountSketch {
                 revcomp_buf[i] = Self::complement(b);
             }
             let rev_hash = gxhash64(&revcomp_buf, 0);
+            let canonical = canonical(fwd_hash, rev_hash);
+            let sign = gxhash64(canonical.as_bytes(), 15);
 
-            self.add_hash(canonical(fwd_hash, rev_hash));
+            self.add_hash(canonical, sign);
         }
 
         Ok(())
@@ -74,10 +77,10 @@ impl CountSketch {
 
     /// Add a single hash value to the sketch.
     #[inline(always)]
-    pub fn add_hash(&mut self, hash: u64) {
+    pub fn add_hash(&mut self, hash: u64, sign: u64) {
         // let g = hash.rotate_right(32);
-        let s = PLUSMIN_LOOKUP[rand::thread_rng().gen_range(0..2)];
         let pos = (hash as usize) & self.size_mask;
+        let s = PLUSMIN_LOOKUP[(sign % 2) as usize];
 
         self.sketch[pos] += s;
         self.total += 1;
