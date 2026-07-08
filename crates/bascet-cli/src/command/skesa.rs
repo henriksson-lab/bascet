@@ -101,6 +101,12 @@ pub struct SkesaCMD {
     #[arg(long = "force-single-ends")]
     pub force_single_ends: bool,
 
+    /// Maximum read pairs per cell fed to assembly. 0 disables the cap. When a cell
+    /// exceeds this, only the first N read pairs encountered in the file are used
+    /// (no random subsampling).
+    #[arg(long = "max-reads-per-cell", default_value_t = 0)]
+    pub max_reads_per_cell: usize,
+
     /// Use the legacy single-pass k-mer counter. This is faster for small cells but can exceed
     /// the memory budget for high-coverage cells.
     #[arg(long = "single-pass-counter", default_value_t = false)]
@@ -165,6 +171,7 @@ impl SkesaCMD {
             self.path_out.clone(),
             self.num_threads_read,
             self.skesa_workers,
+            self.max_reads_per_cell,
             self.sizeof_stream_arena,
             self.sizeof_stream_buffer,
             params,
@@ -275,6 +282,7 @@ fn run_skesa_cells(
     path_out: PathBuf,
     num_threads_read: usize,
     skesa_workers: usize,
+    max_reads_per_cell: usize,
     sizeof_stream_arena: ByteSize,
     sizeof_stream_buffer: ByteSize,
     params: SkesaParams,
@@ -288,6 +296,7 @@ fn run_skesa_cells(
         let result = stream_tirp_cells(
             path_in,
             num_threads_read,
+            max_reads_per_cell,
             sizeof_stream_arena,
             sizeof_stream_buffer,
             tx_cells.clone(),
@@ -339,6 +348,7 @@ fn run_skesa_cells(
 fn stream_tirp_cells(
     path_in: PathBuf,
     num_threads_read: usize,
+    max_reads_per_cell: usize,
     sizeof_stream_arena: ByteSize,
     sizeof_stream_buffer: ByteSize,
     tx_cells: Sender<Result<CellReads>>,
@@ -362,6 +372,10 @@ fn stream_tirp_cells(
     let mut query = stream.query::<bascet_io::tirp::Record>();
     let mut current_cell_id = Vec::new();
     let mut current_read_set = skesa_rs::api::ReadSet::new();
+    // Per-cell totals counted across all records (independent of the cap), so the
+    // logged reads/bases reflect the true cell size even when we stop adding.
+    let mut current_read_pairs: usize = 0;
+    let mut current_bases: usize = 0;
     let mut num_cells_queued = 0_u64;
 
     while let Some(record) = query
@@ -370,22 +384,46 @@ fn stream_tirp_cells(
     {
         let record_id = *record.get_ref::<Id>();
         if record_id != current_cell_id.as_slice() {
-            if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_read_set)? {
+            if send_current_cell(
+                &tx_cells,
+                &mut current_cell_id,
+                &mut current_read_set,
+                current_read_pairs,
+                current_bases,
+                max_reads_per_cell,
+            )? {
                 num_cells_queued += 1;
             }
+            current_read_pairs = 0;
+            current_bases = 0;
             current_cell_id = record_id.to_vec();
             if num_cells_queued > 0 && num_cells_queued % 1000 == 0 {
                 info!("queued {} cells", num_cells_queued);
             }
         }
 
-        // Only r1/r2 are used by assembly; quality/UMI are skipped. Adding straight
-        // into the skesa ReadSet avoids materializing an intermediate Vec<ReadPair>
-        // and stores the reads 2-bit packed.
-        current_read_set.add_pair_bytes(record.get_ref::<R1>(), record.get_ref::<R2>());
+        let r1 = record.get_ref::<R1>();
+        let r2 = record.get_ref::<R2>();
+        // Feed the assembly only the first `max_reads_per_cell` pairs (0 = no cap).
+        // We keep counting all records so the per-cell log shows the true totals.
+        if max_reads_per_cell == 0 || current_read_pairs < max_reads_per_cell {
+            // Only r1/r2 are used by assembly; quality/UMI are skipped. Adding straight
+            // into the skesa ReadSet avoids materializing an intermediate Vec<ReadPair>
+            // and stores the reads 2-bit packed.
+            current_read_set.add_pair_bytes(r1, r2);
+        }
+        current_read_pairs += 1;
+        current_bases += r1.len() + r2.len();
     }
 
-    if send_current_cell(&tx_cells, &mut current_cell_id, &mut current_read_set)? {
+    if send_current_cell(
+        &tx_cells,
+        &mut current_cell_id,
+        &mut current_read_set,
+        current_read_pairs,
+        current_bases,
+        max_reads_per_cell,
+    )? {
         num_cells_queued += 1;
     }
     info!("queued final total of {} cells", num_cells_queued);
@@ -396,6 +434,9 @@ fn send_current_cell(
     tx_cells: &Sender<Result<CellReads>>,
     current_cell_id: &mut Vec<u8>,
     current_read_set: &mut skesa_rs::api::ReadSet,
+    read_pairs: usize,
+    bases: usize,
+    max_reads_per_cell: usize,
 ) -> Result<bool> {
     if current_read_set.read_count() == 0 {
         return Ok(false);
@@ -404,6 +445,24 @@ fn send_current_cell(
     let cell_id = String::from_utf8(std::mem::take(current_cell_id))
         .context("cell id in TIRP is not valid UTF-8")?;
     validate_zip_cell_id(&cell_id)?;
+    let used_pairs = if max_reads_per_cell > 0 {
+        read_pairs.min(max_reads_per_cell)
+    } else {
+        read_pairs
+    };
+    if used_pairs < read_pairs {
+        warn!(
+            "cell {} has {} read pairs ({} bases), exceeding --max-reads-per-cell {}; using the first {} and dropping {}",
+            cell_id,
+            read_pairs,
+            bases,
+            max_reads_per_cell,
+            used_pairs,
+            read_pairs - used_pairs
+        );
+    } else {
+        info!("cell {} reads={} bases={}", cell_id, read_pairs, bases);
+    }
     let read_set = std::mem::take(current_read_set);
     tx_cells
         .send(Ok(CellReads { cell_id, read_set }))
