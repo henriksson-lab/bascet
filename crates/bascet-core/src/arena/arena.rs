@@ -13,7 +13,7 @@ use tracing::warn;
 use super::consts::*;
 use crate::utils::AtomicPatience;
 use crate::utils::send::SendPtr;
-use crate::utils::threading::spinpark_loop::{self, SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
+use crate::utils::threading::spinpark_loop::{SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 
 #[derive(Debug)]
 pub enum AllocError {
@@ -468,9 +468,8 @@ impl Drop for ArenaPool {
                 // SAFETY: We're in drop, no other threads can access arenas
                 let arena = unsafe { &*arena_cell.get() };
                 if arena.cnt.load(Ordering::Relaxed) != 0 {
-                    match spinpark_loop::spinpark_loop::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(
-                        &mut count_spun,
-                    ) {
+                    match SpinPark::run::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut count_spun)
+                    {
                         SpinPark::Warn => {
                             warn!(source = "ArenaPool::drop", "waiting for arena to be freed")
                         }

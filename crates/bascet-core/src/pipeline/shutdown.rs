@@ -35,6 +35,7 @@ impl Shutdown {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn wait_async(&self) {
         if self.is_triggered() {
             return;

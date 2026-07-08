@@ -31,21 +31,23 @@ impl Parse for Pattern {
     }
 }
 
-pub fn resolve(pattern: &Pattern, value: &Lit, map: &mut HashMap<String, Lit>) -> syn::Result<()> {
-    match (pattern, value) {
-        (Pattern::Ident(name), val) => {
-            map.insert(name.clone(), val.clone());
-            Ok(())
-        }
-        (Pattern::Tuple(pats), Lit::Tuple(vals)) => {
-            for (p, v) in pats.iter().zip(vals.iter()) {
-                resolve(p, v, map)?;
+impl Pattern {
+    pub fn bind(&self, value: &Lit, map: &mut HashMap<String, Lit>) -> syn::Result<()> {
+        match (self, value) {
+            (Pattern::Ident(name), val) => {
+                map.insert(name.clone(), val.clone());
+                Ok(())
             }
-            Ok(())
+            (Pattern::Tuple(pats), Lit::Tuple(vals)) => {
+                for (p, v) in pats.iter().zip(vals.iter()) {
+                    p.bind(v, map)?;
+                }
+                Ok(())
+            }
+            _ => Err(syn::Error::new(
+                Span::call_site(),
+                "pattern does not match value structure",
+            )),
         }
-        _ => Err(syn::Error::new(
-            Span::call_site(),
-            "pattern does not match value structure",
-        )),
     }
 }

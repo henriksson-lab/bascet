@@ -1,11 +1,11 @@
 use proc_macro2::{Punct, Span};
 use syn::parse::{Parse, ParseStream};
-use syn::{Ident, LitChar, LitInt, LitStr};
+use syn::{Ident, LitChar, LitInt, LitStr, Token};
 
 use super::value::Lit;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum CmpOp {
+pub enum Cmp {
     Gt,
     Lt,
     Ge,
@@ -17,7 +17,7 @@ pub enum CmpOp {
 #[derive(Debug, Clone)]
 pub struct FilterPred {
     pub lhs: Lit,
-    pub op: CmpOp,
+    pub op: Cmp,
     pub rhs: Lit,
 }
 
@@ -27,12 +27,12 @@ impl FilterPred {
         let rhs = Self::resolve(&self.rhs, value, positions)?;
         match (&lhs, &rhs) {
             (Lit::Int(a), Lit::Int(b)) => Ok(match self.op {
-                CmpOp::Gt => a > b,
-                CmpOp::Lt => a < b,
-                CmpOp::Ge => a >= b,
-                CmpOp::Le => a <= b,
-                CmpOp::Eq => a == b,
-                CmpOp::Ne => a != b,
+                Cmp::Gt => a > b,
+                Cmp::Lt => a < b,
+                Cmp::Ge => a >= b,
+                Cmp::Le => a <= b,
+                Cmp::Eq => a == b,
+                Cmp::Ne => a != b,
             }),
             _ => Err(syn::Error::new(
                 Span::call_site(),
@@ -62,61 +62,58 @@ impl FilterPred {
     }
 }
 
-fn parse_operand(input: ParseStream) -> syn::Result<Lit> {
-    if input.peek(LitInt) {
-        Ok(Lit::Int(input.parse::<LitInt>()?.base10_parse()?))
-    } else if input.peek(LitChar) {
-        Ok(Lit::Char(input.parse::<LitChar>()?.value()))
-    } else if input.peek(LitStr) {
-        Ok(Lit::Str(input.parse::<LitStr>()?.value()))
-    } else {
-        Ok(Lit::Ident(input.parse::<Ident>()?.to_string()))
+impl Lit {
+    fn operand(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(LitInt) {
+            Ok(Self::Int(input.parse::<LitInt>()?.base10_parse()?))
+        } else if input.peek(LitChar) {
+            Ok(Self::Char(input.parse::<LitChar>()?.value()))
+        } else if input.peek(LitStr) {
+            Ok(Self::Str(input.parse::<LitStr>()?.value()))
+        } else {
+            Ok(Self::Ident(input.parse::<Ident>()?.to_string()))
+        }
     }
 }
 
-fn parse_punct(input: ParseStream) -> syn::Result<char> {
-    Ok(input.parse::<Punct>()?.as_char())
-}
-
-fn try_parse_eq(input: ParseStream) -> bool {
-    if input.peek(syn::Token![=]) {
-        let _ = input.parse::<syn::Token![=]>();
-        true
-    } else {
-        false
+impl Cmp {
+    fn from_stream(input: ParseStream) -> syn::Result<Self> {
+        let first = input.parse::<Punct>()?.as_char();
+        match first {
+            '>' => {
+                if input.peek(Token![=]) {
+                    input.parse::<Token![=]>()?;
+                    Ok(Self::Ge)
+                } else {
+                    Ok(Self::Gt)
+                }
+            }
+            '<' => {
+                if input.peek(Token![=]) {
+                    input.parse::<Token![=]>()?;
+                    Ok(Self::Le)
+                } else {
+                    Ok(Self::Lt)
+                }
+            }
+            '!' => {
+                input.parse::<Token![=]>()?;
+                Ok(Self::Ne)
+            }
+            '=' => {
+                input.parse::<Token![=]>()?;
+                Ok(Self::Eq)
+            }
+            c => Err(input.error(format!("unexpected operator char `{c}`"))),
+        }
     }
 }
 
 impl Parse for FilterPred {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let lhs = parse_operand(input)?;
-        let first = parse_punct(input)?;
-        let op = match first {
-            '>' => {
-                if try_parse_eq(input) {
-                    CmpOp::Ge
-                } else {
-                    CmpOp::Gt
-                }
-            }
-            '<' => {
-                if try_parse_eq(input) {
-                    CmpOp::Le
-                } else {
-                    CmpOp::Lt
-                }
-            }
-            '!' => {
-                parse_punct(input)?;
-                CmpOp::Ne
-            }
-            '=' => {
-                parse_punct(input)?;
-                CmpOp::Eq
-            }
-            c => return Err(input.error(format!("unexpected operator char `{c}`"))),
-        };
-        let rhs = parse_operand(input)?;
+        let lhs = Lit::operand(input)?;
+        let op = Cmp::from_stream(input)?;
+        let rhs = Lit::operand(input)?;
         Ok(FilterPred { lhs, op, rhs })
     }
 }

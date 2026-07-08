@@ -1,13 +1,11 @@
-use std::future::Future;
 use std::marker::PhantomData;
 
-use crate::layer::Layer;
-use crate::pipeline::shutdown::Shutdown;
+use crate::coordinate::Auto;
+use crate::contract::Contract;
 use crate::set::Set;
-use crate::sink::Sink;
 use crate::source::Pull;
-use crate::stage::Output;
-use crate::utils::channel::{AsyncPressurisedReceiver, AsyncPressurisedSender};
+use crate::apply::Apply;
+use crate::execute::{Async, Executable};
 
 pub struct Drain<T>(PhantomData<T>);
 
@@ -17,44 +15,29 @@ impl<T> Default for Drain<T> {
     }
 }
 
-impl<T: 'static> Layer for Drain<T> {
+impl<T> Clone for Drain<T> {
+    fn clone(&self) -> Self {
+        Drain(PhantomData)
+    }
+}
+
+impl<T: Send + 'static> Contract for Drain<T> {
+    type Input = T;
+    type Output = ();
     type Provides = ();
     type Requires = ();
     type Resources = ();
 }
 
-impl<T: Send + 'static> Sink for Drain<T> {
-    type Input<'a> = T;
+impl<T: Send + 'static> Apply for Drain<T> {
+    type Runtime = Async;
+    type Coordinate = Auto;
 
-    fn consume<W: Set>(&mut self, _: Self::Input<'_>) -> impl Future<Output = ()> + Send {
-        async {}
-    }
-
-    fn drive<W: Set + 'static, U: Send + 'static>(
-        self,
-        out_res_rx: AsyncPressurisedReceiver<Output<U>>,
-        out_req_tx: AsyncPressurisedSender<Pull>,
-        shutdown: Shutdown,
-    ) where
-        Self: Sized + Send + 'static,
-        U: Into<Self::Input<'static>>,
-    {
-        std::thread::spawn(move || {
-            loop {
-                if out_req_tx.send(Pull::Next).is_err() {
-                    break;
-                }
-            }
-        });
-        std::thread::spawn(move || {
-            loop {
-                match out_res_rx.recv_blocking() {
-                    Ok(Output::Shutdown) | Err(_) => break,
-                    Ok(Output::Error(e)) => tracing::error!("{e}"),
-                    Ok(Output::Value(_)) => {}
-                }
-            }
-            shutdown.trigger();
-        });
+    fn apply<'this, W: Set>(
+        &'this mut self,
+        _want: &Pull,
+        _input: T,
+    ) -> <Self::Runtime as Executable>::Outcome<'this, Self::Output> {
+        Box::pin(async { Ok(Some(())) })
     }
 }

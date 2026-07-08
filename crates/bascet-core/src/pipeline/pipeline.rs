@@ -1,71 +1,132 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use core_affinity::CoreId;
-use event_listener::Event;
-
-use crate::pipeline::scheduler::Scheduler;
+use crate::pipeline::scheduler::Petitioner;
 
 use super::builder::PipelineBuilder;
+use super::runtime::Runtime;
 use super::shutdown::Shutdown;
 
 #[derive(Default)]
 pub struct Pipeline {
+    #[allow(dead_code)]
     pub(crate) inner_wires: Vec<Wire>,
 }
 
 pub(crate) struct Wire;
 
 #[derive(Clone)]
-pub(crate) struct Runtime {
-    pub(crate) inner_task_runtime: Arc<tokio::runtime::Runtime>,
-    pub(crate) inner_trycheck_stalled: Arc<Event>,
-}
-
-#[derive(Clone)]
 pub struct Metrics {
-    pub countof_processed: Arc<AtomicU64>,
-    pub countof_sourced: Arc<AtomicU64>,
-    pub countof_active: Arc<AtomicUsize>,
+    pub shared_processed: Arc<AtomicU64>,
+    pub shared_sourced: Arc<AtomicU64>,
+    pub shared_active: Arc<AtomicU64>,
+    pub shared_idle: Arc<AtomicU64>,
+    pub shared_backpressure: Arc<AtomicU64>,
+    pub local_processed: u64,
+    pub local_sourced: u64,
+    pub local_idle: u64,
+    pub local_backpressure: u64,
 }
 
 impl Metrics {
     pub(crate) fn new() -> Self {
         Self {
-            countof_processed: Arc::new(AtomicU64::new(0)),
-            countof_sourced: Arc::new(AtomicU64::new(0)),
-            countof_active: Arc::new(AtomicUsize::new(0)),
+            shared_processed: Arc::new(AtomicU64::new(0)),
+            shared_sourced: Arc::new(AtomicU64::new(0)),
+            shared_active: Arc::new(AtomicU64::new(0)),
+            shared_idle: Arc::new(AtomicU64::new(0)),
+            shared_backpressure: Arc::new(AtomicU64::new(0)),
+            local_processed: 0,
+            local_sourced: 0,
+            local_idle: 0,
+            local_backpressure: 0,
         }
     }
 
+    #[inline(always)]
+    pub(crate) fn add_processed(&mut self, n: u64) {
+        self.local_processed += n;
+    }
+
+    #[inline(always)]
+    pub(crate) fn add_sourced(&mut self, n: u64) {
+        self.local_sourced += n;
+    }
+
+    #[inline(always)]
+    pub(crate) fn add_idle(&mut self, n: u64) {
+        self.local_idle += n;
+    }
+
+    #[inline(always)]
+    pub(crate) fn add_backpressure(&mut self, n: u64) {
+        self.local_backpressure += n;
+    }
+
+    pub(crate) fn flush_processed(&mut self) {
+        Self::flush(&self.shared_processed, &mut self.local_processed);
+    }
+
+    pub(crate) fn flush_sourced(&mut self) {
+        Self::flush(&self.shared_sourced, &mut self.local_sourced);
+    }
+
+    pub(crate) fn flush_idle(&mut self) {
+        Self::flush(&self.shared_idle, &mut self.local_idle);
+    }
+
+    pub(crate) fn flush_backpressure(&mut self) {
+        Self::flush(&self.shared_backpressure, &mut self.local_backpressure);
+    }
+
+    pub(crate) fn flush_all(&mut self) {
+        self.flush_processed();
+        self.flush_sourced();
+        self.flush_idle();
+        self.flush_backpressure();
+    }
+
+    fn flush(shared: &AtomicU64, local: &mut u64) {
+        if *local == 0 {
+            return;
+        }
+        shared.fetch_add(*local, Ordering::Relaxed);
+        *local = 0;
+    }
+
     pub(crate) fn any_active(&self) -> bool {
-        self.countof_active.load(Ordering::Relaxed) > 0
+        self.shared_active.load(Ordering::Relaxed) > 0
+    }
+}
+
+impl Pipeline {
+    pub fn builder() -> PipelineBuilder<(), (), (), ()> {
+        PipelineBuilder::new()
     }
 }
 
 pub struct Runner {
+    #[allow(dead_code)]
     pub(crate) inner_pipeline: Pipeline,
-    pub(crate) inner_scheduler: Scheduler,
+    #[allow(dead_code)]
+    pub(crate) inner_petitioner: Petitioner,
+    #[allow(dead_code)]
     pub(crate) inner_runtime: Runtime,
     pub(crate) inner_shutdown: Shutdown,
     pub(crate) inner_metrics: Metrics,
 }
 
 impl Runner {
-    pub fn builder() -> PipelineBuilder<(), (), (), (), ()> {
-        PipelineBuilder::new()
-    }
-
     pub(crate) fn new(
         inner_pipeline: Pipeline,
-        inner_scheduler: Scheduler,
+        inner_petitioner: Petitioner,
         inner_runtime: Runtime,
         inner_shutdown: Shutdown,
         inner_metrics: Metrics,
     ) -> Self {
         Self {
             inner_pipeline,
-            inner_scheduler,
+            inner_petitioner,
             inner_runtime,
             inner_shutdown,
             inner_metrics,
@@ -87,32 +148,4 @@ impl Runner {
     pub fn metrics(&self) -> &Metrics {
         &self.inner_metrics
     }
-}
-
-pub(crate) fn make_runtime() -> (Runtime, Vec<CoreId>, usize, usize) {
-    let all_cores = core_affinity::get_core_ids().unwrap_or_default();
-    let p = all_cores.len().max(1);
-    let reserved = (p / 8).max(4).min(p.saturating_sub(1));
-    let burn_count = p - reserved;
-    let job_slots = reserved * 2;
-    let task_slots = reserved * 512;
-    let tokio_workers = (reserved / 2).max(2);
-    let burn_cores: Vec<CoreId> = all_cores.into_iter().take(burn_count).collect();
-
-    (
-        Runtime {
-            inner_task_runtime: Arc::new(
-                tokio::runtime::Builder::new_multi_thread()
-                    .max_blocking_threads(16)
-                    .worker_threads(tokio_workers)
-                    .enable_time()
-                    .build()
-                    .unwrap(),
-            ),
-            inner_trycheck_stalled: Arc::new(Event::new()),
-        },
-        burn_cores,
-        job_slots,
-        task_slots,
-    )
 }

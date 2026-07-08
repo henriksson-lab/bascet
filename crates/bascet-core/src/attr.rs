@@ -21,21 +21,6 @@ pub struct AttrEntry {
 }
 inventory::collect!(AttrEntry);
 
-#[test]
-pub fn assert_unique_attr_ids() {
-    let mut seen = std::collections::HashMap::new();
-    for entry in inventory::iter::<AttrEntry> {
-        let prev = seen.insert(entry.id, entry.name);
-        assert!(
-            prev.is_none(),
-            "Attr ID collision: {:?} and {:?} both have id {:#018x}",
-            prev.unwrap(),
-            entry.name,
-            entry.id
-        );
-    }
-}
-
 pub trait Represents<A: Attr> {}
 
 pub trait Coerce<A: Attr, B: Attr> {

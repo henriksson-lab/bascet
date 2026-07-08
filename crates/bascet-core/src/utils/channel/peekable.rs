@@ -1,11 +1,5 @@
 use crossbeam::channel::{Receiver, Sender, TryRecvError};
 
-pub fn peekable<T>() -> (Sender<T>, PeekableReceiver<T>) {
-    let (tx, rx) = crossbeam::channel::unbounded();
-    let peekable_rx = PeekableReceiver::new(rx);
-    (tx, peekable_rx)
-}
-
 pub struct PeekableReceiver<T> {
     receiver: Receiver<T>,
     peeked: Option<T>,
@@ -14,6 +8,11 @@ pub struct PeekableReceiver<T> {
 unsafe impl<T: Send> Send for PeekableReceiver<T> {}
 
 impl<T> PeekableReceiver<T> {
+    pub fn channel() -> (Sender<T>, Self) {
+        let (tx, rx) = crossbeam::channel::unbounded();
+        (tx, Self::new(rx))
+    }
+
     #[inline(always)]
     pub fn new(receiver: Receiver<T>) -> Self {
         Self {

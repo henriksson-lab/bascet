@@ -14,8 +14,10 @@ bascet-derive = { path = "crates/bascet-derive" }
 bascet-variadic = { path = "crates/bascet-variadic" }
 
 atomic-traits = "0.4.0"
+bon = { version = "3.9" }
 branches = { version = "0.4" }
-bytesize = { version = "2" }
+bytesize = { version = "2.4.0" }
+compio = { version = "0.19.1", features = ["runtime", "time"] }
 core_affinity = { version = "0.8.3" }
 crossbeam = { version = "0.8.4" }
 derive_more = { version = "2.1.1", features = ["full"] }
@@ -23,11 +25,10 @@ event-listener = { version = "5" }
 futures = { version = "0.3" }
 inventory = { version = "0.3" }
 kanal = { version = "0.1.1" }
-memmap2 = { version = "0.9" }
+memmap2 = { version = "0.9.11" }
 num-traits = { version = "0.2" }
 par-stream = { version = "0.10.2" }
 parking_lot = "0.12.5"
 rayon = { version = "1" }
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3" }

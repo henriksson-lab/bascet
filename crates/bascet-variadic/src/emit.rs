@@ -1,37 +1,41 @@
-use crate::ast::{Lit, Pattern, resolve};
+use crate::ast::{Lit, Pattern};
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use quote::quote;
 use std::collections::HashMap;
 use syn::parse::ParseStream;
 use syn::{Ident, Token};
 
-pub fn emit(
-    ts: TokenStream,
-    pattern: &Pattern,
-    values: Vec<Lit>,
-    env: &HashMap<String, Vec<Lit>>,
-) -> syn::Result<TokenStream> {
-    let mut out = TokenStream::new();
-    for val in values {
-        let mut bindings = HashMap::new();
-        resolve(pattern, &val, &mut bindings)?;
-        out.extend(
-            Transcriber {
-                bindings: &bindings,
-                env,
-            }
-            .transcribe(ts.clone(), None)?,
-        );
-    }
-    Ok(out)
-}
+pub struct Transcriber;
 
-struct Transcriber<'a> {
+struct Frame<'a> {
     bindings: &'a HashMap<String, Lit>,
     env: &'a HashMap<String, Vec<Lit>>,
 }
 
-impl<'a> Transcriber<'a> {
+impl Transcriber {
+    pub fn emit(
+        ts: TokenStream,
+        pattern: &Pattern,
+        values: Vec<Lit>,
+        env: &HashMap<String, Vec<Lit>>,
+    ) -> syn::Result<TokenStream> {
+        let mut out = TokenStream::new();
+        for val in values {
+            let mut bindings = HashMap::new();
+            pattern.bind(&val, &mut bindings)?;
+            out.extend(
+                Frame {
+                    bindings: &bindings,
+                    env,
+                }
+                .transcribe(ts.clone(), None)?,
+            );
+        }
+        Ok(out)
+    }
+}
+
+impl<'a> Frame<'a> {
     fn transcribe(&self, ts: TokenStream, index: Option<&Lit>) -> syn::Result<TokenStream> {
         let tokens: Vec<TokenTree> = ts.into_iter().collect();
         let mut out = TokenStream::new();

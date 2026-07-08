@@ -3,6 +3,8 @@ use std::sync::atomic::Ordering;
 use atomic_traits::{Atomic, NumOps};
 use num_traits::{Bounded, SaturatingAdd, SaturatingSub};
 
+use crate::utils::patience::Temper;
+
 pub struct AtomicPatience<A: NumOps>
 where
     <A as Atomic>::Type: Copy + SaturatingAdd + SaturatingSub + Ord + Bounded,
@@ -53,7 +55,7 @@ where
     }
 
     #[inline(always)]
-    pub fn miss(&self) -> <A as Atomic>::Type {
+    pub fn miss(&self) -> Temper<<A as Atomic>::Type> {
         let decay = self.decay;
         let min = self.min;
         let mut new = min;
@@ -63,7 +65,11 @@ where
                 new = v.saturating_sub(&decay).max(min);
                 Some(new)
             });
-        new
+        if new <= min {
+            Temper::Patient(new)
+        } else {
+            Temper::Eager(new)
+        }
     }
 
     #[inline(always)]

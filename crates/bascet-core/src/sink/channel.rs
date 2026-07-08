@@ -1,10 +1,11 @@
-use std::future::Future;
-
 use crossbeam::channel::{Receiver, Sender, unbounded};
 
-use crate::layer::Layer;
+use crate::apply::Apply;
+use crate::contract::Contract;
+use crate::coordinate::Auto;
+use crate::execute::{Async, Executable};
 use crate::set::Set;
-use crate::sink::Sink;
+use crate::source::Pull;
 
 pub struct Channel<T> {
     tx: Sender<T>,
@@ -18,19 +19,36 @@ impl<T> Channel<T> {
     }
 }
 
-impl<T: Send + 'static> Layer for Channel<T> {
+impl<T> Clone for Channel<T> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            rx: self.rx.clone(),
+        }
+    }
+}
+
+impl<T: Send + 'static> Contract for Channel<T> {
+    type Input = T;
+    type Output = ();
     type Provides = ();
     type Requires = ();
     type Resources = ();
 }
 
-impl<T: Send + 'static> Sink for Channel<T> {
-    type Input<'a> = T;
+impl<T: Send + 'static> Apply for Channel<T> {
+    type Runtime = Async;
+    type Coordinate = Auto;
 
-    fn consume<W: Set>(&mut self, item: Self::Input<'_>) -> impl Future<Output = ()> + Send {
+    fn apply<'this, W: Set>(
+        &'this mut self,
+        _want: &Pull,
+        item: T,
+    ) -> <Self::Runtime as Executable>::Outcome<'this, Self::Output> {
         let tx = self.tx.clone();
-        async move {
+        Box::pin(async move {
             tx.send(item).ok();
-        }
+            Ok(Some(()))
+        })
     }
 }

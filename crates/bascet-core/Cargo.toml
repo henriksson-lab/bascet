@@ -8,8 +8,10 @@ bascet-derive.workspace = true
 bascet-variadic.workspace = true
 
 atomic-traits.workspace = true
+bon.workspace = true
 branches.workspace = true
 bytesize.workspace = true
+compio.workspace = true
 core_affinity.workspace = true
 crossbeam.workspace = true
 derive_more.workspace = true
@@ -20,9 +22,16 @@ kanal.workspace = true
 memmap2.workspace = true
 num-traits.workspace = true
 parking_lot.workspace = true
-tokio.workspace = true
 rayon.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
+
+[[bench]]
+name = "parallel"
+harness = false
+
+[[bench]]
+name = "bursty"
+harness = false

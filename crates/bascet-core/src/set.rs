@@ -18,6 +18,20 @@ impl<S: Set> Union<()> for S {
     type Output = S;
 }
 
+impl<A: Attr, B: Attr> Union<B> for A {
+    type Output = (A, B);
+}
+
+bascet_variadic::variadic!(N = 1..=16, for N in N => {
+    impl<A: Attr, @N[B~#: Attr](sep=",")> Union<(@N[B~#](sep=","),)> for A {
+        type Output = (A, @N[B~#](sep=","),);
+    }
+
+    impl<@N[A~#: Attr](sep=","), B: Attr> Union<B> for (@N[A~#](sep=","),) {
+        type Output = (@N[A~#](sep=","), B);
+    }
+});
+
 bascet_variadic::variadic!(N = 1..=16, M = 1..=16, for (N, M) in N.product(M) => {
     impl<@N[A~#: Attr](sep=","), @M[B~#: Attr](sep=",")> Union<(@M[B~#](sep=","),)> for (@N[A~#](sep=","),) {
         type Output = (@N[A~#](sep=","), @M[B~#](sep=","),);
@@ -28,7 +42,7 @@ impl Set for () {}
 
 impl<A: Attr> Set for A {}
 
-impl<Sup: Set> Subset<Sup> for () {
+impl<Superset: Set> Subset<Superset> for () {
     const OK: bool = true;
 }
 

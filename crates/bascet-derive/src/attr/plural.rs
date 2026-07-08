@@ -13,8 +13,8 @@ pub struct Plural {
 impl Plural {
     pub fn new(singular: Ident, plural: Ident, start: usize, end: usize) -> Self {
         Plural {
-            singular_id: super::id::hash(&singular.to_string()),
-            plural_id: super::id::hash(&plural.to_string()),
+            singular_id: super::id::AttrId::from_name(&singular.to_string()),
+            plural_id: super::id::AttrId::from_name(&plural.to_string()),
             singular,
             plural,
             start,
