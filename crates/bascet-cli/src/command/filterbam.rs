@@ -21,6 +21,14 @@ const BAM_FLAG_SEGMENTED: u16 = 0x1;
 const BAM_FLAG_UNMAPPED: u16 = 0x4;
 const BAM_FLAG_FIRST_SEGMENT: u16 = 0x40;
 const BAM_FLAG_LAST_SEGMENT: u16 = 0x80;
+const DEFAULT_MIN_MATCHING: u32 = 0;
+const DEFAULT_MIN_MATCHING_PERCENT: u8 = 90;
+
+#[derive(Clone, Copy, Debug)]
+pub struct AlignmentFilter {
+    pub min_matching: u32,
+    pub min_matching_percent: u8,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct FilterBamMemoryPlan {
@@ -56,6 +64,20 @@ pub struct FilterBamCMD {
     #[arg(long = "keep", value_enum, default_value_t = BamFilterMode::Mapped)]
     pub keep: BamFilterMode,
 
+    /// Minimum CIGAR M-bases for a BAM-mapped read to be considered aligned.
+    /// The default of 0 disables this absolute cutoff.
+    #[arg(long = "min-matching", value_parser, default_value_t = DEFAULT_MIN_MATCHING)]
+    pub min_matching: u32,
+
+    /// Minimum percent of read bases covered by CIGAR M operations for a BAM-mapped read
+    /// to be considered aligned. Use 0 to disable this fractional cutoff.
+    #[arg(
+        long = "min-matching-percent",
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        default_value_t = DEFAULT_MIN_MATCHING_PERCENT
+    )]
+    pub min_matching_percent: u8,
+
     /// BGZF worker threads used by each input reader and by the output writer.
     #[arg(short = '@', long = "threads", value_parser = clap::value_parser!(usize))]
     pub num_threads: Option<usize>,
@@ -78,6 +100,10 @@ impl FilterBamCMD {
             &self.path_out,
             &self.path_temp,
             self.keep,
+            AlignmentFilter {
+                min_matching: self.min_matching,
+                min_matching_percent: self.min_matching_percent,
+            },
             num_threads,
             self.total_mem,
         )
@@ -89,6 +115,7 @@ pub fn filter_bam(
     path_out: &Path,
     path_temp: &Path,
     keep: BamFilterMode,
+    alignment_filter: AlignmentFilter,
     num_threads: usize,
     total_mem: Option<ByteSize>,
 ) -> Result<()> {
@@ -105,6 +132,8 @@ pub fn filter_bam(
         temp_dir = %path_temp.display(),
         keep = ?keep,
         flag_mask = BAM_FLAG_UNMAPPED,
+        min_matching = alignment_filter.min_matching,
+        min_matching_percent = alignment_filter.min_matching_percent,
         threads = num_threads,
         memory = ?total_mem,
         output_buffer_size = memory_plan.output_buffer_size,
@@ -133,6 +162,7 @@ pub fn filter_bam(
             &mut writer,
             expected_header.as_ref(),
             keep,
+            alignment_filter,
             num_threads,
             memory_plan.bgzf_queue_capacity,
         )?;
@@ -162,6 +192,7 @@ fn filter_one_bam(
     writer: &mut bgzf::ParallelWriter,
     expected_header: Option<&bam::Header>,
     keep: BamFilterMode,
+    alignment_filter: AlignmentFilter,
     num_threads: usize,
     bgzf_queue_capacity: usize,
 ) -> Result<(bam::Header, u64, u64)> {
@@ -196,8 +227,8 @@ fn filter_one_bam(
             if let Some(next) = next {
                 records_read += 1;
                 if is_adjacent_second_mate(&record, &next) {
-                    if should_keep_record_flag(record.flag(), keep)
-                        || should_keep_record_flag(next.flag(), keep)
+                    if should_keep_record(&record, keep, alignment_filter)
+                        || should_keep_record(&next, keep, alignment_filter)
                     {
                         record.write(writer).with_context(|| {
                             format!("write filtered BAM record from {}", path_in.display())
@@ -214,7 +245,7 @@ fn filter_one_bam(
             }
         }
 
-        if should_keep_record_flag(record.flag(), keep) {
+        if should_keep_record(&record, keep, alignment_filter) {
             record
                 .write(writer)
                 .with_context(|| format!("write filtered BAM record from {}", path_in.display()))?;
@@ -265,12 +296,43 @@ fn filterbam_memory_plan(
     })
 }
 
-fn should_keep_record_flag(flag: u16, keep: BamFilterMode) -> bool {
-    let is_unmapped = flag & BAM_FLAG_UNMAPPED != 0;
+fn should_keep_record(record: &bam::Record, keep: BamFilterMode, filter: AlignmentFilter) -> bool {
+    let is_aligned = is_record_aligned(record, filter);
     match keep {
-        BamFilterMode::Mapped => !is_unmapped,
-        BamFilterMode::Unmapped => is_unmapped,
+        BamFilterMode::Mapped => is_aligned,
+        BamFilterMode::Unmapped => !is_aligned,
     }
+}
+
+fn is_record_aligned(record: &bam::Record, filter: AlignmentFilter) -> bool {
+    if record.flag() & BAM_FLAG_UNMAPPED != 0 {
+        return false;
+    }
+
+    let matching_bases = count_matching_bases(record);
+    let passes_absolute = filter.min_matching > 0 && matching_bases >= filter.min_matching;
+    let passes_percent = if filter.min_matching_percent == 0 {
+        true
+    } else {
+        let read_len = record.l_seq().max(0) as u32;
+        let required = (read_len as u64 * filter.min_matching_percent as u64).div_ceil(100) as u32;
+        matching_bases >= required
+    };
+
+    passes_absolute || passes_percent
+}
+
+fn count_matching_bases(record: &bam::Record) -> u32 {
+    record
+        .cigar_raw()
+        .chunks_exact(4)
+        .filter_map(|op| {
+            let raw = u32::from_le_bytes(op.try_into().unwrap());
+            let kind = raw & 0x0f;
+            let len = raw >> 4;
+            (kind == 0).then_some(len)
+        })
+        .sum()
 }
 
 fn is_first_segment(record: &bam::Record) -> bool {
@@ -313,56 +375,127 @@ fn ensure_compatible_headers(
 #[cfg(test)]
 mod tests {
     use super::{
-        BAM_FLAG_FIRST_SEGMENT, BAM_FLAG_LAST_SEGMENT, BAM_FLAG_SEGMENTED, BAM_FLAG_UNMAPPED,
-        BamFilterMode, DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE, MIN_FILTERBAM_MEMORY,
-        filterbam_memory_plan, is_adjacent_second_mate, should_keep_record_flag,
+        AlignmentFilter, BAM_FLAG_FIRST_SEGMENT, BAM_FLAG_LAST_SEGMENT, BAM_FLAG_SEGMENTED,
+        BAM_FLAG_UNMAPPED, BamFilterMode, DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE,
+        MIN_FILTERBAM_MEMORY, filterbam_memory_plan, is_adjacent_second_mate, is_record_aligned,
+        should_keep_record,
     };
     use crate::command::samtools_rs::bam::Record;
     use bytesize::ByteSize;
 
     #[test]
-    fn keep_mapped_uses_unmapped_flag_not_proper_pair_flag() {
-        assert!(should_keep_record_flag(0x0, BamFilterMode::Mapped));
-        assert!(should_keep_record_flag(0x2, BamFilterMode::Mapped));
-        assert!(!should_keep_record_flag(0x4, BamFilterMode::Mapped));
-        assert!(!should_keep_record_flag(0x6, BamFilterMode::Mapped));
+    fn keep_mapped_requires_bam_mapped_and_enough_matching_bases() {
+        let filter = default_alignment_filter();
+        let aligned = test_record_with_cigar(b"cell:umi", 0x0, 10, &[(10, 0)]);
+        let weak = test_record_with_cigar(b"cell:umi", 0x0, 10, &[(7, 0), (3, 4)]);
+        let unmapped = test_record_with_cigar(b"cell:umi", BAM_FLAG_UNMAPPED, 10, &[]);
+
+        assert!(should_keep_record(&aligned, BamFilterMode::Mapped, filter));
+        assert!(!should_keep_record(&weak, BamFilterMode::Mapped, filter));
+        assert!(!should_keep_record(
+            &unmapped,
+            BamFilterMode::Mapped,
+            filter
+        ));
     }
 
     #[test]
-    fn keep_unmapped_uses_unmapped_flag_not_proper_pair_flag() {
-        assert!(!should_keep_record_flag(0x0, BamFilterMode::Unmapped));
-        assert!(!should_keep_record_flag(0x2, BamFilterMode::Unmapped));
-        assert!(should_keep_record_flag(0x4, BamFilterMode::Unmapped));
-        assert!(should_keep_record_flag(0x6, BamFilterMode::Unmapped));
+    fn keep_unmapped_is_complement_of_alignment_filter() {
+        let filter = default_alignment_filter();
+        let aligned = test_record_with_cigar(b"cell:umi", 0x0, 10, &[(9, 0), (1, 4)]);
+        let weak = test_record_with_cigar(b"cell:umi", 0x0, 10, &[(7, 0), (3, 4)]);
+        let unmapped = test_record_with_cigar(b"cell:umi", BAM_FLAG_UNMAPPED, 10, &[]);
+
+        assert!(!should_keep_record(
+            &aligned,
+            BamFilterMode::Unmapped,
+            filter
+        ));
+        assert!(should_keep_record(&weak, BamFilterMode::Unmapped, filter));
+        assert!(should_keep_record(
+            &unmapped,
+            BamFilterMode::Unmapped,
+            filter
+        ));
+    }
+
+    #[test]
+    fn absolute_matching_cutoff_can_make_alignment_pass() {
+        let filter = AlignmentFilter {
+            min_matching: 6,
+            min_matching_percent: 80,
+        };
+        let record = test_record_with_cigar(b"cell:umi", 0x0, 10, &[(6, 0), (4, 4)]);
+
+        assert!(is_record_aligned(&record, filter));
+    }
+
+    #[test]
+    fn zero_percent_disables_fractional_cutoff() {
+        let filter = AlignmentFilter {
+            min_matching: 0,
+            min_matching_percent: 0,
+        };
+        let record = test_record_with_cigar(b"cell:umi", 0x0, 10, &[]);
+
+        assert!(is_record_aligned(&record, filter));
     }
 
     #[test]
     fn adjacent_r1_r2_with_same_name_is_detected_as_pair() {
-        let r1 = test_record(b"cell:umi", BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT);
-        let r2 = test_record(b"cell:umi", BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT);
+        let r1 = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
+        let r2 = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
 
         assert!(is_adjacent_second_mate(&r1, &r2));
     }
 
     #[test]
     fn different_read_name_is_not_detected_as_pair() {
-        let r1 = test_record(b"cell:umi1", BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT);
-        let r2 = test_record(b"cell:umi2", BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT);
+        let r1 = test_record_with_cigar(
+            b"cell:umi1",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
+        let r2 = test_record_with_cigar(
+            b"cell:umi2",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
 
         assert!(!is_adjacent_second_mate(&r1, &r2));
     }
 
     #[test]
     fn pair_is_retained_when_either_mate_matches_filter() {
-        let r1 = test_record(b"cell:umi", BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT);
-        let r2 = test_record(
+        let filter = default_alignment_filter();
+        let r1 = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
+        let r2 = test_record_with_cigar(
             b"cell:umi",
             BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT | BAM_FLAG_UNMAPPED,
+            10,
+            &[],
         );
 
         assert!(
-            should_keep_record_flag(r1.flag(), BamFilterMode::Mapped)
-                || should_keep_record_flag(r2.flag(), BamFilterMode::Mapped)
+            should_keep_record(&r1, BamFilterMode::Mapped, filter)
+                || should_keep_record(&r2, BamFilterMode::Mapped, filter)
         );
     }
 
@@ -393,12 +526,35 @@ mod tests {
         assert!(filterbam_memory_plan(Some(MIN_FILTERBAM_MEMORY - ByteSize(1)), 5).is_err());
     }
 
-    fn test_record(read_name: &[u8], flag: u16) -> Record {
+    fn default_alignment_filter() -> AlignmentFilter {
+        AlignmentFilter {
+            min_matching: 0,
+            min_matching_percent: 90,
+        }
+    }
+
+    fn test_record_with_cigar(
+        read_name: &[u8],
+        flag: u16,
+        read_len: u32,
+        cigar_ops: &[(u32, u8)],
+    ) -> Record {
         let l_read_name = read_name.len() + 1;
-        let mut data = vec![0_u8; 32 + l_read_name];
+        let n_cigar = cigar_ops.len();
+        let seq_len = read_len as usize;
+        let seq_bytes = seq_len.div_ceil(2);
+        let mut data = vec![0_u8; 32 + l_read_name + 4 * n_cigar + seq_bytes + seq_len];
         data[8] = l_read_name as u8;
+        data[12..14].copy_from_slice(&(n_cigar as u16).to_le_bytes());
         data[14..16].copy_from_slice(&flag.to_le_bytes());
+        data[16..20].copy_from_slice(&(read_len as i32).to_le_bytes());
         data[32..32 + read_name.len()].copy_from_slice(read_name);
+        let cigar_off = 32 + l_read_name;
+        for (idx, (len, kind)) in cigar_ops.iter().enumerate() {
+            let raw = (len << 4) | u32::from(*kind);
+            let off = cigar_off + 4 * idx;
+            data[off..off + 4].copy_from_slice(&raw.to_le_bytes());
+        }
         Record { data }
     }
 }

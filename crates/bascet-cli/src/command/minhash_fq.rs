@@ -163,11 +163,15 @@ fn run_minhash_fq(
         )
     });
 
-    let reader_res = reader.join().map_err(|_| anyhow!("reader thread panicked"))?;
+    let reader_res = reader
+        .join()
+        .map_err(|_| anyhow!("reader thread panicked"))?;
     for h in worker_handles {
         h.join().map_err(|_| anyhow!("worker thread panicked"))?;
     }
-    let merger_res = merger.join().map_err(|_| anyhow!("merger thread panicked"))?;
+    let merger_res = merger
+        .join()
+        .map_err(|_| anyhow!("merger thread panicked"))?;
 
     reader_res?;
     merger_res?;
@@ -222,21 +226,18 @@ fn reader_loop(
     };
 
     // Finalise the current cell: flush its tail batch, then fan EndCell to all workers.
-    let end_cell = |batch: &mut Vec<Vec<u8>>,
-                    next_worker: &mut usize,
-                    idx: u32,
-                    name: &str|
-     -> Result<()> {
-        flush(batch, next_worker)?;
-        for s in &senders {
-            s.send(Msg::EndCell {
-                idx,
-                name: name.to_string(),
-            })
-            .map_err(|_| anyhow!("worker channel closed early"))?;
-        }
-        Ok(())
-    };
+    let end_cell =
+        |batch: &mut Vec<Vec<u8>>, next_worker: &mut usize, idx: u32, name: &str| -> Result<()> {
+            flush(batch, next_worker)?;
+            for s in &senders {
+                s.send(Msg::EndCell {
+                    idx,
+                    name: name.to_string(),
+                })
+                .map_err(|_| anyhow!("worker channel closed early"))?;
+            }
+            Ok(())
+        };
 
     while let Some(record) = query
         .next_into::<bascet_io::tirp::Record>()
@@ -289,8 +290,7 @@ fn worker_loop(rx: Receiver<Msg>, tx_merge: Sender<Partial>, kmer: usize, num_mi
                 }
             }
             Msg::EndCell { idx, name } => {
-                let done =
-                    std::mem::replace(&mut heap, BoundedMinHeap::with_capacity(num_minhash));
+                let done = std::mem::replace(&mut heap, BoundedMinHeap::with_capacity(num_minhash));
                 if tx_merge.send((idx, name, done)).is_err() {
                     return;
                 }
