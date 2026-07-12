@@ -22,7 +22,7 @@ pub fn try_execute_bwa_mem2(
     total_memory: ByteSize,
     total_threads: u64,
     worker_pool: Arc<rayon::ThreadPool>,
-    mem_overhead_per_input_byte: u64,
+    max_batch_pairs: u64,
 ) -> Result<()> {
     info!("BWAMEM2 selected");
     let index_disk_size = validate_bwa_mem2_index(path_genome)?;
@@ -45,7 +45,7 @@ pub fn try_execute_bwa_mem2(
         total_memory,
         total_threads,
         worker_pool,
-        mem_overhead_per_input_byte,
+        max_batch_pairs as usize,
     )?;
     // Free the BWA aligner before the sort phase so the in-process sort gets the full memory
     // budget.

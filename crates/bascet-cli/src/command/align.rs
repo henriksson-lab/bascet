@@ -78,13 +78,13 @@ pub struct AlignCMD {
     sizeof_stream_arena: ByteSize,
 
     #[arg(
-        long = "bwamem2-mem-overhead-per-input-byte",
-        help = "BWAMEM2 in-flight memory charge per uncompressed input sequence byte",
-        default_value_t = 32,
+        long = "bwamem2-batch-pairs",
+        help = "BWAMEM2 max read pairs per alignment batch. Bounds per-batch peak memory (bwa-mem2 materializes a whole batch's alignment scratch + SAM before returning); lower it on memory-constrained nodes, raise it for throughput.",
+        default_value_t = 100_000,
         hide_short_help = true,
         value_parser = clap::value_parser!(u64).range(1..),
     )]
-    bwamem2_mem_overhead_per_input_byte: u64,
+    bwamem2_batch_pairs: u64,
 
     #[arg(
         long = "aligner",
@@ -212,7 +212,7 @@ impl AlignCMD {
                 budget.memory,
                 budget.threads.get(),
                 Arc::clone(&rayon_pool),
-                self.bwamem2_mem_overhead_per_input_byte,
+                self.bwamem2_batch_pairs,
             );
         }
 
