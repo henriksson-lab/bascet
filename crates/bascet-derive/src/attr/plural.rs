@@ -36,17 +36,25 @@ impl Plural {
     fn impl_attr(&self) -> TokenStream {
         let singular = &self.singular;
         let plural = &self.plural;
-        let prime = Literal::u64_unsuffixed(super::id::PRIME);
-        let sing_base = Literal::u64_unsuffixed(self.singular_id);
-        let plur_base = Literal::u64_unsuffixed(self.plural_id);
-        quote! {
-            impl<const N: usize> crate::Attr for #singular<N> {
-                const ID: u64 = #sing_base ^ (N as u64).wrapping_mul(#prime);
-            }
-            impl<const N: usize> crate::Attr for #plural<N> {
-                const ID: u64 = #plur_base ^ (N as u64).wrapping_mul(#prime);
-            }
-        }
+        (self.start..=self.end)
+            .map(|n| {
+                let n_lit = Literal::usize_suffixed(n);
+                let sing_id = super::id::AttrId::digits(
+                    self.singular_id ^ (n as u64).wrapping_mul(super::id::PRIME),
+                );
+                let plur_id = super::id::AttrId::digits(
+                    self.plural_id ^ (n as u64).wrapping_mul(super::id::PRIME),
+                );
+                quote! {
+                    impl crate::Attr for #singular<#n_lit> {
+                        type Id = #sing_id;
+                    }
+                    impl crate::Attr for #plural<#n_lit> {
+                        type Id = #plur_id;
+                    }
+                }
+            })
+            .collect()
     }
 
     fn impl_display(&self) -> TokenStream {
@@ -65,12 +73,17 @@ impl Plural {
         let singular = &self.singular;
         let plural = &self.plural;
         (self.start..=self.end).flat_map(|n| {
-            let n_lit = Literal::usize_suffixed(n);
             let sing_name = format!("{}<{}>", singular, n);
             let plur_name = format!("{}<{}>", plural, n);
+            let sing_id = Literal::u64_unsuffixed(
+                self.singular_id ^ (n as u64).wrapping_mul(super::id::PRIME),
+            );
+            let plur_id = Literal::u64_unsuffixed(
+                self.plural_id ^ (n as u64).wrapping_mul(super::id::PRIME),
+            );
             [
-                quote! { inventory::submit! { crate::AttrEntry { id: <#singular<#n_lit> as crate::Attr>::ID, name: #sing_name } } },
-                quote! { inventory::submit! { crate::AttrEntry { id: <#plural<#n_lit> as crate::Attr>::ID, name: #plur_name } } },
+                quote! { inventory::submit! { crate::AttrEntry { id: #sing_id, name: #sing_name } } },
+                quote! { inventory::submit! { crate::AttrEntry { id: #plur_id, name: #plur_name } } },
             ]
         }).collect()
     }

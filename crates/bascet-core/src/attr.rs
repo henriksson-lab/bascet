@@ -11,7 +11,11 @@ pub use phred::*;
 pub use reads::*;
 
 pub trait Attr: 'static {
-    const ID: u64;
+    type Id: crate::set::AttrId;
+}
+
+pub trait Record {
+    type Attrs: crate::set::Set;
 }
 
 #[derive(Debug)]

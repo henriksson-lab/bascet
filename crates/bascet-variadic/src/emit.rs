@@ -9,7 +9,6 @@ pub struct Transcriber;
 
 struct Frame<'a> {
     bindings: &'a HashMap<String, Lit>,
-    env: &'a HashMap<String, Vec<Lit>>,
 }
 
 impl Transcriber {
@@ -17,7 +16,6 @@ impl Transcriber {
         ts: TokenStream,
         pattern: &Pattern,
         values: Vec<Lit>,
-        env: &HashMap<String, Vec<Lit>>,
     ) -> syn::Result<TokenStream> {
         let mut out = TokenStream::new();
         for val in values {
@@ -26,7 +24,6 @@ impl Transcriber {
             out.extend(
                 Frame {
                     bindings: &bindings,
-                    env,
                 }
                 .transcribe(ts.clone(), None)?,
             );
@@ -87,9 +84,6 @@ impl<'a> Frame<'a> {
         i: usize,
         index: Option<&Lit>,
     ) -> Option<(TokenStream, usize)> {
-        let Lit::Int(n) = index? else {
-            return None;
-        };
         let TokenTree::Ident(ident) = tokens.get(i)? else {
             return None;
         };
@@ -99,13 +93,18 @@ impl<'a> Frame<'a> {
         if p.as_char() != '~' {
             return None;
         }
-        let TokenTree::Punct(p) = tokens.get(i + 2)? else {
-            return None;
+        let value = match tokens.get(i + 2)? {
+            TokenTree::Punct(p) if p.as_char() == '#' => match index? {
+                Lit::Int(n) => *n,
+                _ => return None,
+            },
+            TokenTree::Ident(var) => match self.bindings.get(&var.to_string()) {
+                Some(Lit::Int(n)) => *n,
+                _ => return None,
+            },
+            _ => return None,
         };
-        if p.as_char() != '#' {
-            return None;
-        }
-        let new_ident = proc_macro2::Ident::new(&format!("{}{}", ident, n), ident.span());
+        let new_ident = proc_macro2::Ident::new(&format!("{}{}", ident, value), ident.span());
         Some((quote! { #new_ident }, 3))
     }
 
@@ -161,16 +160,7 @@ impl<'a> Frame<'a> {
 
         let consumed = j - i;
 
-        let iter_values: Vec<Lit> = self
-            .env
-            .get(&var_name)
-            .map(|seq| {
-                seq.iter()
-                    .filter(|v| matches!(v, Lit::Int(m) if *m <= n))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
+        let iter_values: Vec<Lit> = (0..n).map(Lit::Int).collect();
 
         let mut out = TokenStream::new();
         for (k, val) in iter_values.iter().enumerate() {

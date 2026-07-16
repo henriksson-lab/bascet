@@ -1,4 +1,4 @@
-mod id;
+pub(crate) mod id;
 mod input;
 mod plural;
 

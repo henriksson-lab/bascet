@@ -22,13 +22,10 @@ core_affinity = { version = "0.8.3" }
 crossbeam = { version = "0.8.4" }
 derive_more = { version = "2.1.1", features = ["full"] }
 event-listener = { version = "5" }
-futures = { version = "0.3" }
 inventory = { version = "0.3" }
 kanal = { version = "0.1.1" }
 memmap2 = { version = "0.9.11" }
 num-traits = { version = "0.2" }
-par-stream = { version = "0.10.2" }
 parking_lot = "0.12.5"
-rayon = { version = "1" }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3" }

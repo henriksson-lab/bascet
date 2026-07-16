@@ -82,6 +82,24 @@ impl Value for u64 {
     }
 }
 
+impl Value for u32 {
+    fn min_value() -> Self {
+        u32::MIN
+    }
+
+    fn max_value() -> Self {
+        u32::MAX
+    }
+
+    fn add(self, rhs: Self) -> Self {
+        self.saturating_add(rhs)
+    }
+
+    fn sub(self, rhs: Self) -> Self {
+        self.saturating_sub(rhs)
+    }
+}
+
 impl Value for usize {
     fn min_value() -> Self {
         usize::MIN

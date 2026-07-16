@@ -1,41 +1,35 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use bascet_core::{
-    Apply, Async, Auto, Contract, Error, Executable, Pipeline, Pull, Runtime, Set, Sync,
-};
+use bascet_core::set::Set;
+use bascet_core::{Apply, Emit, Error, Pipeline, Runtime, sink};
 
 const WORK: u32 = 1_000_000;
 const BURST: usize = 2 << 16;
+const FAST: usize = 100;
+const SLOW: usize = 10000;
+const STALL: u64 = 2000;
+const ITERS: usize = 5;
 
 fn main() {
-    let _ = tracing_subscriber::fmt::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .try_init();
 
+    let items: Vec<u32> = (0..(FAST + SLOW * ITERS) as u32).collect();
     let start = Instant::now();
-    Bursty::run();
+    let runner = Runtime::builder().build().pipeline::<()>(
+        Pipeline::builder()
+            .source(Burst::new(items, FAST, SLOW, STALL))
+            .layer(Job)
+            .sink(sink::drain::<u32>()),
+    );
+    runner.join().unwrap();
     println!("bursty: {:?}", start.elapsed());
 }
 
-struct Bursty;
-
-impl Bursty {
-    fn run() {
-        const FAST: usize = 100;
-        const SLOW: usize = 10000;
-        const STALL: u64 = 2000;
-        const ITERS: usize = 5;
-        const N: usize = FAST + SLOW * ITERS;
-
-        let items: Vec<u32> = (0..N as u32).collect();
-        let runner = Runtime::builder().build().pipeline::<()>(
-            Pipeline::builder()
-                .layer(Burst::new(items, FAST, SLOW, STALL))
-                .layer(Job),
-        );
-        runner.join();
-    }
-}
-
+#[derive(Clone)]
 struct Burst {
     state: Arc<Mutex<BurstState>>,
 }
@@ -46,7 +40,7 @@ struct BurstState {
     fast: usize,
     slow: usize,
     stall: u64,
-    buf: std::collections::VecDeque<u32>,
+    buf: VecDeque<u32>,
 }
 
 impl Burst {
@@ -58,65 +52,44 @@ impl Burst {
                 fast,
                 slow,
                 stall,
-                buf: std::collections::VecDeque::new(),
+                buf: VecDeque::new(),
             })),
         }
     }
 }
 
-impl Clone for Burst {
-    fn clone(&self) -> Self {
-        Self {
-            state: Arc::clone(&self.state),
-        }
-    }
-}
-
-impl Contract for Burst {
+impl Apply for Burst {
     type Input = ();
     type Output = u32;
     type Provides = ();
     type Requires = ();
-    type Resources = ();
-}
 
-impl Apply for Burst {
-    type Runtime = Async;
-    type Coordinate = Auto;
-
-    fn apply<'this, W: Set>(
-        &'this mut self,
-        _want: &Pull,
-        _: (),
-    ) -> <Self::Runtime as Executable>::Outcome<'this, Self::Output> {
-        Box::pin(async move {
-            let (item, stall) = {
-                let mut state = self.state.lock().expect("burst source lock poisoned");
-                if let Some(item) = state.buf.pop_front() {
-                    return Ok(Some(item));
-                }
-                if state.pos >= state.items.len() {
-                    return Ok(None);
-                }
-                if state.pos < state.fast {
-                    let end = (state.pos + BURST).min(state.fast).min(state.items.len());
+    fn apply<W: Set>(&mut self, _: (), out: &mut Emit<u32, W>) -> Result<(), Error> {
+        let item = {
+            let mut state = self.state.lock().expect("burst source lock poisoned");
+            match state.buf.pop_front() {
+                Some(item) => item,
+                None => {
+                    if state.pos >= state.items.len() {
+                        out.finish();
+                        return Ok(());
+                    }
+                    let end = if state.pos < state.fast {
+                        (state.pos + BURST).min(state.fast).min(state.items.len())
+                    } else {
+                        std::thread::sleep(Duration::from_millis(state.stall));
+                        (state.pos + state.slow).min(state.items.len())
+                    };
                     let pos = state.pos;
-                    let items: Vec<_> = state.items[pos..end].to_vec();
+                    let items: Vec<u32> = state.items[pos..end].to_vec();
                     state.buf.extend(items);
                     state.pos = end;
-                    return Ok(Some(state.buf.pop_front().unwrap()));
+                    state.buf.pop_front().unwrap()
                 }
-
-                let end = (state.pos + state.slow).min(state.items.len());
-                let pos = state.pos;
-                let items: Vec<_> = state.items[pos..end].to_vec();
-                state.buf.extend(items);
-                state.pos = end;
-                (state.buf.pop_front().unwrap(), state.stall)
-            };
-            std::thread::sleep(Duration::from_millis(stall));
-            Ok(Some(item))
-        })
+            }
+        };
+        out.push(item);
+        Ok(())
     }
 }
 
@@ -133,19 +106,14 @@ impl Job {
     }
 }
 
-impl Contract for Job {
+impl Apply for Job {
     type Input = u32;
     type Output = u32;
     type Provides = ();
     type Requires = ();
-    type Resources = ();
-}
 
-impl Apply for Job {
-    type Runtime = Sync;
-    type Coordinate = Auto;
-
-    fn apply<W: Set>(&mut self, _want: &Pull, input: u32) -> Result<Option<u32>, Error> {
-        Ok(Some(Self::work(input).wrapping_add(42)))
+    fn apply<W: Set>(&mut self, input: u32, out: &mut Emit<u32, W>) -> Result<(), Error> {
+        out.push(Self::work(input).wrapping_add(42));
+        Ok(())
     }
 }

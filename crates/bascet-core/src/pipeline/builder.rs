@@ -1,136 +1,96 @@
 use std::marker::PhantomData;
 
-use crate::layer::Layer;
-use crate::owned::Owned;
-use crate::pipe::Pipe;
+use crate::apply::execute::Work;
 use crate::set::{Set, Subset, Union};
-use crate::execute::Executable;
-use crate::schedule::Schedule;
-use crate::traits;
 
-pub struct PipelineBuilder<Provides, Producer, Applies, Resources>
-where
-    Provides: Set,
-{
-    pub producer: Producer,
-    pub applies: Applies,
-    pub resources: Resources,
-    _provides: PhantomData<Provides>,
+pub struct PipelineBuilder<Chain> {
+    pub(crate) chain: Chain,
 }
 
-impl PipelineBuilder<(), (), (), ()> {
-    pub fn new() -> Self {
+pub struct Source<A, M> {
+    pub(crate) apply: A,
+    pub(crate) _mode: PhantomData<M>,
+}
+
+pub struct Pipe<A, M, Tail> {
+    pub(crate) apply: A,
+    pub(crate) tail: Tail,
+    pub(crate) _mode: PhantomData<M>,
+}
+
+pub struct Pipeline<Chain> {
+    pub(crate) chain: Chain,
+}
+
+pub trait Head {
+    type Output;
+    type Provides: Set;
+}
+
+impl<A, M: 'static> Head for Source<A, M>
+where
+    A: Work<M>,
+{
+    type Output = A::Output;
+    type Provides = A::Provides;
+}
+
+impl<A, M: 'static, Tail> Head for Pipe<A, M, Tail>
+where
+    A: Work<M>,
+{
+    type Output = A::Output;
+    type Provides = A::Provides;
+}
+
+pub type Wanted<A, M, W> = Union<<A as Work<M>>::Requires, W>;
+
+impl Pipeline<()> {
+    pub fn builder() -> PipelineBuilder<()> {
+        PipelineBuilder { chain: () }
+    }
+}
+
+impl PipelineBuilder<()> {
+    pub fn source<A, M: 'static>(self, apply: A) -> PipelineBuilder<Source<A, M>>
+    where
+        A: Work<M, Input = ()>,
+    {
         PipelineBuilder {
-            producer: (),
-            applies: (),
-            resources: (),
-            _provides: PhantomData,
+            chain: Source {
+                apply,
+                _mode: PhantomData,
+            },
         }
     }
 }
 
-impl<Provides, Applies, Resources> PipelineBuilder<Provides, (), Applies, Resources>
-where
-    Provides: Set,
-{
-    pub fn layer<A>(
-        self,
-        apply: A,
-    ) -> PipelineBuilder<<Provides as Union<A::Provides>>::Output, Layer<A>, Applies, Resources>
+impl<Chain: Head> PipelineBuilder<Chain> {
+    pub fn layer<A, M: 'static>(self, apply: A) -> PipelineBuilder<Pipe<A, M, Chain>>
     where
-        A: traits::Apply<Input = ()>,
-        A::Requires: Subset<Provides>,
-        Resources: Owned<A::Resources>,
-        Provides: Union<A::Provides>,
-        <Provides as Union<A::Provides>>::Output: Set,
-    {
-        self.layer_scheduled(apply, <A::Runtime as Executable>::default_schedule())
-    }
-
-    fn layer_scheduled<A>(
-        self,
-        apply: A,
-        schedule: Schedule,
-    ) -> PipelineBuilder<<Provides as Union<A::Provides>>::Output, Layer<A>, Applies, Resources>
-    where
-        A: traits::Apply<Input = ()>,
-        A::Requires: Subset<Provides>,
-        Resources: Owned<A::Resources>,
-        Provides: Union<A::Provides>,
-        <Provides as Union<A::Provides>>::Output: Set,
+        A: Work<M, Input = Chain::Output>,
+        A::Requires: Subset<Chain::Provides>,
     {
         PipelineBuilder {
-            producer: Layer::new(apply, schedule),
-            applies: self.applies,
-            resources: self.resources,
-            _provides: PhantomData,
+            chain: Pipe {
+                apply,
+                tail: self.chain,
+                _mode: PhantomData,
+            },
         }
     }
-}
 
-impl<Provides, Producer, Applies> PipelineBuilder<Provides, Producer, Applies, ()>
-where
-    Provides: Set,
-{
-    pub fn resource<Resources>(
-        self,
-        resources: Resources,
-    ) -> PipelineBuilder<Provides, Producer, Applies, Resources> {
-        PipelineBuilder {
-            producer: self.producer,
-            applies: self.applies,
-            resources,
-            _provides: PhantomData,
-        }
-    }
-}
-
-impl<Provides, Producer, Applies, Resources> PipelineBuilder<Provides, Producer, Applies, Resources>
-where
-    Provides: Set,
-    Producer: traits::Apply<Input = ()>,
-{
-    pub fn layer<A>(
-        self,
-        apply: A,
-    ) -> PipelineBuilder<
-        <Provides as Union<A::Provides>>::Output,
-        Producer,
-        Pipe<Layer<A>, Applies>,
-        Resources,
-    >
+    pub fn sink<A, M: 'static>(self, apply: A) -> Pipeline<Pipe<A, M, Chain>>
     where
-        A: traits::Apply,
-        A::Requires: Subset<Provides>,
-        Resources: Owned<A::Resources>,
-        Provides: Union<A::Provides>,
-        <Provides as Union<A::Provides>>::Output: Set,
+        A: Work<M, Input = Chain::Output, Output = ()>,
+        A::Requires: Subset<Chain::Provides>,
     {
-        self.layer_scheduled(apply, <A::Runtime as Executable>::default_schedule())
-    }
-
-    fn layer_scheduled<A>(
-        self,
-        apply: A,
-        schedule: Schedule,
-    ) -> PipelineBuilder<
-        <Provides as Union<A::Provides>>::Output,
-        Producer,
-        Pipe<Layer<A>, Applies>,
-        Resources,
-    >
-    where
-        A: traits::Apply,
-        A::Requires: Subset<Provides>,
-        Resources: Owned<A::Resources>,
-        Provides: Union<A::Provides>,
-        <Provides as Union<A::Provides>>::Output: Set,
-    {
-        PipelineBuilder {
-            producer: self.producer,
-            applies: Pipe(Layer::new(apply, schedule), self.applies),
-            resources: self.resources,
-            _provides: PhantomData,
+        Pipeline {
+            chain: Pipe {
+                apply,
+                tail: self.chain,
+                _mode: PhantomData,
+            },
         }
     }
 }

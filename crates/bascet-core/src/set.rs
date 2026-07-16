@@ -1,70 +1,77 @@
-use crate::Attr;
+pub mod attr_id;
+pub mod ops;
 
-pub trait Set {}
+pub use attr_id::AttrId;
+pub use ops::{In, Join, Meet};
+
+use crate::attr::Attr;
+
+pub struct Hit;
+pub struct Miss;
+
+pub trait Bool {
+    type And<B: Bool>: Bool;
+    type Or<B: Bool>: Bool;
+    type Not: Bool;
+    const HIT: bool;
+}
+
+impl Bool for Hit {
+    type And<B: Bool> = B;
+    type Or<B: Bool> = Hit;
+    type Not = Miss;
+    const HIT: bool = true;
+}
+
+impl Bool for Miss {
+    type And<B: Bool> = Miss;
+    type Or<B: Bool> = B;
+    type Not = Hit;
+    const HIT: bool = false;
+}
+
+pub trait Set: 'static {
+    fn contains<A: Attr>() -> bool;
+}
+
+impl Set for () {
+    fn contains<A: Attr>() -> bool {
+        false
+    }
+}
+
+impl<B1: Attr> Set for (B1,) {
+    fn contains<A: Attr>() -> bool {
+        <A::Id as AttrId>::ID == <B1::Id as AttrId>::ID
+    }
+}
+
+bascet_variadic::variadic!(N = 2..=16, M = 1..=15, for (N, M) in N.zip(M) => {
+    impl<@N[B~#: Attr](sep=",")> Set for (@N[B~#](sep=","),)
+    where
+        B~M: In<(@M[B~#](sep=","),), Verdict = Miss>,
+        (@M[B~#](sep=","),): Set,
+    {
+        fn contains<A: Attr>() -> bool {
+            @N[(<A::Id as AttrId>::ID == <B~#::Id as AttrId>::ID)](sep=" || ")
+        }
+    }
+});
 
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` requires attributes not provided by any upstream layer",
-    label = "add a layer whose `Provides` covers the missing attributes"
+    message = "`{Self}` requires attributes not provided upstream",
+    label = "the producer's `Provides` must cover this layer's `Requires`"
 )]
-pub trait Subset<Sup: Set> {
-    const OK: bool;
-}
+pub trait Subset<Sup: Set> {}
 
-pub trait Union<B: Set>: Set {
-    type Output;
-}
-
-impl<S: Set> Union<()> for S {
-    type Output = S;
-}
-
-impl<A: Attr, B: Attr> Union<B> for A {
-    type Output = (A, B);
-}
+impl<Sup: Set> Subset<Sup> for () {}
 
 bascet_variadic::variadic!(N = 1..=16, for N in N => {
-    impl<A: Attr, @N[B~#: Attr](sep=",")> Union<(@N[B~#](sep=","),)> for A {
-        type Output = (A, @N[B~#](sep=","),);
-    }
-
-    impl<@N[A~#: Attr](sep=","), B: Attr> Union<B> for (@N[A~#](sep=","),) {
-        type Output = (@N[A~#](sep=","), B);
-    }
-});
-
-bascet_variadic::variadic!(N = 1..=16, M = 1..=16, for (N, M) in N.product(M) => {
-    impl<@N[A~#: Attr](sep=","), @M[B~#: Attr](sep=",")> Union<(@M[B~#](sep=","),)> for (@N[A~#](sep=","),) {
-        type Output = (@N[A~#](sep=","), @M[B~#](sep=","),);
-    }
-});
-
-impl Set for () {}
-
-impl<A: Attr> Set for A {}
-
-impl<Superset: Set> Subset<Superset> for () {
-    const OK: bool = true;
-}
-
-impl<B: Attr> Subset<()> for B {
-    const OK: bool = false;
-}
-
-impl<A: Attr, B: Attr> Subset<A> for B {
-    const OK: bool = A::ID == B::ID;
-}
-
-bascet_variadic::variadic!(N = 1..=16, for N in N => {
-    impl<@N[A~#: Attr](sep=",")> Set for (@N[A~#](sep=","),) { }
-
-    impl<B: Attr, @N[A~#: Attr](sep=",")> Subset<(@N[A~#](sep=","),)> for B {
-        const OK: bool = @N[(B::ID == A~#::ID)](sep=" || ");
-    }
-
-    impl<@N[A~#: Attr](sep=","), Sup: Set> Subset<Sup> for (@N[A~#](sep=","),)
+    impl<Sup: Set, @N[A~#: Attr](sep=",")> Subset<Sup> for (@N[A~#](sep=","),)
     where
-        @N[A~#: Subset<Sup>](sep=","),
-    {
-        const OK: bool = @N[<A~# as Subset<Sup>>::OK](sep=" && ");
-    }
+        @N[A~#: In<Sup, Verdict = Hit>](sep=","),
+    {}
 });
+
+pub type Union<L, R> = <L as Join<R>>::Output;
+pub type Intersect<L, R> = <L as Meet<R>>::Output;

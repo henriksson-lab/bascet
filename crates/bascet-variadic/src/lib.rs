@@ -34,7 +34,7 @@ pub fn variadic(input: TokenStream) -> TokenStream {
             let content;
             syn::braced!(content in input);
             let item: TokenStream2 = content.parse()?;
-            Transcriber::emit(item, &pattern, expr.eval(&env)?, &env)
+            Transcriber::emit(item, &pattern, expr.eval(&env)?)
         },
         input2,
     )

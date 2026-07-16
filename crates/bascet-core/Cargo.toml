@@ -16,22 +16,24 @@ core_affinity.workspace = true
 crossbeam.workspace = true
 derive_more.workspace = true
 event-listener.workspace = true
-futures.workspace = true
 inventory.workspace = true
 kanal.workspace = true
 memmap2.workspace = true
 num-traits.workspace = true
 parking_lot.workspace = true
-rayon.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
 
 [[bench]]
+name = "bursty"
+harness = false
+
+[[bench]]
 name = "parallel"
 harness = false
 
 [[bench]]
-name = "bursty"
+name = "tiers"
 harness = false
