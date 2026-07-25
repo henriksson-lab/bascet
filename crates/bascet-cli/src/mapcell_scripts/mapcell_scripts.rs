@@ -76,10 +76,6 @@ fn get_preset_scripts() -> HashMap<String, MapCellFunctionConstuctor> {
         MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("prokka.sh").to_vec()),
     );
     map.insert(
-        "quast".to_string(),
-        MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("quast.sh").to_vec()),
-    );
-    map.insert(
         "skesa".to_string(),
         MapCellFunctionConstuctor::ShellScriptConstructor(include_bytes!("skesa.sh").to_vec()),
     );

@@ -173,6 +173,7 @@ fn main() -> std::process::ExitCode {
         Commands::Kraken(mut cmd) => cmd.try_execute(),
         Commands::PipeSamAddTags(mut _cmd) => _cmd.try_execute(), // no longer needed?
         Commands::Qc(mut cmd) => cmd.try_execute(),
+        Commands::Quast(mut cmd) => cmd.try_execute(),
         Commands::Shardify(mut cmd) => cmd.try_execute(),
         #[cfg(feature = "skesa")]
         Commands::Skesa(mut cmd) => cmd.try_execute(),

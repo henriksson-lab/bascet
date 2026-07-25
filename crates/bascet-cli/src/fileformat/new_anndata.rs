@@ -357,6 +357,41 @@ impl SparseMatrixAnnDataWriter {
         Ok(())
     }
 
+    pub fn store_cell_obs_f64(
+        &mut self,
+        list_cell_names: &Vec<String>,
+        columns: &[(&str, Vec<f64>)],
+    ) -> anyhow::Result<()> {
+        let mut group = self.file.create_group("obs")?;
+        let column_order: Vec<&str> = columns.iter().map(|(name, _)| *name).collect();
+        Self::add_dataframe_attrs(&mut group, &column_order)?;
+
+        let list_cell_names = strings_as_strs(list_cell_names);
+        group
+            .new_dataset_builder("_index")
+            .fixed_utf8_attr("encoding-type", "string-array", "string-array".len())?
+            .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
+            .write_vlen_utf8_strings(&list_cell_names)?;
+
+        for (name, values) in columns {
+            if values.len() != list_cell_names.len() {
+                anyhow::bail!(
+                    "obs column {} has {} values for {} cells",
+                    name,
+                    values.len(),
+                    list_cell_names.len()
+                );
+            }
+            group
+                .new_dataset_builder(name)
+                .fixed_utf8_attr("encoding-type", "array", "array".len())?
+                .fixed_utf8_attr("encoding-version", "0.2.0", "0.2.0".len())?
+                .write(values.as_slice())?;
+        }
+
+        Ok(())
+    }
+
     pub fn csr_mat_u32_to_u16(csr_mat: &CsMat<u32>) -> CsMat<u16> {
         let csr_mat: CsMat<u16> = CsMat::new(
             csr_mat.shape().into(),

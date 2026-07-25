@@ -31,6 +31,7 @@ pub mod minhash_fq;
 pub mod minhash_hist;
 pub mod ncbi_genome_download;
 pub mod qc;
+pub mod quast;
 pub mod sam_add_barcode_tag_cmd;
 pub mod samtools_rs;
 pub mod shardify;
@@ -73,6 +74,7 @@ pub use minhash_fq::MinhashFqCMD;
 pub use minhash_hist::{MinhashHist, MinhashHistCMD};
 pub use ncbi_genome_download::NcbiGenomeDownloadCMD;
 pub use qc::QcCMD;
+pub use quast::QuastCMD;
 
 // Taxonomic classification
 pub use kraken::KrakenCMD;
@@ -120,6 +122,7 @@ pub enum Commands {
     MinhashHist(MinhashHistCMD),
     NcbiGenomeDownload(NcbiGenomeDownloadCMD),
     PipeSamAddTags(PipeSamAddTagsCMD), //Not needed for bascet anymore, but useful if anyone needs to use a non-standard aligner
+    Quast(QuastCMD),
     Shardify(ShardifyCMD),
     #[cfg(feature = "skesa")]
     Skesa(SkesaCMD),

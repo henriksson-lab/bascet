@@ -173,14 +173,7 @@ struct BatchArena {
 }
 
 impl BatchArena {
-    fn push(
-        &mut self,
-        name: &[u8],
-        r1: &[u8],
-        q1: &[u8],
-        r2: &[u8],
-        q2: &[u8],
-    ) -> Result<()> {
+    fn push(&mut self, name: &[u8], r1: &[u8], q1: &[u8], r2: &[u8], q2: &[u8]) -> Result<()> {
         if r1.len() != q1.len() {
             anyhow::bail!(
                 "R1 sequence/quality length mismatch: {} != {}",
@@ -284,14 +277,12 @@ fn align_and_write_batch(
     let mut sink_err: Option<anyhow::Error> = None;
     state
         .aligner
-        .align_pairs_into(&pairs, |line| {
-            match sink.record(line) {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    let msg = err.to_string();
-                    sink_err = Some(err);
-                    Err(msg)
-                }
+        .align_pairs_into(&pairs, |line| match sink.record(line) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let msg = err.to_string();
+                sink_err = Some(err);
+                Err(msg)
             }
         })
         .map_err(|err| match sink_err.take() {
@@ -356,10 +347,7 @@ pub fn run_stock_driver_tirp_to_bam(
     let max_batch_pairs = max_batch_pairs.max(1);
     debug!(
         align_threads = state.align_threads,
-        writer_threads,
-        batch_target_bases,
-        max_batch_pairs,
-        "BWAMEM2 streaming driver: config"
+        writer_threads, batch_target_bases, max_batch_pairs, "BWAMEM2 streaming driver: config"
     );
 
     let decoder = codec::BBGZDecoder::builder().with_path(path_in).build();
@@ -389,7 +377,13 @@ pub fn run_stock_driver_tirp_to_bam(
             .with_context(|| format!("malformed TIRP line at record {num_read}"))?;
         name_buf.clear();
         write_bascet_read_name(&mut name_buf, fields.id, fields.umi, num_read);
-        batch.push(name_buf.as_bytes(), fields.r1, fields.q1, fields.r2, fields.q2)?;
+        batch.push(
+            name_buf.as_bytes(),
+            fields.r1,
+            fields.q1,
+            fields.r2,
+            fields.q2,
+        )?;
         num_read += 1;
 
         if batch.bases >= batch_target_bases || batch.len() >= max_batch_pairs {
