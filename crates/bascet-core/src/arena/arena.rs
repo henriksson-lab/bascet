@@ -1,5 +1,5 @@
 use bytesize::ByteSize;
-use crossbeam::utils::CachePadded;
+use crossbeam_utils::CachePadded;
 use event_listener::{Event, Listener};
 use memmap2::{MmapMut, MmapOptions};
 use std::cell::UnsafeCell;
@@ -8,12 +8,12 @@ use std::ops::Index;
 use std::ptr::NonNull;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
+use std::thread::park_timeout;
+use std::time::Duration;
 use tracing::warn;
 
 use super::consts::*;
 use crate::utils::AtomicPatience;
-use crate::utils::send::SendPtr;
-use crate::utils::threading::spinpark_loop::{SPINPARK_COUNTOF_PARKS_BEFORE_WARN, SpinPark};
 
 #[derive(Debug)]
 pub enum AllocError {
@@ -46,7 +46,7 @@ impl ArenaSlice {
     #[inline(always)]
     pub unsafe fn from_raw_parts(
         slice: &mut [u8],
-        arena: SendPtr<Arena>,
+        arena: NonNull<Arena>,
         event: *const Event,
         waiters: *const AtomicU32,
     ) -> Self {
@@ -78,13 +78,18 @@ impl ArenaSlice {
         unsafe { self.inner.as_ref() }
     }
 
+    // NOTE   unsound paired with `Clone`: a cloned `ArenaSlice` shares the same
+    //        `inner: NonNull<[u8]>`, so two clones can each hand out `&mut [u8]` to the
+    //        same bytes — aliasing `&mut` from a safe API (UB). Fix (spec §11): split a
+    //        non-Clone `ArenaSliceMut` that owns `as_mut_slice` and `freeze()`s into this
+    //        read-only Clone view (bytes-crate `BytesMut::freeze` precedent).
     #[inline(always)]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { self.inner.as_mut() }
     }
 
     #[inline(always)]
-    pub fn src_ptr(&self) -> SendPtr<Arena> {
+    pub fn src_ptr(&self) -> NonNull<Arena> {
         self.view.inner_src
     }
 
@@ -115,7 +120,7 @@ impl<I: SliceIndex<[u8]>> Index<I> for ArenaSlice {
 }
 
 pub struct ArenaView {
-    pub(crate) inner_src: SendPtr<Arena>,
+    pub(crate) inner_src: NonNull<Arena>,
     event: *const Event,
     waiters: *const AtomicU32,
     _not_sync: PhantomData<*const ()>,
@@ -123,8 +128,8 @@ pub struct ArenaView {
 
 impl ArenaView {
     #[inline(always)]
-    pub fn new(arena: SendPtr<Arena>, event: *const Event, waiters: *const AtomicU32) -> Self {
-        unsafe { (*arena).as_ref().increment_strong_count() };
+    pub fn new(arena: NonNull<Arena>, event: *const Event, waiters: *const AtomicU32) -> Self {
+        unsafe { arena.as_ref().increment_strong_count() };
         Self {
             inner_src: arena,
             event,
@@ -138,7 +143,7 @@ unsafe impl Send for ArenaView {}
 
 impl Clone for ArenaView {
     fn clone(&self) -> Self {
-        unsafe { (*self.inner_src).as_ref().increment_strong_count() };
+        unsafe { self.inner_src.as_ref().increment_strong_count() };
         Self {
             inner_src: self.inner_src,
             event: self.event,
@@ -150,9 +155,16 @@ impl Clone for ArenaView {
 
 impl Drop for ArenaView {
     fn drop(&mut self) {
-        let prev = unsafe { (*self.inner_src).as_ref().decrement_strong_count() };
+        let prev = unsafe { self.inner_src.as_ref().decrement_strong_count() };
         // SAFETY   waiters/event pointers are valid for the lifetime of the pool,
         //          which outlives all views (enforced by Drop on ArenaPool)
+        // NOTE     the above claim has a use-after-free window: decrement_strong_count()
+        //          drops `cnt` to 0 BEFORE the `(*self.waiters)`/`(*self.event)` derefs
+        //          below, and ArenaPool::drop only waits on `cnt == 0` — so the pool can
+        //          observe not-busy, break its loop, and free the Event+waiters while this
+        //          view is mid-epilogue. Fix at wire-in: hold the retry Event+waiters in an
+        //          `Arc` cloned into each view (last drop keeps them alive), deleting these
+        //          raw pointers.
         if prev == 1 {
             unsafe {
                 if (*self.waiters).load(Ordering::Relaxed) > 0 {
@@ -191,6 +203,14 @@ impl Arena {
         }
     }
 
+    // NOTE   `&mut self` here is unsound as used by `ArenaPool::try_alloc`, which forms
+    //        `&mut Arena` from a shared `UnsafeCell<Arena>`: two threads racing the same
+    //        slab hold aliasing `&mut Arena` before the `avl` CAS below picks a winner.
+    //        The CAS serialises the data write, but forming aliasing `&mut` is itself UB
+    //        under Stacked/Tree Borrows (Miri rejects it), independent of the CAS. Latent
+    //        only because the arena is not yet wired to a hot path. Fix at wire-in: take
+    //        `&self`, hold `off` in interior mutability mutated only by the CAS winner, and
+    //        return `*mut u8` — never construct `&mut Arena`.
     #[inline(always)]
     pub fn try_alloc(&mut self, len: usize) -> Option<*mut u8> {
         if self.inner.avl.load(Ordering::Relaxed) == false {
@@ -222,12 +242,12 @@ impl Arena {
 
     #[inline(always)]
     pub fn remaining(&self) -> usize {
-        (self.inner.len - self.inner.off) as usize
+        self.inner.len - self.inner.off
     }
 
     #[inline(always)]
     pub fn capacity(&self) -> usize {
-        self.inner.len as usize
+        self.inner.len
     }
 
     #[inline(always)]
@@ -253,7 +273,7 @@ pub struct ArenaPool {
     inner_cap_arenas: usize,
 
     inner_idx_hint: CachePadded<AtomicUsize>,
-    inner_patience: CachePadded<AtomicPatience<AtomicU32>>,
+    inner_patience: CachePadded<AtomicPatience>,
 
     inner_retry_alloc: Box<Event>,
     inner_retry_waiters: Box<AtomicU32>,
@@ -293,10 +313,11 @@ impl ArenaPool {
             {
                 let base = mmap.as_mut_ptr();
                 let total = sizeof_buffer.as_u64() as usize;
+                let step = page_size::get();
                 let mut offset = 0;
                 while offset < total {
                     base.add(offset).write_volatile(0);
-                    offset += 4096;
+                    offset += step;
                 }
             }
 
@@ -315,12 +336,12 @@ impl ArenaPool {
                 inner_idx_hint: CachePadded::new(AtomicUsize::new(0)),
                 inner_patience: CachePadded::new(
                     AtomicPatience::new(
-                        AtomicU32::new(PATIENCE_INIT),
-                        PATIENCE_GROWTH,
-                        PATIENCE_DECAY,
+                        ARENA_PATIENCE_INIT,
+                        ARENA_PATIENCE_GROWTH,
+                        ARENA_PATIENCE_DECAY,
                     )
-                    .set_min(PATIENCE_MIN)
-                    .set_max(PATIENCE_MAX),
+                    .set_min(ARENA_PATIENCE_MIN)
+                    .set_max(ARENA_PATIENCE_MAX),
                 ),
                 inner_retry_alloc: Box::new(Event::new()),
                 inner_retry_waiters: Box::new(AtomicU32::new(0)),
@@ -329,6 +350,9 @@ impl ArenaPool {
     }
 
     pub fn try_alloc(&self, len: usize) -> Option<ArenaSlice> {
+        if len > self.inner_cap_arenas {
+            return None;
+        }
         let countof = self.inner_buf_arenas.len();
         unsafe {
             std::hint::assert_unchecked(countof > 0);
@@ -344,7 +368,7 @@ impl ArenaPool {
                 let slice = unsafe {
                     ArenaSlice::from_raw_parts(
                         std::slice::from_raw_parts_mut(ptr, len),
-                        SendPtr::new_unchecked(arena),
+                        NonNull::new_unchecked(arena),
                         &*self.inner_retry_alloc as *const Event,
                         &*self.inner_retry_waiters as *const AtomicU32,
                     )
@@ -364,6 +388,8 @@ impl ArenaPool {
             }
 
             // SAFETY   The atomic lock in try_alloc() ensures exclusive access
+            // NOTE     exclusive to the *data* only; `&mut *cell.get()` still forms an
+            //          aliasing `&mut Arena` across racing threads (see Arena::try_alloc).
             let arena = unsafe { &mut *self.inner_buf_arenas.get_unchecked(idx).get() };
             if let Some(ptr) = arena.try_alloc(len) {
                 self.inner_idx_hint.store(idx, Ordering::Relaxed);
@@ -372,7 +398,7 @@ impl ArenaPool {
                 let slice = unsafe {
                     ArenaSlice::from_raw_parts(
                         std::slice::from_raw_parts_mut(ptr, len),
-                        SendPtr::new_unchecked(arena),
+                        NonNull::new_unchecked(arena),
                         &*self.inner_retry_alloc as *const Event,
                         &*self.inner_retry_waiters as *const AtomicU32,
                     )
@@ -461,24 +487,23 @@ impl ArenaPool {
 
 impl Drop for ArenaPool {
     fn drop(&mut self) {
-        let mut count_spun = 0;
-
-        'wait: loop {
-            for arena_cell in &self.inner_buf_arenas {
-                // SAFETY: We're in drop, no other threads can access arenas
-                let arena = unsafe { &*arena_cell.get() };
-                if arena.cnt.load(Ordering::Relaxed) != 0 {
-                    match SpinPark::run::<100, SPINPARK_COUNTOF_PARKS_BEFORE_WARN>(&mut count_spun)
-                    {
-                        SpinPark::Warn => {
-                            warn!(source = "ArenaPool::drop", "waiting for arena to be freed")
-                        }
-                        _ => {}
-                    }
-                    continue 'wait;
-                }
+        let mut millis = 0;
+        loop {
+            // SAFETY: we're in drop, no other threads can access arenas
+            let busy = self
+                .inner_buf_arenas
+                .iter()
+                .any(|cell| unsafe { (*cell.get()).cnt.load(Ordering::Relaxed) != 0 });
+            if !busy {
+                break;
             }
-            break;
+
+            park_timeout(Duration::from_millis(100));
+            millis += 100;
+
+            if millis % 15_000 == 0 {
+                warn!(source = "ArenaPool::drop", "waiting for arena to be freed");
+            }
         }
 
         std::sync::atomic::fence(Ordering::Acquire);

@@ -1,33 +1,30 @@
-pub mod attr_id;
+pub mod matches;
 pub mod ops;
 
-pub use attr_id::AttrId;
-pub use ops::{In, Join, Meet};
+pub use matches::Matches;
+pub use ops::{Chain, In, Intersect, Lower, Union};
 
-use crate::attr::Attr;
+use crate::attr::{Attr, AttrId};
 
 pub struct Hit;
 pub struct Miss;
 
-pub trait Bool {
-    type And<B: Bool>: Bool;
-    type Or<B: Bool>: Bool;
-    type Not: Bool;
-    const HIT: bool;
+pub trait SetOps {
+    type Intersect<B: SetOps>: SetOps;
+    type Union<B: SetOps>: SetOps;
+    type Complement: SetOps;
 }
 
-impl Bool for Hit {
-    type And<B: Bool> = B;
-    type Or<B: Bool> = Hit;
-    type Not = Miss;
-    const HIT: bool = true;
+impl SetOps for Hit {
+    type Intersect<B: SetOps> = B;
+    type Union<B: SetOps> = Hit;
+    type Complement = Miss;
 }
 
-impl Bool for Miss {
-    type And<B: Bool> = Miss;
-    type Or<B: Bool> = B;
-    type Not = Hit;
-    const HIT: bool = false;
+impl SetOps for Miss {
+    type Intersect<B: SetOps> = Miss;
+    type Union<B: SetOps> = B;
+    type Complement = Hit;
 }
 
 pub trait Set: 'static {
@@ -40,23 +37,14 @@ impl Set for () {
     }
 }
 
-impl<B1: Attr> Set for (B1,) {
+impl<H: Attr, Rest: Set> Set for (H, Rest)
+where
+    H: In<Rest, Result = Miss>,
+{
     fn contains<A: Attr>() -> bool {
-        <A::Id as AttrId>::ID == <B1::Id as AttrId>::ID
+        <A::Id as AttrId>::ID == <H::Id as AttrId>::ID || Rest::contains::<A>()
     }
 }
-
-bascet_variadic::variadic!(N = 2..=16, M = 1..=15, for (N, M) in N.zip(M) => {
-    impl<@N[B~#: Attr](sep=",")> Set for (@N[B~#](sep=","),)
-    where
-        B~M: In<(@M[B~#](sep=","),), Verdict = Miss>,
-        (@M[B~#](sep=","),): Set,
-    {
-        fn contains<A: Attr>() -> bool {
-            @N[(<A::Id as AttrId>::ID == <B~#::Id as AttrId>::ID)](sep=" || ")
-        }
-    }
-});
 
 #[diagnostic::on_unimplemented(
     message = "`{Self}` requires attributes not provided upstream",
@@ -66,12 +54,9 @@ pub trait Subset<Sup: Set> {}
 
 impl<Sup: Set> Subset<Sup> for () {}
 
-bascet_variadic::variadic!(N = 1..=16, for N in N => {
-    impl<Sup: Set, @N[A~#: Attr](sep=",")> Subset<Sup> for (@N[A~#](sep=","),)
-    where
-        @N[A~#: In<Sup, Verdict = Hit>](sep=","),
-    {}
-});
-
-pub type Union<L, R> = <L as Join<R>>::Output;
-pub type Intersect<L, R> = <L as Meet<R>>::Output;
+impl<Sup: Set, H: Attr, Rest> Subset<Sup> for (H, Rest)
+where
+    H: In<Sup, Result = Hit>,
+    Rest: Subset<Sup>,
+{
+}

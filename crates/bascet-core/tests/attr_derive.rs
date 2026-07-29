@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bascet_core::attr::Phred;
-use bascet_core::set::AttrId;
+use bascet_core::attr::AttrId;
 use bascet_core::{Attr, AttrEntry};
 
 #[test]

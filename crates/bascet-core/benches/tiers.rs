@@ -2,27 +2,50 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use bascet_core::set::Set;
-use bascet_core::{Apply, Emit, Error, Pipeline, Runtime, sink};
+use bascet_core::attr::Attr;
+use bascet_core::attr::store::Store;
+use bascet_core::pipeline::batch::Batch;
+use bascet_core::{Apply, Error, Pipeline, Runtime, sink};
+use bascet_derive::attr_id;
 use tracing::info;
 
-const WORK: u32 = 100_000_000;
-const ITEMS: usize = 100;
+const WORK: usize = 1_000;
+const ITEMS: usize = 100_000_000;
+const CHUNK: usize = 1024;
+const SCRATCH: usize = 1 << 12;
 const THREADS: usize = 18;
-const SCRATCH: usize = 1 << 28;
+
+struct Value;
+
+impl Attr for Value {
+    type Id = attr_id!(1);
+}
+
+struct Column(Vec<u32>);
+
+impl Store for Column {
+    type Key = Value;
+    type Item<'a> = u32;
+    fn get(&self, row: usize) -> u32 {
+        self.0[row]
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 fn main() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .try_init();
 
-    let burn = run(Runtime::builder().burn(THREADS).jobs(0).build());
+    let burn = run(Runtime::builder().with_burn(THREADS).with_jobs(0).with_tasks(0).build());
     info!(
         "burn: {:?} ({:.0} items/s)",
         burn,
         ITEMS as f64 / burn.as_secs_f64()
     );
-    let noburn = run(Runtime::builder().burn(0).jobs(THREADS).build());
+    let noburn = run(Runtime::builder().with_burn(0).with_jobs(THREADS).with_tasks(0).build());
     info!(
         "noburn: {:?} ({:.0} items/s)",
         noburn,
@@ -41,10 +64,8 @@ fn run(runtime: Runtime) -> Duration {
             .source(Count {
                 pos: Arc::new(AtomicUsize::new(0)),
             })
-            .layer(Job {
-                scratch: vec![1; SCRATCH],
-            })
-            .sink(sink::drain::<u32>()),
+            .layer(Job::new())
+            .sink(sink::drain::<(Column, ())>()),
     );
     runner.join().unwrap();
     start.elapsed()
@@ -55,52 +76,63 @@ struct Count {
     pos: Arc<AtomicUsize>,
 }
 
-impl Apply for Count {
-    type Input = ();
-    type Output = u32;
-    type Provides = ();
+impl Apply<()> for Count {
+    type Produces = (Column, ());
     type Requires = ();
 
-    fn apply<W: Set>(&mut self, _: (), out: &mut Emit<u32, W>) -> Result<(), Error> {
-        let pos = self.pos.fetch_add(1, Ordering::Relaxed);
-        if pos < ITEMS {
-            out.push(pos as u32);
-        } else {
-            out.finish();
+    fn apply_batch(&mut self, _: &Batch<()>) -> Result<Option<Self::Produces>, Error> {
+        let start = self.pos.fetch_add(CHUNK, Ordering::Relaxed);
+        if start >= ITEMS {
+            return Ok(None);
         }
-        Ok(())
+        let end = (start + CHUNK).min(ITEMS);
+        Ok(Some((Column((start..end).map(|i| i as u32).collect()), ())))
     }
 }
 
 #[derive(Clone)]
 struct Job {
-    scratch: Vec<u32>,
+    chase: Vec<u32>,
 }
 
 impl Job {
-    fn work(&mut self, seed: u32) -> u32 {
-        let mut x = std::hint::black_box(seed | 1);
-        let mask = self.scratch.len() - 1;
-        let mut acc = 0u32;
-        for _ in 0..WORK {
-            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let i = (x as usize) & mask;
-            acc = acc.wrapping_add(self.scratch[i]);
-            self.scratch[i] = acc ^ x;
+    fn new() -> Self {
+        let mut perm: Vec<u32> = (0..SCRATCH as u32).collect();
+        let mut rng = 0x9E37_79B9u32;
+        for i in (1..SCRATCH).rev() {
+            rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            perm.swap(i, rng as usize % (i + 1));
         }
-        std::hint::black_box(acc)
+        let mut chase = vec![0u32; SCRATCH];
+        for k in 0..SCRATCH {
+            chase[perm[k] as usize] = perm[(k + 1) % SCRATCH];
+        }
+        Self { chase }
+    }
+
+    fn work(&self, seed: u32) -> u32 {
+        let mut idx = seed as usize & (self.chase.len() - 1);
+        for _ in 0..WORK {
+            idx = self.chase[idx] as usize;
+        }
+        std::hint::black_box(idx as u32)
     }
 }
 
-impl Apply for Job {
-    type Input = u32;
-    type Output = u32;
-    type Provides = ();
-    type Requires = ();
+impl Apply<(Column, ())> for Job {
+    type Produces = (Column, ());
+    type Requires = (Value,);
 
-    fn apply<W: Set>(&mut self, input: u32, out: &mut Emit<u32, W>) -> Result<(), Error> {
-        let value = self.work(input);
-        out.push(value.wrapping_add(7));
-        Ok(())
+    fn apply_batch(
+        &mut self,
+        batch: &Batch<(Column, ())>,
+    ) -> Result<Option<Self::Produces>, Error> {
+        let out: Vec<u32> = batch
+            .store::<Value>()
+            .0
+            .iter()
+            .map(|&seed| self.work(seed))
+            .collect();
+        Ok(Some((Column(out), ())))
     }
 }

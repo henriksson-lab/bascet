@@ -4,14 +4,21 @@ use std::sync::atomic::AtomicU8;
 
 use parking_lot::Mutex;
 
-use crate::apply::execute::{Dispatch, Work};
+use crate::apply::execute::{Assembled, Assign, Provides};
+use crate::consts::{
+    FLUSH_PATIENCE_DECAY, FLUSH_PATIENCE_GROWTH, FLUSH_PATIENCE_INIT, FLUSH_PATIENCE_MAX,
+    FLUSH_PATIENCE_MIN,
+};
+use crate::pipeline::batch::{Batch, Keys, Len};
 use crate::pipeline::builder::{Pipe, Pipeline, Source, Wanted};
 use crate::pipeline::edge::{Downstream, Upstream};
 use crate::pipeline::gather::{Gather, Probe};
 use crate::runtime::RuntimeInner;
-use crate::schedule::layer::{Assignment, Layer};
+use crate::schedule::layer::{Dispatch, Layer, LayerState};
 use crate::schedule::preempt::Preempt;
-use crate::set::{Join, Set};
+use crate::set::ops::partition::Compose;
+use crate::set::{Lower, Set, Subset, Union};
+use crate::utils::AtomicPatience;
 
 pub(crate) struct Build {
     pub(crate) runtime: Arc<RuntimeInner>,
@@ -37,20 +44,31 @@ impl Build {
         (up, down)
     }
 
-    pub(crate) fn register<A, M, W, U>(
+    pub(crate) fn register<A, W, U, Stores>(
         &mut self,
         apply: A,
         gather: U,
-        downstream: Option<Downstream<A::Output>>,
+        downstream: Option<Downstream<Batch<Assembled<Stores, A, W>>>>,
         index: usize,
     ) where
-        A: Dispatch<M>,
-        A::Output: Send + 'static,
-        U: Gather<Item = A::Input>,
+        Stores: 'static,
+        A: Assign<Stores>,
+        A::Produces: Keys,
+        Stores: Compose<Provides<Stores, A>, W, A::Produces>,
+        Assembled<Stores, A, W>: Len + Send + 'static,
+        U: Gather<Item = Batch<Stores>>,
         W: Set,
-        M: 'static,
     {
         let preempt = Arc::new(AtomicU8::new(Preempt::Continue as u8));
+        let patience = Arc::new(
+            AtomicPatience::new(
+                FLUSH_PATIENCE_INIT,
+                FLUSH_PATIENCE_GROWTH,
+                FLUSH_PATIENCE_DECAY,
+            )
+            .set_min(FLUSH_PATIENCE_MIN)
+            .set_max(FLUSH_PATIENCE_MAX),
+        );
         let probe_gather = gather.clone();
         let probe_tx = downstream
             .as_ref()
@@ -66,18 +84,27 @@ impl Build {
         });
         let runtime = Arc::downgrade(&self.runtime);
         let dispatch_preempt = Arc::clone(&preempt);
-        let dispatch: Arc<Mutex<dyn FnMut() -> Box<dyn Assignment> + Send>> =
-            Arc::new(Mutex::new(move || {
-                apply.dispatch::<_, W>(&gather, &downstream, index, &dispatch_preempt, &runtime)
-            }));
+        let dispatch_patience = Arc::clone(&patience);
+        let dispatch: Dispatch = Arc::new(Mutex::new(move || {
+            apply.assign::<_, W>(
+                &gather,
+                &downstream,
+                index,
+                &dispatch_preempt,
+                &dispatch_patience,
+                &runtime,
+            )
+        }));
         self.layers[index] = Some(Layer {
-            dispatch: Some(dispatch),
+            dispatch,
+            state: LayerState::Open,
             probe,
             blocked: VecDeque::new(),
             parked: VecDeque::new(),
             workers: 0,
             pass: 0,
             preempt,
+            patience,
         });
     }
 }
@@ -87,43 +114,50 @@ pub(crate) trait Connect<W: Set> {
     fn connect(self, build: &mut Build, consumer: usize) -> Self::Stream;
 }
 
-impl<A, M, W> Connect<W> for Source<A, M>
+impl<A, W> Connect<W> for Source<A>
 where
-    A: Dispatch<M> + Work<M, Input = ()>,
-    A::Output: Send + 'static,
-    M: 'static,
+    A: Assign<()>,
+    A::Produces: Keys,
+    (): Compose<Provides<(), A>, W, A::Produces>,
+    Assembled<(), A, W>: Len + Send + 'static,
+    <A::Requires as Lower>::Out: Subset<()>,
     W: Set,
 {
-    type Stream = Upstream<A::Output>;
+    type Stream = Upstream<Batch<Assembled<(), A, W>>>;
 
     fn connect(self, build: &mut Build, consumer: usize) -> Self::Stream {
         let index = build.index();
         build.upstream[consumer].push(index);
         let (up, down) = build.edge();
-        build.register::<A, M, W, ()>(self.apply, (), Some(down), index);
+        build.register::<A, W, (), ()>(self.apply, (), Some(down), index);
         up
     }
 }
 
-impl<A, M, Tail, W> Connect<W> for Pipe<A, M, Tail>
+impl<A, Stores, Tail, W> Connect<W> for Pipe<A, Stores, Tail>
 where
-    A: Dispatch<M>,
-    A::Output: Send + 'static,
-    A::Requires: Join<W>,
-    Wanted<A, M, W>: Set,
-    Tail: Connect<Wanted<A, M, W>>,
-    Tail::Stream: Gather<Item = A::Input>,
-    M: 'static,
+    Stores: 'static,
+    A: Assign<Stores>,
+    A::Produces: Keys,
+    Stores: Compose<Provides<Stores, A>, W, A::Produces>,
+    Stores: Keys,
+    <Stores as Keys>::Output: Set,
+    Assembled<Stores, A, W>: Len + Send + 'static,
+    <A::Requires as Lower>::Out: Union<W>,
+    <A::Requires as Lower>::Out: Subset<<Stores as Keys>::Output>,
+    Wanted<A, Stores, W>: Set,
+    Tail: Connect<Wanted<A, Stores, W>>,
+    Tail::Stream: Gather<Item = Batch<Stores>>,
     W: Set,
 {
-    type Stream = Upstream<A::Output>;
+    type Stream = Upstream<Batch<Assembled<Stores, A, W>>>;
 
     fn connect(self, build: &mut Build, consumer: usize) -> Self::Stream {
         let index = build.index();
         build.upstream[consumer].push(index);
         let upstream = self.tail.connect(build, index);
         let (up, down) = build.edge();
-        build.register::<A, M, W, Tail::Stream>(self.apply, upstream, Some(down), index);
+        build.register::<A, W, Tail::Stream, Stores>(self.apply, upstream, Some(down), index);
         up
     }
 }
@@ -132,21 +166,27 @@ pub(crate) trait Assemble<W: Set> {
     fn assemble(self, build: &mut Build) -> usize;
 }
 
-impl<W, A, M, Tail> Assemble<W> for Pipeline<Pipe<A, M, Tail>>
+impl<W, A, Stores, Tail> Assemble<W> for Pipeline<Pipe<A, Stores, Tail>>
 where
     W: Set,
-    A: Dispatch<M> + Work<M, Output = ()>,
-    A::Requires: Join<W>,
-    Wanted<A, M, W>: Set,
-    Tail: Connect<Wanted<A, M, W>>,
-    Tail::Stream: Gather<Item = A::Input>,
-    M: 'static,
+    Stores: 'static,
+    A: Assign<Stores>,
+    A::Produces: Keys,
+    Stores: Compose<Provides<Stores, A>, W, A::Produces>,
+    Stores: Keys,
+    <Stores as Keys>::Output: Set,
+    Assembled<Stores, A, W>: Len + Send + 'static,
+    <A::Requires as Lower>::Out: Union<W>,
+    <A::Requires as Lower>::Out: Subset<<Stores as Keys>::Output>,
+    Wanted<A, Stores, W>: Set,
+    Tail: Connect<Wanted<A, Stores, W>>,
+    Tail::Stream: Gather<Item = Batch<Stores>>,
 {
     fn assemble(self, build: &mut Build) -> usize {
         let Pipe { apply, tail, .. } = self.chain;
         let sink = build.index();
         let stream = tail.connect(build, sink);
-        build.register::<A, M, W, _>(apply, stream, None, sink);
+        build.register::<A, W, _, Stores>(apply, stream, None, sink);
         sink
     }
 }

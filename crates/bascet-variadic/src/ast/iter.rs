@@ -51,7 +51,7 @@ impl IterExpr {
                 .eval(env)?
                 .into_iter()
                 .zip(b.eval(env)?)
-                .map(|(a, b)| Lit::Tuple(vec![a, b]))
+                .map(|(a, b)| Lit::flatten([a, b]))
                 .collect()),
 
             IterExpr::Product(a, b) => {
@@ -61,7 +61,7 @@ impl IterExpr {
                     .flat_map(|a| {
                         bs.iter()
                             .cloned()
-                            .map(move |b| Lit::Tuple(vec![a.clone(), b]))
+                            .map(move |b| Lit::flatten([a.clone(), b]))
                     })
                     .collect())
             }
@@ -84,7 +84,7 @@ impl IterExpr {
                 .eval(env)?
                 .into_iter()
                 .enumerate()
-                .map(|(i, v)| Lit::Tuple(vec![Lit::Int(i as i64), v]))
+                .map(|(i, v)| Lit::flatten([Lit::Int(i as i64), v]))
                 .collect()),
 
             IterExpr::Filter(inner, pred) => {

@@ -1,5 +1,5 @@
 use proc_macro2::{Ident, Literal, TokenStream};
-use quote::{format_ident, quote};
+use quote::quote;
 
 pub struct Plural {
     singular: Ident,
@@ -29,7 +29,6 @@ impl Plural {
         out.extend(self.impl_display());
         out.extend(self.impl_inventory());
         out.extend(self.impl_ref());
-        out.extend(self.impl_coerce());
         out
     }
 
@@ -46,10 +45,10 @@ impl Plural {
                     self.plural_id ^ (n as u64).wrapping_mul(super::id::PRIME),
                 );
                 quote! {
-                    impl crate::Attr for #singular<#n_lit> {
+                    impl bascet_core::Attr for #singular<#n_lit> {
                         type Id = #sing_id;
                     }
-                    impl crate::Attr for #plural<#n_lit> {
+                    impl bascet_core::Attr for #plural<#n_lit> {
                         type Id = #plur_id;
                     }
                 }
@@ -82,8 +81,8 @@ impl Plural {
                 self.plural_id ^ (n as u64).wrapping_mul(super::id::PRIME),
             );
             [
-                quote! { inventory::submit! { crate::AttrEntry { id: #sing_id, name: #sing_name } } },
-                quote! { inventory::submit! { crate::AttrEntry { id: #plur_id, name: #plur_name } } },
+                quote! { inventory::submit! { bascet_core::AttrEntry { id: #sing_id, name: #sing_name } } },
+                quote! { inventory::submit! { bascet_core::AttrEntry { id: #plur_id, name: #plur_name } } },
             ]
         }).collect()
     }
@@ -95,15 +94,15 @@ impl Plural {
             .map(|n| {
                 let n_lit = Literal::usize_suffixed(n);
                 let idx: Vec<_> = (1..=n).map(Literal::usize_suffixed).collect();
-                let bounds = idx.iter().map(|i| quote! { S: crate::Ref<#singular<#i>>, });
+                let bounds = idx.iter().map(|i| quote! { S: bascet_core::Ref<#singular<#i>>, });
                 let val_types = idx
                     .iter()
-                    .map(|i| quote! { <S as crate::Ref<#singular<#i>>>::Value<'a> });
+                    .map(|i| quote! { <S as bascet_core::Ref<#singular<#i>>>::Value<'a> });
                 let get_refs = idx
                     .iter()
-                    .map(|i| quote! { crate::Ref::<#singular<#i>>::get_ref(self) });
+                    .map(|i| quote! { bascet_core::Ref::<#singular<#i>>::get_ref(self) });
                 quote! {
-                    impl<S> crate::Ref<#plural<#n_lit>> for S
+                    impl<S> bascet_core::Ref<#plural<#n_lit>> for S
                     where #(#bounds)*
                     {
                         type Value<'a> = (#(#val_types,)*) where S: 'a;
@@ -116,28 +115,4 @@ impl Plural {
             .collect()
     }
 
-    fn impl_coerce(&self) -> TokenStream {
-        let plural = &self.plural;
-        let mut out = TokenStream::new();
-        for n in self.start..=self.end {
-            let n_lit = Literal::usize_suffixed(n);
-            let v_types: Vec<Ident> = (1..=n).map(|i| format_ident!("V{}", i)).collect();
-            let v_idents: Vec<Ident> = (1..=n).map(|i| format_ident!("v{}", i)).collect();
-            for m in self.start..n {
-                let m_lit = Literal::usize_suffixed(m);
-                let m_v_types = &v_types[..m];
-                let m_v_idents = &v_idents[..m];
-                out.extend(quote! {
-                    impl<#(#v_types,)*> crate::Coerce<#plural<#n_lit>, #plural<#m_lit>> for (#(#v_types,)*) {
-                        type Output = (#(#m_v_types,)*);
-                        fn coerce(self) -> Self::Output {
-                            let (#(#v_idents,)*) = self;
-                            (#(#m_v_idents,)*)
-                        }
-                    }
-                });
-            }
-        }
-        out
-    }
 }

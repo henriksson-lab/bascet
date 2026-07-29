@@ -1,29 +1,25 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use parking_lot::Mutex;
 
 pub(crate) struct Shutdown {
-    closers: Mutex<Vec<Box<dyn Fn() + Send + Sync>>>,
-    fired: AtomicBool,
+    closers: Mutex<Option<Vec<Box<dyn FnOnce() + Send>>>>,
 }
 
 impl Shutdown {
     pub(crate) fn new() -> Self {
         Self {
-            closers: Mutex::new(Vec::new()),
-            fired: AtomicBool::new(false),
+            closers: Mutex::new(Some(Vec::new())),
         }
     }
 
-    pub(crate) fn register(&self, closer: Box<dyn Fn() + Send + Sync>) {
-        self.closers.lock().push(closer);
+    pub(crate) fn register(&self, closer: Box<dyn FnOnce() + Send>) {
+        if let Some(closers) = self.closers.lock().as_mut() {
+            closers.push(closer);
+        }
     }
 
     pub(crate) fn trigger(&self) {
-        if self.fired.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        for closer in self.closers.lock().iter() {
+        let closers = self.closers.lock().take();
+        for closer in closers.into_iter().flatten() {
             closer();
         }
     }
@@ -33,7 +29,7 @@ impl Shutdown {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn trigger_runs_each_closer_once() {

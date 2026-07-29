@@ -15,12 +15,17 @@ pub mod sink;
 pub mod utils;
 pub mod worker;
 
-pub use apply::{Apply, ApplyAsync, Emit, Error};
+pub use apply::{Apply, ApplyAsync, Error};
+pub use consts::MORSEL;
 pub use arena::{Arena, ArenaPool, ArenaSlice, ArenaView};
 pub use attr::{Attr, AttrEntry, Coerce, Mut, Put, Record, Ref, Represents};
 pub use owned::Owned;
 pub use pipeline::Pipeline;
 pub use runner::Runner;
-pub use runtime::{Runtime, Tier};
+pub use runtime::{Pinning, Runtime, Tier};
 pub use schedule::preempt::Preempt;
-pub use sink::{channel, drain};
+pub use sink::drain;
+
+pub use attr::Store;
+pub use bascet_derive::{Attr, attr_id};
+pub use pipeline::batch::Batch;

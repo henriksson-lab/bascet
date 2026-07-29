@@ -1,16 +1,37 @@
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use bascet_core::set::Set;
-use bascet_core::{Apply, Emit, Error, Pipeline, Runtime, sink};
+use bascet_core::attr::Attr;
+use bascet_core::attr::store::Store;
+use bascet_core::pipeline::batch::Batch;
+use bascet_core::{Apply, Error, Pipeline, Runtime, sink};
+use bascet_derive::attr_id;
 
 const WORK: u32 = 1_000_000;
-const BURST: usize = 2 << 16;
+const CHUNK: usize = 256;
 const FAST: usize = 100;
 const SLOW: usize = 10000;
 const STALL: u64 = 2000;
 const ITERS: usize = 5;
+
+struct Value;
+
+impl Attr for Value {
+    type Id = attr_id!(1);
+}
+
+struct Column(Vec<u32>);
+
+impl Store for Column {
+    type Key = Value;
+    type Item<'a> = u32;
+    fn get(&self, row: usize) -> u32 {
+        self.0[row]
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 fn main() {
     let _ = tracing_subscriber::fmt()
@@ -19,11 +40,11 @@ fn main() {
 
     let items: Vec<u32> = (0..(FAST + SLOW * ITERS) as u32).collect();
     let start = Instant::now();
-    let runner = Runtime::builder().build().pipeline::<()>(
+    let runner = Runtime::default().pipeline::<()>(
         Pipeline::builder()
             .source(Burst::new(items, FAST, SLOW, STALL))
             .layer(Job)
-            .sink(sink::drain::<u32>()),
+            .sink(sink::drain::<(Column, ())>()),
     );
     runner.join().unwrap();
     println!("bursty: {:?}", start.elapsed());
@@ -40,7 +61,6 @@ struct BurstState {
     fast: usize,
     slow: usize,
     stall: u64,
-    buf: VecDeque<u32>,
 }
 
 impl Burst {
@@ -52,44 +72,34 @@ impl Burst {
                 fast,
                 slow,
                 stall,
-                buf: VecDeque::new(),
             })),
         }
     }
 }
 
-impl Apply for Burst {
-    type Input = ();
-    type Output = u32;
-    type Provides = ();
+impl Apply<()> for Burst {
+    type Produces = (Column, ());
     type Requires = ();
 
-    fn apply<W: Set>(&mut self, _: (), out: &mut Emit<u32, W>) -> Result<(), Error> {
-        let item = {
-            let mut state = self.state.lock().expect("burst source lock poisoned");
-            match state.buf.pop_front() {
-                Some(item) => item,
-                None => {
-                    if state.pos >= state.items.len() {
-                        out.finish();
-                        return Ok(());
-                    }
-                    let end = if state.pos < state.fast {
-                        (state.pos + BURST).min(state.fast).min(state.items.len())
-                    } else {
-                        std::thread::sleep(Duration::from_millis(state.stall));
-                        (state.pos + state.slow).min(state.items.len())
-                    };
-                    let pos = state.pos;
-                    let items: Vec<u32> = state.items[pos..end].to_vec();
-                    state.buf.extend(items);
-                    state.pos = end;
-                    state.buf.pop_front().unwrap()
-                }
-            }
+    fn apply_batch(&mut self, _: &Batch<()>) -> Result<Option<Self::Produces>, Error> {
+        let mut state = self.state.lock().expect("burst source lock poisoned");
+        if state.pos >= state.items.len() {
+            return Ok(None);
+        }
+        if state.pos >= state.fast && (state.pos - state.fast) % state.slow == 0 {
+            std::thread::sleep(Duration::from_millis(state.stall));
+        }
+        let region_end = if state.pos < state.fast {
+            state.fast
+        } else {
+            let region = (state.pos - state.fast) / state.slow;
+            state.fast + (region + 1) * state.slow
         };
-        out.push(item);
-        Ok(())
+        let pos = state.pos;
+        let end = (pos + CHUNK).min(region_end).min(state.items.len());
+        let burst: Vec<u32> = state.items[pos..end].to_vec();
+        state.pos = end;
+        Ok(Some((Column(burst), ())))
     }
 }
 
@@ -106,14 +116,20 @@ impl Job {
     }
 }
 
-impl Apply for Job {
-    type Input = u32;
-    type Output = u32;
-    type Provides = ();
-    type Requires = ();
+impl Apply<(Column, ())> for Job {
+    type Produces = (Column, ());
+    type Requires = Value;
 
-    fn apply<W: Set>(&mut self, input: u32, out: &mut Emit<u32, W>) -> Result<(), Error> {
-        out.push(Self::work(input).wrapping_add(42));
-        Ok(())
+    fn apply_batch(
+        &mut self,
+        batch: &Batch<(Column, ())>,
+    ) -> Result<Option<Self::Produces>, Error> {
+        let out: Vec<u32> = batch
+            .store::<Value>()
+            .0
+            .iter()
+            .map(|&seed| Self::work(seed).wrapping_add(42))
+            .collect();
+        Ok(Some((Column(out), ())))
     }
 }

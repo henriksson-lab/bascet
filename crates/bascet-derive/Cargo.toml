@@ -9,5 +9,5 @@ proc-macro = true
 [dependencies]
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
-syn = { version = "2", features = ["full"] }
+syn = { version = "3" }
 fnv = { version = "1" }

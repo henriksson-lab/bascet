@@ -19,7 +19,7 @@ impl AttrId {
             let nibble = (value >> (4 * (15 - i))) & 0xF;
             format_ident!("D{}", nibble)
         });
-        quote! { (#(bascet_core::set::attr_id::#digits,)*) }
+        quote! { (#(bascet_core::attr::attr_id::#digits,)*) }
     }
 
     pub fn expand(input: proc_macro::TokenStream) -> proc_macro::TokenStream {

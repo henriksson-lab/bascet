@@ -1,47 +1,36 @@
-pub mod emit;
 pub mod execute;
+pub mod fuse;
 
-pub use emit::Emit;
+use crate::pipeline::batch::Batch;
+use crate::set::Lower;
 
-use crate::set::Set;
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Layer(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    #[error("layer panicked: {0}")]
+    Panic(String),
+}
 
-pub type Error = ();
+pub trait Apply<Stores>: Clone + Send + 'static {
+    type Produces;
+    type Requires: Lower;
 
-pub trait Apply: Clone + Send + 'static {
-    type Input;
-    type Output;
-    type Provides: Set;
-    type Requires: Set;
+    fn apply_batch(&mut self, input: &Batch<Stores>) -> Result<Option<Self::Produces>, Error>;
 
-    fn apply<Wants: Set>(
-        &mut self,
-        input: Self::Input,
-        out: &mut Emit<Self::Output, Wants>,
-    ) -> Result<(), Error>;
-
-    fn finish<Wants: Set>(&mut self, out: &mut Emit<Self::Output, Wants>) -> Result<(), Error> {
-        let _ = out;
+    fn finish(&mut self) -> Result<(), Error> {
         Ok(())
     }
 }
 
-pub trait ApplyAsync: Clone + Send + 'static {
-    type Input;
-    type Output;
-    type Provides: Set;
-    type Requires: Set;
+pub trait ApplyAsync<Stores>: Clone + Send + 'static {
+    type Produces;
+    type Requires: Lower;
 
-    async fn apply<Wants: Set>(
-        &mut self,
-        input: Self::Input,
-        out: &mut Emit<Self::Output, Wants>,
-    ) -> Result<(), Error>;
+    async fn apply_batch(&mut self, input: &Batch<Stores>)
+    -> Result<Option<Self::Produces>, Error>;
 
-    async fn finish<Wants: Set>(
-        &mut self,
-        out: &mut Emit<Self::Output, Wants>,
-    ) -> Result<(), Error> {
-        let _ = out;
+    async fn finish(&mut self) -> Result<(), Error> {
         Ok(())
     }
 }

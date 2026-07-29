@@ -35,6 +35,17 @@ impl Lit {
         }
     }
 
+    pub fn flatten(parts: impl IntoIterator<Item = Lit>) -> Lit {
+        let mut flat = Vec::new();
+        for part in parts {
+            match part {
+                Lit::Tuple(inner) => flat.extend(inner),
+                other => flat.push(other),
+            }
+        }
+        Lit::Tuple(flat)
+    }
+
     fn from_stream(input: ParseStream) -> syn::Result<Self> {
         if input.peek(LitInt) {
             Ok(Self::Int(input.parse::<LitInt>()?.base10_parse()?))

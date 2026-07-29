@@ -2,21 +2,40 @@ pub(crate) mod layer;
 pub mod preempt;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 use std::task::Waker;
 use std::thread::Thread;
 
 use parking_lot::Mutex;
 
-use crate::pipeline::gather::Probe;
+use crate::apply::Error;
 use crate::runtime::{RuntimeInner, Tier};
-use crate::schedule::layer::{Assignment, Layer};
+use crate::schedule::layer::{Assignment, Layer, LayerState};
 use crate::schedule::preempt::Preempt;
 use crate::worker::State;
 
+pub(crate) struct Epoch(AtomicU32);
+
+impl Epoch {
+    pub(crate) fn new() -> Self {
+        Self(AtomicU32::new(0))
+    }
+
+    #[inline]
+    pub(crate) fn advance(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub(crate) fn read(&self) -> u32 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 pub(crate) struct Schedule {
     pub(crate) scheduler: Mutex<Scheduler>,
+    pub(crate) epoch: Epoch,
 }
 
 pub(crate) struct Scheduler {
@@ -28,23 +47,7 @@ pub(crate) struct Scheduler {
 
 impl Scheduler {
     pub(crate) fn runnable(&self, index: usize) -> bool {
-        let Some(layer) = self.layers[index].as_ref() else {
-            return false;
-        };
-        let assignable = layer.dispatch.is_some()
-            || !layer.blocked.is_empty()
-            || !layer.parked.is_empty();
-        if !assignable {
-            return false;
-        }
-        match (layer.probe)() {
-            Probe::Full => false,
-            Probe::Ready => true,
-            Probe::Starved => !layer.blocked.is_empty(),
-            Probe::Exhausted => {
-                !layer.blocked.is_empty() || !layer.parked.is_empty() || layer.workers == 0
-            }
-        }
+        self.layers[index].as_ref().is_some_and(Layer::is_open)
     }
 
     pub(crate) fn pick(&self, previous: Option<usize>) -> Option<usize> {
@@ -178,7 +181,7 @@ impl Schedule {
                         layer.workers -= 1;
                         match status {
                             State::Finished => {
-                                layer.dispatch = None;
+                                layer.state = LayerState::Finished;
                                 let joined = layer.workers == 0
                                     && layer.blocked.is_empty()
                                     && layer.parked.is_empty();
@@ -201,6 +204,7 @@ impl Schedule {
                     }
                 }
                 scheduler.wake();
+                self.epoch.advance();
             }
             if scheduler.finished() {
                 return;
@@ -218,7 +222,7 @@ impl Schedule {
                         let dispatch = if popped.is_some() {
                             None
                         } else {
-                            layer.dispatch.clone()
+                            Some(layer.dispatch.clone())
                         };
                         (popped, dispatch)
                     };
@@ -230,19 +234,24 @@ impl Schedule {
                             .lock())(),
                     };
                     previous = Some(index);
-                    let outcome =
-                        catch_unwind(AssertUnwindSafe(|| assignment.drive(self, tier)));
+                    let outcome = catch_unwind(AssertUnwindSafe(|| assignment.drive(self, tier)));
                     match outcome {
                         Ok(status) => current = Some((assignment, status)),
-                        Err(_) => {
+                        Err(payload) => {
                             if let Some(inner) = runtime.upgrade() {
-                                inner.record_error(());
+                                let message = payload
+                                    .downcast_ref::<&str>()
+                                    .map(|s| s.to_string())
+                                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                inner.record_error(Error::Panic(message));
                             }
                             let mut scheduler = self.scheduler.lock();
                             if let Some(layer) = scheduler.layers[index].as_mut() {
                                 layer.workers -= 1;
                             }
                             scheduler.retire(index);
+                            self.epoch.advance();
                         }
                     }
                 }
@@ -252,8 +261,11 @@ impl Schedule {
                     }
                     match tier {
                         Tier::Burn => {
+                            let seen = self.epoch.read();
                             drop(scheduler);
-                            std::hint::spin_loop();
+                            while self.epoch.read() == seen {
+                                std::hint::spin_loop();
+                            }
                         }
                         _ => {
                             scheduler.idle.push(waker.clone());
@@ -284,6 +296,8 @@ impl Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::gather::Probe;
+    use crate::utils::AtomicPatience;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, AtomicU8};
 
@@ -310,7 +324,8 @@ mod tests {
         let dispatch: Arc<Mutex<dyn FnMut() -> Box<dyn Assignment> + Send>> =
             Arc::new(Mutex::new(|| Box::new(Stub) as Box<dyn Assignment>));
         Layer {
-            dispatch: Some(dispatch),
+            dispatch,
+            state: LayerState::Open,
             probe: Box::new(move || {
                 if !output.load(Ordering::Relaxed) {
                     Probe::Full
@@ -325,6 +340,7 @@ mod tests {
             workers: 0,
             pass,
             preempt: Arc::new(AtomicU8::new(Preempt::Continue as u8)),
+            patience: Arc::new(AtomicPatience::new(1, 1, 1)),
         }
     }
 
