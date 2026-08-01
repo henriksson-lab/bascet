@@ -11,5 +11,5 @@ It has also been designed to analyze large numbers of bulk samples in a manner a
 
 Bascet is an advanced command-line tool aimed primarily to be used through the Zorn R library, which offers multi-node compute capability and ease of use.
 
-Most users will prefer to use Zorn. For more information, follow this link: https://henriksson-lab.github.io/zorn/
+Most users will prefer to interface Bascet indirectly, using Zorn. For more information, follow this link: https://henriksson-lab.github.io/zorn/
 
