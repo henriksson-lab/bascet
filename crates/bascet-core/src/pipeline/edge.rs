@@ -4,12 +4,14 @@ use std::sync::Arc;
 use kanal::{Receiver, Sender};
 use parking_lot::Mutex;
 
+use crate::pipeline::gather::Closed;
+
 pub(crate) struct Upstream<T> {
     pub(crate) input_rx: Arc<Receiver<T>>,
 }
 
 pub(crate) struct Downstream<T> {
-    pub(crate) output_tx: Arc<Sender<T>>,
+    pub(crate) output_tx: Sender<T>,
     pub(crate) exhausted: bool,
 }
 
@@ -24,7 +26,7 @@ impl<T> Clone for Upstream<T> {
 impl<T> Clone for Downstream<T> {
     fn clone(&self) -> Self {
         Self {
-            output_tx: Arc::clone(&self.output_tx),
+            output_tx: self.output_tx.clone(),
             exhausted: self.exhausted,
         }
     }
@@ -38,14 +40,34 @@ impl<T> Upstream<T> {
                 input_rx: Arc::new(input_rx),
             },
             Downstream {
-                output_tx: Arc::new(output_tx),
+                output_tx,
                 exhausted: false,
             },
         )
     }
 
-    pub(crate) fn done(&self) -> bool {
-        self.input_rx.sender_count() == 0
+    pub(crate) fn try_recv(&self) -> Result<Option<T>, Closed> {
+        match self.input_rx.try_recv() {
+            Ok(item) => Ok(item),
+            Err(_) => Err(Closed),
+        }
+    }
+
+    pub(crate) fn close(&self) {
+        self.input_rx.close().ok();
+    }
+}
+
+impl<T> Downstream<T> {
+    pub(crate) fn send(&self, item: T) -> Result<(), Closed> {
+        self.output_tx.send(item).map_err(|_| Closed)
+    }
+
+    pub(crate) fn try_send(&self, item: &mut Option<T>) -> Result<bool, Closed> {
+        match self.output_tx.try_send_option(item) {
+            Ok(sent) => Ok(sent),
+            Err(_) => Err(Closed),
+        }
     }
 }
 
@@ -82,25 +104,24 @@ mod tests {
     fn consumer_drop_closes_for_producer() {
         let (up, down) = Upstream::<u32>::new(1);
         drop(up);
-        assert!(down.output_tx.send(1).is_err());
+        assert!(down.send(1).is_err());
     }
 
     #[test]
-    fn sender_drop_drains_before_close() {
+    fn sender_drop_closes_after_drain() {
         let (up, down) = Upstream::<u32>::new(4);
-        down.output_tx.send(1).unwrap();
-        assert!(!up.done());
+        down.send(1).unwrap();
         drop(down);
-        assert!(up.done());
-        assert_eq!(up.input_rx.try_recv().unwrap(), Some(1));
-        assert!(up.input_rx.try_recv().is_err() || up.input_rx.try_recv().unwrap().is_none());
+        assert_eq!(up.try_recv().unwrap(), Some(1));
+        assert!(up.try_recv().is_err());
     }
 
     #[test]
     fn clones_share_the_channel() {
         let (up, down) = Upstream::<u32>::new(4);
         let view = up.clone();
-        down.output_tx.send(7).unwrap();
-        assert_eq!(view.input_rx.try_recv().unwrap(), Some(7));
+        down.send(7).unwrap();
+        assert_eq!(view.try_recv().unwrap(), Some(7));
+        assert_eq!(up.try_recv().unwrap(), None);
     }
 }

@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 use bascet_core::attr::Attr;
 use bascet_core::attr::store::Store;
 use bascet_core::pipeline::batch::Batch;
-use bascet_core::{Apply, Error, Pipeline, Runtime, sink};
+use bascet_core::{Apply, Error, Fields, Pipeline, Report, Runtime, sink};
 use bascet_derive::attr_id;
 
 const WORK: usize = 1_000;
 const ITEMS: usize = 100_000_000;
 const CHUNK: usize = 1024;
-const SCRATCH: usize = 1 << 14;
+const SCRATCH: usize = 1 << 12;
 
 struct Value;
 
@@ -34,6 +34,8 @@ impl Store for Column {
 
 fn main() {
     let _ = tracing_subscriber::fmt()
+        .event_format(Report)
+        .fmt_fields(Fields)
         .with_max_level(tracing::Level::TRACE)
         .try_init();
 

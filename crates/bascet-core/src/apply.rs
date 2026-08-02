@@ -12,6 +12,14 @@ pub enum Error {
     Panic(String),
 }
 
+impl crate::exception::Raise for Error {
+    fn level(&self) -> tracing::Level {
+        match self {
+            Error::Layer(_) | Error::Panic(_) => tracing::Level::ERROR,
+        }
+    }
+}
+
 pub trait Apply<Stores>: Clone + Send + 'static {
     type Produces;
     type Requires: Lower;

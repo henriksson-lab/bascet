@@ -1,15 +1,11 @@
 pub mod attr_id;
-pub mod backing;
 pub mod block;
-pub mod ext;
 pub mod meta;
 pub mod phred;
 pub mod reads;
 pub mod store;
 
 pub use attr_id::AttrId;
-pub use backing::*;
-pub use ext::*;
 pub use phred::*;
 pub use reads::*;
 pub use store::Store;

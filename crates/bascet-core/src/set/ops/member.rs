@@ -1,9 +1,9 @@
 use crate::attr::Attr;
 use crate::set::matches::Matches;
-use crate::set::{Miss, SetOps};
+use crate::set::{Membership, Miss};
 
 pub trait In<S> {
-    type Result: SetOps;
+    type Result: Membership;
 }
 
 impl<X: Attr> In<()> for X {
@@ -15,5 +15,5 @@ where
     X::Id: Matches<H::Id>,
     X: In<Rest>,
 {
-    type Result = <<X::Id as Matches<H::Id>>::Result as SetOps>::Union<<X as In<Rest>>::Result>;
+    type Result = <<X::Id as Matches<H::Id>>::Result as Membership>::Or<<X as In<Rest>>::Result>;
 }

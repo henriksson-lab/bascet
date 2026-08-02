@@ -6,17 +6,18 @@ use crate::apply::Error;
 use crate::apply::execute::{Assembled, Provides};
 use crate::apply::fuse::Fuse;
 use crate::pipeline::batch::{Batch, Keys, Len};
+use crate::pipeline::edge::Downstream;
 use crate::pipeline::gather::{Closed, Gather};
 use crate::runtime::{RuntimeInner, Tier};
 use crate::schedule::Schedule;
-use crate::schedule::layer::Assignment;
+use crate::schedule::layer::{Assignment, LayerState};
 use crate::schedule::preempt::Preempt;
 use crate::set::Set;
 use crate::set::ops::partition::Compose;
 use crate::utils::AtomicPatience;
 use crate::worker::State;
 
-pub(crate) struct Run<A, U, W, Stores>
+pub(crate) struct Task<A, U, W, Stores>
 where
     A: Apply<Stores>,
     U: Gather<Item = Batch<Stores>>,
@@ -32,9 +33,10 @@ where
     pub(crate) patience: Arc<AtomicPatience>,
     pub(crate) runtime: Weak<RuntimeInner>,
     pub(crate) finalized: bool,
+    pub(crate) state: State,
 }
 
-impl<A, U, W, Stores> Assignment for Run<A, U, W, Stores>
+impl<A, U, W, Stores> Assignment for Task<A, U, W, Stores>
 where
     A: Apply<Stores>,
     U: Gather<Item = Batch<Stores>>,
@@ -43,13 +45,15 @@ where
     Stores: Compose<Provides<Stores, A>, W, A::Produces>,
     Assembled<Stores, A, W>: Len + Send + 'static,
 {
-    fn drive(&mut self, schedule: &Schedule, tier: Tier) -> State {
+    fn drive(&mut self, schedule: &Schedule, _tier: Tier) {
         if self.finalized {
-            return self.conclude();
+            return self.finish(schedule);
         }
         loop {
             if self.fuse.residue() && !self.flush() {
-                return self.leave();
+                schedule.scheduler.layers[self.layer].mark(LayerState::Blocked);
+                self.state = State::Blocked;
+                return;
             }
             if self.preempt.load(Ordering::Relaxed) == Preempt::Halt as u8
                 && self
@@ -63,43 +67,50 @@ where
                     .is_ok()
             {
                 self.fuse.flush();
-                if !self.visit(schedule, tier, true) {
-                    return self.leave();
-                }
+                self.state = State::Yielded;
+                return;
             }
             match self.gather.try_recv() {
-                Ok(Some(batch)) => match self.apply.apply_batch(&batch) {
-                    Ok(Some(produced)) => {
-                        let stores = batch.into_parts();
-                        let out = <Stores as Compose<Provides<Stores, A>, W, A::Produces>>::compose(
-                            stores, produced,
-                        );
-                        self.fuse.push(Batch::new(out));
-                        if !self.flush() {
-                            return self.leave();
+                Ok(Some(batch)) => {
+                    self.rouse_upstream(schedule);
+                    match self.apply.apply_batch(&batch) {
+                        Ok(Some(produced)) => {
+                            let stores = batch.into_parts();
+                            let out =
+                                <Stores as Compose<Provides<Stores, A>, W, A::Produces>>::compose(
+                                    stores, produced,
+                                );
+                            self.fuse.push(Batch::new(out));
+                            if !self.flush() {
+                                schedule.scheduler.layers[self.layer].mark(LayerState::Blocked);
+                                self.state = State::Blocked;
+                                return;
+                            }
+                            if self.fuse.orphaned() {
+                                return self.finish(schedule);
+                            }
+                            self.rouse_downstream(schedule);
                         }
-                        if !self.visit(schedule, tier, false) {
-                            return self.leave();
+                        Ok(None) => return self.finish(schedule),
+                        Err(error) => {
+                            self.fuse.flush();
+                            return self.fail(error);
                         }
                     }
-                    Ok(None) => {
-                        return self.conclude();
-                    }
-                    Err(error) => {
-                        self.fuse.flush();
-                        return self.fail(error);
-                    }
-                },
+                }
                 Ok(None) => {
                     self.fuse.flush();
-                    self.check_in(schedule);
-                    return self.starve();
+                    schedule.scheduler.layers[self.layer].mark(LayerState::Starved);
+                    self.state = State::Starved;
+                    return;
                 }
-                Err(Closed) => {
-                    return self.conclude();
-                }
+                Err(Closed) => return self.finish(schedule),
             }
         }
+    }
+
+    fn state(&self) -> State {
+        self.state
     }
 
     fn layer(&self) -> usize {
@@ -107,7 +118,7 @@ where
     }
 }
 
-impl<A, U, W, Stores> Run<A, U, W, Stores>
+impl<A, U, W, Stores> Task<A, U, W, Stores>
 where
     A: Apply<Stores>,
     U: Gather<Item = Batch<Stores>>,
@@ -115,6 +126,31 @@ where
     A::Produces: Keys,
     Stores: Compose<Provides<Stores, A>, W, A::Produces>,
 {
+    pub(crate) fn new(
+        apply: &A,
+        gather: &U,
+        downstream: &Option<Downstream<Batch<Assembled<Stores, A, W>>>>,
+        layer: usize,
+        preempt: &Arc<AtomicU8>,
+        patience: &Arc<AtomicPatience>,
+        runtime: &Weak<RuntimeInner>,
+    ) -> Box<dyn Assignment>
+    where
+        Assembled<Stores, A, W>: Len + Send + 'static,
+    {
+        Box::new(Task {
+            apply: apply.clone(),
+            gather: gather.clone(),
+            fuse: Fuse::new(downstream.clone()),
+            layer,
+            preempt: Arc::clone(preempt),
+            patience: Arc::clone(patience),
+            runtime: runtime.clone(),
+            finalized: false,
+            state: State::New,
+        })
+    }
+
     fn flush(&mut self) -> bool {
         if self.fuse.flush() {
             return true;
@@ -131,55 +167,24 @@ where
         false
     }
 
-    fn visit(&mut self, schedule: &Schedule, tier: Tier, claim: bool) -> bool {
-        let mut scheduler = schedule.scheduler.lock();
-        {
-            let Some(layer) = scheduler.layers[self.layer].as_mut() else {
-                return false;
-            };
-            layer
-                .preempt
-                .store(Preempt::Continue as u8, Ordering::Relaxed);
-        }
-        scheduler.wake();
-        schedule.epoch.advance();
-        let stay = scheduler.runnable(self.layer)
-            && ((tier == Tier::Burn && !claim)
-                || scheduler.pick(Some(self.layer)) == Some(self.layer));
-        if stay && let Some(layer) = scheduler.layers[self.layer].as_mut() {
-            layer.pass += 1;
-        }
-        stay
-    }
-
-    fn check_in(&self, schedule: &Schedule) {
-        let mut scheduler = schedule.scheduler.lock();
-        if let Some(layer) = scheduler.layers[self.layer].as_mut() {
-            layer
-                .preempt
-                .store(Preempt::Continue as u8, Ordering::Relaxed);
-        }
-        scheduler.wake();
-        schedule.epoch.advance();
-    }
-
-    fn leave(&self) -> State {
-        if self.fuse.residue() || self.gather.residue() {
-            State::Blocked
-        } else {
-            State::Yielded
+    fn rouse_downstream(&self, schedule: &Schedule) {
+        if let Some(down) = schedule.scheduler.layers[self.layer].downstream.get() {
+            if down.ready() == LayerState::Starved && down.rouse(LayerState::Starved) {
+                schedule.wake();
+            }
         }
     }
 
-    fn starve(&self) -> State {
-        if self.fuse.residue() {
-            State::Blocked
-        } else {
-            State::Starved
+    fn rouse_upstream(&self, schedule: &Schedule) {
+        for &up in schedule.scheduler.upstream[self.layer].iter() {
+            let producer = &schedule.scheduler.layers[up];
+            if producer.ready() == LayerState::Blocked && producer.rouse(LayerState::Blocked) {
+                schedule.wake();
+            }
         }
     }
 
-    fn conclude(&mut self) -> State {
+    fn finish(&mut self, schedule: &Schedule) {
         if !self.finalized {
             self.finalized = true;
             if let Err(error) = self.apply.finish() {
@@ -196,16 +201,17 @@ where
             );
         }
         if clean {
-            State::Finished
+            self.state = State::Finished;
         } else {
-            State::Blocked
+            schedule.scheduler.layers[self.layer].mark(LayerState::Blocked);
+            self.state = State::Blocked;
         }
     }
 
-    fn fail(&mut self, error: Error) -> State {
+    fn fail(&mut self, error: Error) {
         if let Some(runtime) = self.runtime.upgrade() {
             runtime.record_error(error);
         }
-        State::Failed
+        self.state = State::Failed;
     }
 }

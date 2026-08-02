@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use std::ops::Index;
 use std::ptr::NonNull;
 use std::slice::SliceIndex;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::thread::park_timeout;
 use std::time::Duration;
 use tracing::warn;
@@ -15,26 +15,19 @@ use tracing::warn;
 use super::consts::*;
 use crate::utils::AtomicPatience;
 
-#[derive(Debug)]
-pub enum AllocError {
+#[derive(Debug, thiserror::Error)]
+pub enum Exception {
+    #[error("allocation of {requested} bytes exceeds slab capacity of {slab_cap} bytes")]
     Oversized { requested: usize, slab_cap: usize },
 }
 
-impl std::fmt::Display for AllocError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl crate::exception::Raise for Exception {
+    fn level(&self) -> tracing::Level {
         match self {
-            AllocError::Oversized {
-                requested,
-                slab_cap,
-            } => write!(
-                f,
-                "allocation of {requested} bytes exceeds slab capacity of {slab_cap} bytes"
-            ),
+            Exception::Oversized { .. } => tracing::Level::ERROR,
         }
     }
 }
-
-impl std::error::Error for AllocError {}
 
 pub struct ArenaSlice {
     inner: NonNull<[u8]>,
@@ -187,7 +180,7 @@ pub struct Arena {
     // allocator hot path (cache line 1)
     inner: CachePadded<ArenaInner>,
     // consumer hot path (cache line 2)
-    cnt: CachePadded<AtomicU16>,
+    cnt: CachePadded<AtomicU64>,
 }
 
 impl Arena {
@@ -199,7 +192,7 @@ impl Arena {
                 off: 0,
                 avl: AtomicBool::new(true),
             }),
-            cnt: CachePadded::new(AtomicU16::new(0)),
+            cnt: CachePadded::new(AtomicU64::new(0)),
         }
     }
 
@@ -231,7 +224,7 @@ impl Arena {
             }
             self.inner.off = 0;
         }
-        let start = self.inner.off as usize;
+        let start = self.inner.off;
         self.inner.off += len;
         unsafe {
             debug_assert!(self.inner.off <= self.inner.len);
@@ -254,11 +247,11 @@ impl Arena {
     pub fn increment_strong_count(&self) {
         // SAFETY: just incrementing no data sync needed here as the value of this is not needed anywhere
         let cnt = self.cnt.fetch_add(1, Ordering::Relaxed);
-        debug_assert!(cnt < u16::MAX);
+        debug_assert!(cnt < u64::MAX);
     }
 
     #[inline(always)]
-    pub fn decrement_strong_count(&self) -> u16 {
+    pub fn decrement_strong_count(&self) -> u64 {
         // SAFETY: Release ensures all writes to arena data happen before refcnt reaches 0
         let cnt = self.cnt.fetch_sub(1, Ordering::Release);
         debug_assert!(cnt > 0);
@@ -436,9 +429,9 @@ impl ArenaPool {
         self.inner_retry_waiters.load(Ordering::Relaxed)
     }
 
-    pub async fn alloc_await(&self, len: usize) -> Result<ArenaSlice, AllocError> {
+    pub async fn alloc_await(&self, len: usize) -> Result<ArenaSlice, Exception> {
         if len > self.inner_cap_arenas {
-            return Err(AllocError::Oversized {
+            return Err(Exception::Oversized {
                 requested: len,
                 slab_cap: self.inner_cap_arenas,
             });
@@ -460,9 +453,9 @@ impl ArenaPool {
         }
     }
 
-    pub fn alloc_blocking(&self, len: usize) -> Result<ArenaSlice, AllocError> {
+    pub fn alloc_blocking(&self, len: usize) -> Result<ArenaSlice, Exception> {
         if len > self.inner_cap_arenas {
-            return Err(AllocError::Oversized {
+            return Err(Exception::Oversized {
                 requested: len,
                 slab_cap: self.inner_cap_arenas,
             });
@@ -494,6 +487,7 @@ impl Drop for ArenaPool {
                 .inner_buf_arenas
                 .iter()
                 .any(|cell| unsafe { (*cell.get()).cnt.load(Ordering::Relaxed) != 0 });
+
             if !busy {
                 break;
             }

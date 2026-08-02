@@ -1,11 +1,10 @@
 use crate::attr::store::Store;
 use crate::set::ops::chain::Chain;
 use crate::set::ops::member::In;
-use crate::set::{Hit, Miss, SetOps};
+use crate::set::{Hit, Membership, Miss};
 
-type Forwarded<K, Wants, Provides> = <<K as In<Wants>>::Result as SetOps>::Intersect<
-    <<K as In<Provides>>::Result as SetOps>::Complement,
->;
+type Forwarded<K, Wants, Provides> =
+    <<K as In<Wants>>::Result as Membership>::And<<<K as In<Provides>>::Result as Membership>::Not>;
 
 pub trait Partition<Provides, Wants> {
     type Output;
@@ -57,14 +56,14 @@ where
     }
 }
 
-pub trait Compose<Provides, Wants, Produced> {
+pub trait Compose<Provides, Wants, Produced>: 'static {
     type Output;
     fn compose(self, produced: Produced) -> Self::Output;
 }
 
 impl<Stores, Provides, Wants, Produced> Compose<Provides, Wants, Produced> for Stores
 where
-    Stores: Partition<Provides, Wants>,
+    Stores: Partition<Provides, Wants> + 'static,
     <Stores as Partition<Provides, Wants>>::Output: Chain<Produced>,
 {
     type Output = <<Stores as Partition<Provides, Wants>>::Output as Chain<Produced>>::Output;

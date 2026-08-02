@@ -1,49 +1,42 @@
-pub(crate) enum Exception {
+use tracing::Level;
+
+use crate::exception::Raise;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Exception {
+    #[error("cpu topology unavailable; distributing over logical cores only")]
     HWUnavailableTopology,
+    #[error("cpu affinity unavailable; workers run unpinned")]
     HWUnavailableAffinity,
+    #[error("cpu core kinds unavailable; treating each core as logical")]
     HWUnavailableCores,
-    HWUnavailableKinds,
-    NoWorkers,
+    #[error("cpu core clock speeds unavailable; placing workers unranked")]
+    HWUnavailableClock,
+
+    #[error("cpu binding failed; thread runs unpinned")]
     HWFailureSetAffinity,
-    BurnExceedsCores { burn: usize, cores: usize },
-    BurnExceedsLogical { burn: usize, logical: usize },
+
+    #[error("insufficient physical cores; using logical cores")]
+    HWFailureInsufficientCoresPhysical,
+
+    #[error("insufficient logical cores; truncating to available cores")]
+    HWFailureInsufficientCoresLogical,
+
+    #[error("insufficient parallelism")]
+    HWFailureInsufficientParallelism,
 }
 
-impl Exception {
-    pub(crate) fn log(self) {
+impl Raise for Exception {
+    fn level(&self) -> Level {
         match self {
-            Exception::HWUnavailableTopology => {
-                tracing::warn!(
-                    "hardware topology unavailable; distributing over logical core count only"
-                )
-            }
-            Exception::HWUnavailableAffinity => {
-                tracing::warn!(
-                    "cpu binding unsupported on this platform; workers will run unpinned"
-                )
-            }
-            Exception::HWUnavailableCores => {
-                tracing::warn!("no physical cores reported; treating each logical core as its own")
-            }
-            Exception::HWUnavailableKinds => {
-                tracing::debug!("cpu kinds unavailable; burn placed without performance ranking")
-            }
-            Exception::NoWorkers => {
-                tracing::warn!("no workers configured; the pipeline will not make progress")
-            }
-            Exception::HWFailureSetAffinity => {
-                tracing::warn!("a thread failed to pin to its cores")
-            }
-            Exception::BurnExceedsCores { burn, cores } => {
-                tracing::warn!(
-                    "{burn} burn workers exceed {cores} physical cores; pinning to logical cores"
-                )
-            }
-            Exception::BurnExceedsLogical { burn, logical } => {
-                tracing::warn!(
-                    "cannot pin all burn workers: {burn} requested but only {logical} logical cores"
-                )
-            }
+            Exception::HWUnavailableTopology
+            | Exception::HWUnavailableAffinity
+            | Exception::HWUnavailableClock
+            | Exception::HWUnavailableCores
+            | Exception::HWFailureSetAffinity
+            | Exception::HWFailureInsufficientCoresPhysical
+            | Exception::HWFailureInsufficientCoresLogical => Level::WARN,
+            Exception::HWFailureInsufficientParallelism => Level::ERROR,
         }
     }
 }

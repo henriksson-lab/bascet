@@ -1,6 +1,10 @@
 [package]
 name = "bascet-cli"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]

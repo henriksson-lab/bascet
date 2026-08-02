@@ -9,22 +9,22 @@ use crate::attr::{Attr, AttrId};
 pub struct Hit;
 pub struct Miss;
 
-pub trait SetOps {
-    type Intersect<B: SetOps>: SetOps;
-    type Union<B: SetOps>: SetOps;
-    type Complement: SetOps;
+pub trait Membership {
+    type And<Other: Membership>: Membership;
+    type Or<Other: Membership>: Membership;
+    type Not: Membership;
 }
 
-impl SetOps for Hit {
-    type Intersect<B: SetOps> = B;
-    type Union<B: SetOps> = Hit;
-    type Complement = Miss;
+impl Membership for Hit {
+    type And<Other: Membership> = Other;
+    type Or<Other: Membership> = Hit;
+    type Not = Miss;
 }
 
-impl SetOps for Miss {
-    type Intersect<B: SetOps> = Miss;
-    type Union<B: SetOps> = B;
-    type Complement = Hit;
+impl Membership for Miss {
+    type And<Other: Membership> = Miss;
+    type Or<Other: Membership> = Other;
+    type Not = Hit;
 }
 
 pub trait Set: 'static {

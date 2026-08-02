@@ -1,13 +1,18 @@
 [package]
 name = "bascet-derive"
-version = "0.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
 
 [lib]
 proc-macro = true
 
+[lints]
+workspace = true
+
 [dependencies]
-proc-macro2 = { version = "1" }
-quote = { version = "1" }
-syn = { version = "3" }
-fnv = { version = "1" }
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+fnv.workspace = true

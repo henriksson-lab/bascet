@@ -1,7 +1,9 @@
 use crate::attr::Attr;
+use crate::attr::AttrEq;
 use crate::attr::store::Store;
 use crate::set::{Hit, Matches, Miss};
-use crate::attr::AttrEq;
+
+type Matched<S, A> = <<<S as Store>::Key as Attr>::Id as Matches<<A as Attr>::Id>>::Result;
 
 #[diagnostic::on_unimplemented(
     message = "no store provides attribute `{A}`",
@@ -13,7 +15,7 @@ pub trait Holds<A> {
     fn store(&self) -> &Self::Held;
 }
 
-pub trait Step<A, V> {
+pub trait Seek<A, Found> {
     type Held: Store;
     fn store(&self) -> &Self::Held;
 }
@@ -21,15 +23,15 @@ pub trait Step<A, V> {
 impl<A: Attr, S: Store, Rest> Holds<A> for (S, Rest)
 where
     <S::Key as Attr>::Id: Matches<<A as Attr>::Id>,
-    (S, Rest): Step<A, <<S::Key as Attr>::Id as Matches<<A as Attr>::Id>>::Result>,
+    (S, Rest): Seek<A, Matched<S, A>>,
 {
-    type Held = <(S, Rest) as Step<A, <<S::Key as Attr>::Id as Matches<<A as Attr>::Id>>::Result>>::Held;
+    type Held = <(S, Rest) as Seek<A, Matched<S, A>>>::Held;
     fn store(&self) -> &Self::Held {
-        <(S, Rest) as Step<A, <<S::Key as Attr>::Id as Matches<<A as Attr>::Id>>::Result>>::store(self)
+        <(S, Rest) as Seek<A, Matched<S, A>>>::store(self)
     }
 }
 
-impl<A, S: Store, Rest> Step<A, Hit> for (S, Rest)
+impl<A, S: Store, Rest> Seek<A, Hit> for (S, Rest)
 where
     <S as Store>::Key: AttrEq<A>,
 {
@@ -39,7 +41,7 @@ where
     }
 }
 
-impl<A, S: Store, Rest> Step<A, Miss> for (S, Rest)
+impl<A, S: Store, Rest> Seek<A, Miss> for (S, Rest)
 where
     Rest: Holds<A>,
 {

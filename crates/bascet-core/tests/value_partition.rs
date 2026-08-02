@@ -4,8 +4,8 @@ use bascet_core::Record;
 use bascet_core::attr::Attr;
 use bascet_core::attr::store::Store;
 use bascet_core::pipeline::batch::Batch;
-use bascet_core::set::ops::partition::Partition;
 use bascet_core::set::Chain;
+use bascet_core::set::ops::partition::Partition;
 use bascet_derive::attr_id;
 
 struct A;
@@ -52,8 +52,7 @@ fn eq<T: 'static, U: 'static>() -> bool {
 #[test]
 fn forward_moves_wanted_drops_unwanted() {
     let input: (Bag<A>, (Bag<B>, ())) = (bag(b"a"), (bag(b"b"), ()));
-    let out: (Bag<A>, ()) =
-        <(Bag<A>, (Bag<B>, ())) as Partition<(), (A, ())>>::partition(input);
+    let out: (Bag<A>, ()) = <(Bag<A>, (Bag<B>, ())) as Partition<(), (A, ())>>::partition(input);
     let batch = Batch::new(out);
     let row = batch.iter().next().unwrap();
     assert_eq!(row.get::<A>(), &b"a"[..]);
@@ -63,8 +62,7 @@ fn forward_moves_wanted_drops_unwanted() {
 fn override_replaces_input_with_produced() {
     let input: (Bag<A>, (Bag<B>, ())) = (bag(b"old"), (bag(b"b"), ()));
     let produced: (Bag<A>, ()) = (bag(b"new"), ());
-    let forwarded =
-        <(Bag<A>, (Bag<B>, ())) as Partition<(A, ()), (A, (B, ()))>>::partition(input);
+    let forwarded = <(Bag<A>, (Bag<B>, ())) as Partition<(A, ()), (A, (B, ()))>>::partition(input);
     let out: (Bag<B>, (Bag<A>, ())) = forwarded.chain(produced);
     let batch = Batch::new(out);
     let row = batch.iter().next().unwrap();
@@ -85,5 +83,8 @@ fn narrowing_drops_middle_store() {
 
 #[test]
 fn output_attrs_are_forward_then_produced() {
-    assert!(eq::<<Batch<(Bag<B>, (Bag<A>, ()))> as Record>::Attrs, (B, (A, ()))>());
+    assert!(eq::<
+        <Batch<(Bag<B>, (Bag<A>, ()))> as Record>::Attrs,
+        (B, (A, ())),
+    >());
 }

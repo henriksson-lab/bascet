@@ -77,7 +77,12 @@ type L<S> = <S as Lower>::Out;
 
 #[test]
 fn chain_builds_and_runs() {
-    let runtime = Runtime::builder().with_burn(0).with_jobs(1).with_tasks(0).build();
+    let runtime = Runtime::builder()
+        .with_burn(0)
+        .with_jobs(2)
+        .with_tasks(0)
+        .build()
+        .unwrap();
     let runner = runtime.pipeline::<()>(
         Pipeline::builder()
             .source(Numbers)
@@ -98,5 +103,8 @@ fn wants_algebra_normalizes() {
 #[test]
 fn wanted_accumulates_requires_over_wants() {
     assert!(eq::<Wanted<Consume, (Head, ()), ()>, L<Header>>());
-    assert!(eq::<Wanted<Double, (Head, ()), L<Blocks>>, L<(Header, Blocks)>>());
+    assert!(eq::<
+        Wanted<Double, (Head, ()), L<Blocks>>,
+        L<(Header, Blocks)>,
+    >());
 }

@@ -4,6 +4,7 @@ use std::num::NonZeroUsize;
 use hwlocality::Topology;
 use hwlocality::object::types::ObjectType;
 
+use crate::exception::Raise;
 use crate::runtime::exception::Exception;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -28,7 +29,7 @@ pub(crate) struct Machine {
 }
 
 impl Machine {
-    pub(crate) fn probe(topology: &Topology) -> Self {
+    pub(crate) fn probe(topology: &Topology) -> Result<Self, Exception> {
         let binds = topology
             .feature_support()
             .cpu_binding()
@@ -45,7 +46,15 @@ impl Machine {
                     }
                 }
             }
-            Err(_) => Exception::HWUnavailableKinds.log(),
+            Err(_) => {
+                Exception::HWUnavailableClock
+                    .annotate()
+                    .fixed("ranking every core equally")
+                    .help(
+                        "harmless on homogeneous machines; on hybrid machines burn workers may land on efficiency cores",
+                    )
+                    .raise()?;
+            }
         }
 
         let mut cores: Vec<Core> = topology
@@ -64,7 +73,11 @@ impl Machine {
             .collect();
 
         if cores.is_empty() {
-            Exception::HWUnavailableCores.log();
+            Exception::HWUnavailableCores
+                .annotate()
+                .fixed("treating each logical cpu as its own core")
+                .help("burn workers take one logical cpu each instead of a whole core, so siblings contend")
+                .raise()?;
             cores = topology
                 .cpuset()
                 .iter_set()
@@ -78,7 +91,7 @@ impl Machine {
         }
 
         cores.sort_by_key(|core| (core.kind, core.cluster, core.node, core.logical[0]));
-        Machine { cores, binds }
+        Ok(Machine { cores, binds })
     }
 
     pub(crate) fn fallback() -> Self {

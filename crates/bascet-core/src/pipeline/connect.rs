@@ -1,10 +1,10 @@
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64};
+use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
-use crate::apply::execute::{Assembled, Assign, Provides};
+use crate::apply::Apply;
+use crate::apply::execute::{Assembled, Provides};
 use crate::consts::{
     FLUSH_PATIENCE_DECAY, FLUSH_PATIENCE_GROWTH, FLUSH_PATIENCE_INIT, FLUSH_PATIENCE_MAX,
     FLUSH_PATIENCE_MIN,
@@ -12,13 +12,14 @@ use crate::consts::{
 use crate::pipeline::batch::{Batch, Keys, Len};
 use crate::pipeline::builder::{Pipe, Pipeline, Source, Wanted};
 use crate::pipeline::edge::{Downstream, Upstream};
-use crate::pipeline::gather::{Gather, Probe};
+use crate::pipeline::gather::Gather;
 use crate::runtime::RuntimeInner;
-use crate::schedule::layer::{Dispatch, Layer, LayerState};
+use crate::schedule::layer::{Capacity, Dispatch, Layer, LayerState, Mint};
 use crate::schedule::preempt::Preempt;
 use crate::set::ops::partition::Compose;
 use crate::set::{Lower, Set, Subset, Union};
 use crate::utils::AtomicPatience;
+use crate::worker::synchronous::Task;
 
 pub(crate) struct Build {
     pub(crate) runtime: Arc<RuntimeInner>,
@@ -52,7 +53,7 @@ impl Build {
         index: usize,
     ) where
         Stores: 'static,
-        A: Assign<Stores>,
+        A: Apply<Stores>,
         A::Produces: Keys,
         Stores: Compose<Provides<Stores, A>, W, A::Produces>,
         Assembled<Stores, A, W>: Len + Send + 'static,
@@ -69,24 +70,12 @@ impl Build {
             .set_min(FLUSH_PATIENCE_MIN)
             .set_max(FLUSH_PATIENCE_MAX),
         );
-        let probe_gather = gather.clone();
-        let probe_tx = downstream
-            .as_ref()
-            .map(|downstream| Arc::clone(&downstream.output_tx));
-        let probe: Box<dyn Fn() -> Probe + Send> = Box::new(move || {
-            if probe_tx
-                .as_ref()
-                .is_some_and(|output_tx| output_tx.is_full() && output_tx.receiver_count() > 0)
-            {
-                return Probe::Full;
-            }
-            probe_gather.probe()
-        });
         let runtime = Arc::downgrade(&self.runtime);
         let dispatch_preempt = Arc::clone(&preempt);
         let dispatch_patience = Arc::clone(&patience);
-        let dispatch: Dispatch = Arc::new(Mutex::new(move || {
-            apply.assign::<_, W>(
+        let mint: Mint = Box::new(move || {
+            Task::new(
+                &apply,
                 &gather,
                 &downstream,
                 index,
@@ -94,17 +83,18 @@ impl Build {
                 &dispatch_patience,
                 &runtime,
             )
-        }));
+        });
+        let dispatch: Dispatch = Arc::new(Mutex::new(Some(mint)));
         self.layers[index] = Some(Layer {
             dispatch,
-            state: LayerState::Open,
-            probe,
-            blocked: VecDeque::new(),
-            parked: VecDeque::new(),
-            workers: 0,
-            pass: 0,
+            capacity: AtomicU64::new(Capacity::Open.pack()),
+            state: AtomicU8::new(LayerState::Runnable as u8),
+            downstream: OnceLock::new(),
+            workers: AtomicU64::new(0),
+            pass: AtomicU64::new(0),
             preempt,
             patience,
+            done: AtomicBool::new(false),
         });
     }
 }
@@ -116,7 +106,7 @@ pub(crate) trait Connect<W: Set> {
 
 impl<A, W> Connect<W> for Source<A>
 where
-    A: Assign<()>,
+    A: Apply<()>,
     A::Produces: Keys,
     (): Compose<Provides<(), A>, W, A::Produces>,
     Assembled<(), A, W>: Len + Send + 'static,
@@ -137,7 +127,7 @@ where
 impl<A, Stores, Tail, W> Connect<W> for Pipe<A, Stores, Tail>
 where
     Stores: 'static,
-    A: Assign<Stores>,
+    A: Apply<Stores>,
     A::Produces: Keys,
     Stores: Compose<Provides<Stores, A>, W, A::Produces>,
     Stores: Keys,
@@ -170,7 +160,7 @@ impl<W, A, Stores, Tail> Assemble<W> for Pipeline<Pipe<A, Stores, Tail>>
 where
     W: Set,
     Stores: 'static,
-    A: Assign<Stores>,
+    A: Apply<Stores>,
     A::Produces: Keys,
     Stores: Compose<Provides<Stores, A>, W, A::Produces>,
     Stores: Keys,

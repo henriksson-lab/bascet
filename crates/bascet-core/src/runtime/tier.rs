@@ -2,5 +2,5 @@
 pub enum Tier {
     Burn,
     Job,
-    Task,
+    Async,
 }

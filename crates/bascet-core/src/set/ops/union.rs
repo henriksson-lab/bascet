@@ -1,5 +1,5 @@
 use crate::attr::Attr;
-use crate::set::SetOps;
+use crate::set::Membership;
 use crate::set::ops::chain::Chain;
 use crate::set::ops::member::In;
 use crate::set::ops::select::Select;
@@ -11,11 +11,11 @@ pub trait Absorb<L> {
 impl<A: Attr, L> Absorb<L> for A
 where
     A: In<L>,
-    A: Select<<<A as In<L>>::Result as SetOps>::Complement>,
-    L: Chain<<A as Select<<<A as In<L>>::Result as SetOps>::Complement>>::Output>,
+    A: Select<<<A as In<L>>::Result as Membership>::Not>,
+    L: Chain<<A as Select<<<A as In<L>>::Result as Membership>::Not>>::Output>,
 {
     type Output =
-        <L as Chain<<A as Select<<<A as In<L>>::Result as SetOps>::Complement>>::Output>>::Output;
+        <L as Chain<<A as Select<<<A as In<L>>::Result as Membership>::Not>>::Output>>::Output;
 }
 
 pub trait Union<R> {

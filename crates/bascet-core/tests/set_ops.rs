@@ -11,8 +11,14 @@ type L<S> = <S as Lower>::Out;
 
 #[test]
 fn membership_folds_by_id() {
-    assert!(eq::<<Header<1> as In<L<(Header<1>, Offset<1>)>>>::Result, Hit>());
-    assert!(eq::<<Trailer<1> as In<L<(Header<1>, Offset<1>)>>>::Result, Miss>());
+    assert!(eq::<
+        <Header<1> as In<L<(Header<1>, Offset<1>)>>>::Result,
+        Hit,
+    >());
+    assert!(eq::<
+        <Trailer<1> as In<L<(Header<1>, Offset<1>)>>>::Result,
+        Miss,
+    >());
     assert!(eq::<<Header<1> as In<()>>::Result, Miss>());
 }
 

@@ -2,20 +2,12 @@ use crate::consts::DEPTH;
 use crate::pipeline::batch::Batch;
 use crate::pipeline::edge::{Upstream, Zip};
 
-pub struct Closed;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Probe {
-    Ready,
-    Starved,
-    Exhausted,
-    Full,
-}
+pub struct Closed;
 
 pub trait Gather: Clone + Send + 'static {
     type Item;
     fn try_recv(&mut self) -> Result<Option<Self::Item>, Closed>;
-    fn probe(&self) -> Probe;
     fn residue(&self) -> bool;
 }
 
@@ -23,20 +15,7 @@ impl<T: Send + 'static> Gather for Upstream<T> {
     type Item = T;
 
     fn try_recv(&mut self) -> Result<Option<T>, Closed> {
-        match self.input_rx.try_recv() {
-            Ok(item) => Ok(item),
-            Err(_) => Err(Closed),
-        }
-    }
-
-    fn probe(&self) -> Probe {
-        if !self.input_rx.is_empty() {
-            Probe::Ready
-        } else if self.done() {
-            Probe::Exhausted
-        } else {
-            Probe::Starved
-        }
+        Upstream::try_recv(self)
     }
 
     fn residue(&self) -> bool {
@@ -51,10 +30,6 @@ impl Gather for () {
         Ok(Some(Batch::new(())))
     }
 
-    fn probe(&self) -> Probe {
-        Probe::Ready
-    }
-
     fn residue(&self) -> bool {
         false
     }
@@ -65,10 +40,6 @@ impl<A: Send + 'static> Gather for (Upstream<A>,) {
 
     fn try_recv(&mut self) -> Result<Option<A>, Closed> {
         Gather::try_recv(&mut self.0)
-    }
-
-    fn probe(&self) -> Probe {
-        Gather::probe(&self.0)
     }
 
     fn residue(&self) -> bool {
@@ -115,35 +86,6 @@ bascet_variadic::variadic!(N = 2..=16, for N in N => {
             Ok(self.outstanding.pop_front())
         }
 
-        fn probe(&self) -> Probe {
-            if !self.outstanding.is_empty() {
-                return Probe::Ready;
-            }
-            let guard = self.inner.lock();
-            let (members, row) = &*guard;
-            let mut starving = false;
-            let mut drained = true;
-            @N[if row.#.is_some() {
-                drained = false;
-            } else {
-                match Gather::probe(&members.#) {
-                    Probe::Starved => {
-                        starving = true;
-                        drained = false;
-                    }
-                    Probe::Exhausted => {}
-                    _ => drained = false,
-                }
-            }]
-            if drained {
-                Probe::Exhausted
-            } else if starving {
-                Probe::Starved
-            } else {
-                Probe::Ready
-            }
-        }
-
         fn residue(&self) -> bool {
             !self.outstanding.is_empty()
         }
@@ -157,30 +99,27 @@ mod tests {
     #[test]
     fn recv_serves_then_starves() {
         let (mut up, down) = Upstream::<u32>::new(4);
-        down.output_tx.send(1).unwrap();
-        down.output_tx.send(2).unwrap();
+        down.send(1).unwrap();
+        down.send(2).unwrap();
         assert!(matches!(Gather::try_recv(&mut up), Ok(Some(1))));
         assert!(matches!(Gather::try_recv(&mut up), Ok(Some(2))));
         assert!(matches!(Gather::try_recv(&mut up), Ok(None)));
-        assert!(matches!(up.probe(), Probe::Starved));
         assert!(!up.residue());
     }
 
     #[test]
     fn closed_after_drain() {
         let (mut up, down) = Upstream::<u32>::new(4);
-        down.output_tx.send(1).unwrap();
+        down.send(1).unwrap();
         drop(down);
         assert!(matches!(Gather::try_recv(&mut up), Ok(Some(1))));
         assert!(matches!(Gather::try_recv(&mut up), Err(Closed)));
-        assert!(matches!(up.probe(), Probe::Exhausted));
     }
 
     #[test]
     fn source_gather_never_starves() {
         let mut unit = ();
         assert!(matches!(Gather::try_recv(&mut unit), Ok(Some(_))));
-        assert!(matches!(Gather::probe(&()), Probe::Ready));
         assert!(!Gather::residue(&()));
     }
 
@@ -188,12 +127,12 @@ mod tests {
     fn uneven_batches_pair_in_order() {
         let (up_a, down_a) = Upstream::<u32>::new(4);
         let (up_b, down_b) = Upstream::<u32>::new(4);
-        down_a.output_tx.send(1).unwrap();
-        down_a.output_tx.send(2).unwrap();
-        down_a.output_tx.send(3).unwrap();
-        down_b.output_tx.send(10).unwrap();
-        down_b.output_tx.send(20).unwrap();
-        down_b.output_tx.send(30).unwrap();
+        down_a.send(1).unwrap();
+        down_a.send(2).unwrap();
+        down_a.send(3).unwrap();
+        down_b.send(10).unwrap();
+        down_b.send(20).unwrap();
+        down_b.send(30).unwrap();
         let mut gather = Zip::from((up_a, up_b));
         assert!(matches!(gather.try_recv(), Ok(Some((Some(1), Some(10))))));
         assert!(matches!(gather.try_recv(), Ok(Some((Some(2), Some(20))))));
@@ -207,9 +146,9 @@ mod tests {
     fn survivor_drains_with_none_slots() {
         let (up_a, down_a) = Upstream::<u32>::new(4);
         let (up_b, down_b) = Upstream::<u32>::new(4);
-        down_a.output_tx.send(1).unwrap();
-        down_b.output_tx.send(10).unwrap();
-        down_b.output_tx.send(20).unwrap();
+        down_a.send(1).unwrap();
+        down_b.send(10).unwrap();
+        down_b.send(20).unwrap();
         drop(down_a);
         drop(down_b);
         let mut gather = Zip::from((up_a, up_b));
@@ -222,11 +161,11 @@ mod tests {
     fn clones_share_staging_but_not_outstanding() {
         let (up_a, down_a) = Upstream::<u32>::new(4);
         let (up_b, down_b) = Upstream::<u32>::new(4);
-        down_a.output_tx.send(1).unwrap();
+        down_a.send(1).unwrap();
         let mut first = Zip::from((up_a, up_b));
         let mut second = first.clone();
         assert!(matches!(first.try_recv(), Ok(None)));
-        down_b.output_tx.send(10).unwrap();
+        down_b.send(10).unwrap();
         assert!(matches!(second.try_recv(), Ok(Some((Some(1), Some(10))))));
         drop(down_a);
         drop(down_b);

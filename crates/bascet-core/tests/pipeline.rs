@@ -62,7 +62,10 @@ impl Apply<(Column, ())> for Double {
     type Produces = (Column, ());
     type Requires = Value;
 
-    fn apply_batch(&mut self, batch: &Batch<(Column, ())>) -> Result<Option<Self::Produces>, Error> {
+    fn apply_batch(
+        &mut self,
+        batch: &Batch<(Column, ())>,
+    ) -> Result<Option<Self::Produces>, Error> {
         let out: Vec<u32> = batch.store::<Value>().0.iter().map(|&n| n * 2).collect();
         Ok(Some((Column(out), ())))
     }
@@ -85,7 +88,10 @@ impl Apply<(Column, ())> for Slow {
     type Produces = (Column, ());
     type Requires = Value;
 
-    fn apply_batch(&mut self, batch: &Batch<(Column, ())>) -> Result<Option<Self::Produces>, Error> {
+    fn apply_batch(
+        &mut self,
+        batch: &Batch<(Column, ())>,
+    ) -> Result<Option<Self::Produces>, Error> {
         std::thread::sleep(std::time::Duration::from_micros(200));
         let out: Vec<u32> = batch.store::<Value>().0.iter().copied().collect();
         Ok(Some((Column(out), ())))
@@ -125,7 +131,12 @@ impl Apply<(Column, ())> for Collect {
 #[test]
 fn linear_pipeline_runs_to_completion() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::builder().with_burn(0).with_jobs(4).with_tasks(0).build();
+    let runtime = Runtime::builder()
+        .with_burn(0)
+        .with_jobs(4)
+        .with_tasks(0)
+        .build()
+        .unwrap();
 
     let runner = runtime.pipeline::<()>(
         Pipeline::builder()
@@ -146,7 +157,12 @@ fn linear_pipeline_runs_to_completion() {
 fn slow_layer_scales_to_multiple_workers() {
     let clones = Arc::new(AtomicU32::new(0));
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::builder().with_burn(0).with_jobs(4).with_tasks(0).build();
+    let runtime = Runtime::builder()
+        .with_burn(0)
+        .with_jobs(4)
+        .with_tasks(0)
+        .build()
+        .unwrap();
 
     let runner = runtime.pipeline::<()>(
         Pipeline::builder()
@@ -163,12 +179,20 @@ fn slow_layer_scales_to_multiple_workers() {
     let mut collected = seen.lock().unwrap().clone();
     collected.sort_unstable();
     assert_eq!(collected, (0..500).collect::<Vec<_>>());
-    assert!(clones.load(Ordering::Relaxed) > 1, "slow layer never scaled");
+    assert!(
+        clones.load(Ordering::Relaxed) > 1,
+        "slow layer never scaled"
+    );
 }
 
 #[test]
 fn failing_sink_errors_join_without_hanging() {
-    let runtime = Runtime::builder().with_burn(0).with_jobs(4).with_tasks(0).build();
+    let runtime = Runtime::builder()
+        .with_burn(0)
+        .with_jobs(4)
+        .with_tasks(0)
+        .build()
+        .unwrap();
 
     let runner = runtime.pipeline::<()>(
         Pipeline::builder()
@@ -182,7 +206,12 @@ fn failing_sink_errors_join_without_hanging() {
 #[test]
 fn single_thread_pool_drives_three_layers() {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::builder().with_burn(0).with_jobs(1).with_tasks(0).build();
+    let runtime = Runtime::builder()
+        .with_burn(0)
+        .with_jobs(4)
+        .with_tasks(0)
+        .build()
+        .unwrap();
 
     let runner = runtime.pipeline::<()>(
         Pipeline::builder()
@@ -199,7 +228,7 @@ fn single_thread_pool_drives_three_layers() {
 
 #[test]
 fn double_eof_retires_once_and_join_returns() {
-    let runtime = Runtime::builder().with_burn(0).with_jobs(4).with_tasks(0).build();
+    let runtime = Runtime::default();
 
     let runner = runtime.pipeline::<()>(
         Pipeline::builder()

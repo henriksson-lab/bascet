@@ -5,6 +5,7 @@ use hwlocality::Topology;
 use hwlocality::cpu::binding::CpuBindingFlags;
 use hwlocality::cpu::cpuset::CpuSet;
 
+use crate::exception::Raise;
 use crate::runtime::Tier;
 use crate::runtime::allocation::Allocation;
 use crate::runtime::exception::Exception;
@@ -31,14 +32,14 @@ impl Workers {
                 std::thread::Builder::new()
                     .name(format!("bascet-burn-{index}"))
                     .spawn(move || {
-                        Self::pin(topology.as_deref(), &logical);
+                        let _ = Self::pin(topology.as_deref(), &logical);
                         run();
                     })
                     .expect("spawn burn thread"),
             );
         }
 
-        for index in 0..allocation.jobs + allocation.tasks {
+        for index in 0..allocation.jobs {
             let topology = topology.clone();
             let float = allocation.float.clone();
             let run = run(Tier::Job);
@@ -46,7 +47,7 @@ impl Workers {
                 std::thread::Builder::new()
                     .name(format!("bascet-job-{index}"))
                     .spawn(move || {
-                        Self::pin(topology.as_deref(), &float);
+                        let _ = Self::pin(topology.as_deref(), &float);
                         run();
                     })
                     .expect("spawn job thread"),
@@ -62,17 +63,24 @@ impl Workers {
         }
     }
 
-    fn pin(topology: Option<&Topology>, logical: &[usize]) {
-        let Some(topology) = topology else { return };
+    fn pin(topology: Option<&Topology>, logical: &[usize]) -> Result<(), Exception> {
+        let Some(topology) = topology else {
+            return Ok(());
+        };
         if logical.is_empty() {
-            return;
+            return Ok(());
         }
         let mut set = CpuSet::new();
         for &id in logical {
             set.set(id);
         }
         if topology.bind_cpu(&set, CpuBindingFlags::THREAD).is_err() {
-            Exception::HWFailureSetAffinity.log();
+            Exception::HWFailureSetAffinity
+                .annotate()
+                .fixed("this worker runs unpinned")
+                .help("the remaining workers keep their bindings")
+                .raise()?;
         }
+        Ok(())
     }
 }
