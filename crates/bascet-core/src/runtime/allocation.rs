@@ -32,6 +32,10 @@ impl Allocation {
         (3, 1),
     ];
 
+    pub(crate) fn workers(&self) -> usize {
+        self.burn.len() + self.jobs as usize + self.tasks as usize
+    }
+
     pub(crate) fn plan(
         machine: &Machine,
         total: Option<NonZero<u64>>,
@@ -81,7 +85,9 @@ impl Allocation {
             Exception::HWFailureInsufficientCoresPhysical
                 .annotate()
                 .fixed("placing burn workers on logical cpus instead of whole cores")
-                .suggestion(format!("lower burn to at most {physical} to keep dedicated pinning"))
+                .suggestion(format!(
+                    "lower burn to at most {physical} to keep dedicated pinning"
+                ))
                 .raise()?;
         }
         if burn * cost + jobs + tasks > budget {
@@ -124,14 +130,18 @@ impl Allocation {
             Pinning::Physical => Self::snap(cores, burn as usize),
             Pinning::Virtual => burn as usize,
         };
-        let burn: Vec<Vec<usize>> = cores
-            .iter()
-            .flat_map(|core| match pinning {
-                Pinning::Physical => vec![core.logical.clone()],
-                Pinning::Virtual => core.logical.iter().map(|&id| vec![id]).collect(),
-            })
-            .take(burn)
-            .collect();
+        let burn: Vec<Vec<usize>> = match pinning {
+            Pinning::Physical => cores
+                .iter()
+                .map(|core| core.logical.clone())
+                .take(burn)
+                .collect(),
+            Pinning::Virtual => cores
+                .iter()
+                .flat_map(|core| core.logical.iter().map(|&id| vec![id]))
+                .take(burn)
+                .collect(),
+        };
         let held: HashSet<usize> = burn.iter().flatten().copied().collect();
         let float = cores
             .iter()

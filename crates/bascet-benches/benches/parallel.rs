@@ -2,11 +2,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use bascet_cli::logging;
 use bascet_core::attr::Attr;
 use bascet_core::attr::store::Store;
 use bascet_core::pipeline::batch::Batch;
-use bascet_core::{Apply, Error, Fields, Pipeline, Report, Runtime, sink};
+use bascet_core::{Apply, Error, Pipeline, Runtime, sink};
 use bascet_derive::attr_id;
+use tracing::Level;
 
 const WORK: usize = 1_000;
 const ITEMS: usize = 100_000_000;
@@ -33,11 +35,7 @@ impl Store for Column {
 }
 
 fn main() {
-    let _ = tracing_subscriber::fmt()
-        .event_format(Report)
-        .fmt_fields(Fields)
-        .with_max_level(tracing::Level::TRACE)
-        .try_init();
+    logging::init(Level::DEBUG);
 
     let elapsed = run(Runtime::default());
     println!(
@@ -49,7 +47,7 @@ fn main() {
 
 fn run(runtime: Runtime) -> Duration {
     let start = Instant::now();
-    let runner = runtime.pipeline::<()>(
+    let runner = runtime.pipeline(
         Pipeline::builder()
             .source(Count {
                 pos: Arc::new(AtomicUsize::new(0)),

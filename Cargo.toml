@@ -2,6 +2,7 @@
 members = [
     "crates/bascet-core",
     "crates/bascet-cli",
+    "crates/bascet-benches",
     "crates/bascet-io",
     "crates/bascet-derive",
     "crates/bascet-variadic",
@@ -20,6 +21,7 @@ expect_used = "warn"
 
 [workspace.dependencies]
 bascet-core = { path = "crates/bascet-core" }
+bascet-cli = { path = "crates/bascet-cli" }
 bascet-derive = { path = "crates/bascet-derive" }
 bascet-variadic = { path = "crates/bascet-variadic" }
 

@@ -1,0 +1,26 @@
+[package]
+name = "bascet-benches"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+bascet-core.workspace = true
+bascet-cli.workspace = true
+bascet-derive.workspace = true
+tracing.workspace = true
+
+[[bench]]
+name = "bursty"
+harness = false
+
+[[bench]]
+name = "parallel"
+harness = false
+
+[[bench]]
+name = "tiers"
+harness = false

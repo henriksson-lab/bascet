@@ -12,11 +12,7 @@ struct Frame<'a> {
 }
 
 impl Transcriber {
-    pub fn emit(
-        ts: TokenStream,
-        pattern: &Pattern,
-        values: Vec<Lit>,
-    ) -> syn::Result<TokenStream> {
+    pub fn emit(ts: TokenStream, pattern: &Pattern, values: Vec<Lit>) -> syn::Result<TokenStream> {
         let mut out = TokenStream::new();
         for val in values {
             let mut bindings = HashMap::new();
@@ -160,16 +156,14 @@ impl<'a> Frame<'a> {
 
         let consumed = j - i;
 
-        let iter_values: Vec<Lit> = (0..n).map(Lit::Int).collect();
-
         let mut out = TokenStream::new();
-        for (k, val) in iter_values.iter().enumerate() {
+        for (k, val) in (0..n).map(Lit::Int).enumerate() {
             if k > 0 {
                 if let Some(ref s) = sep {
                     out.extend(s.parse::<TokenStream>().unwrap_or_default());
                 }
             }
-            out.extend(self.transcribe(template.clone(), Some(val))?);
+            out.extend(self.transcribe(template.clone(), Some(&val))?);
         }
 
         Ok(Some((out, consumed)))

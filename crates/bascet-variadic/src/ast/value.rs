@@ -46,7 +46,7 @@ impl Lit {
         Lit::Tuple(flat)
     }
 
-    fn from_stream(input: ParseStream) -> syn::Result<Self> {
+    pub(super) fn from_stream(input: ParseStream) -> syn::Result<Self> {
         if input.peek(LitInt) {
             Ok(Self::Int(input.parse::<LitInt>()?.base10_parse()?))
         } else if input.peek(LitChar) {

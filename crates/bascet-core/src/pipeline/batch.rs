@@ -1,7 +1,7 @@
 use crate::attr::Record;
 use crate::attr::store::Store;
 use crate::set::Set;
-use crate::set::ops::holds::Holds;
+use crate::set::holds::Holds;
 
 pub struct Batch<Stores> {
     stores: Stores,

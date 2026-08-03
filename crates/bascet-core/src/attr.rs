@@ -10,8 +10,6 @@ pub use phred::*;
 pub use reads::*;
 pub use store::Store;
 
-use crate::utils::TEq;
-
 pub trait Attr: 'static {
     type Id: AttrId;
 }
@@ -50,7 +48,7 @@ where
     note = "give one of them a distinct id; two attrs sharing an `AttrId` would silently alias"
 )]
 pub trait AttrEq<A> {}
-impl<A, B: TEq<A>> AttrEq<A> for B {}
+impl<A> AttrEq<A> for A {}
 
 pub trait Ref<T> {
     type Value<'a>

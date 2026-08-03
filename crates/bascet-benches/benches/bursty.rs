@@ -1,18 +1,20 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use bascet_cli::logging;
 use bascet_core::attr::Attr;
 use bascet_core::attr::store::Store;
 use bascet_core::pipeline::batch::Batch;
-use bascet_core::{Apply, Error, Fields, Pipeline, Report, Runtime, sink};
+use bascet_core::{Apply, Error, Pipeline, Runtime, sink};
 use bascet_derive::attr_id;
+use tracing::Level;
 
 const WORK: u32 = 1_000_000;
 const CHUNK: usize = 256;
 const FAST: usize = 100;
 const SLOW: usize = 10000;
 const STALL: u64 = 2000;
-const ITERS: usize = 5;
+const ITERS: usize = 20;
 
 struct Value;
 
@@ -34,15 +36,11 @@ impl Store for Column {
 }
 
 fn main() {
-    let _ = tracing_subscriber::fmt()
-        .event_format(Report)
-        .fmt_fields(Fields)
-        .with_max_level(tracing::Level::DEBUG)
-        .try_init();
+    logging::init(Level::DEBUG);
 
     let items: Vec<u32> = (0..(FAST + SLOW * ITERS) as u32).collect();
     let start = Instant::now();
-    let runner = Runtime::default().pipeline::<()>(
+    let runner = Runtime::default().pipeline(
         Pipeline::builder()
             .source(Burst::new(items, FAST, SLOW, STALL))
             .layer(Job)

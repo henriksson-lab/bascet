@@ -1,7 +1,6 @@
 pub(crate) mod allocation;
 pub mod exception;
 pub(crate) mod machine;
-pub(crate) mod shutdown;
 pub mod tier;
 pub(crate) mod workers;
 
@@ -10,10 +9,9 @@ pub use tier::Tier;
 
 use std::num::NonZero;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use bon::bon;
-use crossbeam_queue::ArrayQueue;
 use hwlocality::Topology;
 use parking_lot::Mutex;
 
@@ -24,23 +22,19 @@ use crate::runner::Runner;
 use crate::runtime::allocation::Allocation;
 use crate::runtime::exception::Exception;
 use crate::runtime::machine::Machine;
-use crate::runtime::shutdown::Shutdown;
 use crate::runtime::workers::Workers;
-use crate::schedule::layer::{Layer, LayerState};
-use crate::schedule::preempt::Preempt;
+use crate::schedule::layer::Layer;
 use crate::schedule::wait::Waiters;
-use crate::schedule::{Schedule, Scheduler};
-use crate::set::Set;
+use crate::schedule::{Schedule, Worker};
 
 pub struct Runtime {
     pub(crate) inner: Arc<RuntimeInner>,
     topology: Option<Arc<Topology>>,
-    allocation: Allocation,
 }
 
 pub(crate) struct RuntimeInner {
-    pub(crate) shutdown: Shutdown,
     pub(crate) error: Mutex<Option<Error>>,
+    pub(crate) allocation: Allocation,
 }
 
 impl RuntimeInner {
@@ -103,72 +97,56 @@ impl Runtime {
 
         Ok(Self {
             inner: Arc::new(RuntimeInner {
-                shutdown: Shutdown::new(),
                 error: Mutex::new(None),
+                allocation,
             }),
             topology,
-            allocation,
         })
     }
 
-    pub fn pipeline<W: Set>(self, pipeline: impl Assemble<W>) -> Runner {
-        let Runtime {
-            inner,
-            topology,
-            allocation,
-        } = self;
+    pub fn pipeline(self, pipeline: impl Assemble) -> Runner {
+        let Runtime { inner, topology } = self;
         let mut build = Build {
             runtime: Arc::clone(&inner),
             layers: Vec::new(),
             upstream: Vec::new(),
         };
         let sink = pipeline.assemble(&mut build);
-        let workers = allocation.burn.len() + allocation.jobs as usize + allocation.tasks as usize;
-        let layers: Box<[Arc<Layer>]> = build
-            .layers
+
+        let Build {
+            layers, upstream, ..
+        } = build;
+        let layers: Box<[Arc<Layer>]> = layers
             .into_iter()
             .map(|layer| match layer {
                 Some(layer) => Arc::new(layer),
                 None => panic!("layer slot reserved but never registered"),
             })
             .collect();
-        let upstream: Box<[Box<[usize]>]> = build
-            .upstream
-            .into_iter()
-            .map(Vec::into_boxed_slice)
-            .collect();
         for (consumer, producers) in upstream.iter().enumerate() {
+            let up: Box<[Arc<Layer>]> = producers.iter().map(|&p| Arc::clone(&layers[p])).collect();
+            let _ = layers[consumer].build_upstream.set(up);
             for &producer in producers.iter() {
-                let _ = layers[producer].downstream.set(Arc::clone(&layers[consumer]));
+                let _ = layers[producer]
+                    .build_downstream
+                    .set(Arc::clone(&layers[consumer]));
             }
         }
         let count = layers.len();
+        let sink = Arc::clone(&layers[sink]);
         let schedule = Arc::new(Schedule {
-            scheduler: Scheduler {
-                layers,
-                upstream,
-                suspended: (0..count).map(|_| ArrayQueue::new(workers)).collect(),
-                live: AtomicU64::new(count as u64),
-            },
-            waiters: Waiters::new(workers),
+            layers,
+            live: AtomicU64::new(count as u64),
+            waiters: Waiters::new(inner.allocation.workers()),
+            runtime: Arc::clone(&inner),
         });
-        let closer = Arc::downgrade(&schedule);
-        inner.shutdown.register(Box::new(move || {
-            if let Some(schedule) = closer.upgrade() {
-                for layer in schedule.scheduler.layers.iter() {
-                    layer.preempt.store(Preempt::Halt as u8, Ordering::Relaxed);
-                    layer.mark(LayerState::Runnable);
-                }
-                schedule.wake_all();
-                schedule.wake_join();
-            }
-        }));
-        let weak = Arc::downgrade(&inner);
         let worker_schedule = Arc::clone(&schedule);
-        let workers = Workers::spawn(topology, allocation, move |tier| {
+        let workers = Workers::spawn(topology, &inner.allocation, move |tier| {
             let schedule = Arc::clone(&worker_schedule);
-            let runtime = weak.clone();
-            move || schedule.participate(&runtime, tier)
+            move || {
+                let mut worker = Worker::new(tier);
+                worker.run(&schedule);
+            }
         });
         Runner {
             runtime: inner,

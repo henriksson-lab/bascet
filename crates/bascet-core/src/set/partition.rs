@@ -1,6 +1,6 @@
 use crate::attr::store::Store;
-use crate::set::ops::chain::Chain;
-use crate::set::ops::member::In;
+use crate::set::chain::Chain;
+use crate::set::member::In;
 use crate::set::{Hit, Membership, Miss};
 
 type Forwarded<K, Wants, Provides> =

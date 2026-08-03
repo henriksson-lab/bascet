@@ -17,7 +17,7 @@ pub(crate) struct Workers {
 impl Workers {
     pub(crate) fn spawn<F>(
         topology: Option<Arc<Topology>>,
-        allocation: Allocation,
+        allocation: &Allocation,
         mut run: impl FnMut(Tier) -> F,
     ) -> Self
     where
@@ -25,8 +25,9 @@ impl Workers {
     {
         let mut handles = Vec::new();
 
-        for (index, logical) in allocation.burn.into_iter().enumerate() {
+        for (index, logical) in allocation.burn.iter().enumerate() {
             let topology = topology.clone();
+            let logical = logical.clone();
             let run = run(Tier::Burn);
             handles.push(
                 std::thread::Builder::new()

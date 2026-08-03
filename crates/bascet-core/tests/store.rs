@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::marker::PhantomData;
 
 use bascet_core::Record;
@@ -5,7 +6,7 @@ use bascet_core::attr::Attr;
 use bascet_core::attr::store::Store;
 use bascet_core::pipeline::batch::Batch;
 use bascet_core::set::Chain;
-use bascet_core::set::ops::partition::Partition;
+use bascet_core::set::partition::Partition;
 use bascet_derive::attr_id;
 
 struct A;
@@ -46,11 +47,27 @@ fn bag<K>(value: &[u8]) -> Bag<K> {
 }
 
 fn eq<T: 'static, U: 'static>() -> bool {
-    std::any::TypeId::of::<T>() == std::any::TypeId::of::<U>()
+    TypeId::of::<T>() == TypeId::of::<U>()
 }
 
 #[test]
-fn forward_moves_wanted_drops_unwanted() {
+fn resolves_by_key() {
+    let batch = Batch::new((bag::<A>(b"a"), (bag::<B>(b"b"), ())));
+    let row = batch.iter().next().unwrap();
+    assert_eq!(row.get::<A>(), &b"a"[..]);
+    assert_eq!(row.get::<B>(), &b"b"[..]);
+}
+
+#[test]
+fn resolves_deeply() {
+    let batch = Batch::new((bag::<A>(b"a"), (bag::<B>(b"b"), (bag::<C>(b"c"), ()))));
+    let row = batch.iter().next().unwrap();
+    assert_eq!(row.get::<A>(), &b"a"[..]);
+    assert_eq!(row.get::<C>(), &b"c"[..]);
+}
+
+#[test]
+fn partition_forwards() {
     let input: (Bag<A>, (Bag<B>, ())) = (bag(b"a"), (bag(b"b"), ()));
     let out: (Bag<A>, ()) = <(Bag<A>, (Bag<B>, ())) as Partition<(), (A, ())>>::partition(input);
     let batch = Batch::new(out);
@@ -59,10 +76,11 @@ fn forward_moves_wanted_drops_unwanted() {
 }
 
 #[test]
-fn override_replaces_input_with_produced() {
+fn partition_overrides() {
     let input: (Bag<A>, (Bag<B>, ())) = (bag(b"old"), (bag(b"b"), ()));
     let produced: (Bag<A>, ()) = (bag(b"new"), ());
-    let forwarded = <(Bag<A>, (Bag<B>, ())) as Partition<(A, ()), (A, (B, ()))>>::partition(input);
+    let forwarded =
+        <(Bag<A>, (Bag<B>, ())) as Partition<(A, ()), (A, (B, ()))>>::partition(input);
     let out: (Bag<B>, (Bag<A>, ())) = forwarded.chain(produced);
     let batch = Batch::new(out);
     let row = batch.iter().next().unwrap();
@@ -71,7 +89,7 @@ fn override_replaces_input_with_produced() {
 }
 
 #[test]
-fn narrowing_drops_middle_store() {
+fn partition_narrows() {
     let input: (Bag<A>, (Bag<B>, (Bag<C>, ()))) = (bag(b"a"), (bag(b"b"), (bag(b"c"), ())));
     let out: (Bag<A>, (Bag<C>, ())) =
         <(Bag<A>, (Bag<B>, (Bag<C>, ()))) as Partition<(), (A, (C, ()))>>::partition(input);
@@ -82,7 +100,7 @@ fn narrowing_drops_middle_store() {
 }
 
 #[test]
-fn output_attrs_are_forward_then_produced() {
+fn projects_attrs() {
     assert!(eq::<
         <Batch<(Bag<B>, (Bag<A>, ()))> as Record>::Attrs,
         (B, (A, ())),

@@ -1,7 +1,7 @@
 use crate::attr::Attr;
-use crate::set::ops::chain::Chain;
-use crate::set::ops::member::In;
-use crate::set::ops::select::Select;
+use crate::set::chain::Chain;
+use crate::set::member::In;
+use crate::set::select::Select;
 
 pub trait Keep<R> {
     type Output;

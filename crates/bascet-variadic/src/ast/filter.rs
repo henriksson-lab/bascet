@@ -1,6 +1,6 @@
 use proc_macro2::{Punct, Span};
 use syn::parse::{Parse, ParseStream};
-use syn::{Ident, LitChar, LitInt, LitStr, Token};
+use syn::{Ident, Token};
 
 use super::value::Lit;
 
@@ -64,14 +64,10 @@ impl FilterPred {
 
 impl Lit {
     fn operand(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(LitInt) {
-            Ok(Self::Int(input.parse::<LitInt>()?.base10_parse()?))
-        } else if input.peek(LitChar) {
-            Ok(Self::Char(input.parse::<LitChar>()?.value()))
-        } else if input.peek(LitStr) {
-            Ok(Self::Str(input.parse::<LitStr>()?.value()))
-        } else {
+        if input.peek(Ident) {
             Ok(Self::Ident(input.parse::<Ident>()?.to_string()))
+        } else {
+            Self::from_stream(input)
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::attr::Attr;
-use crate::set::ops::chain::Chain;
+use crate::set::chain::Chain;
 
 pub trait Lower {
     type Out;

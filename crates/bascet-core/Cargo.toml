@@ -27,16 +27,3 @@ page_size.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
-
-[[bench]]
-name = "bursty"
-harness = false
-
-[[bench]]
-name = "parallel"
-harness = false
-
-[[bench]]
-name = "tiers"
-harness = false

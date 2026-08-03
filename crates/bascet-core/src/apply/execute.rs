@@ -1,6 +1,6 @@
 use crate::apply::Apply;
 use crate::pipeline::batch::Keys;
-use crate::set::ops::partition::Compose;
+use crate::set::partition::Compose;
 
 pub type Provides<Stores, A> = <<A as Apply<Stores>>::Produces as Keys>::Output;
 

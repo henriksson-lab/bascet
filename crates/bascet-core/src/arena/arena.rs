@@ -327,15 +327,7 @@ impl ArenaPool {
                 sizeof_buffer,
                 sizeof_arena,
                 inner_idx_hint: CachePadded::new(AtomicUsize::new(0)),
-                inner_patience: CachePadded::new(
-                    AtomicPatience::new(
-                        ARENA_PATIENCE_INIT,
-                        ARENA_PATIENCE_GROWTH,
-                        ARENA_PATIENCE_DECAY,
-                    )
-                    .set_min(ARENA_PATIENCE_MIN)
-                    .set_max(ARENA_PATIENCE_MAX),
-                ),
+                inner_patience: CachePadded::new(AtomicPatience::new()),
                 inner_retry_alloc: Box::new(Event::new()),
                 inner_retry_waiters: Box::new(AtomicU32::new(0)),
             }

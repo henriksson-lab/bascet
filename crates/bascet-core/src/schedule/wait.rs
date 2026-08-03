@@ -12,7 +12,9 @@ pub(crate) struct Waiters {
 impl Waiters {
     pub(crate) fn new(workers: usize) -> Self {
         Self {
-            parked: (0..workers.div_ceil(64)).map(|_| AtomicU64::new(0)).collect(),
+            parked: (0..workers.div_ceil(64))
+                .map(|_| AtomicU64::new(0))
+                .collect(),
             threads: (0..workers).map(|_| OnceLock::new()).collect(),
             next: AtomicUsize::new(0),
             join: OnceLock::new(),

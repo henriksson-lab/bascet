@@ -6,19 +6,34 @@ use parking_lot::Mutex;
 
 use crate::pipeline::gather::Closed;
 
+pub(crate) struct Edge;
+
 pub(crate) struct Upstream<T> {
-    pub(crate) input_rx: Arc<Receiver<T>>,
+    input_rx: Receiver<T>,
 }
 
 pub(crate) struct Downstream<T> {
-    pub(crate) output_tx: Sender<T>,
-    pub(crate) exhausted: bool,
+    output_tx: Sender<T>,
+    exhausted: bool,
+}
+
+impl Edge {
+    pub(crate) fn new<T>(depth: usize) -> (Upstream<T>, Downstream<T>) {
+        let (output_tx, input_rx) = kanal::bounded(depth);
+        (
+            Upstream { input_rx },
+            Downstream {
+                output_tx,
+                exhausted: false,
+            },
+        )
+    }
 }
 
 impl<T> Clone for Upstream<T> {
     fn clone(&self) -> Self {
         Self {
-            input_rx: Arc::clone(&self.input_rx),
+            input_rx: self.input_rx.clone(),
         }
     }
 }
@@ -33,19 +48,6 @@ impl<T> Clone for Downstream<T> {
 }
 
 impl<T> Upstream<T> {
-    pub(crate) fn new(depth: usize) -> (Upstream<T>, Downstream<T>) {
-        let (output_tx, input_rx) = kanal::bounded(depth);
-        (
-            Upstream {
-                input_rx: Arc::new(input_rx),
-            },
-            Downstream {
-                output_tx,
-                exhausted: false,
-            },
-        )
-    }
-
     pub(crate) fn try_recv(&self) -> Result<Option<T>, Closed> {
         match self.input_rx.try_recv() {
             Ok(item) => Ok(item),
@@ -63,10 +65,17 @@ impl<T> Downstream<T> {
         self.output_tx.send(item).map_err(|_| Closed)
     }
 
-    pub(crate) fn try_send(&self, item: &mut Option<T>) -> Result<bool, Closed> {
+    pub(crate) fn is_exhausted(&self) -> bool {
+        self.exhausted
+    }
+
+    pub(crate) fn try_send(&mut self, item: &mut Option<T>) -> Result<bool, Closed> {
         match self.output_tx.try_send_option(item) {
             Ok(sent) => Ok(sent),
-            Err(_) => Err(Closed),
+            Err(_) => {
+                self.exhausted = true;
+                Err(Closed)
+            }
         }
     }
 }
@@ -102,14 +111,14 @@ mod tests {
 
     #[test]
     fn consumer_drop_closes_for_producer() {
-        let (up, down) = Upstream::<u32>::new(1);
+        let (up, down) = Edge::new::<u32>(1);
         drop(up);
         assert!(down.send(1).is_err());
     }
 
     #[test]
     fn sender_drop_closes_after_drain() {
-        let (up, down) = Upstream::<u32>::new(4);
+        let (up, down) = Edge::new::<u32>(4);
         down.send(1).unwrap();
         drop(down);
         assert_eq!(up.try_recv().unwrap(), Some(1));
@@ -118,7 +127,7 @@ mod tests {
 
     #[test]
     fn clones_share_the_channel() {
-        let (up, down) = Upstream::<u32>::new(4);
+        let (up, down) = Edge::new::<u32>(4);
         let view = up.clone();
         down.send(7).unwrap();
         assert_eq!(view.try_recv().unwrap(), Some(7));

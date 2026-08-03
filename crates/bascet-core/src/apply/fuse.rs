@@ -24,7 +24,7 @@ impl<Out> Fuse<Out> {
             self.staged = None;
             return true;
         };
-        if downstream.exhausted {
+        if downstream.is_exhausted() {
             self.staged = None;
             return true;
         }
@@ -35,7 +35,6 @@ impl<Out> Fuse<Out> {
             Ok(true) => true,
             Ok(false) => false,
             Err(_) => {
-                downstream.exhausted = true;
                 self.staged = None;
                 true
             }
@@ -49,17 +48,17 @@ impl<Out> Fuse<Out> {
     pub(crate) fn orphaned(&self) -> bool {
         self.downstream
             .as_ref()
-            .is_some_and(|downstream| downstream.exhausted)
+            .is_some_and(|downstream| downstream.is_exhausted())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::edge::Upstream;
+    use crate::pipeline::edge::{Edge, Upstream};
 
     fn fuse(depth: usize) -> (Fuse<u32>, Upstream<u32>) {
-        let (up, down) = Upstream::<u32>::new(depth);
+        let (up, down) = Edge::new::<u32>(depth);
         (Fuse::new(Some(down)), up)
     }
 

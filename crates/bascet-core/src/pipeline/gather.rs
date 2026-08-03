@@ -95,10 +95,11 @@ bascet_variadic::variadic!(N = 2..=16, for N in N => {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::edge::Edge;
 
     #[test]
     fn recv_serves_then_starves() {
-        let (mut up, down) = Upstream::<u32>::new(4);
+        let (mut up, down) = Edge::new::<u32>(4);
         down.send(1).unwrap();
         down.send(2).unwrap();
         assert!(matches!(Gather::try_recv(&mut up), Ok(Some(1))));
@@ -109,7 +110,7 @@ mod tests {
 
     #[test]
     fn closed_after_drain() {
-        let (mut up, down) = Upstream::<u32>::new(4);
+        let (mut up, down) = Edge::new::<u32>(4);
         down.send(1).unwrap();
         drop(down);
         assert!(matches!(Gather::try_recv(&mut up), Ok(Some(1))));
@@ -125,8 +126,8 @@ mod tests {
 
     #[test]
     fn uneven_batches_pair_in_order() {
-        let (up_a, down_a) = Upstream::<u32>::new(4);
-        let (up_b, down_b) = Upstream::<u32>::new(4);
+        let (up_a, down_a) = Edge::new::<u32>(4);
+        let (up_b, down_b) = Edge::new::<u32>(4);
         down_a.send(1).unwrap();
         down_a.send(2).unwrap();
         down_a.send(3).unwrap();
@@ -144,8 +145,8 @@ mod tests {
 
     #[test]
     fn survivor_drains_with_none_slots() {
-        let (up_a, down_a) = Upstream::<u32>::new(4);
-        let (up_b, down_b) = Upstream::<u32>::new(4);
+        let (up_a, down_a) = Edge::new::<u32>(4);
+        let (up_b, down_b) = Edge::new::<u32>(4);
         down_a.send(1).unwrap();
         down_b.send(10).unwrap();
         down_b.send(20).unwrap();
@@ -159,8 +160,8 @@ mod tests {
 
     #[test]
     fn clones_share_staging_but_not_outstanding() {
-        let (up_a, down_a) = Upstream::<u32>::new(4);
-        let (up_b, down_b) = Upstream::<u32>::new(4);
+        let (up_a, down_a) = Edge::new::<u32>(4);
+        let (up_b, down_b) = Edge::new::<u32>(4);
         down_a.send(1).unwrap();
         let mut first = Zip::from((up_a, up_b));
         let mut second = first.clone();
