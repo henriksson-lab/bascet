@@ -11,7 +11,9 @@ homepage = "https://henriksson-lab.github.io/zorn/"
 
 [workspace.dependencies]
 anyhow = "1.0.93"
-polars-arrow = { version = "0.46", default-features = false, features = ["io_ipc"] }
+polars-arrow = { version = "0.46", default-features = false, features = [
+  "io_ipc",
+] }
 bitflags = "2.10.0"
 branches = "0.4.4"
 bytemuck = "1.24.0"
@@ -26,7 +28,11 @@ quote = "1.0.42"
 rtrb = "0.3.2"
 syn = { version = "2.0.111", features = ["full"] }
 tracing-appender = "0.2.4"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "smallvec", "parking_lot"] }
+tracing-subscriber = { version = "0.3.22", features = [
+  "env-filter",
+  "smallvec",
+  "parking_lot",
+] }
 bascet-core = { path = "crates/bascet-core" }
 bascet-cli = { path = "crates/bascet-cli" }
 bascet-derive = { path = "crates/bascet-derive" }
@@ -49,15 +55,14 @@ crossbeam-channel = "0.5"
 csv = "1.2.2"
 delegate = "0.13.1"
 enum_dispatch = "0.3.13"
-flate2 = { version = "1.1.9", features = [
-  "zlib-rs",
-], default-features = false }
+flate2 = { version = "1.1.9", features = ["zlib-rs"], default-features = false }
 fraction = "0.15.3"
 futures = { version = "0.3.28", features = ["thread-pool"] }
 gecco = { version = "0.5.4", default-features = false }
 glidesort = "0.1.2"
 gxhash = "3.5.0"
 hdf5 = { package = "hdf5-pure-rust", version = "0.3" }
+hyperloglockless = { version = "0.5" }
 index_list = "0.2.13"
 itertools = "0.13.0"
 lazy_static = "1.5.0"
@@ -112,8 +117,13 @@ wide = "1.1.1"
 #TODO: im going to be brave and try latest
 # still not sure if using latest breaks anything else but for countsketch latest works.
 # crucial to disable default features though due to dependency conflicts
-zip = { version = ">=4.3.0, <4.4.0", default-features = false, features = ["zstd","deflate-flate2"] }
-zune-inflate = { version = "0.2", default-features = false, features = ["gzip"] }
+zip = { version = ">=4.3.0, <4.4.0", default-features = false, features = [
+  "zstd",
+  "deflate-flate2",
+] }
+zune-inflate = { version = "0.2", default-features = false, features = [
+  "gzip",
+] }
 
 [profile.profiling]
 inherits = "release"

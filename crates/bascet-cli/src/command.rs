@@ -5,6 +5,7 @@ pub mod align;
 pub mod bam2fragments;
 pub mod bamsort;
 pub mod countchrom;
+pub mod countdistinct;
 pub mod countfeature;
 pub mod countsketch;
 pub mod extract;
@@ -54,6 +55,7 @@ pub use sam_add_barcode_tag_cmd::PipeSamAddTagsCMD;
 
 // Count operations
 pub use countchrom::{CountChrom, CountChromCMD};
+pub use countdistinct::CountdistinctCMD;
 pub use countfeature::{CountFeature, CountFeatureCMD};
 pub use countsketch::CountsketchCMD;
 pub use detect_kmer_fq::{DetectKmerFq, DetectKmerFqCMD};
@@ -100,6 +102,7 @@ pub enum Commands {
     Bam2fragments(Bam2FragmentsCMD),
     BamSort(BamSortCMD),
     Countchrom(CountChromCMD),
+    Countdistinct(CountdistinctCMD),
     Countfeature(CountFeatureCMD),
     Countsketch(CountsketchCMD),
     DetectKmerKmc(DetectKmerKmcCMD),
