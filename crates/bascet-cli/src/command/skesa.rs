@@ -133,7 +133,6 @@ pub struct SkesaCMD {
 impl SkesaCMD {
     pub fn try_execute(&mut self) -> Result<()> {
         self.validate()?;
-        skesa_rs::sorted_counter::set_single_pass_counter(self.single_pass_counter);
 
         let memory_gb_per_worker = self.memory_gb_per_worker();
         if self.single_pass_counter {
@@ -164,6 +163,7 @@ impl SkesaCMD {
             allow_snps: self.allow_snps,
             force_single_ends: self.force_single_ends,
             skesa_cores: self.skesa_cores,
+            single_pass_counter: self.single_pass_counter,
         };
 
         run_skesa_cells(
@@ -264,6 +264,7 @@ struct SkesaParams {
     allow_snps: bool,
     force_single_ends: bool,
     skesa_cores: usize,
+    single_pass_counter: bool,
 }
 
 struct CellReads {
@@ -510,6 +511,7 @@ fn assemble_cell(cell: CellReads, params: &SkesaParams) -> Result<CellAssembly> 
         allow_snps: params.allow_snps,
         ncores: params.skesa_cores,
         memory_gb: params.memory_gb,
+        single_pass_counter: params.single_pass_counter,
         retain_all_graphs: false,
         retain_all_iterations: false,
     };

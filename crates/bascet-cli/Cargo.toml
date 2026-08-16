@@ -83,7 +83,7 @@ semver.workspace = true
 seq_io.workspace = true
 serde.workspace = true
 shellexpand.workspace = true
-skesa-rs = { version = "0.2.1", default-features = false, optional = true }
+skesa-rs = { version = "0.3", default-features = false, optional = true }
 smallvec.workspace = true
 sprs.workspace = true
 star-rs = { git = "https://github.com/henriksson-lab/star-rs", optional = true }
