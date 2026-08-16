@@ -61,6 +61,7 @@ gecco = { workspace = true, features = ["bundled-data", "cli"], optional = true 
 glidesort.workspace = true
 gxhash.workspace = true
 hdf5.workspace = true
+hyperloglockless.workspace = true
 index_list.workspace = true
 itertools.workspace = true
 kraken2-pure-rs = "0.2.0"
