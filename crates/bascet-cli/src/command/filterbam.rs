@@ -17,10 +17,15 @@ const MIN_FILTERBAM_OUTPUT_BUFFER_SIZE: usize = 1024 * 1024;
 const MIN_FILTERBAM_MEMORY: ByteSize = ByteSize::mib(32);
 const FILTERBAM_MEMORY_RESERVE: ByteSize = ByteSize::mib(16);
 const FILTERBAM_ESTIMATED_BYTES_PER_BGZF_QUEUE_BLOCK: u64 = (bgzf::BLOCK_SIZE as u64 + 0x10000) * 3;
+#[cfg(test)]
 const BAM_FLAG_SEGMENTED: u16 = 0x1;
 const BAM_FLAG_UNMAPPED: u16 = 0x4;
+#[cfg(test)]
 const BAM_FLAG_FIRST_SEGMENT: u16 = 0x40;
+#[cfg(test)]
 const BAM_FLAG_LAST_SEGMENT: u16 = 0x80;
+const BAM_FLAG_SECONDARY: u16 = 0x100;
+const BAM_FLAG_SUPPLEMENTARY: u16 = 0x800;
 const DEFAULT_MIN_MATCHING: u32 = 0;
 const DEFAULT_MIN_MATCHING_PERCENT: u8 = 90;
 
@@ -213,44 +218,23 @@ fn filter_one_bam(
 
     let mut records_read = 0_u64;
     let mut records_written = 0_u64;
-    let mut pushback: Option<bam::Record> = None;
-    while let Some(record) = match pushback.take() {
-        Some(record) => Some(record),
-        None => bam::Record::read(&mut reader)
-            .with_context(|| format!("read BAM record {}", path_in.display()))?,
-    } {
+    let mut group: Vec<bam::Record> = Vec::new();
+    while let Some(record) = bam::Record::read(&mut reader)
+        .with_context(|| format!("read BAM record {}", path_in.display()))?
+    {
         records_read += 1;
 
-        if is_first_segment(&record) {
-            let next = bam::Record::read(&mut reader)
-                .with_context(|| format!("read BAM record {}", path_in.display()))?;
-            if let Some(next) = next {
-                records_read += 1;
-                if is_adjacent_second_mate(&record, &next) {
-                    if should_keep_record(&record, keep, alignment_filter)
-                        || should_keep_record(&next, keep, alignment_filter)
-                    {
-                        record.write(writer).with_context(|| {
-                            format!("write filtered BAM record from {}", path_in.display())
-                        })?;
-                        next.write(writer).with_context(|| {
-                            format!("write filtered BAM record from {}", path_in.display())
-                        })?;
-                        records_written += 2;
-                    }
-                    continue;
-                }
-                pushback = Some(next);
-                records_read -= 1;
-            }
+        if !group.is_empty() && group[0].read_name() != record.read_name() {
+            records_written +=
+                write_filtered_group(&group, writer, path_in, keep, alignment_filter)?;
+            group.clear();
         }
 
-        if should_keep_record(&record, keep, alignment_filter) {
-            record
-                .write(writer)
-                .with_context(|| format!("write filtered BAM record from {}", path_in.display()))?;
-            records_written += 1;
-        }
+        group.push(record);
+    }
+
+    if !group.is_empty() {
+        records_written += write_filtered_group(&group, writer, path_in, keep, alignment_filter)?;
     }
 
     info!(
@@ -260,6 +244,22 @@ fn filter_one_bam(
         "FilterBam: input complete"
     );
     Ok((header, records_read, records_written))
+}
+
+fn write_filtered_group(
+    group: &[bam::Record],
+    writer: &mut bgzf::ParallelWriter,
+    path_in: &Path,
+    keep: BamFilterMode,
+    alignment_filter: AlignmentFilter,
+) -> Result<u64> {
+    let records = kept_primary_records(group, keep, alignment_filter);
+    for record in &records {
+        record
+            .write(writer)
+            .with_context(|| format!("write filtered BAM record from {}", path_in.display()))?;
+    }
+    Ok(records.len() as u64)
 }
 
 fn filterbam_memory_plan(
@@ -296,12 +296,41 @@ fn filterbam_memory_plan(
     })
 }
 
+#[cfg(test)]
 fn should_keep_record(record: &bam::Record, keep: BamFilterMode, filter: AlignmentFilter) -> bool {
     let is_aligned = is_record_aligned(record, filter);
     match keep {
         BamFilterMode::Mapped => is_aligned,
         BamFilterMode::Unmapped => !is_aligned,
     }
+}
+
+fn kept_primary_records(
+    group: &[bam::Record],
+    keep: BamFilterMode,
+    filter: AlignmentFilter,
+) -> Vec<&bam::Record> {
+    let primary: Vec<_> = group
+        .iter()
+        .filter(|record| is_primary_record(record))
+        .collect();
+    if primary.is_empty() {
+        return Vec::new();
+    }
+
+    let any_primary_aligned = primary
+        .iter()
+        .any(|record| is_record_aligned(record, filter));
+    let keep_group = match keep {
+        BamFilterMode::Mapped => any_primary_aligned,
+        BamFilterMode::Unmapped => !any_primary_aligned,
+    };
+
+    if keep_group { primary } else { Vec::new() }
+}
+
+fn is_primary_record(record: &bam::Record) -> bool {
+    record.flag() & (BAM_FLAG_SECONDARY | BAM_FLAG_SUPPLEMENTARY) == 0
 }
 
 fn is_record_aligned(record: &bam::Record, filter: AlignmentFilter) -> bool {
@@ -335,11 +364,13 @@ fn count_matching_bases(record: &bam::Record) -> u32 {
         .sum()
 }
 
+#[cfg(test)]
 fn is_first_segment(record: &bam::Record) -> bool {
     let flag = record.flag();
     flag & BAM_FLAG_SEGMENTED != 0 && flag & BAM_FLAG_FIRST_SEGMENT != 0
 }
 
+#[cfg(test)]
 fn is_adjacent_second_mate(first: &bam::Record, second: &bam::Record) -> bool {
     let second_flag = second.flag();
     second_flag & BAM_FLAG_SEGMENTED != 0
@@ -375,9 +406,10 @@ fn ensure_compatible_headers(
 #[cfg(test)]
 mod tests {
     use super::{
-        AlignmentFilter, BAM_FLAG_FIRST_SEGMENT, BAM_FLAG_LAST_SEGMENT, BAM_FLAG_SEGMENTED,
-        BAM_FLAG_UNMAPPED, BamFilterMode, DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE,
-        MIN_FILTERBAM_MEMORY, filterbam_memory_plan, is_adjacent_second_mate, is_record_aligned,
+        AlignmentFilter, BAM_FLAG_FIRST_SEGMENT, BAM_FLAG_LAST_SEGMENT, BAM_FLAG_SECONDARY,
+        BAM_FLAG_SEGMENTED, BAM_FLAG_SUPPLEMENTARY, BAM_FLAG_UNMAPPED, BamFilterMode,
+        DEFAULT_FILTERBAM_OUTPUT_BUFFER_SIZE, MIN_FILTERBAM_MEMORY, filterbam_memory_plan,
+        is_adjacent_second_mate, is_first_segment, is_record_aligned, kept_primary_records,
         should_keep_record,
     };
     use crate::command::samtools_rs::bam::Record;
@@ -496,6 +528,88 @@ mod tests {
         assert!(
             should_keep_record(&r1, BamFilterMode::Mapped, filter)
                 || should_keep_record(&r2, BamFilterMode::Mapped, filter)
+        );
+    }
+
+    #[test]
+    fn mapped_group_writes_only_primary_pair_and_drops_alternative_mappings() {
+        let filter = default_alignment_filter();
+        let r1_primary = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
+        let r1_supplementary = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT | BAM_FLAG_SUPPLEMENTARY,
+            10,
+            &[(5, 0), (5, 4)],
+        );
+        let r2_primary = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
+        let r2_secondary = test_record_with_cigar(
+            b"cell:umi",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT | BAM_FLAG_SECONDARY,
+            10,
+            &[(10, 0)],
+        );
+        let group = vec![r1_primary, r1_supplementary, r2_primary, r2_secondary];
+
+        let kept = kept_primary_records(&group, BamFilterMode::Mapped, filter);
+
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].flag() & BAM_FLAG_SUPPLEMENTARY, 0);
+        assert_eq!(kept[1].flag() & BAM_FLAG_SECONDARY, 0);
+        assert!(kept.iter().any(|record| is_first_segment(record)));
+        assert!(kept.iter().any(|record| {
+            record.flag() & BAM_FLAG_SEGMENTED != 0 && record.flag() & BAM_FLAG_LAST_SEGMENT != 0
+        }));
+    }
+
+    #[test]
+    fn unmapped_group_keeps_primary_pair_only_when_neither_primary_mate_aligns() {
+        let filter = default_alignment_filter();
+        let r1_mapped = test_record_with_cigar(
+            b"mapped-pair",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT,
+            10,
+            &[(10, 0)],
+        );
+        let r2_unmapped = test_record_with_cigar(
+            b"mapped-pair",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT | BAM_FLAG_UNMAPPED,
+            10,
+            &[],
+        );
+        let mapped_group = vec![r1_mapped, r2_unmapped];
+
+        assert!(kept_primary_records(&mapped_group, BamFilterMode::Unmapped, filter).is_empty());
+
+        let r1_unmapped = test_record_with_cigar(
+            b"unmapped-pair",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_FIRST_SEGMENT | BAM_FLAG_UNMAPPED,
+            10,
+            &[],
+        );
+        let r2_unmapped = test_record_with_cigar(
+            b"unmapped-pair",
+            BAM_FLAG_SEGMENTED | BAM_FLAG_LAST_SEGMENT | BAM_FLAG_UNMAPPED,
+            10,
+            &[],
+        );
+        let never_mapped_group = vec![r1_unmapped, r2_unmapped];
+
+        let kept = kept_primary_records(&never_mapped_group, BamFilterMode::Unmapped, filter);
+
+        assert_eq!(kept.len(), 2);
+        assert!(
+            kept.iter()
+                .all(|record| record.flag() & BAM_FLAG_UNMAPPED != 0)
         );
     }
 
